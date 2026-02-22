@@ -42,6 +42,7 @@ const NAV_LABELS = {
   favorites: ["Favoritter", "Markerede billeder"],
   steder: ["Steder", "Billeder med GPS/placeringsdata"],
   kameraer: ["Kameraer", "Filtreret på billeder med kameradata"],
+  mapper: ["Mapper", "Grupperet efter kilde-mappe"],
   personer: ["Personer", "Klar til ansigtsgenkendelse (kommer med ONNX face-service)"],
 };
 
@@ -53,6 +54,7 @@ let state = {
   q: "",
   scanning: false,
   selectedIndex: -1,
+  folder: null,
 };
 
 function showStatus(text, type = "ok") {
@@ -191,7 +193,6 @@ function renderGrid() {
   }
   hideEmpty();
 
-  // Group by folder in 'mapper' view
   const items = state.items.slice();
   if (state.view === "mapper") {
     const groups = new Map();
@@ -201,11 +202,7 @@ function renderGrid() {
       groups.get(folder).push(it);
     }
     for (const [folder, arr] of groups) {
-      const h = document.createElement("h3");
-      h.textContent = folder;
-      h.style.margin = "8px 4px";
-      els.grid.appendChild(h);
-      arr.forEach(item => appendCard(item));
+      appendFolderCard(folder, arr);
     }
   } else {
     items.forEach(item => appendCard(item));
@@ -236,6 +233,31 @@ function appendCard(item) {
   els.grid.appendChild(card);
 }
 
+function appendFolderCard(folder, arr) {
+  const previews = arr.slice(0, 4);
+  const card = document.createElement("article");
+  card.className = "photo-card";
+  const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
+  card.innerHTML = `
+    <div class="card-thumb folder-mosaic">
+      ${cells}
+    </div>
+    <div class="card-body">
+      <h4 class="card-title">${folder}</h4>
+      <div class="card-meta">
+        <span>${arr.length} elementer</span>
+        <span>Mapper</span>
+      </div>
+    </div>`;
+  card.addEventListener("click", () => {
+    state.view = "library";
+    state.folder = folder === "(root)" ? "" : folder;
+    document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
+    loadPhotos();
+  });
+  els.grid.appendChild(card);
+}
+
 // Viewer controls
 function openViewer(index) {
   state.selectedIndex = index;
@@ -261,6 +283,7 @@ async function loadPhotos() {
     q: state.q,
     view: state.view,
     sort: state.sort,
+    folder: state.folder || "",
   });
 
   const res = await fetch(`/api/photos?${qs.toString()}`);
@@ -353,6 +376,7 @@ async function toggleFavorite() {
 
 function setView(view) {
   state.view = view;
+  state.folder = null;
   state.selectedId = null;
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);

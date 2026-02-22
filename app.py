@@ -473,8 +473,10 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
 
     with closing(get_conn()) as conn:
         existing = {
-            row["rel_path"]: (row["modified_fs"], row["file_size"])
-            for row in conn.execute("SELECT rel_path, modified_fs, file_size FROM photos")
+            row["rel_path"]: row
+            for row in conn.execute(
+                "SELECT rel_path, modified_fs, file_size, gps_lat, gps_lon, lens_model FROM photos"
+            )
         }
 
 
@@ -487,8 +489,11 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
             modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
             file_size = stat.st_size
             prev = existing.get(rel_path)
-            if prev and prev[0] == modified_fs and prev[1] == file_size:
-                continue
+            if prev:
+                unchanged = (prev["modified_fs"] == modified_fs and prev["file_size"] == file_size)
+                missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
+                if unchanged and not missing_meta:
+                    continue
 
             meta = extract_metadata(path, rel_path)
             upsert_photo(meta)
@@ -581,7 +586,7 @@ def matches_search(photo: Dict[str, Any], q: str) -> bool:
     return all(any(term_part in blob for term_part in {t}) or (t in blob) for t in terms)
 
 
-def query_photos(view: str, sort: str) -> list[Dict[str, Any]]:
+def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs) DESC",
         "date_asc": "COALESCE(captured_at, modified_fs) ASC",
@@ -593,7 +598,7 @@ def query_photos(view: str, sort: str) -> list[Dict[str, Any]]:
     order_by = sort_map.get(sort, sort_map["date_desc"])
 
     where = []
-    params = []
+    params: list[Any] = []
     # Always exclude Synology auto-thumbs and @eaDir content from results
     where.append("(UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%' AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%')")
     where.append("(rel_path NOT LIKE '%/@eaDir/%')")
@@ -607,6 +612,11 @@ def query_photos(view: str, sort: str) -> list[Dict[str, Any]]:
         where.append("people_count > 0")  # future face-service
     elif view == "recent":
         where.append("1=1")
+
+    # Optional folder filter: all files under folder (prefix match)
+    if folder:
+        where.append("(rel_path LIKE ? || '/%')")
+        params.append(folder)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"SELECT * FROM photos {where_sql} ORDER BY {order_by}"
@@ -666,8 +676,9 @@ def api_photos():
     q = request.args.get("q", "").strip()
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
+    folder = request.args.get("folder")
 
-    items = query_photos(view, sort)
+    items = query_photos(view, sort, folder=folder)
     if q:
         items = [p for p in items if matches_search(p, q)]
 
@@ -677,6 +688,7 @@ def api_photos():
         "query": q,
         "view": view,
         "sort": sort,
+        "folder": folder,
     })
 
 
