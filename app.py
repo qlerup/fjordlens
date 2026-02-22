@@ -616,6 +616,8 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                 metadata["metadata_json"] = mj
                 if not metadata.get("gps_name"):
                     metadata["gps_name"] = ", ".join([x for x in [city, country] if x])
+    except Exception as e:
+        log_event("error", rel_path=rel_path, error=f"geocode_outer: {e}")
 
     # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
     # try to enrich from a sibling HEIC/HEIF with same basename — but ONLY if the images
