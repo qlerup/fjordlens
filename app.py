@@ -354,60 +354,57 @@ def extract_metadata(path: Path, rel_path: str) -> Dict[str, Any]:
     # are visually the same (verified via perceptual hash distance threshold).
     try:
         if (not metadata.get("gps_lat") and not metadata.get("gps_lon")) or (not metadata.get("lens_model")):
-            stem = path.stem
-            heif_candidate = None
-            for ext in (".heic", ".HEIC", ".heif", ".HEIF"):
-                p = path.with_suffix(ext)
-                if p.exists():
-                    heif_candidate = p
-                    break
-            if heif_candidate:
+            # Consider any sibling with the same basename but different extension (supported types)
+            cur_phash = phash
+            if cur_phash is None:
                 try:
-                    # Ensure we have a pHash on current file to compare with candidate
-                    cur_phash = phash
-                    if cur_phash is None:
-                        try:
-                            with Image.open(path) as _img_tmp:
-                                cur_phash = average_hash(_img_tmp)
-                        except Exception:
-                            cur_phash = None
-
-                    with Image.open(heif_candidate) as himg:
-                        h_exif = parse_exif(himg)
-                        cand_phash = None
-                        try:
-                            cand_phash = average_hash(himg)
-                        except Exception:
-                            cand_phash = None
-
-                        # Require a reasonable visual match to avoid mis-enrichment
-                        allow_enrich = False
-                        if cur_phash and cand_phash:
-                            dist = _hamdist_hex(cur_phash, cand_phash)
-                            allow_enrich = dist <= 6  # threshold can be tuned
-                        # If we cannot compare, do NOT enrich to avoid false matches
-
-                        if allow_enrich:
-                            if not metadata.get("captured_at"):
-                                metadata["captured_at"] = parse_captured_at(h_exif, stat.st_mtime)
-                            if not metadata.get("camera_make"):
-                                metadata["camera_make"] = h_exif.get("Make")
-                            if not metadata.get("camera_model"):
-                                metadata["camera_model"] = h_exif.get("Model")
-                            if not metadata.get("lens_model"):
-                                metadata["lens_model"] = h_exif.get("LensModel")
-                            if not metadata.get("iso"):
-                                metadata["iso"] = h_exif.get("ISOSpeedRatings") or h_exif.get("PhotographicSensitivity")
-                            if not metadata.get("focal_length"):
-                                metadata["focal_length"] = _rational_to_float(h_exif.get("FocalLength"))
-                            if not metadata.get("f_number"):
-                                metadata["f_number"] = _rational_to_float(h_exif.get("FNumber"))
-                            if metadata.get("gps_lat") is None and h_exif.get("_gps_lat") is not None:
-                                metadata["gps_lat"] = h_exif.get("_gps_lat")
-                            if metadata.get("gps_lon") is None and h_exif.get("_gps_lon") is not None:
-                                metadata["gps_lon"] = h_exif.get("_gps_lon")
+                    with Image.open(path) as _img_tmp:
+                        cur_phash = average_hash(_img_tmp)
                 except Exception:
-                    pass
+                    cur_phash = None
+
+            if cur_phash is not None:
+                exts_to_try = set()
+                for ext in SUPPORTED_EXTS:
+                    if ext.lower() != metadata.get("ext", path.suffix.lower()):
+                        exts_to_try.add(ext.lower())
+                        exts_to_try.add(ext.upper())
+                for ext in exts_to_try:
+                    cand = path.with_suffix(ext)
+                    if not cand.exists():
+                        continue
+                    try:
+                        with Image.open(cand) as himg:
+                            h_exif = parse_exif(himg)
+                            try:
+                                cand_phash = average_hash(himg)
+                            except Exception:
+                                cand_phash = None
+                            if not cand_phash:
+                                continue
+                            dist = _hamdist_hex(cur_phash, cand_phash)
+                            if dist <= 6:  # visual match threshold
+                                if not metadata.get("captured_at"):
+                                    metadata["captured_at"] = parse_captured_at(h_exif, stat.st_mtime)
+                                if not metadata.get("camera_make"):
+                                    metadata["camera_make"] = h_exif.get("Make")
+                                if not metadata.get("camera_model"):
+                                    metadata["camera_model"] = h_exif.get("Model")
+                                if not metadata.get("lens_model"):
+                                    metadata["lens_model"] = h_exif.get("LensModel")
+                                if not metadata.get("iso"):
+                                    metadata["iso"] = h_exif.get("ISOSpeedRatings") or h_exif.get("PhotographicSensitivity")
+                                if not metadata.get("focal_length"):
+                                    metadata["focal_length"] = _rational_to_float(h_exif.get("FocalLength"))
+                                if not metadata.get("f_number"):
+                                    metadata["f_number"] = _rational_to_float(h_exif.get("FNumber"))
+                                if metadata.get("gps_lat") is None and h_exif.get("_gps_lat") is not None:
+                                    metadata["gps_lat"] = h_exif.get("_gps_lat")
+                                if metadata.get("gps_lon") is None and h_exif.get("_gps_lon") is not None:
+                                    metadata["gps_lon"] = h_exif.get("_gps_lon")
+                                break  # stop at first valid visual match
+                    except Exception:
+                        continue
     except Exception:
         pass
 
