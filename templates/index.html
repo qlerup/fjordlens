@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FjordLens</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-dot"></div>
+        <div>
+          <div class="logo-title">FjordLens</div>
+          <div class="logo-sub">Synology Starter</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="library">📷 Bibliotek</button>
+        <button class="nav-item" data-view="favorites">⭐ Favoritter</button>
+        <button class="nav-item" data-view="steder">📍 Steder</button>
+        <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
+        <button class="nav-item" data-view="personer">🙂 Personer</button>
+      </nav>
+
+      <div class="sidebar-card">
+        <div class="sidebar-card-title">AI-søgning (klar til næste trin)</div>
+        <p>Datafelter og API er gjort klar til ONNX/CLIP og ansigtsgenkendelse.</p>
+        <p class="hint">Du kan allerede søge på dansk i metadata og placeholder-tags.</p>
+      </div>
+
+      <div class="sidebar-footer">
+        <a href="/api/health" target="_blank" class="mini-link">API health</a>
+        <a href="/api/filters" target="_blank" class="mini-link">Filtre</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="search-wrap">
+          <input id="searchInput" type="text" placeholder="Søg på dansk: strand, bil, skov, kamera, dato, filnavn...">
+        </div>
+        <select id="sortSelect" class="select">
+          <option value="date_desc">Nyeste først</option>
+          <option value="date_asc">Ældste først</option>
+          <option value="name_asc">Navn A-Å</option>
+          <option value="name_desc">Navn Å-A</option>
+          <option value="size_desc">Størst først</option>
+          <option value="size_asc">Mindst først</option>
+        </select>
+        <button id="scanBtn" class="btn primary">Scan bibliotek</button>
+      </header>
+
+      <section class="content-header">
+        <div>
+          <h1 id="viewTitle">Bibliotek</h1>
+          <p id="viewSubtitle">Scan din fotomappe og søg/sortér i metadata</p>
+        </div>
+        <div class="stats">
+          <div class="stat-card">
+            <span class="stat-label">Billeder</span>
+            <span class="stat-value" id="photoCount">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Favoritter</span>
+            <span class="stat-value" id="favoriteCount">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Valgt</span>
+            <span class="stat-value" id="selectedCount">0</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="statusBar" class="status hidden"></section>
+      <section id="emptyState" class="empty hidden"></section>
+      <section id="galleryGrid" class="gallery-grid"></section>
+    </main>
+
+    <aside class="detail-panel">
+      <div id="detailEmpty" class="detail-empty">
+        <p>Vælg et billede for at se detaljer og metadata.</p>
+      </div>
+
+      <div id="detailContent" class="detail-content hidden">
+        <div class="detail-thumb-wrap">
+          <img id="detailThumb" alt="Thumbnail">
+        </div>
+
+        <div class="detail-header">
+          <h3 id="detailName">-</h3>
+          <button id="favoriteBtn" class="icon-btn" title="Favorit">☆</button>
+        </div>
+
+        <div class="detail-path" id="detailPath">-</div>
+
+        <div class="detail-list">
+          <div class="detail-row"><span>Dato</span><strong id="detailDate">-</strong></div>
+          <div class="detail-row"><span>Størrelse</span><strong id="detailSize">-</strong></div>
+          <div class="detail-row"><span>Dimensioner</span><strong id="detailDims">-</strong></div>
+          <div class="detail-row"><span>Kamera</span><strong id="detailCamera">-</strong></div>
+          <div class="detail-row"><span>Linse</span><strong id="detailLens">-</strong></div>
+          <div class="detail-row"><span>GPS</span><strong id="detailGps">-</strong></div>
+          <div class="detail-row"><span>AI tags</span><strong id="detailAiTags">-</strong></div>
+        </div>
+
+        <div class="accordion">
+          <button id="toggleRawBtn" class="btn ghost full">Vis rå metadata (JSON)</button>
+          <pre id="rawMeta" class="raw-meta hidden"></pre>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
