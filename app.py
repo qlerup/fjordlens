@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
+import threading
 from PIL import Image, ExifTags
 
 APP_PORT = 8080
@@ -20,7 +21,11 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 THUMB_SIZE = (600, 600)
 
+
 app = Flask(__name__)
+
+# Global scan control
+scan_stop_event = threading.Event()
 
 
 def ensure_dirs() -> None:
@@ -132,13 +137,23 @@ def average_hash(img: Image.Image, hash_size: int = 8) -> str:
 
 def _rational_to_float(v: Any) -> Optional[float]:
     try:
+        # EXIF kan returnere tuple (numerator, denominator)
         if isinstance(v, tuple) and len(v) == 2 and v[1] != 0:
             return float(v[0]) / float(v[1])
-        if hasattr(v, "numerator") and hasattr(v, "denominator") and getattr(v, "denominator", 0):
-            return float(v.numerator) / float(v.denominator)
-        return float(v)
+        # Nogle EXIF-objekter har numerator/denominator attributter
+        if hasattr(v, "numerator") and hasattr(v, "denominator"):
+            denom = getattr(v, "denominator", None)
+            if denom:
+                return float(getattr(v, "numerator", 0)) / float(denom)
+        # Hvis det bare er et tal
+        if isinstance(v, (int, float)):
+            return float(v)
+        # Hvis det er en string, prøv at konvertere
+        if isinstance(v, str):
+            return float(v)
     except Exception:
         return None
+    return None
 
 
 def _gps_to_deg(value: Any) -> Optional[float]:
@@ -400,7 +415,7 @@ def iter_photo_files(root: Path) -> Iterable[Tuple[Path, str]]:
         yield p, rel
 
 
-def scan_library() -> Dict[str, Any]:
+def scan_library(stop_event=None) -> Dict[str, Any]:
     ensure_dirs()
     init_db()
 
@@ -424,7 +439,10 @@ def scan_library() -> Dict[str, Any]:
             for row in conn.execute("SELECT rel_path, modified_fs, file_size FROM photos")
         }
 
+
     for path, rel_path in iter_photo_files(PHOTO_DIR):
+        if stop_event and stop_event.is_set():
+            break
         scanned += 1
         try:
             stat = path.stat()
@@ -449,6 +467,7 @@ def scan_library() -> Dict[str, Any]:
         "updated": updated,
         "errors": errors,
         "error_samples": error_samples,
+        "stopped": bool(stop_event.is_set()) if stop_event else False,
     }
 
 
@@ -563,10 +582,33 @@ def api_health():
     })
 
 
+
+# Start scan in thread
+scan_thread = None
+
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    result = scan_library()
-    return jsonify(result), (200 if result.get("ok") else 400)
+    global scan_thread
+    if scan_thread and scan_thread.is_alive():
+        return jsonify({"ok": False, "error": "Scan already running"}), 409
+    scan_stop_event.clear()
+    def run_scan():
+        scan_library(stop_event=scan_stop_event)
+    scan_thread = threading.Thread(target=run_scan, daemon=True)
+    scan_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+# Stop scan
+@app.route("/api/scan/stop", methods=["POST"])
+def api_scan_stop():
+    scan_stop_event.set()
+    return jsonify({"ok": True, "stopped": True})
+
+# Scan status
+@app.route("/api/scan/status")
+def api_scan_status():
+    running = bool(scan_thread and scan_thread.is_alive())
+    return jsonify({"ok": True, "running": running})
 
 
 @app.route("/api/photos")

@@ -3,6 +3,7 @@ const els = {
   search: document.getElementById("searchInput"),
   sort: document.getElementById("sortSelect"),
   scanBtn: document.getElementById("scanBtn"),
+  stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
 
@@ -44,6 +45,7 @@ let state = {
   view: "library",
   sort: "date_desc",
   q: "",
+  scanning: false,
 };
 
 function showStatus(text, type = "ok") {
@@ -131,6 +133,15 @@ function setDetail(item) {
   els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
 }
 
+function getSizeLabel(w, h) {
+  if (!w || !h) return "";
+  const area = w * h;
+  if (area >= 2500 * 2500) return "XL";
+  if (area >= 1200 * 1200) return "M";
+  if (area >= 600 * 600) return "SM";
+  return "XS";
+}
+
 function cardHTML(item) {
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
@@ -138,6 +149,7 @@ function cardHTML(item) {
 
   const aiPills = (item.ai_tags || []).slice(0, 3).map(t => `<span class="pill">${t}</span>`).join("");
   const favPill = item.favorite ? `<span class="pill fav">Favorit</span>` : "";
+  const sizeLabel = getSizeLabel(item.width, item.height);
 
   return `
     ${thumb}
@@ -146,6 +158,7 @@ function cardHTML(item) {
       <div class="card-meta">
         <span>${fmtDate(item.captured_at || item.modified_fs)}</span>
         <span>${fmtBytes(item.file_size)}</span>
+        <span>${sizeLabel}</span>
       </div>
       <div class="pills">${aiPills}${favPill}</div>
     </div>
@@ -203,22 +216,66 @@ async function loadPhotos() {
   renderGrid();
 }
 
+function updateScanButton() {
+  if (state.scanning) {
+    els.scanBtn.textContent = "Stop scan";
+  } else {
+    els.scanBtn.textContent = "Scan bibliotek";
+  }
+}
+
+async function pollScanStatus() {
+  try {
+    const res = await fetch("/api/scan/status");
+    const data = await res.json();
+    const running = !!(data && data.running);
+    state.scanning = running;
+    updateScanButton();
+    if (!running) {
+      showStatus("Scan færdig eller stoppet.", "ok");
+      await loadPhotos();
+      return; // stop polling
+    }
+  } catch (_) {
+    // ignore polling errors
+  }
+  // continue polling while scanning
+  if (state.scanning) {
+    setTimeout(pollScanStatus, 2000);
+  }
+}
+
 async function scanLibrary() {
-  els.scanBtn.disabled = true;
-  showStatus("Scanner bibliotek... det kan tage lidt tid første gang.", "ok");
+  if (state.scanning) {
+    // act as stop
+    try {
+      const res = await fetch("/api/scan/stop", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        showStatus("Kunne ikke stoppe scan.", "err");
+        return;
+      }
+      showStatus("Stopper scan...", "ok");
+    } catch (_) {
+      showStatus("Fejl ved stop scan.", "err");
+    }
+    return;
+  }
+
+  // Start scan
   try {
     const res = await fetch("/api/scan", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl: ${data.error || "Scan fejlede"}`, "err");
+      showStatus(`Fejl: ${data && data.error ? data.error : "Scan fejlede"}`, "err");
       return;
     }
-    showStatus(`Scan færdig. Fundet: ${data.scanned}, opdateret: ${data.updated}, fejl: ${data.errors}.`, "ok");
-    await loadPhotos();
+    state.scanning = true;
+    updateScanButton();
+    showStatus("Scan startet... klik 'Stop scan' for at afbryde.", "ok");
+    pollScanStatus();
   } catch (err) {
     showStatus(`Fejl under scan: ${err}`, "err");
-  } finally {
-    els.scanBtn.disabled = false;
   }
 }
 
@@ -255,6 +312,7 @@ els.sort.addEventListener("change", () => {
   loadPhotos();
 });
 els.scanBtn.addEventListener("click", scanLibrary);
+updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
   els.toggleRawBtn.textContent = hidden ? "Vis rå metadata (JSON)" : "Skjul rå metadata (JSON)";
@@ -268,4 +326,12 @@ document.querySelectorAll(".nav-item").forEach(btn => {
 // Initial load
 loadPhotos().then(() => {
   showStatus("Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.", "ok");
+  // Start with a quick status check in case scan was running
+  fetch("/api/scan/status").then(r => r.json()).then(d => {
+    if (d && d.running) {
+      state.scanning = true;
+      updateScanButton();
+      pollScanStatus();
+    }
+  }).catch(() => {});
 });
