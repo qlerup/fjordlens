@@ -5,6 +5,7 @@ const els = {
   scanBtn: document.getElementById("scanBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
+  clearIndexBtn: document.getElementById("clearIndexBtn"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -457,6 +458,33 @@ async function rethumbAll() {
   }
 }
 
+// Clear index (DB + thumbnails, not originals)
+async function clearIndex() {
+  const ok = confirm("Nulstil indeks? Dette sletter kun data og thumbnails i FjordLens (ikke dine originale billeder). Fortsæt?");
+  if (!ok) return;
+  try {
+    if (els.clearIndexBtn) els.clearIndexBtn.disabled = true;
+    showStatus("Sletter indeks og thumbnails...", "ok");
+    const res = await fetch("/api/clear", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showStatus(`Fejl: ${data && data.error ? data.error : "Nulstilning fejlede"}`, "err");
+      if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
+      return;
+    }
+    const r = data.removed || {};
+    showStatus(`Indeks nulstillet. Slettet: ${r.photos || 0} poster, ${r.faces || 0} ansigter, ${r.people || 0} personer, ${r.thumbs || 0} thumbs.`, "ok");
+    // Tøm UI og stats
+    state.items = [];
+    renderGrid();
+    renderStats();
+  } catch (e) {
+    showStatus("Fejl ved nulstilling.", "err");
+  } finally {
+    if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
+  }
+}
+
 async function toggleFavorite() {
   if (!state.selectedId) return;
   const selected = state.items.find(i => i.id === state.selectedId);
@@ -498,6 +526,7 @@ els.sort.addEventListener("change", () => {
 els.scanBtn.addEventListener("click", scanLibrary);
 els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
 els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
+els.clearIndexBtn && els.clearIndexBtn.addEventListener("click", clearIndex);
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");

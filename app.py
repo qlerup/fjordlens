@@ -1060,6 +1060,42 @@ def api_rethumb_status():
     return jsonify(resp)
 
 
+def clear_index() -> Dict[str, Any]:
+    ensure_dirs()
+    init_db()
+    log_event("clear_start")
+    thumbs_deleted = 0
+    # Delete thumbs safely inside THUMB_DIR only
+    for p in THUMB_DIR.glob("*"):
+        try:
+            if p.is_file():
+                p.unlink(missing_ok=True)
+                thumbs_deleted += 1
+        except Exception as e:
+            log_event("error", rel_path=str(p), error=str(e))
+
+    with closing(get_conn()) as conn:
+        photos = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
+        faces = conn.execute("SELECT COUNT(*) AS c FROM faces").fetchone()["c"]
+        people = conn.execute("SELECT COUNT(*) AS c FROM people").fetchone()["c"]
+        conn.execute("DELETE FROM faces")
+        conn.execute("DELETE FROM people")
+        conn.execute("DELETE FROM photos")
+        conn.execute("VACUUM")
+        conn.commit()
+
+    res = {"ok": True, "removed": {"photos": photos, "faces": faces, "people": people, "thumbs": thumbs_deleted}}
+    log_event("clear_done", **res["removed"])  # type: ignore[arg-type]
+    return res
+
+
+@app.route("/api/clear", methods=["POST"])
+def api_clear():
+    # Do not touch PHOTO_DIR; only DB + thumbs in DATA_DIR
+    result = clear_index()
+    return jsonify(result), 200
+
+
 @app.route("/api/photos")
 def api_photos():
     q = request.args.get("q", "").strip()
