@@ -255,6 +255,7 @@ body {
 .folder-card { display: flex; flex-direction: column; }
 .folder-card .card-body { min-height: 74px; display: flex; flex-direction: column; justify-content: center; }
 .folder-card .card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.folder-card .card-meta { justify-content: space-between; }
 .card-thumb.placeholder {
   background: linear-gradient(135deg, #33415c, #1f2a3d);
   display: grid;

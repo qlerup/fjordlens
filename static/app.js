@@ -28,6 +28,8 @@ const els = {
   detailCamera: document.getElementById("detailCamera"),
   detailLens: document.getElementById("detailLens"),
   detailGps: document.getElementById("detailGps"),
+  detailCountry: document.getElementById("detailCountry"),
+  detailCity: document.getElementById("detailCity"),
   detailAiTags: document.getElementById("detailAiTags"),
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
@@ -153,6 +155,9 @@ function setDetail(item) {
     els.detailGps.textContent = item.gps_name || "-";
   }
   els.detailAiTags.textContent = (item.ai_tags && item.ai_tags.length) ? item.ai_tags.join(", ") : "-";
+  const geo = (item.metadata_json && item.metadata_json.geo) ? item.metadata_json.geo : {};
+  els.detailCountry.textContent = geo.country || "-";
+  els.detailCity.textContent = geo.city || "-";
   els.rawMeta.textContent = JSON.stringify(item.metadata_json || {}, null, 2);
   els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
 

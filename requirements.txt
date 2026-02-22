@@ -3,3 +3,4 @@ Pillow>=10.0,<12.0
 pillow-heif>=0.16,<1.0
 piexif>=1.1,<2.0
 exifread>=3.0,<4.0
+requests>=2.31,<3.0

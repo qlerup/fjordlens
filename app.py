@@ -13,6 +13,7 @@ import threading
 from PIL import Image, ExifTags, ImageOps
 import piexif
 import exifread
+import requests
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener, HeifFile  # type: ignore
@@ -30,6 +31,8 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 THUMB_SIZE = (600, 600)
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
+GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
+GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
 
 
 app = Flask(__name__)
@@ -103,7 +106,17 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_photos_captured_at ON photos(captured_at);
             CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
-            CREATE INDEX IF NOT EXISTS idx_photos_camera ON photos(camera_model);
+                CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
+
+                CREATE TABLE IF NOT EXISTS geo_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lat_rounded INTEGER NOT NULL,
+                    lon_rounded INTEGER NOT NULL,
+                    country TEXT,
+                    city TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_geo_cache ON geo_cache(lat_rounded, lon_rounded);
             CREATE INDEX IF NOT EXISTS idx_photos_favorite ON photos(favorite);
             CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(gps_lat, gps_lon);
             CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
@@ -554,6 +567,55 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     log_event("exif_fallback", rel_path=rel_path, field=k, value=str(extra[k]))
     except Exception as e:
         log_event("error", rel_path=rel_path, error=f"exif_fallback: {e}")
+
+    # Reverse geocoding (country, city) if GPS present
+    try:
+        if GEOCODE_ENABLE and metadata.get("gps_lat") is not None and metadata.get("gps_lon") is not None:
+            lat = float(metadata.get("gps_lat"))
+            lon = float(metadata.get("gps_lon"))
+            lat_r = int(round(lat * 10000))
+            lon_r = int(round(lon * 10000))
+            country = None
+            city = None
+            with closing(get_conn()) as conn:
+                row = conn.execute("SELECT country, city FROM geo_cache WHERE lat_rounded=? AND lon_rounded=?", (lat_r, lon_r)).fetchone()
+            if row:
+                country = row["country"]
+                city = row["city"]
+            else:
+                try:
+                    ua = {"User-Agent": f"FjordLens/1.0 ({GEOCODE_EMAIL})"}
+                    r = requests.get(
+                        "https://nominatim.openstreetmap.org/reverse",
+                        params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
+                        headers=ua,
+                        timeout=6,
+                    )
+                    if r.ok:
+                        js = r.json()
+                        addr = js.get("address", {})
+                        country = addr.get("country")
+                        city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("hamlet")
+                        with closing(get_conn()) as conn:
+                            conn.execute(
+                                "INSERT INTO geo_cache(lat_rounded, lon_rounded, country, city, created_at) VALUES (?,?,?,?,?)",
+                                (lat_r, lon_r, country, city, now_iso()),
+                            )
+                            conn.commit()
+                except Exception as ge:
+                    log_event("error", rel_path=rel_path, error=f"geocode: {ge}")
+            # Save into metadata_json and gps_name for quick display
+            if country or city:
+                mj = metadata.get("metadata_json") or {}
+                geo = mj.get("geo", {})
+                if country and not geo.get("country"):
+                    geo["country"] = country
+                if city and not geo.get("city"):
+                    geo["city"] = city
+                mj["geo"] = geo
+                metadata["metadata_json"] = mj
+                if not metadata.get("gps_name"):
+                    metadata["gps_name"] = ", ".join([x for x in [city, country] if x])
 
     # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
     # try to enrich from a sibling HEIC/HEIF with same basename — but ONLY if the images
