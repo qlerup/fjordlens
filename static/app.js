@@ -68,7 +68,7 @@ let state = {
   selectedIndex: -1,
   folder: null,
   // logs
-  logsRunning: false,
+  logsRunning: true,
   logsAfter: 0,
 };
 
@@ -263,9 +263,7 @@ function appendFolderCard(folder, arr) {
   card.className = "photo-card folder-card";
   const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
   card.innerHTML = `
-    <div class="card-thumb folder-mosaic">
-      ${cells}
-    </div>
+    <div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div></div>
     <div class="card-body">
       <h4 class="card-title">${folder}</h4>
       <div class="card-meta">
@@ -468,16 +466,15 @@ async function clearIndex() {
     const res = await fetch("/api/clear", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl: ${data && data.error ? data.error : "Nulstilning fejlede"}`, "err");
+      showStatus(`Fejl ved nulstilling: ${data && data.error ? data.error : "ukendt"}`, "err");
       if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
       return;
     }
     const r = data.removed || {};
     showStatus(`Indeks nulstillet. Slettet: ${r.photos || 0} poster, ${r.faces || 0} ansigter, ${r.people || 0} personer, ${r.thumbs || 0} thumbs.`, "ok");
-    // Tøm UI og stats
+    // Tøm UI og hent frisk
     state.items = [];
-    renderGrid();
-    renderStats();
+    await loadPhotos();
   } catch (e) {
     showStatus("Fejl ved nulstilling.", "err");
   } finally {
@@ -560,7 +557,8 @@ loadPhotos().then(() => {
       pollScanStatus();
     }
   }).catch(() => {});
-  // logs default are stopped; user can start from sidebar or logs view
+  // logs always running
+  startLogs();
 });
 
 // Live logs
@@ -630,7 +628,4 @@ els.logsStart && els.logsStart.addEventListener('click', () => {
   if (state.logsRunning) stopLogs(); else startLogs();
 });
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
-els.mainLogsStart && els.mainLogsStart.addEventListener('click', () => {
-  if (state.logsRunning) stopLogs(); else startLogs();
-});
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);

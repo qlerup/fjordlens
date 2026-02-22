@@ -1074,15 +1074,21 @@ def clear_index() -> Dict[str, Any]:
         except Exception as e:
             log_event("error", rel_path=str(p), error=str(e))
 
-    with closing(get_conn()) as conn:
-        photos = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
-        faces = conn.execute("SELECT COUNT(*) AS c FROM faces").fetchone()["c"]
-        people = conn.execute("SELECT COUNT(*) AS c FROM people").fetchone()["c"]
-        conn.execute("DELETE FROM faces")
-        conn.execute("DELETE FROM people")
-        conn.execute("DELETE FROM photos")
-        conn.execute("VACUUM")
-        conn.commit()
+    try:
+        with closing(get_conn()) as conn:
+            photos = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
+            faces = conn.execute("SELECT COUNT(*) AS c FROM faces").fetchone()["c"]
+            people = conn.execute("SELECT COUNT(*) AS c FROM people").fetchone()["c"]
+            conn.execute("DELETE FROM faces")
+            conn.execute("DELETE FROM people")
+            conn.execute("DELETE FROM photos")
+            # Commit deletes before VACUUM (cannot VACUUM inside a transaction)
+            conn.commit()
+            conn.execute("VACUUM")
+            conn.commit()
+    except Exception as e:
+        log_event("error", rel_path="db_clear", error=str(e))
+        return {"ok": False, "error": str(e)}
 
     res = {"ok": True, "removed": {"photos": photos, "faces": faces, "people": people, "thumbs": thumbs_deleted}}
     log_event("clear_done", **res["removed"])  # type: ignore[arg-type]
