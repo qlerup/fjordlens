@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import threading
-from PIL import Image, ExifTags
+from PIL import Image, ExifTags, ImageOps
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener  # type: ignore
@@ -27,6 +27,7 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 THUMB_SIZE = (600, 600)
+PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 
 
 app = Flask(__name__)
@@ -306,14 +307,18 @@ def build_ai_tags(filename: str, exif_map: Dict[str, Any], gps_lat: Optional[flo
     return sorted(tags)
 
 
-def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: int) -> str:
+def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: int, *, force: bool = False) -> str:
     key = hashlib.md5(f"{rel_path}|{file_mtime}|{file_size}".encode("utf-8")).hexdigest()
     thumb_name = f"{key}.jpg"
     thumb_path = THUMB_DIR / thumb_name
-    if thumb_path.exists():
+    if thumb_path.exists() and not force:
         return thumb_name
 
     thumb = img.convert("RGB").copy()
+    try:
+        thumb = ImageOps.exif_transpose(thumb)
+    except Exception:
+        pass
     thumb.thumbnail(THUMB_SIZE)
     thumb.save(thumb_path, format="JPEG", quality=85, optimize=True)
     return thumb_name
@@ -337,6 +342,10 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
 
     try:
         with Image.open(path) as img:
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
             metadata["width"], metadata["height"] = img.size
             exif_map = parse_exif(img)
             metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
@@ -370,6 +379,10 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
             if cur_phash is None:
                 try:
                     with Image.open(path) as _img_tmp:
+                        try:
+                            _img_tmp = ImageOps.exif_transpose(_img_tmp)
+                        except Exception:
+                            pass
                         cur_phash = average_hash(_img_tmp)
                 except Exception:
                     cur_phash = None
@@ -386,6 +399,10 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                         continue
                     try:
                         with Image.open(cand) as himg:
+                            try:
+                                himg = ImageOps.exif_transpose(himg)
+                            except Exception:
+                                pass
                             h_exif = parse_exif(himg)
                             try:
                                 cand_phash = average_hash(himg)
@@ -394,7 +411,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                             if not cand_phash:
                                 continue
                             dist = _hamdist_hex(cur_phash, cand_phash)
-                            if dist <= 6:  # visual match threshold
+                            if dist <= PHASH_MATCH_THRESHOLD:  # visual match threshold
                                 log_event("enrich", rel_path=rel_path, from_path=str(cand), distance=dist)
                                 if not metadata.get("captured_at"):
                                     metadata["captured_at"] = parse_captured_at(h_exif, stat.st_mtime)
@@ -459,7 +476,14 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
     samples: list[str] = []
 
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT id, rel_path, thumb_name FROM photos").fetchall()
+        rows = conn.execute(
+            """
+            SELECT id, rel_path, thumb_name,
+                   gps_lat, gps_lon, lens_model, camera_make, camera_model,
+                   captured_at, iso, focal_length, f_number
+            FROM photos
+            """
+        ).fetchall()
 
     for row in rows:
         if stop_event and stop_event.is_set():
@@ -477,9 +501,24 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
             # Preserve existing thumbnail name if we didn't regenerate
             if not meta.get("thumb_name"):
                 meta["thumb_name"] = row["thumb_name"]
-            upsert_photo(meta)
-            updated += 1
-            log_event("rescan_updated", rel_path=rel_path)
+            # Determine if anything actually changes (subset of important fields)
+            changed = False
+            keys = [
+                "gps_lat", "gps_lon", "lens_model", "camera_make", "camera_model",
+                "captured_at", "iso", "focal_length", "f_number"
+            ]
+            for k in keys:
+                old = row[k]
+                new = meta.get(k)
+                if old != new:
+                    changed = True
+                    break
+            if changed:
+                upsert_photo(meta)
+                updated += 1
+                log_event("rescan_updated", rel_path=rel_path)
+            else:
+                log_event("no_new", rel_path=rel_path)
         except Exception as e:
             errors += 1
             log_event("error", rel_path=rel_path, error=str(e))
@@ -624,6 +663,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
                 missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
                 if unchanged and not missing_meta:
                     log_event("skip_unchanged", rel_path=rel_path)
+                    log_event("no_new", rel_path=rel_path)
                     continue
 
             meta = extract_metadata(path, rel_path)
@@ -907,6 +947,8 @@ def api_health():
 scan_thread = None
 rescan_thread = None
 last_rescan_result: Optional[Dict[str, Any]] = None
+rethumb_thread = None
+last_rethumb_result: Optional[Dict[str, Any]] = None
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
@@ -956,6 +998,65 @@ def api_rescan_status():
     resp: Dict[str, Any] = {"ok": True, "running": running}
     if not running and last_rescan_result is not None:
         resp["result"] = last_rescan_result
+    return jsonify(resp)
+
+
+def rethumb_all(stop_event=None) -> Dict[str, Any]:
+    ensure_dirs()
+    init_db()
+    log_event("rethumb_start")
+    total = 0
+    errors = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT rel_path FROM photos").fetchall()
+    for row in rows:
+        if stop_event and stop_event.is_set():
+            break
+        rel_path = row["rel_path"]
+        p = PHOTO_DIR / rel_path
+        if not p.exists():
+            continue
+        try:
+            stat = p.stat()
+            with Image.open(p) as img:
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
+                make_thumb(img, rel_path, stat.st_mtime, stat.st_size, force=True)
+            total += 1
+            log_event("rethumb_ok", rel_path=rel_path)
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=rel_path, error=str(e))
+    res = {"ok": True, "processed": total, "errors": errors}
+    log_event("rethumb_done", processed=total, errors=errors)
+    return res
+
+
+@app.route("/api/rethumb", methods=["POST"])
+def api_rethumb():
+    global rethumb_thread, last_rethumb_result
+    if rethumb_thread and rethumb_thread.is_alive():
+        return jsonify({"ok": False, "error": "Rethumb already running"}), 409
+    scan_stop_event.clear()
+    last_rethumb_result = None
+
+    def run_rethumb():
+        global last_rethumb_result
+        last_rethumb_result = rethumb_all(stop_event=scan_stop_event)
+
+    rethumb_thread = threading.Thread(target=run_rethumb, daemon=True)
+    rethumb_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/rethumb/status")
+def api_rethumb_status():
+    running = bool(rethumb_thread and rethumb_thread.is_alive())
+    resp: Dict[str, Any] = {"ok": True, "running": running}
+    if not running and last_rethumb_result is not None:
+        resp["result"] = last_rethumb_result
     return jsonify(resp)
 
 

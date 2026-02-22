@@ -4,6 +4,7 @@ const els = {
   sort: document.getElementById("sortSelect"),
   scanBtn: document.getElementById("scanBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
+  rethumbBtn: document.getElementById("rethumbBtn"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -420,6 +421,42 @@ async function rescanMetadata() {
   }
 }
 
+// Rethumb (rebuild thumbnails)
+async function pollRethumbStatus() {
+  try {
+    const res = await fetch("/api/rethumb/status");
+    const data = await res.json();
+    if (!data || !data.ok) return;
+    if (!data.running) {
+      if (data.result) {
+        const r = data.result;
+        showStatus(`Genbyg thumbnails færdig. Behandlet: ${r.processed}, fejl: ${r.errors}.`, "ok");
+      }
+      await loadPhotos();
+      return;
+    }
+  } catch {}
+  setTimeout(pollRethumbStatus, 2000);
+}
+
+async function rethumbAll() {
+  try {
+    if (els.rethumbBtn) els.rethumbBtn.disabled = true;
+    showStatus("Genbygger thumbnails (kan tage lidt tid)...", "ok");
+    const res = await fetch("/api/rethumb", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showStatus(`Fejl: ${data && data.error ? data.error : "Genbyg thumbnails fejlede"}`, "err");
+      if (els.rethumbBtn) els.rethumbBtn.disabled = false;
+      return;
+    }
+    pollRethumbStatus();
+  } catch (e) {
+    showStatus("Fejl ved genbyg thumbnails.", "err");
+    if (els.rethumbBtn) els.rethumbBtn.disabled = false;
+  }
+}
+
 async function toggleFavorite() {
   if (!state.selectedId) return;
   const selected = state.items.find(i => i.id === state.selectedId);
@@ -460,6 +497,7 @@ els.sort.addEventListener("change", () => {
 });
 els.scanBtn.addEventListener("click", scanLibrary);
 els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
+els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
@@ -532,7 +570,8 @@ async function pollLogs() {
         if (typeof it.errors !== "undefined") extra += ` errors=${it.errors}`;
         if (typeof it.missing !== "undefined") extra += ` missing=${it.missing}`;
         if (it.error) extra += ` :: ${it.error}`;
-        const msg = `[${it.t}] ${it.event}${extra}`;
+        const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
+        const msg = `[${it.t}] ${label}${extra}`;
         appendLogLine(msg);
         state.logsAfter = it.id;
       }
