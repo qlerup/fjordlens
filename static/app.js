@@ -30,6 +30,10 @@ const els = {
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
+  // logs
+  logsBox: document.getElementById("liveLogs"),
+  logsStart: document.getElementById("logsStart"),
+  logsClear: document.getElementById("logsClear"),
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
@@ -56,6 +60,9 @@ let state = {
   scanning: false,
   selectedIndex: -1,
   folder: null,
+  // logs
+  logsRunning: false,
+  logsAfter: 0,
 };
 
 function showStatus(text, type = "ok") {
@@ -237,7 +244,7 @@ function appendCard(item) {
 function appendFolderCard(folder, arr) {
   const previews = arr.slice(0, 4);
   const card = document.createElement("article");
-  card.className = "photo-card";
+  card.className = "photo-card folder-card";
   const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
   card.innerHTML = `
     <div class="card-thumb folder-mosaic">
@@ -467,4 +474,54 @@ loadPhotos().then(() => {
       pollScanStatus();
     }
   }).catch(() => {});
+  // Auto-start logs
+  startLogs();
 });
+
+// Live logs
+function appendLogLine(text) {
+  if (!els.logsBox) return;
+  els.logsBox.textContent += (els.logsBox.textContent ? "\n" : "") + text;
+  const lines = els.logsBox.textContent.split("\n");
+  if (lines.length > 400) {
+    els.logsBox.textContent = lines.slice(-400).join("\n");
+  }
+  els.logsBox.scrollTop = els.logsBox.scrollHeight;
+}
+
+async function pollLogs() {
+  if (!state.logsRunning) return;
+  try {
+    const res = await fetch(`/api/logs?after=${state.logsAfter}`);
+    const data = await res.json();
+    if (data && data.items) {
+      for (const it of data.items) {
+        const msg = `[${it.t}] ${it.event}${it.rel_path ? ` :: ${it.rel_path}` : ""}${it.error ? ` :: ${it.error}` : ""}`;
+        appendLogLine(msg);
+        state.logsAfter = it.id;
+      }
+    }
+  } catch {}
+  setTimeout(pollLogs, 1000);
+}
+
+function startLogs() {
+  state.logsRunning = true;
+  if (els.logsStart) els.logsStart.textContent = "Stop";
+  pollLogs();
+}
+function stopLogs() {
+  state.logsRunning = false;
+  if (els.logsStart) els.logsStart.textContent = "Start";
+}
+
+async function clearLogs() {
+  try { await fetch('/api/logs/clear', { method: 'POST' }); } catch {}
+  state.logsAfter = 0;
+  if (els.logsBox) els.logsBox.textContent = "";
+}
+
+els.logsStart && els.logsStart.addEventListener('click', () => {
+  if (state.logsRunning) stopLogs(); else startLogs();
+});
+els.logsClear && els.logsClear.addEventListener('click', clearLogs);

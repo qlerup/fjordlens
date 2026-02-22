@@ -34,6 +34,17 @@ app = Flask(__name__)
 # Global scan control
 scan_stop_event = threading.Event()
 
+# Simple in-memory log buffer for UI polling
+from collections import deque
+LOG_BUFFER: deque[Dict[str, Any]] = deque(maxlen=1000)
+LOG_SEQ: int = 0
+
+
+def log_event(event: str, **data: Any) -> None:
+    global LOG_SEQ
+    LOG_SEQ += 1
+    LOG_BUFFER.append({"id": LOG_SEQ, "t": now_iso(), "event": event, **data})
+
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -384,6 +395,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                                 continue
                             dist = _hamdist_hex(cur_phash, cand_phash)
                             if dist <= 6:  # visual match threshold
+                                log_event("enrich", rel_path=rel_path, from_path=str(cand), distance=dist)
                                 if not metadata.get("captured_at"):
                                     metadata["captured_at"] = parse_captured_at(h_exif, stat.st_mtime)
                                 if not metadata.get("camera_make"):
@@ -454,8 +466,10 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
         rel_path = row["rel_path"]
         disk_path = PHOTO_DIR / rel_path
         scanned += 1
+        log_event("rescan_check", rel_path=rel_path)
         if not disk_path.exists():
             missing += 1
+            log_event("missing", rel_path=rel_path)
             continue
         try:
             meta = extract_metadata(disk_path, rel_path, generate_thumb=False)
@@ -464,8 +478,10 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
                 meta["thumb_name"] = row["thumb_name"]
             upsert_photo(meta)
             updated += 1
+            log_event("rescan_updated", rel_path=rel_path)
         except Exception as e:
             errors += 1
+            log_event("error", rel_path=rel_path, error=str(e))
             if len(samples) < 5:
                 samples.append(f"{rel_path}: {e}")
 
@@ -594,6 +610,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
             break
         scanned += 1
         try:
+            log_event("scan_check", rel_path=rel_path)
             stat = path.stat()
             modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
             file_size = stat.st_size
@@ -602,13 +619,16 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
                 unchanged = (prev["modified_fs"] == modified_fs and prev["file_size"] == file_size)
                 missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
                 if unchanged and not missing_meta:
+                    log_event("skip_unchanged", rel_path=rel_path)
                     continue
 
             meta = extract_metadata(path, rel_path)
             upsert_photo(meta)
             updated += 1
+            log_event("indexed", rel_path=rel_path)
         except Exception as e:
             errors += 1
+            log_event("error", rel_path=rel_path, error=str(e))
             if len(error_samples) < 5:
                 error_samples.append(f"{rel_path}: {e}")
 
@@ -1013,6 +1033,25 @@ def api_debug_sample():
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos ORDER BY id DESC LIMIT 1").fetchone()
     return jsonify(row_to_public(row) if row else {"empty": True})
+
+
+@app.route("/api/logs")
+def api_logs():
+    try:
+        after = int(request.args.get("after", "0"))
+    except ValueError:
+        after = 0
+    items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
+    next_id = (items[-1]["id"] if items else (LOG_BUFFER[-1]["id"] if LOG_BUFFER else after))
+    return jsonify({"items": items[:200], "next": next_id})
+
+
+@app.route("/api/logs/clear", methods=["POST"])
+def api_logs_clear():
+    global LOG_SEQ
+    LOG_BUFFER.clear()
+    LOG_SEQ = 0
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

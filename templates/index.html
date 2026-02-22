@@ -32,6 +32,15 @@
         <p class="hint">Du kan allerede søge på dansk i metadata og placeholder-tags.</p>
       </div>
 
+      <div class="sidebar-card">
+        <div class="sidebar-card-title">Live logs</div>
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <button id="logsStart" class="btn">Start</button>
+          <button id="logsClear" class="btn">Ryd</button>
+        </div>
+        <pre id="liveLogs" class="raw-meta" style="max-height:220px;"></pre>
+      </div>
+
       <div class="sidebar-footer">
         <a href="/api/health" target="_blank" class="mini-link">API health</a>
         <a href="/api/filters" target="_blank" class="mini-link">Filtre</a>
