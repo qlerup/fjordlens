@@ -243,6 +243,7 @@ body {
   grid-template-rows: 1fr 1fr;
   gap: 1px;
 }
+.card-thumb.folder-mosaic { aspect-ratio: 1 / 1; }
 .folder-mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .card-thumb.placeholder {
   background: linear-gradient(135deg, #33415c, #1f2a3d);

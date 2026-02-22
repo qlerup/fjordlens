@@ -308,7 +308,7 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     return thumb_name
 
 
-def extract_metadata(path: Path, rel_path: str) -> Dict[str, Any]:
+def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) -> Dict[str, Any]:
     stat = path.stat()
     metadata: Dict[str, Any] = {
         "rel_path": rel_path,
@@ -339,7 +339,7 @@ def extract_metadata(path: Path, rel_path: str) -> Dict[str, Any]:
             metadata["gps_lat"] = exif_map.get("_gps_lat")
             metadata["gps_lon"] = exif_map.get("_gps_lon")
             metadata["gps_name"] = None  # placeholder for future reverse geocoding
-            thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
+            thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
             try:
                 phash = average_hash(img)
             except Exception:
@@ -434,6 +434,49 @@ def extract_metadata(path: Path, rel_path: str) -> Dict[str, Any]:
         },
     }
     return metadata
+
+
+def rescan_metadata(stop_event=None) -> Dict[str, Any]:
+    ensure_dirs()
+    init_db()
+    scanned = 0
+    updated = 0
+    errors = 0
+    missing = 0
+    samples: list[str] = []
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT id, rel_path, thumb_name FROM photos").fetchall()
+
+    for row in rows:
+        if stop_event and stop_event.is_set():
+            break
+        rel_path = row["rel_path"]
+        disk_path = PHOTO_DIR / rel_path
+        scanned += 1
+        if not disk_path.exists():
+            missing += 1
+            continue
+        try:
+            meta = extract_metadata(disk_path, rel_path, generate_thumb=False)
+            # Preserve existing thumbnail name if we didn't regenerate
+            if not meta.get("thumb_name"):
+                meta["thumb_name"] = row["thumb_name"]
+            upsert_photo(meta)
+            updated += 1
+        except Exception as e:
+            errors += 1
+            if len(samples) < 5:
+                samples.append(f"{rel_path}: {e}")
+
+    return {
+        "ok": True,
+        "scanned": scanned,
+        "updated": updated,
+        "errors": errors,
+        "missing": missing,
+        "error_samples": samples,
+    }
 
 
 def upsert_photo(meta: Dict[str, Any]) -> None:
@@ -836,6 +879,8 @@ def api_health():
 
 # Start scan in thread
 scan_thread = None
+rescan_thread = None
+last_rescan_result: Optional[Dict[str, Any]] = None
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
@@ -860,6 +905,32 @@ def api_scan_stop():
 def api_scan_status():
     running = bool(scan_thread and scan_thread.is_alive())
     return jsonify({"ok": True, "running": running})
+
+
+@app.route("/api/rescan", methods=["POST"])
+def api_rescan():
+    global rescan_thread, last_rescan_result
+    if rescan_thread and rescan_thread.is_alive():
+        return jsonify({"ok": False, "error": "Rescan already running"}), 409
+    scan_stop_event.clear()
+    last_rescan_result = None
+
+    def run_rescan():
+        global last_rescan_result
+        last_rescan_result = rescan_metadata(stop_event=scan_stop_event)
+
+    rescan_thread = threading.Thread(target=run_rescan, daemon=True)
+    rescan_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/rescan/status")
+def api_rescan_status():
+    running = bool(rescan_thread and rescan_thread.is_alive())
+    resp: Dict[str, Any] = {"ok": True, "running": running}
+    if not running and last_rescan_result is not None:
+        resp["result"] = last_rescan_result
+    return jsonify(resp)
 
 
 @app.route("/api/photos")

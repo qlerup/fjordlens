@@ -3,6 +3,7 @@ const els = {
   search: document.getElementById("searchInput"),
   sort: document.getElementById("sortSelect"),
   scanBtn: document.getElementById("scanBtn"),
+  rescanBtn: document.getElementById("rescanBtn"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -362,6 +363,42 @@ async function scanLibrary() {
   }
 }
 
+// Rescan metadata
+async function pollRescanStatus() {
+  try {
+    const res = await fetch("/api/rescan/status");
+    const data = await res.json();
+    if (!data || !data.ok) return;
+    if (!data.running) {
+      if (data.result) {
+        const r = data.result;
+        showStatus(`Rescan færdig. Gennemgået: ${r.scanned}, opdateret: ${r.updated}, mangler: ${r.missing}, fejl: ${r.errors}.`, "ok");
+      }
+      await loadPhotos();
+      return;
+    }
+  } catch {}
+  setTimeout(pollRescanStatus, 2000);
+}
+
+async function rescanMetadata() {
+  try {
+    els.rescanBtn.disabled = true;
+    showStatus("Rescanner metadata for eksisterende billeder...", "ok");
+    const res = await fetch("/api/rescan", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showStatus(`Fejl: ${data && data.error ? data.error : "Rescan fejlede"}`, "err");
+      els.rescanBtn.disabled = false;
+      return;
+    }
+    pollRescanStatus();
+  } catch (e) {
+    showStatus("Fejl ved rescan.", "err");
+    els.rescanBtn.disabled = false;
+  }
+}
+
 async function toggleFavorite() {
   if (!state.selectedId) return;
   const selected = state.items.find(i => i.id === state.selectedId);
@@ -396,6 +433,7 @@ els.sort.addEventListener("change", () => {
   loadPhotos();
 });
 els.scanBtn.addEventListener("click", scanLibrary);
+els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
