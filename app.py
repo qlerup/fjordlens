@@ -11,6 +11,12 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import threading
 from PIL import Image, ExifTags
+try:
+    # Enable HEIC/HEIF support via pillow-heif if available
+    from pillow_heif import register_heif_opener  # type: ignore
+    register_heif_opener()
+except Exception:
+    pass
 from urllib.parse import quote
 
 APP_PORT = 8080
@@ -86,6 +92,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_photos_camera ON photos(camera_model);
             CREATE INDEX IF NOT EXISTS idx_photos_favorite ON photos(favorite);
             CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(gps_lat, gps_lon);
+            CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
 
             CREATE TABLE IF NOT EXISTS people (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -341,6 +348,68 @@ def extract_metadata(path: Path, rel_path: str) -> Dict[str, Any]:
         # Unsupported or damaged image: still index file-level info
         metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
         metadata["thumb_error"] = str(e)
+
+    # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
+    # try to enrich from a sibling HEIC/HEIF with same basename — but ONLY if the images
+    # are visually the same (verified via perceptual hash distance threshold).
+    try:
+        if (not metadata.get("gps_lat") and not metadata.get("gps_lon")) or (not metadata.get("lens_model")):
+            stem = path.stem
+            heif_candidate = None
+            for ext in (".heic", ".HEIC", ".heif", ".HEIF"):
+                p = path.with_suffix(ext)
+                if p.exists():
+                    heif_candidate = p
+                    break
+            if heif_candidate:
+                try:
+                    # Ensure we have a pHash on current file to compare with candidate
+                    cur_phash = phash
+                    if cur_phash is None:
+                        try:
+                            with Image.open(path) as _img_tmp:
+                                cur_phash = average_hash(_img_tmp)
+                        except Exception:
+                            cur_phash = None
+
+                    with Image.open(heif_candidate) as himg:
+                        h_exif = parse_exif(himg)
+                        cand_phash = None
+                        try:
+                            cand_phash = average_hash(himg)
+                        except Exception:
+                            cand_phash = None
+
+                        # Require a reasonable visual match to avoid mis-enrichment
+                        allow_enrich = False
+                        if cur_phash and cand_phash:
+                            dist = _hamdist_hex(cur_phash, cand_phash)
+                            allow_enrich = dist <= 6  # threshold can be tuned
+                        # If we cannot compare, do NOT enrich to avoid false matches
+
+                        if allow_enrich:
+                            if not metadata.get("captured_at"):
+                                metadata["captured_at"] = parse_captured_at(h_exif, stat.st_mtime)
+                            if not metadata.get("camera_make"):
+                                metadata["camera_make"] = h_exif.get("Make")
+                            if not metadata.get("camera_model"):
+                                metadata["camera_model"] = h_exif.get("Model")
+                            if not metadata.get("lens_model"):
+                                metadata["lens_model"] = h_exif.get("LensModel")
+                            if not metadata.get("iso"):
+                                metadata["iso"] = h_exif.get("ISOSpeedRatings") or h_exif.get("PhotographicSensitivity")
+                            if not metadata.get("focal_length"):
+                                metadata["focal_length"] = _rational_to_float(h_exif.get("FocalLength"))
+                            if not metadata.get("f_number"):
+                                metadata["f_number"] = _rational_to_float(h_exif.get("FNumber"))
+                            if metadata.get("gps_lat") is None and h_exif.get("_gps_lat") is not None:
+                                metadata["gps_lat"] = h_exif.get("_gps_lat")
+                            if metadata.get("gps_lon") is None and h_exif.get("_gps_lon") is not None:
+                                metadata["gps_lon"] = h_exif.get("_gps_lon")
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     metadata["checksum_sha256"] = sha256_file(path)
     metadata["phash"] = phash
@@ -624,6 +693,131 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
     with closing(get_conn()) as conn:
         rows = conn.execute(sql, params).fetchall()
         return [row_to_public(r) for r in rows]
+
+
+def _hamdist_hex(a: str, b: str) -> int:
+    try:
+        va = int(a, 16)
+        vb = int(b, 16)
+        return (va ^ vb).bit_count()
+    except Exception:
+        return 64  # max for 64-bit pHash
+
+
+@app.route("/api/duplicates")
+def api_duplicates():
+    try:
+        dist_thr = int(request.args.get("distance", "5"))
+    except ValueError:
+        dist_thr = 5
+    min_group = max(2, int(request.args.get("min", "2")))
+
+    with closing(get_conn()) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, filename, rel_path, file_size, phash, checksum_sha256, thumb_name, captured_at FROM photos WHERE phash IS NOT NULL"
+        ).fetchall()]
+
+    # Exact duplicates by checksum
+    by_checksum: dict[str, list[dict]] = {}
+    for r in rows:
+        c = r.get("checksum_sha256")
+        if c:
+            by_checksum.setdefault(c, []).append(r)
+    checksum_groups = [v for v in by_checksum.values() if len(v) >= min_group]
+
+    # Exact duplicates by equal phash
+    by_phash: dict[str, list[dict]] = {}
+    for r in rows:
+        p = r.get("phash")
+        if p:
+            by_phash.setdefault(p, []).append(r)
+    phash_exact_groups = [v for v in by_phash.values() if len(v) >= min_group]
+
+    # Near duplicates by small Hamming distance of pHash
+    # Bucket by first 4 hex chars to avoid O(n^2)
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        p = r.get("phash")
+        if not p:
+            continue
+        key = p[:4]
+        buckets.setdefault(key, []).append(r)
+
+    visited: set[int] = set()
+    # exclude items already in exact groups
+    for g in checksum_groups + phash_exact_groups:
+        for it in g:
+            visited.add(int(it["id"]))
+
+    near_groups: list[list[dict]] = []
+    for arr in buckets.values():
+        n = len(arr)
+        if n < 2:
+            continue
+        # Build adjacency by threshold
+        comp_map: dict[int, set[int]] = {}
+        ids = [int(x["id"]) for x in arr]
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = arr[i], arr[j]
+                if int(a["id"]) in visited and int(b["id"]) in visited:
+                    continue
+                d = _hamdist_hex(a["phash"], b["phash"])
+                if d <= dist_thr:
+                    comp_map.setdefault(int(a["id"]), set()).add(int(b["id"]))
+                    comp_map.setdefault(int(b["id"]), set()).add(int(a["id"]))
+        # Connected components
+        seen: set[int] = set()
+        for root in ids:
+            if root in seen or root not in comp_map:
+                continue
+            stack = [root]
+            comp_ids: set[int] = set()
+            while stack:
+                cur = stack.pop()
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                comp_ids.add(cur)
+                for nb in comp_map.get(cur, set()):
+                    if nb not in seen:
+                        stack.append(nb)
+            if len(comp_ids) >= min_group:
+                group_items = [next(x for x in arr if int(x["id"]) == cid) for cid in comp_ids]
+                near_groups.append(group_items)
+
+    # Prepare payload (limit size in thumbs only)
+    def _pub(it: dict) -> dict:
+        out = {
+            "id": it["id"],
+            "filename": it["filename"],
+            "rel_path": it["rel_path"],
+            "file_size": it["file_size"],
+            "phash": it["phash"],
+            "checksum": it["checksum_sha256"],
+            "captured_at": it.get("captured_at"),
+        }
+        if it.get("thumb_name"):
+            out["thumb_url"] = f"/api/thumbs/{it['thumb_name']}"
+        else:
+            out["thumb_url"] = None
+        return out
+
+    resp = {
+        "ok": True,
+        "distance": dist_thr,
+        "groups": [
+            {"reason": "checksum", "items": [[_pub(it) for it in g] for g in checksum_groups]},
+            {"reason": "phash_equal", "items": [[_pub(it) for it in g] for g in phash_exact_groups]},
+            {"reason": "phash_near", "items": [[_pub(it) for it in g] for g in near_groups]},
+        ],
+        "counts": {
+            "checksum": len(checksum_groups),
+            "phash_equal": len(phash_exact_groups),
+            "phash_near": len(near_groups),
+        },
+    }
+    return jsonify(resp)
 
 
 @app.route("/")

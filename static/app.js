@@ -263,10 +263,12 @@ function openViewer(index) {
   state.selectedIndex = index;
   const it = state.items[index];
   if (!it || !it.original_url) return;
+  if (!els.viewer || !els.viewerImg) return;
   els.viewerImg.src = it.original_url;
   els.viewer.classList.remove("hidden");
 }
 function closeViewer() {
+  if (!els.viewer || !els.viewerImg) return;
   els.viewer.classList.add("hidden");
   els.viewerImg.removeAttribute("src");
 }
@@ -275,7 +277,7 @@ function nextViewer(step=1) {
   const n = state.items.length;
   state.selectedIndex = (state.selectedIndex + step + n) % n;
   const it = state.items[state.selectedIndex];
-  if (it && it.original_url) els.viewerImg.src = it.original_url;
+  if (it && it.original_url && els.viewerImg) els.viewerImg.src = it.original_url;
 }
 
 async function loadPhotos() {
@@ -410,7 +412,7 @@ els.viewerClose && els.viewerClose.addEventListener("click", closeViewer);
 els.viewerPrev && els.viewerPrev.addEventListener("click", () => nextViewer(-1));
 els.viewerNext && els.viewerNext.addEventListener("click", () => nextViewer(1));
 window.addEventListener("keydown", (e) => {
-  if (els.viewer.classList.contains("hidden")) return;
+  if (!els.viewer || els.viewer.classList.contains("hidden")) return;
   if (e.key === "Escape") closeViewer();
   if (e.key === "ArrowLeft") nextViewer(-1);
   if (e.key === "ArrowRight") nextViewer(1);
