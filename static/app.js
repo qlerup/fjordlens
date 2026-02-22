@@ -34,6 +34,10 @@ const els = {
   logsBox: document.getElementById("liveLogs"),
   logsStart: document.getElementById("logsStart"),
   logsClear: document.getElementById("logsClear"),
+  mainLogsBox: document.getElementById("mainLogs"),
+  mainLogsStart: document.getElementById("mainLogsStart"),
+  mainLogsClear: document.getElementById("mainLogsClear"),
+  logsPanel: document.getElementById("logsPanel"),
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
@@ -49,6 +53,7 @@ const NAV_LABELS = {
   kameraer: ["Kameraer", "Filtreret på billeder med kameradata"],
   mapper: ["Mapper", "Grupperet efter kilde-mappe"],
   personer: ["Personer", "Klar til ansigtsgenkendelse (kommer med ONNX face-service)"],
+  logs: ["Logs", "Live visning af scannerens hændelser"],
 };
 
 let state = {
@@ -189,6 +194,13 @@ function cardHTML(item) {
 }
 
 function renderGrid() {
+  if (state.view === "logs") {
+    els.grid.innerHTML = "";
+    if (els.logsPanel) els.logsPanel.classList.remove("hidden");
+    return;
+  } else {
+    if (els.logsPanel) els.logsPanel.classList.add("hidden");
+  }
   els.grid.innerHTML = "";
   if (!state.items.length) {
     const msg = state.view === "personer"
@@ -427,7 +439,12 @@ function setView(view) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
-  loadPhotos();
+  if (view === "logs") {
+    // show logs panel, do not load photos
+    renderGrid();
+  } else {
+    loadPhotos();
+  }
 }
 
 // Events
@@ -474,19 +491,27 @@ loadPhotos().then(() => {
       pollScanStatus();
     }
   }).catch(() => {});
-  // Auto-start logs
-  startLogs();
+  // logs default are stopped; user can start from sidebar or logs view
 });
 
 // Live logs
 function appendLogLine(text) {
-  if (!els.logsBox) return;
-  els.logsBox.textContent += (els.logsBox.textContent ? "\n" : "") + text;
-  const lines = els.logsBox.textContent.split("\n");
-  if (lines.length > 400) {
-    els.logsBox.textContent = lines.slice(-400).join("\n");
+  if (els.logsBox) {
+    els.logsBox.textContent += (els.logsBox.textContent ? "\n" : "") + text;
+    const lines = els.logsBox.textContent.split("\n");
+    if (lines.length > 400) {
+      els.logsBox.textContent = lines.slice(-400).join("\n");
+    }
+    els.logsBox.scrollTop = els.logsBox.scrollHeight;
   }
-  els.logsBox.scrollTop = els.logsBox.scrollHeight;
+  if (els.mainLogsBox) {
+    els.mainLogsBox.textContent += (els.mainLogsBox.textContent ? "\n" : "") + text;
+    const lines2 = els.mainLogsBox.textContent.split("\n");
+    if (lines2.length > 1200) {
+      els.mainLogsBox.textContent = lines2.slice(-1200).join("\n");
+    }
+    els.mainLogsBox.scrollTop = els.mainLogsBox.scrollHeight;
+  }
 }
 
 async function pollLogs() {
@@ -496,7 +521,16 @@ async function pollLogs() {
     const data = await res.json();
     if (data && data.items) {
       for (const it of data.items) {
-        const msg = `[${it.t}] ${it.event}${it.rel_path ? ` :: ${it.rel_path}` : ""}${it.error ? ` :: ${it.error}` : ""}`;
+        let extra = "";
+        if (it.rel_path) extra += ` :: ${it.rel_path}`;
+        if (it.from_path) extra += ` ← ${it.from_path}`;
+        if (typeof it.distance !== "undefined") extra += ` [d=${it.distance}]`;
+        if (typeof it.scanned !== "undefined") extra += ` scanned=${it.scanned}`;
+        if (typeof it.updated !== "undefined") extra += ` updated=${it.updated}`;
+        if (typeof it.errors !== "undefined") extra += ` errors=${it.errors}`;
+        if (typeof it.missing !== "undefined") extra += ` missing=${it.missing}`;
+        if (it.error) extra += ` :: ${it.error}`;
+        const msg = `[${it.t}] ${it.event}${extra}`;
         appendLogLine(msg);
         state.logsAfter = it.id;
       }
@@ -519,9 +553,14 @@ async function clearLogs() {
   try { await fetch('/api/logs/clear', { method: 'POST' }); } catch {}
   state.logsAfter = 0;
   if (els.logsBox) els.logsBox.textContent = "";
+  if (els.mainLogsBox) els.mainLogsBox.textContent = "";
 }
 
 els.logsStart && els.logsStart.addEventListener('click', () => {
   if (state.logsRunning) stopLogs(); else startLogs();
 });
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
+els.mainLogsStart && els.mainLogsStart.addEventListener('click', () => {
+  if (state.logsRunning) stopLogs(); else startLogs();
+});
+els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);

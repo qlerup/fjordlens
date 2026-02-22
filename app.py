@@ -451,6 +451,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
 def rescan_metadata(stop_event=None) -> Dict[str, Any]:
     ensure_dirs()
     init_db()
+    log_event("rescan_start")
     scanned = 0
     updated = 0
     errors = 0
@@ -485,7 +486,7 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
             if len(samples) < 5:
                 samples.append(f"{rel_path}: {e}")
 
-    return {
+    result = {
         "ok": True,
         "scanned": scanned,
         "updated": updated,
@@ -493,6 +494,8 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
         "missing": missing,
         "error_samples": samples,
     }
+    log_event("rescan_done", scanned=scanned, updated=updated, errors=errors, missing=missing)
+    return result
 
 
 def upsert_photo(meta: Dict[str, Any]) -> None:
@@ -581,6 +584,7 @@ def iter_photo_files(root: Path) -> Iterable[Tuple[Path, str]]:
 def scan_library(stop_event=None) -> Dict[str, Any]:
     ensure_dirs()
     init_db()
+    log_event("scan_start")
 
     if not PHOTO_DIR.exists():
         return {
@@ -632,7 +636,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
             if len(error_samples) < 5:
                 error_samples.append(f"{rel_path}: {e}")
 
-    return {
+    result = {
         "ok": True,
         "photo_dir": str(PHOTO_DIR),
         "scanned": scanned,
@@ -641,6 +645,8 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
         "error_samples": error_samples,
         "stopped": bool(stop_event.is_set()) if stop_event else False,
     }
+    log_event("scan_done", scanned=scanned, updated=updated, errors=errors)
+    return result
 
 
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
