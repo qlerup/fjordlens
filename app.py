@@ -408,6 +408,14 @@ def iter_photo_files(root: Path) -> Iterable[Tuple[Path, str]]:
             continue
         if p.suffix.lower() not in SUPPORTED_EXTS:
             continue
+        # Skip Synology generated thumbnails and special folders
+        name_upper = p.name.upper()
+        if any(part == "@eaDir" for part in p.parts):
+            continue
+        if name_upper.startswith("SYNOPHOTO_THUMB_") or name_upper.startswith("SYNOPHOTO_CACHE_"):
+            continue
+        if p.name.startswith("._"):  # macOS resource forks
+            continue
         try:
             rel = str(p.relative_to(root)).replace("\\", "/")
         except Exception:
@@ -547,6 +555,9 @@ def query_photos(view: str, sort: str) -> list[Dict[str, Any]]:
 
     where = []
     params = []
+    # Always exclude Synology auto-thumbs and @eaDir content from results
+    where.append("(UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%' AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%')")
+    where.append("(rel_path NOT LIKE '%/@eaDir/%')")
     if view == "favorites":
         where.append("favorite = 1")
     elif view == "steder":
