@@ -1,28 +1,28 @@
-# FjordLens for Synology (GitHub-klar starter)
+# FjordLens for Synology (GitHub-ready starter)
 
-En Docker-baseret photo-app starter til Synology NAS med:
+A Docker-based photo app starter for Synology NAS with:
 
 - Web UI (Flask + HTML/CSS/JS)
-- Scan af fotomappe (`/photos`)
-- Metadata extraction (EXIF + filinfo)
+- Photo library scan (`/photos`)
+- Metadata extraction (EXIF + file info)
 - Thumbnails
-- SQLite indeksdatabase
-- Søgning/sortering/filtrering
-- Favoritter
-- Detaljevisning med rå metadata JSON
-- **AI-klargjort data-model** til senere ONNX/CLIP og ansigtsgenkendelse
+- SQLite index database
+- Search/sort/filter
+- Favorites
+- Detail view with raw metadata JSON
+- **AI-ready data model** for later ONNX/CLIP and face recognition
 
-## Status lige nu
+## Current Status
 
-Denne version er lavet som **testbar base**:
-- ✅ Metadata + thumbnails + søgning virker
-- ✅ Synology Docker/Container Manager klar
-- ✅ GitHub klar (inkl. GHCR workflow)
-- 🔜 Næste trin: ONNX/CLIP (dansk semantisk søgning) + ansigtsgenkendelse + clustering
+This version is a **testable base**:
+- ✅ Metadata + thumbnails + search work
+- ✅ Ready for Synology Docker/Container Manager
+- ✅ GitHub ready (incl. GHCR workflow)
+- 🔜 Next steps: ONNX/CLIP (semantic search) + face recognition + clustering
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 ```txt
 fjordlens/
@@ -49,32 +49,32 @@ fjordlens/
 
 ---
 
-## 1) Lokal test (valgfrit)
+## 1) Local Test (optional)
 
-Hvis du vil teste på din PC først:
+If you want to test on your PC first:
 
 ```bash
 cp .env.example .env
-# ret evt. PHOTO_DIR og DATA_DIR
+# optionally adjust PHOTO_DIR and DATA_DIR
 docker compose up -d --build
 ```
 
-Åbn:
-- `http://localhost:9080` (eller den port du satte i `.env`)
+Open:
+- `http://localhost:9080` (or the port you set in `.env`)
 
 ---
 
-## 2) Synology installation via SSH (anbefalet)
+## 2) Synology Installation via SSH (recommended)
 
-### Aktivér SSH i DSM
-- **Kontrolpanel → Terminal & SNMP → Aktivér SSH**
+### Enable SSH in DSM
+- Control Panel → Terminal & SNMP → Enable SSH
 
-### Log ind på NAS
+### Log in to NAS
 ```bash
-ssh ditbrugernavn@DIN_NAS_IP
+ssh youruser@YOUR_NAS_IP
 ```
 
-### Hent koden (fra GitHub) eller kopiér projektet
+### Get the code (from GitHub) or copy the project
 ```bash
 mkdir -p /volume1/docker
 cd /volume1/docker
@@ -82,13 +82,13 @@ git clone https://github.com/YOUR_USER/YOUR_REPO.git fjordlens
 cd fjordlens
 ```
 
-### Opret `.env`
+### Create `.env`
 ```bash
 cp .env.example .env
 vi .env
 ```
 
-Eksempel:
+Example:
 ```env
 APP_PORT=9080
 PHOTO_DIR=/volume1/photos
@@ -97,34 +97,34 @@ TZ=Europe/Copenhagen
 LOG_LEVEL=INFO
 ```
 
-> Sæt `PHOTO_DIR` til den mappe hvor dine billeder ligger på NAS'en.
+> Set `PHOTO_DIR` to the folder where your photos are located on the NAS.
 
-### Start containeren
+### Start the container
 ```bash
 docker compose up -d --build
 ```
 
-Åbn:
-- `http://DIN_NAS_IP:9080`
+Open:
+- `http://YOUR_NAS_IP:9080`
 
-Tryk **“Scan bibliotek”** i UI.
+Then press **“Scan library”** in the UI.
 
 ---
 
 ## 3) Synology Container Manager (GUI)
-Du kan også bruge **Projects** i Container Manager:
+You can also use **Projects** in Container Manager:
 
-1. Upload projektet til `/volume1/docker/fjordlens`
-2. Opret `.env`
-3. I Container Manager → **Project** → **Create**
-4. Peg på `docker-compose.yml`
-5. Start projektet
+1. Upload the project to `/volume1/docker/fjordlens`
+2. Create `.env`
+3. In Container Manager → Project → Create
+4. Point to `docker-compose.yml`
+5. Start the project
 
 ---
 
-## 4) GitHub opsætning (repo)
+## 4) GitHub Setup (repo)
 
-Hvis du starter med en lokal mappe og vil skubbe til GitHub:
+If you start from a local folder and want to push to GitHub:
 
 ```bash
 git init
@@ -135,15 +135,15 @@ git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
 git push -u origin main
 ```
 
-### Privat repo?
-Brug enten:
-- GitHub Personal Access Token (PAT), eller
+### Private repo?
+Use either:
+- GitHub Personal Access Token (PAT), or
 - SSH keys
 
 ---
 
-## 5) Nem opdatering senere (NAS)
-Når repoet er clonet på NAS:
+## 5) Easy Updates Later (NAS)
+Once the repo is cloned on your NAS:
 
 ```bash
 cd /volume1/docker/fjordlens
@@ -151,26 +151,26 @@ git pull
 docker compose up -d --build
 ```
 
-Du kan også bruge scriptet:
+You can also use the script:
 ```bash
 sh scripts/update.sh
 ```
 
 ---
 
-## 6) GitHub Container Registry (GHCR) klar (valgfrit, senere)
-Der er en workflow med i repoet:
+## 6) GitHub Container Registry (GHCR) ready (optional)
+There is a workflow in the repo:
 - `.github/workflows/docker-ghcr.yml`
 
-Den bygger og publicerer image til GHCR på:
-- push til `main`
-- tags som `v1.0.0`
+It builds and publishes an image to GHCR on:
+- push to `main`
+- tags like `v1.0.0`
 
-### Fordel
-NAS'en skal så **ikke bygge** imaget selv.
+### Benefit
+Then the NAS **does not need to build** the image itself.
 
-### Brug GHCR image på NAS
-Kopiér `docker-compose.ghcr.yml.example` til `docker-compose.yml` og ret image-navn:
+### Use GHCR image on NAS
+Copy `docker-compose.ghcr.yml.example` to `docker-compose.yml` and set the image name:
 
 ```yaml
 image: ghcr.io/YOUR_GITHUB_USERNAME/fjordlens:latest
@@ -178,57 +178,57 @@ image: ghcr.io/YOUR_GITHUB_USERNAME/fjordlens:latest
 
 ---
 
-## 7) Hvad appen indekserer (nu)
-Ved scan gemmes bl.a.:
+## 7) What the app indexes (now)
+During a scan the app stores, among other things:
 
-- filnavn / sti
-- filstørrelse
-- dato (EXIF hvis muligt, ellers fil-dato)
-- dimensioner
-- kamera / linse (hvis EXIF findes)
-- GPS koordinater (hvis EXIF findes)
+- file name / path
+- file size
+- date (EXIF if possible, otherwise file date)
+- dimensions
+- camera / lens (if EXIF exists)
+- GPS coordinates (if EXIF exists)
 - SHA256 checksum
-- pHash (simpel duplicate-støtte)
+- pHash (simple duplicate aid)
 - thumbnails
-- rå metadata JSON (`metadata_json`)
-- `ai_tags` (placeholder til dansk søgning)
-- felter til fremtidig `embedding_json`
+- raw metadata JSON (`metadata_json`)
+- `ai_tags` (placeholder for future semantic search)
+- fields for future `embedding_json`
 
 ---
 
-## 8) Dansk søgning (nu vs senere)
-### Nu
-Søgning virker på:
-- metadata (filnavn, kamera, dato, tags)
-- simple danske synonym-tags (fx strand/hav, bil, skov)
+## 8) Search (now vs later)
+### Now
+Search works on:
+- metadata (file name, camera, date, tags)
+- simple synonym tags (e.g. beach/sea, car, forest)
 
-### Senere (næste trin)
-Vi kobler på:
-- **ONNX/CLIP** for rigtig semantisk søgning på dansk
-- **Face-service** (detektion + embeddings)
-- **Clustering** (gruppering af personer)
-- evt. PostgreSQL + pgvector
-
----
-
-## 9) Kendte begrænsninger (starter)
-- HEIC/HEIF kræver ekstra decoder i nogle miljøer (Pillow kan ikke altid åbne dem direkte)
-- Ingen reverse geocoding endnu (GPS → bynavn)
-- Ingen rigtig ansigtsgenkendelse endnu (tabeller er klargjort)
-- SQLite er fint til start; PostgreSQL/pgvector anbefales senere
+### Later (next steps)
+We will add:
+- **ONNX/CLIP** for real semantic search
+- **Face service** (detection + embeddings)
+- **Clustering** (grouping of people)
+- optionally PostgreSQL + pgvector
 
 ---
 
-## 10) Næste trin jeg vil anbefale
-1. ONNX Runtime container til ansigtsdetektion + embeddings
-2. ONNX/CLIP tekst↔billede embeddings til dansk AI-søgning
-3. Job-queue (Redis) + worker til baggrundsindexering
+## 9) Known Limitations (starter)
+- HEIC/HEIF may need extra decoders in some environments (Pillow can’t always open them directly)
+- No reverse geocoding yet (GPS → place name)
+- No production face recognition yet (tables prepared)
+- SQLite is fine to start; PostgreSQL/pgvector recommended later
+
+---
+
+## 10) Recommended Next Steps
+1. ONNX Runtime container for face detection + embeddings
+2. ONNX/CLIP text↔image embeddings for semantic search
+3. Job queue (Redis) + worker for background indexing
 4. PostgreSQL + pgvector
-5. Personer/Steder visninger med rigtige grupper
+5. People/Places views with proper grouping
 
 ---
 
-## Sikkerhed / drift
-- Commit **ikke** `.env` til GitHub
-- Monter fotos `:ro` (read-only), som i compose-filen
-- Gem data (DB + thumbnails) i en persistent mappe (`/volume1/docker/fjordlens/data`)
+## Security / Operations
+- Do **not** commit `.env` to GitHub
+- Mount photos `:ro` (read-only) as in the compose file
+- Store data (DB + thumbnails) in a persistent folder (`/volume1/docker/fjordlens/data`)
