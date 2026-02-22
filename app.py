@@ -11,9 +11,11 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import threading
 from PIL import Image, ExifTags, ImageOps
+import piexif
+import exifread
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
-    from pillow_heif import register_heif_opener  # type: ignore
+    from pillow_heif import register_heif_opener, HeifFile  # type: ignore
     register_heif_opener()
 except Exception:
     pass
@@ -261,6 +263,121 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
     return exif_map
 
 
+def _merge_if_missing(meta: Dict[str, Any], key: str, val: Any):
+    if val is None:
+        return
+    if meta.get(key) is None or meta.get(key) in (""):
+        meta[key] = val
+
+
+def _piexif_get_first(exif_dict: dict, ifd: str, tag: int) -> Optional[Any]:
+    try:
+        return exif_dict.get(ifd, {}).get(tag)
+    except Exception:
+        return None
+
+
+def extract_exif_via_heif(path: Path) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    try:
+        hf = HeifFile(path)
+        exif_bytes = hf.info.get("exif") if isinstance(hf.info, dict) else None
+        if not exif_bytes:
+            return out
+        exif_dict = piexif.load(exif_bytes)
+        # DateTimeOriginal
+        dto = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.DateTimeOriginal)
+        if dto:
+            try:
+                out["captured_at"] = parse_captured_at({"DateTimeOriginal": dto.decode() if isinstance(dto, bytes) else str(dto)}, path.stat().st_mtime)
+            except Exception:
+                pass
+        # Camera/Lens
+        mke = _piexif_get_first(exif_dict, "0th", piexif.ImageIFD.Make)
+        mdl = _piexif_get_first(exif_dict, "0th", piexif.ImageIFD.Model)
+        lmd = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.LensModel)
+        out["camera_make"] = mke.decode() if isinstance(mke, bytes) else mke
+        out["camera_model"] = mdl.decode() if isinstance(mdl, bytes) else mdl
+        out["lens_model"] = lmd.decode() if isinstance(lmd, bytes) else lmd
+        # Exposure
+        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings) or _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.PhotographicSensitivity)
+        out["f_number"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FNumber))
+        out["focal_length"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FocalLength))
+        et = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ExposureTime)
+        out["exposure_time"] = str(et) if et is not None else None
+        # GPS
+        gps = exif_dict.get("GPS", {})
+        glat = gps.get(piexif.GPSIFD.GPSLatitude)
+        glat_ref = gps.get(piexif.GPSIFD.GPSLatitudeRef)
+        glon = gps.get(piexif.GPSIFD.GPSLongitude)
+        glon_ref = gps.get(piexif.GPSIFD.GPSLongitudeRef)
+        def conv_triplet(t):
+            if not t:
+                return None
+            try:
+                d = _rational_to_float(t[0])
+                m = _rational_to_float(t[1])
+                s = _rational_to_float(t[2])
+                if d is None or m is None or s is None:
+                    return None
+                return d + (m / 60.0) + (s / 3600.0)
+            except Exception:
+                return None
+        lat = conv_triplet(glat)
+        lon = conv_triplet(glon)
+        if lat is not None and (glat_ref in (b"S", "S")):
+            lat = -lat
+        if lon is not None and (glon_ref in (b"W", "W")):
+            lon = -lon
+        out["gps_lat"] = lat
+        out["gps_lon"] = lon
+    except Exception as e:
+        log_event("error", rel_path=str(path), error=f"heif_exif: {e}")
+    return out
+
+
+def extract_exif_via_exifread(path: Path) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    try:
+        with path.open("rb") as f:
+            tags = exifread.process_file(f, details=False)
+        # DateTimeOriginal
+        for key in ("EXIF DateTimeOriginal", "EXIF DateTimeDigitized", "Image DateTime"):
+            if key in tags:
+                dto = str(tags[key])
+                out["captured_at"] = parse_captured_at({"DateTimeOriginal": dto.replace("/", ":")}, path.stat().st_mtime)
+                break
+        # Camera / Lens
+        out["camera_make"] = str(tags.get("Image Make", "")) or None
+        out["camera_model"] = str(tags.get("Image Model", "")) or None
+        out["lens_model"] = str(tags.get("EXIF LensModel", "")) or None
+        # GPS
+        lat = tags.get("GPS GPSLatitude")
+        lat_ref = str(tags.get("GPS GPSLatitudeRef", ""))
+        lon = tags.get("GPS GPSLongitude")
+        lon_ref = str(tags.get("GPS GPSLongitudeRef", ""))
+        def to_float_gps(tag):
+            try:
+                vals = [float(v.num) / float(v.den) for v in tag.values]
+                return vals[0] + vals[1] / 60.0 + vals[2] / 3600.0
+            except Exception:
+                return None
+        if lat and lon:
+            la = to_float_gps(lat)
+            lo = to_float_gps(lon)
+            if la is not None:
+                if lat_ref.strip().upper().startswith("S"):
+                    la = -la
+                out["gps_lat"] = la
+            if lo is not None:
+                if lon_ref.strip().upper().startswith("W"):
+                    lo = -lo
+                out["gps_lon"] = lo
+    except Exception as e:
+        log_event("error", rel_path=str(path), error=f"exifread: {e}")
+    return out
+
+
 def parse_captured_at(exif_map: Dict[str, Any], file_mtime: float) -> str:
     for key in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
         raw = exif_map.get(key)
@@ -368,6 +485,19 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         # Unsupported or damaged image: still index file-level info
         metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
         metadata["thumb_error"] = str(e)
+
+    # Fallbacks to enrich missing EXIF (camera, lens, GPS, date)
+    try:
+        if path.suffix.lower() in {".heic", ".heif"}:
+            extra = extract_exif_via_heif(path)
+        else:
+            extra = extract_exif_via_exifread(path)
+        for k in ("captured_at", "camera_make", "camera_model", "lens_model", "iso", "f_number", "focal_length", "exposure_time", "gps_lat", "gps_lon"):
+            if metadata.get(k) in (None, "") and extra.get(k) is not None:
+                metadata[k] = extra[k]
+                log_event("exif_fallback", rel_path=rel_path, field=k)
+    except Exception as e:
+        log_event("error", rel_path=rel_path, error=f"exif_fallback: {e}")
 
     # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
     # try to enrich from a sibling HEIC/HEIF with same basename — but ONLY if the images
