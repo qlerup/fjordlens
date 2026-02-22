@@ -194,6 +194,8 @@ function cardHTML(item) {
 }
 
 function renderGrid() {
+  // Toggle fixed-width columns for folder view
+  if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
   if (state.view === "logs") {
     els.grid.innerHTML = "";
     if (els.logsPanel) els.logsPanel.classList.remove("hidden");

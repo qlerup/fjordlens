@@ -210,6 +210,9 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
+.gallery-grid.folders-view {
+  grid-template-columns: repeat(auto-fill, 220px);
+}
 .photo-card {
   border: 1px solid var(--border);
   border-radius: 12px;
