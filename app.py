@@ -378,6 +378,54 @@ def extract_exif_via_exifread(path: Path) -> Dict[str, Any]:
     return out
 
 
+def extract_exif_via_piexif_file(path: Path) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    try:
+        exif_dict = piexif.load(str(path))
+        dto = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.DateTimeOriginal)
+        if dto:
+            out["captured_at"] = parse_captured_at({"DateTimeOriginal": dto.decode() if isinstance(dto, bytes) else str(dto)}, path.stat().st_mtime)
+        mke = _piexif_get_first(exif_dict, "0th", piexif.ImageIFD.Make)
+        mdl = _piexif_get_first(exif_dict, "0th", piexif.ImageIFD.Model)
+        lmd = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.LensModel)
+        out["camera_make"] = mke.decode() if isinstance(mke, bytes) else mke
+        out["camera_model"] = mdl.decode() if isinstance(mdl, bytes) else mdl
+        out["lens_model"] = lmd.decode() if isinstance(lmd, bytes) else lmd
+        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings) or _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.PhotographicSensitivity)
+        out["f_number"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FNumber))
+        out["focal_length"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FocalLength))
+        et = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ExposureTime)
+        out["exposure_time"] = str(et) if et is not None else None
+        gps = exif_dict.get("GPS", {})
+        glat = gps.get(piexif.GPSIFD.GPSLatitude)
+        glat_ref = gps.get(piexif.GPSIFD.GPSLatitudeRef)
+        glon = gps.get(piexif.GPSIFD.GPSLongitude)
+        glon_ref = gps.get(piexif.GPSIFD.GPSLongitudeRef)
+        def conv_triplet(t):
+            if not t:
+                return None
+            try:
+                d = _rational_to_float(t[0])
+                m = _rational_to_float(t[1])
+                s = _rational_to_float(t[2])
+                if d is None or m is None or s is None:
+                    return None
+                return d + (m / 60.0) + (s / 3600.0)
+            except Exception:
+                return None
+        lat = conv_triplet(glat)
+        lon = conv_triplet(glon)
+        if lat is not None and (glat_ref in (b"S", "S")):
+            lat = -lat
+        if lon is not None and (glon_ref in (b"W", "W")):
+            lon = -lon
+        out["gps_lat"] = lat
+        out["gps_lon"] = lon
+    except Exception as e:
+        log_event("error", rel_path=str(path), error=f"piexif_file: {e}")
+    return out
+
+
 def parse_captured_at(exif_map: Dict[str, Any], file_mtime: float) -> str:
     for key in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
         raw = exif_map.get(key)
@@ -488,14 +536,22 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
 
     # Fallbacks to enrich missing EXIF (camera, lens, GPS, date)
     try:
-        if path.suffix.lower() in {".heic", ".heif"}:
+        ext = path.suffix.lower()
+        if ext in {".heic", ".heif"}:
             extra = extract_exif_via_heif(path)
+        elif ext in {".jpg", ".jpeg", ".tif", ".tiff"}:
+            # prefer piexif on file (robust GPS), then exifread as backup
+            extra = extract_exif_via_piexif_file(path)
+            if not extra.get("gps_lat") and not extra.get("gps_lon"):
+                more = extract_exif_via_exifread(path)
+                extra.update({k: v for k, v in more.items() if v is not None})
         else:
             extra = extract_exif_via_exifread(path)
         for k in ("captured_at", "camera_make", "camera_model", "lens_model", "iso", "f_number", "focal_length", "exposure_time", "gps_lat", "gps_lon"):
             if metadata.get(k) in (None, "") and extra.get(k) is not None:
                 metadata[k] = extra[k]
-                log_event("exif_fallback", rel_path=rel_path, field=k)
+                if k in ("gps_lat", "gps_lon"):
+                    log_event("exif_fallback", rel_path=rel_path, field=k, value=str(extra[k]))
     except Exception as e:
         log_event("error", rel_path=rel_path, error=f"exif_fallback: {e}")
 
