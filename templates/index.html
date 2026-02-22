@@ -22,6 +22,7 @@
         <button class="nav-item" data-view="favorites">⭐ Favoritter</button>
         <button class="nav-item" data-view="steder">📍 Steder</button>
         <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
+        <button class="nav-item" data-view="mapper">🗂️ Mapper</button>
         <button class="nav-item" data-view="personer">🙂 Personer</button>
       </nav>
 
@@ -114,6 +115,13 @@
     </aside>
   </div>
 
+  <!-- Image viewer modal -->
+  <div id="viewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;">
+    <button id="viewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);">⟨</button>
+    <img id="viewerImg" alt="" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);" />
+    <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
+    <button id="viewerClose" class="btn" style="position:absolute;right:12px;top:12px;">Luk</button>
+  </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

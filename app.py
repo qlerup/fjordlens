@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import threading
 from PIL import Image, ExifTags
+from urllib.parse import quote
 
 APP_PORT = 8080
 PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
@@ -177,6 +178,25 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
     except Exception:
         exif = None
     if not exif:
+        # last resort: try GPS IFD if available in Pillow
+        try:
+            if hasattr(img, "getexif") and hasattr(ExifTags, "IFD"):
+                gps_ifd = img.getexif().get_ifd(getattr(ExifTags, "IFD").GPS)  # type: ignore[attr-defined]
+                if gps_ifd:
+                    exif_map["GPSInfo"] = {ExifTags.GPSTAGS.get(k, str(k)): v for k, v in gps_ifd.items()}
+                    # derive lat/lon
+                    lat = _gps_to_deg(exif_map["GPSInfo"].get("GPSLatitude"))
+                    lon = _gps_to_deg(exif_map["GPSInfo"].get("GPSLongitude"))
+                    if lat is not None and exif_map["GPSInfo"].get("GPSLatitudeRef") in ("S", b"S"):
+                        lat = -lat
+                    if lon is not None and exif_map["GPSInfo"].get("GPSLongitudeRef") in ("W", b"W"):
+                        lon = -lon
+                    if lat is not None:
+                        exif_map["_gps_lat"] = lat
+                    if lon is not None:
+                        exif_map["_gps_lon"] = lon
+        except Exception:
+            pass
         return exif_map
 
     for tag_id, value in exif.items():
@@ -194,6 +214,16 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
                 exif_map[tag_name] = value
         except Exception:
             exif_map[tag_name] = str(value)
+
+    # If GPSInfo not present, try direct GPS IFD
+    if "GPSInfo" not in exif_map:
+        try:
+            if hasattr(ExifTags, "IFD"):
+                gps_ifd = exif.get_ifd(getattr(ExifTags, "IFD").GPS)  # type: ignore[attr-defined]
+                if gps_ifd:
+                    exif_map["GPSInfo"] = {ExifTags.GPSTAGS.get(k, str(k)): v for k, v in gps_ifd.items()}
+        except Exception:
+            pass
 
     # Pillow sometimes stores GPSInfo values without expanding GPSTAGS
     if "GPSInfo" in exif_map and isinstance(exif_map["GPSInfo"], dict):
@@ -494,6 +524,15 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
         d["thumb_url"] = f"/api/thumbs/{d['thumb_name']}"
     else:
         d["thumb_url"] = None
+    # Public URL to original (for viewer)
+    rel = d.get("rel_path") or d.get("filename")
+    if rel:
+        try:
+            d["original_url"] = f"/api/original/{quote(rel)}"
+        except Exception:
+            d["original_url"] = None
+    else:
+        d["original_url"] = None
     return d
 
 
@@ -684,6 +723,15 @@ def api_filters():
 @app.route("/api/thumbs/<path:thumb_name>")
 def api_thumbs(thumb_name: str):
     return send_from_directory(THUMB_DIR, thumb_name)
+
+
+@app.route("/api/original/<path:rel_path>")
+def api_original(rel_path: str):
+    # Serve original file safely from PHOTO_DIR
+    # Prevent path escape
+    safe_rel = rel_path.replace("..", "").lstrip("/")
+    directory = str(PHOTO_DIR)
+    return send_from_directory(directory, safe_rel)
 
 
 @app.route("/api/debug/sample")

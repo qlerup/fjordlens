@@ -29,6 +29,12 @@ const els = {
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
+  // viewer
+  viewer: document.getElementById("viewer"),
+  viewerImg: document.getElementById("viewerImg"),
+  viewerPrev: document.getElementById("viewerPrev"),
+  viewerNext: document.getElementById("viewerNext"),
+  viewerClose: document.getElementById("viewerClose"),
 };
 
 const NAV_LABELS = {
@@ -46,6 +52,7 @@ let state = {
   sort: "date_desc",
   q: "",
   scanning: false,
+  selectedIndex: -1,
 };
 
 function showStatus(text, type = "ok") {
@@ -131,6 +138,12 @@ function setDetail(item) {
   els.detailAiTags.textContent = (item.ai_tags && item.ai_tags.length) ? item.ai_tags.join(", ") : "-";
   els.rawMeta.textContent = JSON.stringify(item.metadata_json || {}, null, 2);
   els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
+
+  // Click on thumbnail in detail opens viewer
+  els.detailThumb.onclick = () => {
+    const idx = state.items.findIndex(i => i.id === item.id);
+    if (idx >= 0) openViewer(idx);
+  };
 }
 
 function getSizeLabel(w, h) {
@@ -178,17 +191,25 @@ function renderGrid() {
   }
   hideEmpty();
 
-  state.items.forEach(item => {
-    const card = document.createElement("article");
-    card.className = "photo-card" + (state.selectedId === item.id ? " active" : "");
-    card.innerHTML = cardHTML(item);
-    card.addEventListener("click", () => {
-      state.selectedId = item.id;
-      renderGrid();
-      setDetail(item);
-    });
-    els.grid.appendChild(card);
-  });
+  // Group by folder in 'mapper' view
+  const items = state.items.slice();
+  if (state.view === "mapper") {
+    const groups = new Map();
+    for (const it of items) {
+      const folder = (it.rel_path && it.rel_path.includes("/")) ? it.rel_path.split("/").slice(0, -1).join("/") : "(root)";
+      if (!groups.has(folder)) groups.set(folder, []);
+      groups.get(folder).push(it);
+    }
+    for (const [folder, arr] of groups) {
+      const h = document.createElement("h3");
+      h.textContent = folder;
+      h.style.margin = "8px 4px";
+      els.grid.appendChild(h);
+      arr.forEach(item => appendCard(item));
+    }
+  } else {
+    items.forEach(item => appendCard(item));
+  }
 
   if (!state.items.some(i => i.id === state.selectedId)) {
     state.selectedId = null;
@@ -196,6 +217,43 @@ function renderGrid() {
   }
 
   renderStats();
+}
+
+function appendCard(item) {
+  const card = document.createElement("article");
+  card.className = "photo-card" + (state.selectedId === item.id ? " active" : "");
+  card.innerHTML = cardHTML(item);
+  card.addEventListener("click", () => {
+    state.selectedId = item.id;
+    renderGrid();
+    setDetail(item);
+  });
+  // double-click opens viewer
+  card.addEventListener("dblclick", () => {
+    const idx = state.items.findIndex(i => i.id === item.id);
+    if (idx >= 0) openViewer(idx);
+  });
+  els.grid.appendChild(card);
+}
+
+// Viewer controls
+function openViewer(index) {
+  state.selectedIndex = index;
+  const it = state.items[index];
+  if (!it || !it.original_url) return;
+  els.viewerImg.src = it.original_url;
+  els.viewer.classList.remove("hidden");
+}
+function closeViewer() {
+  els.viewer.classList.add("hidden");
+  els.viewerImg.removeAttribute("src");
+}
+function nextViewer(step=1) {
+  if (state.selectedIndex < 0) return;
+  const n = state.items.length;
+  state.selectedIndex = (state.selectedIndex + step + n) % n;
+  const it = state.items[state.selectedIndex];
+  if (it && it.original_url) els.viewerImg.src = it.original_url;
 }
 
 async function loadPhotos() {
@@ -321,6 +379,17 @@ els.favoriteBtn.addEventListener("click", toggleFavorite);
 
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => setView(btn.dataset.view));
+});
+
+// viewer events
+els.viewerClose && els.viewerClose.addEventListener("click", closeViewer);
+els.viewerPrev && els.viewerPrev.addEventListener("click", () => nextViewer(-1));
+els.viewerNext && els.viewerNext.addEventListener("click", () => nextViewer(1));
+window.addEventListener("keydown", (e) => {
+  if (els.viewer.classList.contains("hidden")) return;
+  if (e.key === "Escape") closeViewer();
+  if (e.key === "ArrowLeft") nextViewer(-1);
+  if (e.key === "ArrowRight") nextViewer(1);
 });
 
 // Initial load
