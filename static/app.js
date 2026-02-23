@@ -45,6 +45,13 @@ const els = {
   settingsPanel: document.getElementById("settingsPanel"),
   placesMapWrap: document.getElementById("placesMapWrap"),
   placesMapEl: document.getElementById("placesMap"),
+  // duplicates
+  dupesBtn: document.getElementById("dupesBtn"),
+  dupesRun: document.getElementById("dupesRun"),
+  dupeDist: document.getElementById("dupeDist"),
+  dupeMin: document.getElementById("dupeMin"),
+  dupeStatus: document.getElementById("dupeStatus"),
+  dupeResults: document.getElementById("dupeResults"),
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
@@ -731,6 +738,63 @@ loadPhotos().then(() => {
   // logs always running
   startLogs();
 });
+
+// Duplicates UI
+async function fetchDuplicates() {
+  const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
+  const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
+  try {
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Søger efter dupletter (afstand=${dist}, min=${min})...`; els.dupeStatus.classList.remove("hidden", "err"); els.dupeStatus.classList.add("ok"); }
+    if (els.dupeResults) els.dupeResults.innerHTML = "";
+    const res = await fetch(`/api/duplicates?distance=${encodeURIComponent(dist)}&min=${encodeURIComponent(min)}`);
+    const data = await res.json();
+    renderDuplicates(data);
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Færdig. Checksum-grupper: ${data?.counts?.checksum || 0}, pHash-lige: ${data?.counts?.phash_equal || 0}, pHash-nære: ${data?.counts?.phash_near || 0}`; }
+  } catch (e) {
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Fejl ved duplet-søgning.`; els.dupeStatus.classList.remove("ok"); els.dupeStatus.classList.add("err"); }
+  }
+}
+
+function renderDuplicates(data) {
+  if (!els.dupeResults) return;
+  const wrap = els.dupeResults;
+  wrap.innerHTML = "";
+  if (!data || !data.groups) {
+    wrap.innerHTML = "<div class='empty'>Ingen resultater.</div>";
+    return;
+  }
+  for (const grp of data.groups) {
+    const sets = grp.items || [];
+    if (!sets.length) continue;
+    const sec = document.createElement("section");
+    sec.className = "dupe-group";
+    const titleMap = { checksum: "Checksum", phash_equal: "pHash (ens)", phash_near: `pHash (nær)` };
+    const name = titleMap[grp.reason] || grp.reason;
+    sec.innerHTML = `<h4>${name} · ${sets.length} grupper</h4>`;
+    for (const arr of sets) {
+      const strip = document.createElement("div");
+      strip.className = "dupe-strip";
+      for (const it of arr) {
+        const a = document.createElement("a");
+        a.className = "dupe-item";
+        a.href = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : "#";
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.innerHTML = `${it.thumb_url ? `<img class='dupe-thumb' src='${it.thumb_url}' alt=''>` : `<div class='dupe-thumb' style='display:grid;place-items:center;background:#1b1f29;'>Ingen</div>`}<small>${it.filename || ''}</small>`;
+        strip.appendChild(a);
+      }
+      sec.appendChild(strip);
+    }
+    wrap.appendChild(sec);
+  }
+  if (!wrap.children.length) {
+    wrap.innerHTML = "<div class='empty'>Ingen dupletter fundet med de aktuelle kriterier.</div>";
+  }
+}
+
+// Buttons for duplicates (both buttons do the same action)
+els.dupesBtn && els.dupesBtn.addEventListener('click', fetchDuplicates);
+els.dupesRun && els.dupesRun.addEventListener('click', fetchDuplicates);
 
 // Live logs
 function appendLogLine(text) {

@@ -101,7 +101,21 @@
             <button id="rescanBtn" class="btn">Rescan metadata</button>
             <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
             <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+            <button id="dupesBtn" class="btn">Find dupletter</button>
           </div>
+        </div>
+
+        <div class="sidebar-card" id="dupeCard" style="margin-bottom:12px;">
+          <div class="sidebar-card-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span>Dupletter</span>
+            <label class="mini-label" for="dupeDist">Afstand</label>
+            <input id="dupeDist" type="number" min="0" max="20" value="5" class="input-number small" />
+            <label class="mini-label" for="dupeMin">Min gruppe</label>
+            <input id="dupeMin" type="number" min="2" max="10" value="2" class="input-number small" />
+            <button id="dupesRun" class="btn">Scan</button>
+          </div>
+          <section id="dupeStatus" class="status hidden"></section>
+          <div id="dupeResults" class="dupe-groups"></div>
         </div>
 
         <!-- Logs vises også her ved at aktivere logsPanel sammen med Indstillinger -->

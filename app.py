@@ -692,26 +692,21 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     metadata["thumb_name"] = thumb_name
     metadata["ai_tags"] = build_ai_tags(metadata["filename"], exif_map, metadata.get("gps_lat"), metadata.get("gps_lon"))
     metadata["exif_json"] = exif_map
-    metadata["metadata_json"] = {
-        "file": {
-            "rel_path": rel_path,
-            "filename": path.name,
-            "ext": path.suffix.lower(),
-            "size_bytes": stat.st_size,
-            "created_fs": metadata["created_fs"],
-            "modified_fs": metadata["modified_fs"],
-        },
-        "image": {
-            "width": metadata.get("width"),
-            "height": metadata.get("height"),
-        },
-        "exif": exif_map,
-        "ai": {
-            "tags": metadata["ai_tags"],
-            "embedding": None,  # reserved for future CLIP/ONNX
-            "faces": [],
-        },
+    # Preserve any previously-added fields in metadata_json (e.g. geo from reverse geocoding)
+    prev_mj = metadata.get("metadata_json") or {}
+    mj: Dict[str, Any] = {**prev_mj}
+    mj["file"] = {
+        "rel_path": rel_path,
+        "filename": path.name,
+        "ext": path.suffix.lower(),
+        "size_bytes": stat.st_size,
+        "created_fs": metadata["created_fs"],
+        "modified_fs": metadata["modified_fs"],
     }
+    mj["image"] = {"width": metadata.get("width"), "height": metadata.get("height")}
+    mj["exif"] = exif_map
+    mj["ai"] = {"tags": metadata["ai_tags"], "embedding": None, "faces": []}
+    metadata["metadata_json"] = mj
     return metadata
 
 
