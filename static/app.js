@@ -383,8 +383,13 @@ function initOrUpdatePlacesMap() {
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: [10, 56],
       zoom: 4,
-      attributionControl: true,
+      attributionControl: false,
     });
+    // Add attribution including MapLibre (plus source attributions from the style)
+    placesMap.addControl(new maplibregl.AttributionControl({
+      compact: true,
+      customAttribution: "MapLibre"
+    }));
     placesMap.addControl(new maplibregl.NavigationControl({ showCompass: false }));
     placesMap.on("load", () => {
       // Add clustered source + layers
