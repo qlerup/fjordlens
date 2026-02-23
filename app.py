@@ -37,6 +37,8 @@ GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
 GEOCODE_TIMEOUT = int(os.environ.get("GEOCODE_TIMEOUT", "12"))
 GEOCODE_RETRIES = int(os.environ.get("GEOCODE_RETRIES", "3"))
 GEOCODE_DELAY = float(os.environ.get("GEOCODE_DELAY", "1.0"))  # courteous delay per request
+GEOCODE_PROVIDER = os.environ.get("GEOCODE_PROVIDER", "nominatim").strip().lower()
+GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
@@ -577,55 +579,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         if GEOCODE_ENABLE and metadata.get("gps_lat") is not None and metadata.get("gps_lon") is not None:
             lat = float(metadata.get("gps_lat"))
             lon = float(metadata.get("gps_lon"))
-            lat_r = int(round(lat * 10000))
-            lon_r = int(round(lon * 10000))
-            country = None
-            city = None
-            with closing(get_conn()) as conn:
-                row = conn.execute("SELECT country, city FROM geo_cache WHERE lat_rounded=? AND lon_rounded=?", (lat_r, lon_r)).fetchone()
-            if row:
-                country = row["country"]
-                city = row["city"]
-            else:
-                try:
-                    ua = {"User-Agent": f"FjordLens/1.0 ({GEOCODE_EMAIL})"}
-                    last_err = None
-                    for attempt in range(max(1, GEOCODE_RETRIES)):
-                        try:
-                            # Be polite to the public service; default 1 req/sec
-                            time.sleep(max(0.0, GEOCODE_DELAY))
-                            r = requests.get(
-                                "https://nominatim.openstreetmap.org/reverse",
-                                params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
-                                headers=ua,
-                                timeout=GEOCODE_TIMEOUT,
-                            )
-                            if r.status_code == 429:
-                                last_err = "HTTP 429 Too Many Requests"
-                                time.sleep(1.5 * (attempt + 1))
-                                continue
-                            if r.ok:
-                                js = r.json()
-                                addr = js.get("address", {})
-                                country = addr.get("country")
-                                city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("hamlet")
-                                with closing(get_conn()) as conn:
-                                    conn.execute(
-                                        "INSERT INTO geo_cache(lat_rounded, lon_rounded, country, city, created_at) VALUES (?,?,?,?,?)",
-                                        (lat_r, lon_r, country, city, now_iso()),
-                                    )
-                                    conn.commit()
-                                break
-                            else:
-                                last_err = f"status={r.status_code}"
-                                time.sleep(1.2 * (attempt + 1))
-                        except Exception as _ge:
-                            last_err = str(_ge)
-                            time.sleep(1.2 * (attempt + 1))
-                    if not (country or city) and last_err:
-                        log_event("error", rel_path=rel_path, error=f"geocode: {last_err}")
-                except Exception as ge:
-                    log_event("error", rel_path=rel_path, error=f"geocode_outer_try: {ge}")
+            country, city = reverse_geocode_with_cache(lat, lon)
             # Save into metadata_json and gps_name for quick display
             if country or city:
                 mj = metadata.get("metadata_json") or {}
@@ -730,6 +684,99 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     mj["ai"] = {"tags": metadata["ai_tags"], "embedding": None, "faces": []}
     metadata["metadata_json"] = mj
     return metadata
+
+
+def reverse_geocode_with_cache(lat: float, lon: float) -> tuple[Optional[str], Optional[str]]:
+    """Return (country, city) using cache and provider fallbacks."""
+    lat_r = int(round(lat * 10000))
+    lon_r = int(round(lon * 10000))
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT country, city FROM geo_cache WHERE lat_rounded=? AND lon_rounded=?",
+            (lat_r, lon_r),
+        ).fetchone()
+    if row and (row["country"] or row["city"]):
+        return row["country"], row["city"]
+
+    country, city = reverse_geocode_providers(lat, lon)
+    if country or city:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO geo_cache(lat_rounded, lon_rounded, country, city, created_at) VALUES (?,?,?,?,?)",
+                (lat_r, lon_r, country, city, now_iso()),
+            )
+            conn.commit()
+    return country, city
+
+
+def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Optional[str]]:
+    """Try configured provider first, then fallbacks (Nominatim → BigDataCloud → Photon)."""
+    order: list[str] = []
+    pref = GEOCODE_PROVIDER or "nominatim"
+    if pref not in ("nominatim", "bigdatacloud", "photon"):
+        pref = "nominatim"
+    order.append(pref)
+    for p in ("nominatim", "bigdatacloud", "photon"):
+        if p not in order:
+            order.append(p)
+
+    last_err = None
+    ua = {"User-Agent": f"FjordLens/1.0 ({GEOCODE_EMAIL})"}
+    for prov in order:
+        try:
+            time.sleep(max(0.0, GEOCODE_DELAY))
+            if prov == "nominatim":
+                r = requests.get(
+                    "https://nominatim.openstreetmap.org/reverse",
+                    params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
+                    headers=ua,
+                    timeout=GEOCODE_TIMEOUT,
+                )
+                if r.status_code == 429:
+                    last_err = "nominatim 429"
+                    continue
+                if r.ok:
+                    js = r.json()
+                    addr = js.get("address", {})
+                    country = addr.get("country")
+                    city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("hamlet")
+                    if country or city:
+                        return country, city
+            elif prov == "bigdatacloud":
+                r = requests.get(
+                    "https://api.bigdatacloud.net/data/reverse-geocode-client",
+                    params={"latitude": lat, "longitude": lon, "localityLanguage": GEOCODE_LANG or "en"},
+                    headers=ua,
+                    timeout=GEOCODE_TIMEOUT,
+                )
+                if r.ok:
+                    js = r.json()
+                    country = js.get("countryName")
+                    city = js.get("city") or js.get("locality") or js.get("principalSubdivision")
+                    if country or city:
+                        return country, city
+            elif prov == "photon":
+                r = requests.get(
+                    "https://photon.komoot.io/reverse",
+                    params={"lat": lat, "lon": lon, "lang": GEOCODE_LANG or "en"},
+                    headers=ua,
+                    timeout=GEOCODE_TIMEOUT,
+                )
+                if r.ok:
+                    js = r.json()
+                    feats = js.get("features") or []
+                    if feats:
+                        props = feats[0].get("properties", {})
+                        country = props.get("country")
+                        city = props.get("city") or props.get("town") or props.get("village") or props.get("state") or props.get("name")
+                        if country or city:
+                            return country, city
+        except Exception as e:
+            last_err = str(e)
+            continue
+    if last_err:
+        log_event("error", rel_path="geocode", error=f"providers_failed: {last_err}")
+    return None, None
 
 
 def rescan_metadata(stop_event=None) -> Dict[str, Any]:
