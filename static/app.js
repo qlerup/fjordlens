@@ -42,6 +42,7 @@ const els = {
   mainLogsStart: document.getElementById("mainLogsStart"),
   mainLogsClear: document.getElementById("mainLogsClear"),
   logsPanel: document.getElementById("logsPanel"),
+  settingsPanel: document.getElementById("settingsPanel"),
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
@@ -58,6 +59,7 @@ const NAV_LABELS = {
   mapper: ["Mapper", "Grupperet efter kilde-mappe"],
   personer: ["Personer", "Klar til ansigtsgenkendelse (kommer med ONNX face-service)"],
   logs: ["Logs", "Live visning af scannerens hændelser"],
+  settings: ["Indstillinger", "Vedligeholdelse, scan og administration"],
 };
 
 let state = {
@@ -203,13 +205,22 @@ function cardHTML(item) {
 function renderGrid() {
   // Toggle fixed-width columns for folder view
   if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
+  // Handle special views
   if (state.view === "logs") {
     els.grid.innerHTML = "";
+    if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
     if (els.logsPanel) els.logsPanel.classList.remove("hidden");
     return;
-  } else {
-    if (els.logsPanel) els.logsPanel.classList.add("hidden");
   }
+  if (state.view === "settings") {
+    els.grid.innerHTML = "";
+    if (els.settingsPanel) els.settingsPanel.classList.remove("hidden");
+    if (els.logsPanel) els.logsPanel.classList.remove("hidden");
+    return;
+  }
+  // Default views
+  if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
+  if (els.logsPanel) els.logsPanel.classList.add("hidden");
   els.grid.innerHTML = "";
   if (!state.items.length) {
     const msg = state.view === "personer"
@@ -508,7 +519,7 @@ function setView(view) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
-  if (view === "logs") {
+  if (view === "logs" || view === "settings") {
     // show logs panel, do not load photos
     renderGrid();
   } else {

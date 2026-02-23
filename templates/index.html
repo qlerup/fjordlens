@@ -24,6 +24,7 @@
         <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
         <button class="nav-item" data-view="mapper">🗂️ Mapper</button>
         <button class="nav-item" data-view="personer">🙂 Personer</button>
+        <button class="nav-item" data-view="settings">⚙️ Indstillinger</button>
         <button class="nav-item" data-view="logs">🧾 Logs</button>
       </nav>
 
@@ -53,10 +54,6 @@
           <option value="size_desc">Størst først</option>
           <option value="size_asc">Mindst først</option>
         </select>
-        <button id="scanBtn" class="btn primary">Scan bibliotek</button>
-        <button id="rescanBtn" class="btn">Rescan metadata</button>
-        <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
-        <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
       </header>
 
       <section class="content-header">
@@ -84,9 +81,26 @@
       <section id="emptyState" class="empty hidden"></section>
       <section id="galleryGrid" class="gallery-grid"></section>
 
+      <!-- Indstillinger panel -->
+      <section id="settingsPanel" class="hidden">
+        <div class="sidebar-card" style="margin-bottom:12px;">
+          <div class="sidebar-card-title">Vedligeholdelse</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="scanBtn" class="btn primary">Scan bibliotek</button>
+            <button id="rescanBtn" class="btn">Rescan metadata</button>
+            <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
+            <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+          </div>
+        </div>
+
+        <!-- Logs vises også her ved at aktivere logsPanel sammen med Indstillinger -->
+      </section>
+
+      <!-- Separat logs-visning (for "Logs" fanen) -->
       <section id="logsPanel" class="hidden">
         <div class="status" style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
           <strong>Logs:</strong>
+          <button id="logsStart" class="btn">Stop</button>
           <button id="mainLogsClear" class="btn">Ryd</button>
         </div>
         <pre id="mainLogs" class="raw-meta" style="height:60vh;"></pre>
