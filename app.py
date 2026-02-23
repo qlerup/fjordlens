@@ -221,7 +221,7 @@ def init_db() -> None:
 @app.before_request
 def enforce_login_for_app():
     # Allow static files and login endpoints without auth
-    open_endpoints = {"login", "static", "setup"}
+    open_endpoints = {"login", "verify_2fa", "static", "setup"}
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
     # Bootstrap: if no users exist, redirect to setup
