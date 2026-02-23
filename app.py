@@ -1030,7 +1030,8 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
     if view == "favorites":
         where.append("favorite = 1")
     elif view == "steder":
-        where.append("(gps_lat IS NOT NULL OR gps_name IS NOT NULL)")
+        # Only include photos with explicit coordinates so the map can plot them
+        where.append("(gps_lat IS NOT NULL AND gps_lon IS NOT NULL)")
     elif view == "kameraer":
         where.append("(camera_model IS NOT NULL AND camera_model != '')")
     elif view == "personer":
