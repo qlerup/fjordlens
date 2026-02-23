@@ -94,21 +94,10 @@ def load_user(user_id: str) -> Optional[User]:
         return None
 
 
-def ensure_default_admin() -> None:
-    username = os.environ.get("ADMIN_USER", "admin")
-    password = os.environ.get("ADMIN_PASSWORD")
+def users_count() -> int:
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
-        if row and int(row["c"]) == 0:
-            if not password:
-                # Generate a random password and log it once
-                password = hashlib.sha256(os.urandom(32)).hexdigest()[:12]
-                log_event("info", rel_path="auth", error=f"Created default admin '{username}' with password: {password}")
-            conn.execute(
-                "INSERT INTO users(username, password_hash, is_admin, totp_secret, totp_enabled, created_at) VALUES (?,?,?,?,?,?)",
-                (username, generate_password_hash(password), 1, None, 0, now_iso()),
-            )
-            conn.commit()
+        return int(row["c"]) if row else 0
 
 
 def ensure_dirs() -> None:
@@ -227,15 +216,62 @@ def init_db() -> None:
 @app.before_request
 def enforce_login_for_app():
     # Allow static files and login endpoints without auth
-    open_endpoints = {"login", "static"}
+    open_endpoints = {"login", "static", "setup"}
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
+    # Bootstrap: if no users exist, redirect to setup
+    try:
+        if users_count() == 0 and request.endpoint != "setup":
+            return redirect(url_for("setup"))
+    except Exception:
+        pass
     # Everything else (index + /api/* + file routes) requires auth
     if not current_user.is_authenticated:
         # For API calls, return 401 to avoid HTML in fetch
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
         return redirect(url_for("login", next=request.path))
+
+
+def _read_secret(name: str) -> Optional[str]:
+    v = os.environ.get(name)
+    if v:
+        return v
+    f = os.environ.get(f"{name}_FILE")
+    if f and os.path.exists(f):
+        try:
+            return Path(f).read_text(encoding="utf-8").strip()
+        except Exception:
+            return None
+    return None
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    # If a user already exists, send to login
+    if users_count() > 0:
+        return redirect(url_for("login"))
+    require_token = bool(_read_secret("SETUP_TOKEN"))
+    if request.method == "POST":
+        if require_token:
+            token = (request.form.get("token") or "").strip()
+            if token != _read_secret("SETUP_TOKEN"):
+                return render_template("setup.html", error="Forkert setup‑token", require_token=True)
+        u = (request.form.get("username") or "").strip()
+        p = request.form.get("password") or ""
+        if not u or not p:
+            return render_template("setup.html", error="Udfyld felterne", require_token=require_token)
+        try:
+            with closing(get_conn()) as conn:
+                conn.execute(
+                    "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?,?,?,?)",
+                    (u, generate_password_hash(p), 1, now_iso()),
+                )
+                conn.commit()
+            return render_template("setup.html", ok=True, require_token=require_token)
+        except Exception as e:
+            return render_template("setup.html", error=str(e), require_token=require_token)
+    return render_template("setup.html", require_token=require_token)
 
 
 def now_iso() -> str:
@@ -1752,5 +1788,4 @@ def admin_users():
 
 if __name__ == "__main__":
     init_db()
-    ensure_default_admin()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)
