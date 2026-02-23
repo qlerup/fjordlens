@@ -15,6 +15,8 @@ from PIL import Image, ExifTags, ImageOps
 import piexif
 import exifread
 import requests
+import reverse_geocoder as rg
+import pycountry
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener, HeifFile  # type: ignore
@@ -37,7 +39,7 @@ GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
 GEOCODE_TIMEOUT = int(os.environ.get("GEOCODE_TIMEOUT", "12"))
 GEOCODE_RETRIES = int(os.environ.get("GEOCODE_RETRIES", "3"))
 GEOCODE_DELAY = float(os.environ.get("GEOCODE_DELAY", "1.0"))  # courteous delay per request
-GEOCODE_PROVIDER = os.environ.get("GEOCODE_PROVIDER", "nominatim").strip().lower()
+GEOCODE_PROVIDER = os.environ.get("GEOCODE_PROVIDER", "rg").strip().lower()
 GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
@@ -710,13 +712,13 @@ def reverse_geocode_with_cache(lat: float, lon: float) -> tuple[Optional[str], O
 
 
 def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Optional[str]]:
-    """Try configured provider first, then fallbacks (Nominatim → BigDataCloud → Photon)."""
+    """Try configured provider first, then fallbacks (Offline RG → Nominatim → BigDataCloud → Photon)."""
     order: list[str] = []
-    pref = GEOCODE_PROVIDER or "nominatim"
-    if pref not in ("nominatim", "bigdatacloud", "photon"):
-        pref = "nominatim"
+    pref = GEOCODE_PROVIDER or "rg"
+    if pref not in ("rg", "nominatim", "bigdatacloud", "photon"):
+        pref = "rg"
     order.append(pref)
-    for p in ("nominatim", "bigdatacloud", "photon"):
+    for p in ("rg", "nominatim", "bigdatacloud", "photon"):
         if p not in order:
             order.append(p)
 
@@ -725,7 +727,27 @@ def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Op
     for prov in order:
         try:
             time.sleep(max(0.0, GEOCODE_DELAY))
-            if prov == "nominatim":
+            if prov == "rg":
+                # Offline reverse geocoder (city-level, no network)
+                try:
+                    out = rg.search((lat, lon), mode=1, verbose=False)
+                except TypeError:
+                    # older versions don't support verbose arg
+                    out = rg.search((lat, lon), mode=1)
+                if out:
+                    rec = out[0]
+                    city = rec.get("name") or rec.get("admin1") or rec.get("admin2")
+                    cc = rec.get("cc")
+                    country = None
+                    if cc:
+                        try:
+                            c = pycountry.countries.get(alpha_2=cc.upper())
+                            country = getattr(c, "name", None)
+                        except Exception:
+                            country = cc
+                    if country or city:
+                        return country, city
+            elif prov == "nominatim":
                 r = requests.get(
                     "https://nominatim.openstreetmap.org/reverse",
                     params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
