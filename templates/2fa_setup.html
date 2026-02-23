@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>2FA · FjordLens</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body style="display:grid;min-height:100vh;place-items:center;">
+  <div class="login-card" style="width:420px;max-width:92vw;border:1px solid var(--border);background:var(--panel);border-radius:12px;padding:16px;">
+    <h2 style="margin:0 0 10px;">To-faktor godkendelse</h2>
+    {% if enabled %}
+      <p>2FA er aktiveret for din konto.</p>
+    {% else %}
+      <p>Scan QR-koden i din Authenticator-app, og indtast koden for at aktivere.</p>
+      <div style="display:grid;place-items:center;margin:10px 0;">
+        <img src="{{ qrcode_url }}" alt="QR" style="width:220px;height:220px;border-radius:12px;border:1px solid var(--border);background:#fff;"/>
+      </div>
+      <p style="color:var(--muted);word-break:break-all;">Secret: {{ secret }}</p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      {% if ok %}<div class="status ok">2FA er nu slået til.</div>{% endif %}
+      <form method="post" style="display:flex;gap:8px;">
+        <input name="code" placeholder="6-cifret kode" required class="input-number" style="flex:1;"/>
+        <button class="btn primary">Aktivér</button>
+      </form>
+    {% endif %}
+    <div style="margin-top:10px;display:flex;justify-content:space-between;">
+      <a class="mini-link" href="/">Tilbage</a>
+      <a class="mini-link" href="/logout">Log ud</a>
+    </div>
+  </div>
+</body>
+</html>

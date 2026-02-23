@@ -9,7 +9,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for
+from flask_login import (
+    LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 import threading
 from PIL import Image, ExifTags, ImageOps
 import piexif
@@ -17,6 +21,9 @@ import exifread
 import requests
 import reverse_geocoder as rg
 import pycountry
+import pyotp
+import qrcode
+import base64
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener, HeifFile  # type: ignore
@@ -44,6 +51,10 @@ GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
+
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
 
 # Global scan control
 scan_stop_event = threading.Event()
@@ -58,6 +69,46 @@ def log_event(event: str, **data: Any) -> None:
     global LOG_SEQ
     LOG_SEQ += 1
     LOG_BUFFER.append({"id": LOG_SEQ, "t": now_iso(), "event": event, **data})
+
+
+class User(UserMixin):
+    def __init__(self, id: int, username: str, is_admin: bool):
+        self.id = str(id)
+        self.username = username
+        self.is_admin = is_admin
+
+
+def _row_to_user(row: sqlite3.Row) -> Optional[User]:
+    if not row:
+        return None
+    return User(int(row["id"]), row["username"], bool(row["is_admin"]))
+
+
+@login_manager.user_loader
+def load_user(user_id: str) -> Optional[User]:
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, username, is_admin FROM users WHERE id=?", (user_id,)).fetchone()
+        return _row_to_user(row)
+    except Exception:
+        return None
+
+
+def ensure_default_admin() -> None:
+    username = os.environ.get("ADMIN_USER", "admin")
+    password = os.environ.get("ADMIN_PASSWORD")
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+        if row and int(row["c"]) == 0:
+            if not password:
+                # Generate a random password and log it once
+                password = hashlib.sha256(os.urandom(32)).hexdigest()[:12]
+                log_event("info", rel_path="auth", error=f"Created default admin '{username}' with password: {password}")
+            conn.execute(
+                "INSERT INTO users(username, password_hash, is_admin, totp_secret, totp_enabled, created_at) VALUES (?,?,?,?,?,?)",
+                (username, generate_password_hash(password), 1, None, 0, now_iso()),
+            )
+            conn.commit()
 
 
 def ensure_dirs() -> None:
@@ -149,9 +200,42 @@ def init_db() -> None:
                 FOREIGN KEY(photo_id) REFERENCES photos(id),
                 FOREIGN KEY(person_id) REFERENCES people(id)
             );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 1,
+                totp_secret TEXT,
+                totp_enabled INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
             """
         )
         conn.commit()
+        # Simple migration for old DBs
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+
+@app.before_request
+def enforce_login_for_app():
+    # Allow static files and login endpoints without auth
+    open_endpoints = {"login", "static"}
+    if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
+        return None
+    # Everything else (index + /api/* + file routes) requires auth
+    if not current_user.is_authenticated:
+        # For API calls, return 401 to avoid HTML in fetch
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        return redirect(url_for("login", next=request.path))
 
 
 def now_iso() -> str:
@@ -1558,6 +1642,115 @@ def api_logs_clear():
     return jsonify({"ok": True})
 
 
+# --- Authentication routes ---
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, username, password_hash, is_admin, totp_enabled FROM users WHERE username=?", (username,)).fetchone()
+        if row and check_password_hash(row["password_hash"], password):
+            if int(row["totp_enabled"] or 0) == 1:
+                # 2FA required
+                from flask import session
+                session["2fa_user_id"] = int(row["id"])
+                return redirect(url_for("verify_2fa", next=request.args.get("next")))
+            user = _row_to_user(row)
+            login_user(user)
+            next_url = request.args.get("next") or url_for("index")
+            return redirect(next_url)
+        return render_template("login.html", error="Forkert brugernavn eller adgangskode")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
+@app.route("/login/2fa", methods=["GET", "POST"])
+def verify_2fa():
+    from flask import session
+    uid = session.get("2fa_user_id")
+    if not uid:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        code = (request.form.get("code") or "").strip()
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, username, is_admin, totp_secret FROM users WHERE id=?", (uid,)).fetchone()
+        if not row or not row["totp_secret"]:
+            return redirect(url_for("login"))
+        totp = pyotp.TOTP(row["totp_secret"]) 
+        if totp.verify(code, valid_window=1):
+            user = _row_to_user(row)
+            login_user(user)
+            session.pop("2fa_user_id", None)
+            return redirect(request.args.get("next") or url_for("index"))
+        return render_template("2fa_verify.html", error="Ugyldig kode")
+    return render_template("2fa_verify.html")
+
+
+@app.route("/account/2fa", methods=["GET", "POST"])
+@login_required
+def setup_2fa():
+    # Generate secret if missing
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT totp_secret, totp_enabled FROM users WHERE id=?", (current_user.id,)).fetchone()
+    secret = row["totp_secret"] if row else None
+    if not secret:
+        secret = pyotp.random_base32()
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
+            conn.commit()
+    issuer = "FjordLens"
+    user_label = f"{issuer}:{current_user.username}"
+    otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
+    # Render QR as data URL
+    img = qrcode.make(otp_uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    if request.method == "POST":
+        code = (request.form.get("code") or "").strip()
+        if pyotp.TOTP(secret).verify(code, valid_window=1):
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE users SET totp_enabled=1 WHERE id=?", (current_user.id,))
+                conn.commit()
+            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True)
+        return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode")
+    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"]) 
+
+
+@app.route("/admin/users", methods=["GET", "POST"]) 
+@login_required
+def admin_users():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    msg = None
+    if request.method == "POST":
+        u = (request.form.get("username") or "").strip()
+        p = request.form.get("password") or ""
+        if u and p:
+            try:
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?,?,?,?)",
+                        (u, generate_password_hash(p), 0, now_iso()),
+                    )
+                    conn.commit()
+                msg = "Bruger oprettet"
+            except Exception as e:
+                msg = f"Fejl: {e}"
+    with closing(get_conn()) as conn:
+        users = conn.execute("SELECT id, username, is_admin, totp_enabled, created_at FROM users ORDER BY id").fetchall()
+    return render_template("admin_users.html", users=users, msg=msg)
+
+
 if __name__ == "__main__":
     init_db()
+    ensure_default_admin()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)

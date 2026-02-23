@@ -472,9 +472,9 @@ function addOrUpdatePlacesSource(geo) {
     type: "geojson",
     data: geo,
     cluster: true,
-    // Uncluster a bit tidligere, så punkter vises før man er HELT tæt på
-    clusterMaxZoom: 12,
-    clusterRadius: 50,
+    // Hold klynger aktivt helt tæt på, så nærliggende billeder "klistrer" sammen
+    clusterMaxZoom: 20,
+    clusterRadius: 60,
   });
 }
 
@@ -533,7 +533,7 @@ function clearPlacesMarkers() {
 function renderPlacesMarkers() {
   if (!placesMap || !placesMap.isStyleLoaded() || !placesMap.getSource("places")) return;
   clearPlacesMarkers();
-  const feats = placesMap.queryRenderedFeatures({ layers: ["clusters", "unclustered-point"] });
+  const feats = placesMap.queryRenderedFeatures({ layers: ["clusters"] });
   const src = placesMap.getSource("places");
   for (const f of feats) {
     const el = document.createElement("div");
@@ -551,9 +551,7 @@ function renderPlacesMarkers() {
           badge.textContent = String(f.properties.point_count_abbreviated || f.properties.point_count || "");
           el.appendChild(badge);
           el.addEventListener("click", () => {
-            src.getClusterExpansionZoom(cid, (err2, zoom) => {
-              if (!err2) placesMap.easeTo({ center: f.geometry.coordinates, zoom });
-            });
+            openClusterSheet(cid);
           });
           const m = new maplibregl.Marker({ element: el, anchor: "center" })
             .setLngLat(f.geometry.coordinates)
@@ -561,28 +559,6 @@ function renderPlacesMarkers() {
           placesHtmlMarkers.push(m);
         });
       } catch {}
-    } else {
-      const p = f.properties || {};
-      const thumb = p.thumb || null;
-      el.className = "photo-marker";
-      if (thumb) el.style.backgroundImage = `url(${thumb})`;
-      const m = new maplibregl.Marker({ element: el, anchor: "center" })
-        .setLngLat(f.geometry.coordinates)
-        .addTo(placesMap);
-      el.addEventListener("click", () => {
-        // Vis popup som før
-        const html = `
-          <div class="places-map-popup">
-            ${thumb ? `<img class="thumb" src="${thumb}" alt="">` : ""}
-            <div class="meta">${p.name || ""}</div>
-            <div class="meta">${p.date ? new Date(p.date).toLocaleString("da-DK") : ""}</div>
-          </div>`;
-        new maplibregl.Popup({ offset: 12 })
-          .setLngLat(f.geometry.coordinates)
-          .setHTML(html)
-          .addTo(placesMap);
-      });
-      placesHtmlMarkers.push(m);
     }
   }
 }
@@ -594,6 +570,42 @@ function updateScanButton() {
     els.scanBtn.textContent = "Scan bibliotek";
   }
 }
+
+function openClusterSheet(clusterId) {
+  const src = placesMap.getSource("places");
+  if (!src) return;
+  try {
+    src.getClusterLeaves(clusterId, 100, 0, (err, leaves) => {
+      const sheet = document.getElementById("clusterSheet");
+      const grid = document.getElementById("clusterGrid");
+      if (!sheet || !grid) return;
+      grid.innerHTML = "";
+      if (!err && leaves && leaves.length) {
+        for (const lf of leaves) {
+          const p = lf.properties || {};
+          const img = document.createElement("img");
+          if (p.thumb) img.src = p.thumb;
+          img.title = p.name || "";
+          img.addEventListener("click", () => {
+            // Åbn viewer på dette billede hvis muligt
+            const idx = state.items.findIndex(i => i.id === p.id);
+            if (idx >= 0) openViewer(idx);
+          });
+          grid.appendChild(img);
+        }
+      }
+      sheet.classList.remove("hidden");
+    });
+  } catch {}
+}
+
+// Luk sheet når man klikker på baggrund eller trykker Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const sheet = document.getElementById("clusterSheet");
+    if (sheet) sheet.classList.add("hidden");
+  }
+});
 
 async function pollScanStatus() {
   try {

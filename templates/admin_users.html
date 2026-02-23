@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Brugere · FjordLens</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body style="padding:16px;">
+  <h1>Brugere</h1>
+  {% if msg %}<div class="status ok">{{ msg }}</div>{% endif %}
+  <form method="post" style="display:flex;gap:8px;align-items:center;margin:10px 0;">
+    <input name="username" placeholder="Brugernavn" required class="input-number" style="flex:1;">
+    <input name="password" placeholder="Adgangskode" required class="input-number" style="flex:1;">
+    <button class="btn primary">Opret</button>
+  </form>
+  <table style="width:100%;border-collapse:collapse;">
+    <thead><tr><th style="text-align:left;">ID</th><th>Bruger</th><th>Admin</th><th>2FA</th><th>Oprettet</th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td>{{ u.username }}</td>
+        <td>{{ 'Ja' if u.is_admin else 'Nej' }}</td>
+        <td>{{ 'Aktiv' if u.totp_enabled else '—' }}</td>
+        <td>{{ u.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div style="margin-top:10px;display:flex;gap:10px;">
+    <a class="mini-link" href="/">Tilbage</a>
+    <a class="mini-link" href="/account/2fa">Min 2FA</a>
+  </div>
+</body>
+</html>

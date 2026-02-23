@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Login · FjordLens</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/fjordlens.svg') }}">
+  <style>
+    body { display:grid; min-height:100vh; place-items:center; }
+    .login-card { width: 360px; max-width: 92vw; border:1px solid var(--border); background: var(--panel); border-radius:12px; padding:16px; }
+    .login-title { font-weight:700; margin:0 0 12px; display:flex; align-items:center; gap:10px; }
+    .login-title img { width:24px; height:24px; border-radius:6px; border:1px solid var(--border); }
+    .form-row { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+    .form-row label { color: var(--muted); font-size:0.9rem; }
+    .form-row input { background: var(--panel-2); border:1px solid var(--border); color: var(--text); border-radius:10px; padding:10px 12px; }
+    .actions { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .err { color:#ffe4e4; background: rgba(255,107,107,0.08); border:1px solid rgba(255,107,107,0.4); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
+  </style>
+</head>
+<body>
+  <form class="login-card" method="post">
+    <div class="login-title">
+      <img src="{{ url_for('static', filename='icons/fjordlens_lens_favicon_64.png') }}" alt=""/>
+      <span>Log ind på FjordLens</span>
+    </div>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <div class="form-row">
+      <label for="username">Brugernavn</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+    </div>
+    <div class="form-row">
+      <label for="password">Adgangskode</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="actions">
+      <div style="color:var(--muted); font-size:0.85rem;">Adgang påkrævet</div>
+      <button class="btn primary" type="submit">Log ind</button>
+    </div>
+  </form>
+</body>
+</html>

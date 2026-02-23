@@ -49,6 +49,7 @@
       <div class="sidebar-footer">
         <a href="/api/health" target="_blank" class="mini-link">API health</a>
         <a href="/api/filters" target="_blank" class="mini-link">Filtre</a>
+        <a href="/logout" class="mini-link">Log ud</a>
       </div>
     </aside>
 
@@ -96,6 +97,14 @@
       <section id="placesMapWrap" class="hidden">
         <div id="placesMap" style="width:100%;height:68vh;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0d1016;"></div>
       </section>
+
+      <!-- Cluster bottom sheet -->
+      <div id="clusterSheet" class="sheet hidden">
+        <div class="sheet-bar"></div>
+        <div class="sheet-content">
+          <div class="sheet-grid" id="clusterGrid"></div>
+        </div>
+      </div>
 
       <!-- Indstillinger panel -->
       <section id="settingsPanel" class="hidden">
