@@ -40,12 +40,14 @@ body {
   gap: 12px;
   margin-bottom: 18px;
 }
-.logo-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #7cf7c6);
-  box-shadow: 0 0 18px rgba(91, 140, 255, 0.4);
+.logo-dot { display: none; }
+.logo-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 14px rgba(91, 140, 255, 0.25);
 }
 .logo-title { font-weight: 700; }
 .logo-sub { font-size: 0.75rem; color: var(--muted); }
