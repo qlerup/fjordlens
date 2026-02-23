@@ -401,3 +401,10 @@ body {
   #scanBtn { width: 100%; }
   .content-header { flex-direction: column; }
 }
+
+/* Hide non-relevant chrome when viewing Settings */
+body.view-settings .topbar,
+body.view-settings .content-header,
+body.view-settings #statusBar,
+body.view-settings #emptyState,
+body.view-settings .gallery-grid { display: none !important; }

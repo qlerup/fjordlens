@@ -58,7 +58,6 @@ const NAV_LABELS = {
   kameraer: ["Kameraer", "Filtreret på billeder med kameradata"],
   mapper: ["Mapper", "Grupperet efter kilde-mappe"],
   personer: ["Personer", "Klar til ansigtsgenkendelse (kommer med ONNX face-service)"],
-  logs: ["Logs", "Live visning af scannerens hændelser"],
   settings: ["Indstillinger", "Vedligeholdelse, scan og administration"],
 };
 
@@ -205,22 +204,17 @@ function cardHTML(item) {
 function renderGrid() {
   // Toggle fixed-width columns for folder view
   if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
-  // Handle special views
-  if (state.view === "logs") {
-    els.grid.innerHTML = "";
-    if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
-    if (els.logsPanel) els.logsPanel.classList.remove("hidden");
-    return;
-  }
+  // Always hide special panels first
+  if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
+  if (els.logsPanel) els.logsPanel.classList.add("hidden");
+  // Handle Settings view
   if (state.view === "settings") {
     els.grid.innerHTML = "";
     if (els.settingsPanel) els.settingsPanel.classList.remove("hidden");
     if (els.logsPanel) els.logsPanel.classList.remove("hidden");
     return;
   }
-  // Default views
-  if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
-  if (els.logsPanel) els.logsPanel.classList.add("hidden");
+  // Default views (library, mapper, etc.)
   els.grid.innerHTML = "";
   if (!state.items.length) {
     const msg = state.view === "personer"
@@ -519,7 +513,9 @@ function setView(view) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
-  if (view === "logs" || view === "settings") {
+  // Toggle body class to drive CSS for Settings view
+  document.body.classList.toggle("view-settings", view === "settings");
+  if (view === "settings") {
     // show logs panel, do not load photos
     renderGrid();
   } else {
