@@ -5,6 +5,7 @@ import os
 import sqlite3
 from contextlib import closing
 from datetime import datetime
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
@@ -33,6 +34,9 @@ THUMB_SIZE = (600, 600)
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
+GEOCODE_TIMEOUT = int(os.environ.get("GEOCODE_TIMEOUT", "12"))
+GEOCODE_RETRIES = int(os.environ.get("GEOCODE_RETRIES", "3"))
+GEOCODE_DELAY = float(os.environ.get("GEOCODE_DELAY", "1.0"))  # courteous delay per request
 
 
 app = Flask(__name__)
@@ -585,25 +589,43 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
             else:
                 try:
                     ua = {"User-Agent": f"FjordLens/1.0 ({GEOCODE_EMAIL})"}
-                    r = requests.get(
-                        "https://nominatim.openstreetmap.org/reverse",
-                        params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
-                        headers=ua,
-                        timeout=6,
-                    )
-                    if r.ok:
-                        js = r.json()
-                        addr = js.get("address", {})
-                        country = addr.get("country")
-                        city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("hamlet")
-                        with closing(get_conn()) as conn:
-                            conn.execute(
-                                "INSERT INTO geo_cache(lat_rounded, lon_rounded, country, city, created_at) VALUES (?,?,?,?,?)",
-                                (lat_r, lon_r, country, city, now_iso()),
+                    last_err = None
+                    for attempt in range(max(1, GEOCODE_RETRIES)):
+                        try:
+                            # Be polite to the public service; default 1 req/sec
+                            time.sleep(max(0.0, GEOCODE_DELAY))
+                            r = requests.get(
+                                "https://nominatim.openstreetmap.org/reverse",
+                                params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10, "addressdetails": 1},
+                                headers=ua,
+                                timeout=GEOCODE_TIMEOUT,
                             )
-                            conn.commit()
+                            if r.status_code == 429:
+                                last_err = "HTTP 429 Too Many Requests"
+                                time.sleep(1.5 * (attempt + 1))
+                                continue
+                            if r.ok:
+                                js = r.json()
+                                addr = js.get("address", {})
+                                country = addr.get("country")
+                                city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("hamlet")
+                                with closing(get_conn()) as conn:
+                                    conn.execute(
+                                        "INSERT INTO geo_cache(lat_rounded, lon_rounded, country, city, created_at) VALUES (?,?,?,?,?)",
+                                        (lat_r, lon_r, country, city, now_iso()),
+                                    )
+                                    conn.commit()
+                                break
+                            else:
+                                last_err = f"status={r.status_code}"
+                                time.sleep(1.2 * (attempt + 1))
+                        except Exception as _ge:
+                            last_err = str(_ge)
+                            time.sleep(1.2 * (attempt + 1))
+                    if not (country or city) and last_err:
+                        log_event("error", rel_path=rel_path, error=f"geocode: {last_err}")
                 except Exception as ge:
-                    log_event("error", rel_path=rel_path, error=f"geocode: {ge}")
+                    log_event("error", rel_path=rel_path, error=f"geocode_outer_try: {ge}")
             # Save into metadata_json and gps_name for quick display
             if country or city:
                 mj = metadata.get("metadata_json") or {}
