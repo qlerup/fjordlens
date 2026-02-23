@@ -23,8 +23,8 @@
       <p style="color:var(--muted);word-break:break-all;">Secret: {{ secret }}</p>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
       {% if ok %}<div class="status ok">2FA er nu slået til.</div>{% endif %}
-      <form method="post" style="display:flex;gap:8px;">
-        <input name="code" placeholder="6-cifret kode" required class="input-number" style="flex:1;"/>
+      <form id="setupForm" method="post" style="display:flex;gap:8px;">
+        <input id="setupCode" name="code" placeholder="6-cifret kode" required class="input-number" style="flex:1;" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"/>
         <button class="btn primary">Aktivér</button>
       </form>
     {% endif %}
@@ -33,5 +33,19 @@
       <a class="mini-link" href="/logout">Log ud</a>
     </div>
   </div>
+  <script>
+    (function(){
+      const input = document.getElementById('setupCode');
+      const form = document.getElementById('setupForm');
+      if (!input || !form) return;
+      input.addEventListener('input', () => {
+        const v = (input.value || '').replace(/\D/g, '').slice(0,6);
+        if (v !== input.value) input.value = v;
+        if (v.length === 6) {
+          try { form.requestSubmit ? form.requestSubmit() : form.submit(); } catch(e) { form.submit(); }
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

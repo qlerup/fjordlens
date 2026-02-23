@@ -472,9 +472,10 @@ function addOrUpdatePlacesSource(geo) {
     type: "geojson",
     data: geo,
     cluster: true,
-    // Hold klynger aktivt helt tæt på, så nærliggende billeder "klistrer" sammen
-    clusterMaxZoom: 20,
-    clusterRadius: 60,
+      // Klynger bevares ved tæt zoom; større radius gør dem mere stabile
+      clusterMaxZoom: 20,
+      clusterRadius: 80,
+      clusterMinPoints: 2,
   });
 }
 
@@ -534,10 +535,7 @@ function renderPlacesMarkers() {
   if (!placesMap || !placesMap.isStyleLoaded() || !placesMap.getSource("places")) return;
   clearPlacesMarkers();
   const feats = placesMap.queryRenderedFeatures({ layers: ["clusters"] });
-  const src = placesMap.getSource("places");
-  for (const f of feats) {
-    const el = document.createElement("div");
-    if (f.properties && f.properties.cluster) {
+      // Brug MapLibre's egne cluster-lag for stabilitet (ingen HTML overlays)
       // Cluster: hent ét leaf for thumbnail
       const cid = f.properties.cluster_id;
       try {
@@ -562,7 +560,7 @@ function renderPlacesMarkers() {
     }
   }
 }
-
+    setTimeout(() => { try { placesMap.resize(); } catch {} }, 50);
 function updateScanButton() {
   if (state.scanning) {
     els.scanBtn.textContent = "Stop scan";
