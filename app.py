@@ -197,6 +197,7 @@ def init_db() -> None:
                 is_admin INTEGER DEFAULT 1,
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
+                totp_setup_done INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
             );
             """
@@ -209,6 +210,10 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_setup_done INTEGER DEFAULT 0")
         except Exception:
             pass
 
@@ -231,6 +236,14 @@ def enforce_login_for_app():
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
         return redirect(url_for("login", next=request.path))
+    # Enforce initial 2FA setup: if user has never completed setup, force /account/2fa
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT totp_setup_done FROM users WHERE id=?", (current_user.id,)).fetchone()
+        if row and int(row["totp_setup_done"] or 0) == 0 and request.endpoint not in {"setup_2fa", "logout", "static"}:
+            return redirect(url_for("setup_2fa"))
+    except Exception:
+        pass
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -1723,6 +1736,10 @@ def verify_2fa():
         if totp.verify(code, valid_window=1):
             user = _row_to_user(row)
             login_user(user)
+            # mark that initial setup is completed
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE users SET totp_setup_done=1 WHERE id=?", (current_user.id,))
+                conn.commit()
             session.pop("2fa_user_id", None)
             return redirect(request.args.get("next") or url_for("index"))
         return render_template("2fa_verify.html", error="Ugyldig kode")
@@ -1751,10 +1768,18 @@ def setup_2fa():
     data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
     if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        if action == "disable":
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
+                conn.commit()
+            # Bemærk: totp_setup_done forbliver 1, så brugeren tvinges ikke igen
+            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True)
+        # enable flow
         code = (request.form.get("code") or "").strip()
         if pyotp.TOTP(secret).verify(code, valid_window=1):
             with closing(get_conn()) as conn:
-                conn.execute("UPDATE users SET totp_enabled=1 WHERE id=?", (current_user.id,))
+                conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1 WHERE id=?", (current_user.id,))
                 conn.commit()
             return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True)
         return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode")

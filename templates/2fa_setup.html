@@ -11,6 +11,10 @@
     <h2 style="margin:0 0 10px;">To-faktor godkendelse</h2>
     {% if enabled %}
       <p>2FA er aktiveret for din konto.</p>
+      <form method="post" style="margin:10px 0;">
+        <input type="hidden" name="action" value="disable">
+        <button class="btn" type="submit">Deaktivér 2FA</button>
+      </form>
     {% else %}
       <p>Scan QR-koden i din Authenticator-app, og indtast koden for at aktivere.</p>
       <div style="display:grid;place-items:center;margin:10px 0;">
