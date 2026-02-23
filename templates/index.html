@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FjordLens</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <!-- App icons / PWA manifest -->
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/fjordlens.svg') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_32.png') }}">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_64.png') }}">
+  <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_128.png') }}">
+  <link rel="icon" type="image/png" sizes="256x256" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_256.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/fjordlens_lens_appicon_256.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='icons/site.webmanifest') }}">
+  <meta name="theme-color" content="#0f1115">
   <!-- MapLibre (for Steder-kort med clustering) -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
