@@ -43,6 +43,8 @@ const els = {
   mainLogsClear: document.getElementById("mainLogsClear"),
   logsPanel: document.getElementById("logsPanel"),
   settingsPanel: document.getElementById("settingsPanel"),
+  placesMapWrap: document.getElementById("placesMapWrap"),
+  placesMapEl: document.getElementById("placesMap"),
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
@@ -74,6 +76,10 @@ let state = {
   logsRunning: true,
   logsAfter: 0,
 };
+
+// Map state for "Steder"
+let placesMap = null;
+let placesSourceReady = false;
 
 function showStatus(text, type = "ok") {
   els.status.textContent = text;
@@ -207,11 +213,19 @@ function renderGrid() {
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
   if (els.logsPanel) els.logsPanel.classList.add("hidden");
+  if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
   // Handle Settings view
   if (state.view === "settings") {
     els.grid.innerHTML = "";
     if (els.settingsPanel) els.settingsPanel.classList.remove("hidden");
     if (els.logsPanel) els.logsPanel.classList.remove("hidden");
+    return;
+  }
+  // Handle Places (Steder) view: show map with clusters
+  if (state.view === "steder") {
+    if (els.placesMapWrap) els.placesMapWrap.classList.remove("hidden");
+    els.grid.innerHTML = ""; // hide gallery
+    initOrUpdatePlacesMap();
     return;
   }
   // Default views (library, mapper, etc.)
@@ -329,6 +343,151 @@ async function loadPhotos() {
   els.viewSubtitle.textContent = subtitle;
 
   renderGrid();
+}
+
+function buildPlacesGeoJSON(items) {
+  const feats = [];
+  for (const it of items) {
+    const lat = it.gps_lat != null ? parseFloat(it.gps_lat) : null;
+    const lon = it.gps_lon != null ? parseFloat(it.gps_lon) : null;
+    if (isFinite(lat) && isFinite(lon)) {
+      feats.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [lon, lat] },
+        properties: {
+          id: it.id,
+          name: it.filename || "(ukendt)",
+          thumb: it.thumb_url || null,
+          date: it.captured_at || it.modified_fs || "",
+        },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features: feats };
+}
+
+function initOrUpdatePlacesMap() {
+  if (!els.placesMapEl) return;
+  // Lazy init map
+  if (!placesMap) {
+    placesMap = new maplibregl.Map({
+      container: els.placesMapEl,
+      style: "https://demotiles.maplibre.org/style.json",
+      center: [10, 56],
+      zoom: 4,
+      attributionControl: true,
+    });
+    placesMap.addControl(new maplibregl.NavigationControl({ showCompass: false }));
+    placesMap.on("load", () => {
+      placesMap.addSource("places", {
+        type: "geojson",
+        data: buildPlacesGeoJSON(state.items),
+        cluster: true,
+        clusterMaxZoom: 14,
+        clusterRadius: 50,
+      });
+      // clusters
+      placesMap.addLayer({
+        id: "clusters",
+        type: "circle",
+        source: "places",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#4f6bdc",
+            25, "#4279f4",
+            100, "#2c8cff"
+          ],
+          "circle-radius": ["step", ["get", "point_count"], 16, 25, 22, 100, 28],
+          "circle-stroke-color": "#0b1020",
+          "circle-stroke-width": 2
+        }
+      });
+      // cluster counts
+      placesMap.addLayer({
+        id: "cluster-count",
+        type: "symbol",
+        source: "places",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+          "text-size": 12
+        },
+        paint: { "text-color": "#ffffff" }
+      });
+      // single points
+      placesMap.addLayer({
+        id: "unclustered-point",
+        type: "circle",
+        source: "places",
+        filter: ["!has", "point_count"],
+        paint: {
+          "circle-color": "#7aa2ff",
+          "circle-radius": 6,
+          "circle-stroke-color": "#0b1020",
+          "circle-stroke-width": 2
+        }
+      });
+
+      // Cluster click expands
+      placesMap.on("click", "clusters", (e) => {
+        const features = placesMap.queryRenderedFeatures(e.point, { layers: ["clusters"] });
+        const clusterId = features[0].properties.cluster_id;
+        const src = placesMap.getSource("places");
+        src.getClusterExpansionZoom(clusterId, (err, zoom) => {
+          if (err) return;
+          placesMap.easeTo({ center: features[0].geometry.coordinates, zoom });
+        });
+      });
+
+      // Single point click shows popup
+      placesMap.on("click", "unclustered-point", (e) => {
+        const f = e.features && e.features[0];
+        if (!f) return;
+        const p = f.properties || {};
+        const html = `
+          <div class="places-map-popup">
+            ${p.thumb ? `<img class="thumb" src="${p.thumb}" alt="">` : ""}
+            <div class="meta">${p.name || ""}</div>
+            <div class="meta">${p.date ? new Date(p.date).toLocaleString("da-DK") : ""}</div>
+          </div>`;
+        new maplibregl.Popup({ offset: 12 })
+          .setLngLat(f.geometry.coordinates)
+          .setHTML(html)
+          .addTo(placesMap);
+      });
+
+      placesMap.on("mouseenter", "clusters", () => (placesMap.getCanvas().style.cursor = "pointer"));
+      placesMap.on("mouseleave", "clusters", () => (placesMap.getCanvas().style.cursor = ""));
+      placesMap.on("mouseenter", "unclustered-point", () => (placesMap.getCanvas().style.cursor = "pointer"));
+      placesMap.on("mouseleave", "unclustered-point", () => (placesMap.getCanvas().style.cursor = ""));
+
+      placesSourceReady = true;
+    });
+  }
+
+  // Update data if map already loaded
+  if (placesMap && placesMap.isStyleLoaded()) {
+    const src = placesMap.getSource("places");
+    const geo = buildPlacesGeoJSON(state.items);
+    if (src) src.setData(geo);
+    // Fit bounds to data when entering view
+    try {
+      if (geo.features && geo.features.length) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const f of geo.features) {
+          const [x, y] = f.geometry.coordinates;
+          if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        }
+        const b = [[minX, minY], [maxX, maxY]];
+        placesMap.fitBounds(b, { padding: 40, duration: 400, maxZoom: 12 });
+      }
+    } catch {}
+    setTimeout(() => { try { placesMap.resize(); } catch {} }, 50);
+  }
 }
 
 function updateScanButton() {

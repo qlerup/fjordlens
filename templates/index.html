@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FjordLens</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <!-- MapLibre (for Steder-kort med clustering) -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -80,8 +83,17 @@
       <section id="emptyState" class="empty hidden"></section>
       <section id="galleryGrid" class="gallery-grid"></section>
 
+      <!-- Steder: interaktivt kort med clustering -->
+      <section id="placesMapWrap" class="hidden">
+        <div id="placesMap" style="width:100%;height:68vh;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0d1016;"></div>
+      </section>
+
       <!-- Indstillinger panel -->
       <section id="settingsPanel" class="hidden">
+        <div class="settings-header">
+          <h1>Indstillinger</h1>
+          <p>Vedligeholdelse, scan og logs</p>
+        </div>
         <div class="sidebar-card" style="margin-bottom:12px;">
           <div class="sidebar-card-title">Vedligeholdelse</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">

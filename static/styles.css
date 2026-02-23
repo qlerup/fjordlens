@@ -210,6 +210,13 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
 }
+.places-map-popup {
+  color: var(--text);
+}
+.places-map-popup .thumb {
+  width: 180px; height: 120px; object-fit: cover; display: block; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 6px;
+}
+.places-map-popup .meta { font-size: 0.8rem; color: var(--muted); }
 .gallery-grid.folders-view {
   grid-template-columns: repeat(auto-fill, 220px);
 }
@@ -408,3 +415,8 @@ body.view-settings .content-header,
 body.view-settings #statusBar,
 body.view-settings #emptyState,
 body.view-settings .gallery-grid { display: none !important; }
+
+/* Settings local header (visible only inside settings panel) */
+.settings-header { margin: 4px 0 12px; }
+.settings-header h1 { margin: 0; font-size: 1.35rem; }
+.settings-header p { margin: 6px 0 0; color: var(--muted); }
