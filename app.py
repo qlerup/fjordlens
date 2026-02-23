@@ -816,7 +816,8 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
             """
             SELECT id, rel_path, thumb_name,
                    gps_lat, gps_lon, lens_model, camera_make, camera_model,
-                   captured_at, iso, focal_length, f_number
+                   captured_at, iso, focal_length, f_number,
+                   gps_name, metadata_json
             FROM photos
             """
         ).fetchall()
@@ -849,6 +850,23 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
                 if old != new:
                     changed = True
                     break
+            # If not changed yet, see if reverse-geocoded geo/city/country was added
+            if not changed:
+                try:
+                    old_mj = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                except Exception:
+                    old_mj = {}
+                old_geo = (old_mj.get("geo") or {})
+                new_mj = meta.get("metadata_json") or {}
+                new_geo = (new_mj.get("geo") or {})
+                old_city = old_geo.get("city")
+                old_country = old_geo.get("country")
+                new_city = new_geo.get("city")
+                new_country = new_geo.get("country")
+                if (new_city and new_city != old_city) or (new_country and new_country != old_country):
+                    changed = True
+                elif (meta.get("gps_name") or None) != (row["gps_name"] or None):
+                    changed = True
             if changed:
                 upsert_photo(meta)
                 updated += 1

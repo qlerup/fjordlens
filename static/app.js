@@ -379,65 +379,17 @@ function initOrUpdatePlacesMap() {
   if (!placesMap) {
     placesMap = new maplibregl.Map({
       container: els.placesMapEl,
-      style: "https://demotiles.maplibre.org/style.json",
+      // OpenFreeMap style (OpenMapTiles + OSM attribution, no key required)
+      style: "https://tiles.openfreemap.org/styles/liberty",
       center: [10, 56],
       zoom: 4,
       attributionControl: true,
     });
     placesMap.addControl(new maplibregl.NavigationControl({ showCompass: false }));
     placesMap.on("load", () => {
-      placesMap.addSource("places", {
-        type: "geojson",
-        data: buildPlacesGeoJSON(state.items),
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 50,
-      });
-      // clusters
-      placesMap.addLayer({
-        id: "clusters",
-        type: "circle",
-        source: "places",
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#4f6bdc",
-            25, "#4279f4",
-            100, "#2c8cff"
-          ],
-          "circle-radius": ["step", ["get", "point_count"], 16, 25, 22, 100, 28],
-          "circle-stroke-color": "#0b1020",
-          "circle-stroke-width": 2
-        }
-      });
-      // cluster counts
-      placesMap.addLayer({
-        id: "cluster-count",
-        type: "symbol",
-        source: "places",
-        filter: ["has", "point_count"],
-        layout: {
-          "text-field": ["get", "point_count_abbreviated"],
-          "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
-          "text-size": 12
-        },
-        paint: { "text-color": "#ffffff" }
-      });
-      // single points
-      placesMap.addLayer({
-        id: "unclustered-point",
-        type: "circle",
-        source: "places",
-        filter: ["!has", "point_count"],
-        paint: {
-          "circle-color": "#7aa2ff",
-          "circle-radius": 6,
-          "circle-stroke-color": "#0b1020",
-          "circle-stroke-width": 2
-        }
-      });
+      // Add clustered source + layers
+      addOrUpdatePlacesSource(buildPlacesGeoJSON(state.items));
+      addPlacesLayers();
 
       // Cluster click expands
       placesMap.on("click", "clusters", (e) => {
@@ -478,9 +430,13 @@ function initOrUpdatePlacesMap() {
 
   // Update data if map already loaded
   if (placesMap && placesMap.isStyleLoaded()) {
-    const src = placesMap.getSource("places");
     const geo = buildPlacesGeoJSON(state.items);
-    if (src) src.setData(geo);
+    if (!placesMap.getSource("places")) {
+      addOrUpdatePlacesSource(geo);
+      addPlacesLayers();
+    } else {
+      placesMap.getSource("places").setData(geo);
+    }
     // Fit bounds to data when entering view
     try {
       if (geo.features && geo.features.length) {
@@ -495,6 +451,65 @@ function initOrUpdatePlacesMap() {
     } catch {}
     setTimeout(() => { try { placesMap.resize(); } catch {} }, 50);
   }
+}
+
+function addOrUpdatePlacesSource(geo) {
+  if (placesMap.getSource("places")) {
+    placesMap.getSource("places").setData(geo);
+    return;
+  }
+  placesMap.addSource("places", {
+    type: "geojson",
+    data: geo,
+    cluster: true,
+    clusterMaxZoom: 14,
+    clusterRadius: 50,
+  });
+}
+
+function addPlacesLayers() {
+  if (placesMap.getLayer("clusters")) return;
+  placesMap.addLayer({
+    id: "clusters",
+    type: "circle",
+    source: "places",
+    filter: ["has", "point_count"],
+    paint: {
+      "circle-color": [
+        "step",
+        ["get", "point_count"],
+        "#4f6bdc",
+        25, "#4279f4",
+        100, "#2c8cff"
+      ],
+      "circle-radius": ["step", ["get", "point_count"], 18, 25, 24, 100, 30],
+      "circle-stroke-color": "#0b1020",
+      "circle-stroke-width": 2
+    }
+  });
+  placesMap.addLayer({
+    id: "cluster-count",
+    type: "symbol",
+    source: "places",
+    filter: ["has", "point_count"],
+    layout: {
+      "text-field": ["get", "point_count_abbreviated"],
+      "text-size": 12
+    },
+    paint: { "text-color": "#ffffff" }
+  });
+  placesMap.addLayer({
+    id: "unclustered-point",
+    type: "circle",
+    source: "places",
+    filter: ["!has", "point_count"],
+    paint: {
+      "circle-color": "#7aa2ff",
+      "circle-radius": 6,
+      "circle-stroke-color": "#0b1020",
+      "circle-stroke-width": 2
+    }
+  });
 }
 
 function updateScanButton() {
