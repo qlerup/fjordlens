@@ -425,6 +425,11 @@ function initOrUpdatePlacesMap() {
       placesMap.on("mouseleave", "unclustered-point", () => (placesMap.getCanvas().style.cursor = ""));
 
       placesSourceReady = true;
+        // Render initial HTML markers and keep them updated
+        renderPlacesMarkers();
+        placesMap.on("moveend", renderPlacesMarkers);
+        placesMap.on("zoomend", renderPlacesMarkers);
+        placesMap.on("data", (e) => { if (e.sourceId === "places" && e.isSourceLoaded) renderPlacesMarkers(); });
     });
   }
 
@@ -449,7 +454,7 @@ function initOrUpdatePlacesMap() {
         placesMap.fitBounds(b, { padding: 40, duration: 400, maxZoom: 12 });
       }
     } catch {}
-    setTimeout(() => { try { placesMap.resize(); } catch {} }, 50);
+    setTimeout(() => { try { placesMap.resize(); renderPlacesMarkers(); } catch {} }, 50);
   }
 }
 
@@ -462,7 +467,8 @@ function addOrUpdatePlacesSource(geo) {
     type: "geojson",
     data: geo,
     cluster: true,
-    clusterMaxZoom: 14,
+    // Uncluster a bit tidligere, så punkter vises før man er HELT tæt på
+    clusterMaxZoom: 12,
     clusterRadius: 50,
   });
 }
@@ -505,11 +511,75 @@ function addPlacesLayers() {
     filter: ["!has", "point_count"],
     paint: {
       "circle-color": "#7aa2ff",
-      "circle-radius": 6,
+      "circle-radius": 7,
       "circle-stroke-color": "#0b1020",
       "circle-stroke-width": 2
     }
   });
+}
+
+// HTML-baserede markører (små thumbs + tæller), så de fremstår tydeligere
+let placesHtmlMarkers = [];
+function clearPlacesMarkers() {
+  for (const m of placesHtmlMarkers) try { m.remove(); } catch {}
+  placesHtmlMarkers = [];
+}
+
+function renderPlacesMarkers() {
+  if (!placesMap || !placesMap.isStyleLoaded() || !placesMap.getSource("places")) return;
+  clearPlacesMarkers();
+  const feats = placesMap.queryRenderedFeatures({ layers: ["clusters", "unclustered-point"] });
+  const src = placesMap.getSource("places");
+  for (const f of feats) {
+    const el = document.createElement("div");
+    if (f.properties && f.properties.cluster) {
+      // Cluster: hent ét leaf for thumbnail
+      const cid = f.properties.cluster_id;
+      try {
+        src.getClusterLeaves(cid, 1, 0, (err, leaves) => {
+          const leaf = !err && leaves && leaves[0] ? leaves[0] : null;
+          const thumb = leaf && leaf.properties ? (leaf.properties.thumb || null) : null;
+          el.className = "cluster-marker";
+          if (thumb) el.style.backgroundImage = `url(${thumb})`;
+          const badge = document.createElement("span");
+          badge.className = "cluster-badge";
+          badge.textContent = String(f.properties.point_count_abbreviated || f.properties.point_count || "");
+          el.appendChild(badge);
+          el.addEventListener("click", () => {
+            src.getClusterExpansionZoom(cid, (err2, zoom) => {
+              if (!err2) placesMap.easeTo({ center: f.geometry.coordinates, zoom });
+            });
+          });
+          const m = new maplibregl.Marker({ element: el, anchor: "center" })
+            .setLngLat(f.geometry.coordinates)
+            .addTo(placesMap);
+          placesHtmlMarkers.push(m);
+        });
+      } catch {}
+    } else {
+      const p = f.properties || {};
+      const thumb = p.thumb || null;
+      el.className = "photo-marker";
+      if (thumb) el.style.backgroundImage = `url(${thumb})`;
+      const m = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat(f.geometry.coordinates)
+        .addTo(placesMap);
+      el.addEventListener("click", () => {
+        // Vis popup som før
+        const html = `
+          <div class="places-map-popup">
+            ${thumb ? `<img class="thumb" src="${thumb}" alt="">` : ""}
+            <div class="meta">${p.name || ""}</div>
+            <div class="meta">${p.date ? new Date(p.date).toLocaleString("da-DK") : ""}</div>
+          </div>`;
+        new maplibregl.Popup({ offset: 12 })
+          .setLngLat(f.geometry.coordinates)
+          .setHTML(html)
+          .addTo(placesMap);
+      });
+      placesHtmlMarkers.push(m);
+    }
+  }
 }
 
 function updateScanButton() {
