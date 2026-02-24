@@ -255,7 +255,7 @@ body {
 .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9998; background: var(--panel); border-top:1px solid var(--border); box-shadow: 0 -12px 24px rgba(0,0,0,0.35); border-top-left-radius:16px; border-top-right-radius:16px; }
 .sheet.hidden { display:none; }
 .sheet-bar { width:48px; height:5px; background:#5b6a8d; border-radius:999px; margin:8px auto; opacity:0.7; }
-.sheet-content { max-height: 42vh; overflow: auto; padding: 8px 12px 14px; }
+.sheet-content { max-height: 18vh; overflow: auto; padding: 8px 12px 10px; }
 .sheet-grid { display:grid; grid-template-columns: repeat(auto-fill, 120px); gap:8px; }
 .sheet-grid img { width:120px; height:90px; object-fit:cover; border-radius:8px; border:1px solid var(--border); cursor:pointer; display:block; }
 .gallery-grid.folders-view {

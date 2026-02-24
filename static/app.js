@@ -379,8 +379,8 @@ function initOrUpdatePlacesMap() {
   if (!placesMap) {
     placesMap = new maplibregl.Map({
       container: els.placesMapEl,
-      // MapLibre demo style with working sprites/glyphs (no key required)
-      style: "https://demotiles.maplibre.org/style.json",
+      // Street/label style (Carto Positron GL) without API key
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
       center: [10, 56],
       zoom: 4,
       pitch: 0,
