@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -69,6 +70,57 @@ def log_event(event: str, **data: Any) -> None:
     global LOG_SEQ
     LOG_SEQ += 1
     LOG_BUFFER.append({"id": LOG_SEQ, "t": now_iso(), "event": event, **data})
+
+
+# --- 2FA trust helpers ---
+def _ua_fingerprint() -> str:
+    ua = (request.headers.get("User-Agent") or "").encode("utf-8", errors="ignore")
+    return hashlib.sha256(ua).hexdigest()[:16]
+
+
+def _sign_token(raw: str) -> str:
+    key = app.secret_key if isinstance(app.secret_key, (bytes, bytearray)) else str(app.secret_key).encode()
+    return hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _make_trust_cookie(user_id: int, days: int) -> tuple[str, int]:
+    if days <= 0:
+        return ("", 0)
+    now = int(time.time())
+    exp = now + days * 86400
+    fp = _ua_fingerprint()
+    payload = f"{user_id}.{exp}.{fp}"
+    sig = _sign_token(payload)
+    token = f"{payload}.{sig}"
+    return (token, exp - now)
+
+
+def _parse_trust_cookie(val: str) -> Optional[dict]:
+    try:
+        user_s, exp_s, fp, sig = val.split(".", 3)
+        raw = f"{user_s}.{exp_s}.{fp}"
+        if _sign_token(raw) != sig:
+            return None
+        exp = int(exp_s)
+        if exp < int(time.time()):
+            return None
+        return {"user_id": int(user_s), "exp": exp, "fp": fp}
+    except Exception:
+        return None
+
+
+def _trust_cookie_valid_for(user_id: int) -> bool:
+    val = request.cookies.get("fl_trust")
+    if not val:
+        return False
+    data = _parse_trust_cookie(val)
+    if not data:
+        return False
+    if data["user_id"] != int(user_id):
+        return False
+    if data.get("fp") != _ua_fingerprint():
+        return False
+    return True
 
 
 class User(UserMixin):
@@ -198,6 +250,7 @@ def init_db() -> None:
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
                 totp_setup_done INTEGER DEFAULT 0,
+                totp_remember_days INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
             );
             """
@@ -214,6 +267,10 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN totp_setup_done INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_remember_days INTEGER DEFAULT 0")
         except Exception:
             pass
 
@@ -265,9 +322,15 @@ def setup():
     if users_count() > 0:
         return redirect(url_for("login"))
     require_token = bool(_read_secret("SETUP_TOKEN"))
-    if request.method == "POST":
+            row = conn.execute("SELECT id, username, password_hash, is_admin, totp_enabled, totp_remember_days FROM users WHERE username=?", (username,)).fetchone()
         if require_token:
-            token = (request.form.get("token") or "").strip()
+            if int(row["totp_enabled"] or 0) == 1:
+                # If trusted-device cookie is valid, skip 2FA
+                if _trust_cookie_valid_for(int(row["id"])):
+                    user = _row_to_user(row)
+                    login_user(user)
+                    next_url = request.args.get("next") or url_for("index")
+                    return redirect(next_url)
             if token != _read_secret("SETUP_TOKEN"):
                 return render_template("setup.html", error="Forkert setup‑token", require_token=True)
         u = (request.form.get("username") or "").strip()
@@ -1716,8 +1779,11 @@ def login():
 @app.route("/logout")
 @login_required
 def logout():
+    resp = redirect(url_for("login"))
+    # Clear trusted-device cookie on explicit logout
+    resp.set_cookie("fl_trust", "", max_age=0)
     logout_user()
-    return redirect(url_for("login"))
+    return resp
 
 
 @app.route("/login/2fa", methods=["GET", "POST"])
@@ -1728,22 +1794,38 @@ def verify_2fa():
         return redirect(url_for("login"))
     if request.method == "POST":
         code = (request.form.get("code") or "").strip()
+        remember_flag = 1 if (request.form.get("remember") == "1") else 0
+        try:
+            remember_days = int(request.form.get("remember_days") or 0)
+        except ValueError:
+            remember_days = 0
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, is_admin, totp_secret FROM users WHERE id=?", (uid,)).fetchone()
+            row = conn.execute("SELECT id, username, is_admin, totp_secret, totp_remember_days FROM users WHERE id=?", (uid,)).fetchone()
         if not row or not row["totp_secret"]:
             return redirect(url_for("login"))
         totp = pyotp.TOTP(row["totp_secret"]) 
         if totp.verify(code, valid_window=1):
             user = _row_to_user(row)
+            resp = redirect(request.args.get("next") or url_for("index"))
             login_user(user)
             # mark that initial setup is completed
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_setup_done=1 WHERE id=?", (current_user.id,))
                 conn.commit()
             session.pop("2fa_user_id", None)
-            return redirect(request.args.get("next") or url_for("index"))
-        return render_template("2fa_verify.html", error="Ugyldig kode")
-    return render_template("2fa_verify.html")
+            # Set trusted-device cookie if requested
+            if remember_flag and remember_days > 0:
+                token, max_age = _make_trust_cookie(int(row["id"]), remember_days)
+                if token:
+                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax")
+            return resp
+        default_days = int(row["totp_remember_days"] or 0) if row else 0
+        return render_template("2fa_verify.html", error="Ugyldig kode", remember_days=default_days)
+    # GET
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT totp_remember_days FROM users WHERE id=?", (uid,)).fetchone()
+    default_days = (row["totp_remember_days"] if row else 0) or 0
+    return render_template("2fa_verify.html", remember_days=default_days)
 
 
 @app.route("/account/2fa", methods=["GET", "POST"])
@@ -1769,21 +1851,42 @@ def setup_2fa():
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
+        # Verify code for any sensitive change (disable/change remember)
+        code = (request.form.get("code") or "").strip()
+        if action in {"disable", "remember"}:
+            if not pyotp.TOTP(secret).verify(code, valid_window=1):
+                rdays = int(row["totp_remember_days"] or 0) if row else 0
+                return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
         if action == "disable":
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
                 conn.commit()
-            # Bemærk: totp_setup_done forbliver 1, så brugeren tvinges ikke igen
-            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True)
-        # enable flow
-        code = (request.form.get("code") or "").strip()
-        if pyotp.TOTP(secret).verify(code, valid_window=1):
+            rdays = int(row["totp_remember_days"] or 0) if row else 0
+            resp = render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True, remember_days=rdays)
+            return resp
+        if action == "remember":
+            try:
+                days = max(0, min(30, int(request.form.get("days") or 0)))
+            except ValueError:
+                days = 0
             with closing(get_conn()) as conn:
-                conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1 WHERE id=?", (current_user.id,))
+                conn.execute("UPDATE users SET totp_remember_days=? WHERE id=?", (days, current_user.id))
                 conn.commit()
-            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True)
-        return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode")
-    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"]) 
+            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], ok=True, remember_days=days)
+        # enable flow (also accept preferred remember days)
+        if pyotp.TOTP(secret).verify(code, valid_window=1):
+            try:
+                days = max(0, min(30, int(request.form.get("days") or 0)))
+            except ValueError:
+                days = 0
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1, totp_remember_days=? WHERE id=?", (days, current_user.id))
+                conn.commit()
+            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True, remember_days=days)
+        rdays = int(row["totp_remember_days"] or 0) if row else 0
+        return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+    rdays = int(row["totp_remember_days"] or 0) if row else 0
+    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], remember_days=rdays) 
 
 
 @app.route("/admin/users", methods=["GET", "POST"]) 

@@ -14,6 +14,19 @@
       <label for="code">6-cifret kode</label>
       <input id="code" name="code" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" placeholder="••••••">
     </div>
+    <div class="form-row">
+      <label for="remember_days" style="display:block;">Husk denne enhed</label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" name="remember" value="1"> Aktivér</label>
+        <select id="remember_days" name="remember_days" class="select">
+          <option value="0" {% if (remember_days or 0) == 0 %}selected{% endif %}>Hver gang</option>
+          <option value="1" {% if (remember_days or 0) == 1 %}selected{% endif %}>1 dag</option>
+          <option value="3" {% if (remember_days or 0) == 3 %}selected{% endif %}>3 dage</option>
+          <option value="5" {% if (remember_days or 0) == 5 %}selected{% endif %}>5 dage</option>
+          <option value="7" {% if (remember_days or 0) == 7 %}selected{% endif %}>7 dage</option>
+        </select>
+      </div>
+    </div>
     <div class="actions">
       <a class="mini-link" href="/login">Tilbage</a>
       <button class="btn primary" type="submit">Bekræft</button>

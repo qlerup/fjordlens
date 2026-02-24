@@ -11,9 +11,23 @@
     <h2 style="margin:0 0 10px;">To-faktor godkendelse</h2>
     {% if enabled %}
       <p>2FA er aktiveret for din konto.</p>
-      <form method="post" style="margin:10px 0;">
+      <form method="post" style="margin:10px 0; display:flex; gap:8px; align-items:center;">
+        <input type="hidden" name="action" value="remember">
+        <label for="remember_days" class="mini-label">Husk denne enhed</label>
+        <select id="remember_days" name="days" class="select">
+          <option value="0" {% if (remember_days or 0) == 0 %}selected{% endif %}>Hver gang</option>
+          <option value="1" {% if (remember_days or 0) == 1 %}selected{% endif %}>1 dag</option>
+          <option value="3" {% if (remember_days or 0) == 3 %}selected{% endif %}>3 dage</option>
+          <option value="5" {% if (remember_days or 0) == 5 %}selected{% endif %}>5 dage</option>
+          <option value="7" {% if (remember_days or 0) == 7 %}selected{% endif %}>7 dage</option>
+        </select>
+        <input name="code" placeholder="2FA kode" class="input-number" style="width:110px;" inputmode="numeric" pattern="\d{6}" maxlength="6" required>
+        <button class="btn" type="submit">Gem</button>
+      </form>
+      <form method="post" style="margin:10px 0; display:flex; gap:8px; align-items:center;">
         <input type="hidden" name="action" value="disable">
-        <button class="btn" type="submit">Deaktivér 2FA</button>
+        <input name="code" placeholder="2FA kode" class="input-number" style="width:110px;" inputmode="numeric" pattern="\d{6}" maxlength="6" required>
+        <button class="btn danger" type="submit">Deaktivér 2FA</button>
       </form>
     {% else %}
       <p>Scan QR-koden i din Authenticator-app, og indtast koden for at aktivere.</p>
@@ -23,8 +37,16 @@
       <p style="color:var(--muted);word-break:break-all;">Secret: {{ secret }}</p>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
       {% if ok %}<div class="status ok">2FA er nu slået til.</div>{% endif %}
-      <form id="setupForm" method="post" style="display:flex;gap:8px;">
+      <form id="setupForm" method="post" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <input id="setupCode" name="code" placeholder="6-cifret kode" required class="input-number" style="flex:1;" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"/>
+        <label for="remember_days_on_enable" class="mini-label">Husk i</label>
+        <select id="remember_days_on_enable" name="days" class="select">
+          <option value="0">Hver gang</option>
+          <option value="1">1 dag</option>
+          <option value="3">3 dage</option>
+          <option value="5">5 dage</option>
+          <option value="7">7 dage</option>
+        </select>
         <button class="btn primary">Aktivér</button>
       </form>
     {% endif %}

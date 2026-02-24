@@ -650,6 +650,15 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Luk sheet ved klik udenfor panelet
+document.addEventListener("click", (e) => {
+  const sheet = document.getElementById("clusterSheet");
+  if (!sheet || sheet.classList.contains("hidden")) return;
+  if (!sheet.contains(e.target)) {
+    sheet.classList.add("hidden");
+  }
+});
+
 async function pollScanStatus() {
   try {
     const res = await fetch("/api/scan/status");
