@@ -379,8 +379,8 @@ function initOrUpdatePlacesMap() {
   if (!placesMap) {
     placesMap = new maplibregl.Map({
       container: els.placesMapEl,
-      // OpenFreeMap style (OpenMapTiles + OSM attribution, no key required)
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      // MapLibre demo style with working sprites/glyphs (no key required)
+      style: "https://demotiles.maplibre.org/style.json",
       center: [10, 56],
       zoom: 4,
       pitch: 0,
