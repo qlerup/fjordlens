@@ -1796,13 +1796,8 @@ def verify_2fa():
         return redirect(url_for("login"))
     if request.method == "POST":
         code = (request.form.get("code") or "").strip()
-        remember_flag = 1 if (request.form.get("remember") == "1") else 0
-        try:
-            remember_days = int(request.form.get("remember_days") or 0)
-        except ValueError:
-            remember_days = 0
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, is_admin, totp_secret, totp_remember_days FROM users WHERE id=?", (uid,)).fetchone()
+            row = conn.execute("SELECT id, username, is_admin, totp_secret, totp_remember_days FROM users WHERE id= ?", (uid,)).fetchone()
         if not row or not row["totp_secret"]:
             return redirect(url_for("login"))
         totp = pyotp.TOTP(row["totp_secret"]) 
@@ -1815,19 +1810,16 @@ def verify_2fa():
                 conn.execute("UPDATE users SET totp_setup_done=1 WHERE id=?", (current_user.id,))
                 conn.commit()
             session.pop("2fa_user_id", None)
-            # Set trusted-device cookie if requested
-            if remember_flag and remember_days > 0:
-                token, max_age = _make_trust_cookie(int(row["id"]), remember_days)
+            # Set trusted-device cookie automatically if preference > 0
+            pref_days = int(row["totp_remember_days"] or 0) if row else 0
+            if pref_days > 0:
+                token, max_age = _make_trust_cookie(int(row["id"]), pref_days)
                 if token:
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax")
             return resp
-        default_days = int(row["totp_remember_days"] or 0) if row else 0
-        return render_template("2fa_verify.html", error="Ugyldig kode", remember_days=default_days)
+        return render_template("2fa_verify.html", error="Ugyldig kode")
     # GET
-    with closing(get_conn()) as conn:
-        row = conn.execute("SELECT totp_remember_days FROM users WHERE id=?", (uid,)).fetchone()
-    default_days = (row["totp_remember_days"] if row else 0) or 0
-    return render_template("2fa_verify.html", remember_days=default_days)
+    return render_template("2fa_verify.html")
 
 
 @app.route("/account/2fa", methods=["GET", "POST"])
