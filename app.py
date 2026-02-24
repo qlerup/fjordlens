@@ -1761,10 +1761,19 @@ def login():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, password_hash, is_admin, totp_enabled FROM users WHERE username=?", (username,)).fetchone()
+            row = conn.execute(
+                "SELECT id, username, password_hash, is_admin, totp_enabled, totp_remember_days FROM users WHERE username=?",
+                (username,),
+            ).fetchone()
         if row and check_password_hash(row["password_hash"], password):
             if int(row["totp_enabled"] or 0) == 1:
-                # 2FA required
+                # Skip 2FA if trusted cookie is valid
+                if _trust_cookie_valid_for(int(row["id"])):
+                    user = _row_to_user(row)
+                    login_user(user)
+                    next_url = request.args.get("next") or url_for("index")
+                    return redirect(next_url)
+                # Otherwise require 2FA
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
                 return redirect(url_for("verify_2fa", next=request.args.get("next")))
