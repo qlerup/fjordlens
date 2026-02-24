@@ -524,43 +524,21 @@ function addPlacesLayers() {
   });
 }
 
-// HTML-baserede markører (små thumbs + tæller), så de fremstår tydeligere
+// HTML-baserede markører (små thumbs + tæller) – deaktiveret for stabilitet.
+// Vi bruger i stedet MapLibres egne cluster/point-lag ovenfor.
 let placesHtmlMarkers = [];
 function clearPlacesMarkers() {
-  for (const m of placesHtmlMarkers) try { m.remove(); } catch {}
+  for (const m of placesHtmlMarkers) {
+    try { m.remove(); } catch {}
+  }
   placesHtmlMarkers = [];
 }
 
 function renderPlacesMarkers() {
-  if (!placesMap || !placesMap.isStyleLoaded() || !placesMap.getSource("places")) return;
-  clearPlacesMarkers();
-  const feats = placesMap.queryRenderedFeatures({ layers: ["clusters"] });
-      // Brug MapLibre's egne cluster-lag for stabilitet (ingen HTML overlays)
-      // Cluster: hent ét leaf for thumbnail
-      const cid = f.properties.cluster_id;
-      try {
-        src.getClusterLeaves(cid, 1, 0, (err, leaves) => {
-          const leaf = !err && leaves && leaves[0] ? leaves[0] : null;
-          const thumb = leaf && leaf.properties ? (leaf.properties.thumb || null) : null;
-          el.className = "cluster-marker";
-          if (thumb) el.style.backgroundImage = `url(${thumb})`;
-          const badge = document.createElement("span");
-          badge.className = "cluster-badge";
-          badge.textContent = String(f.properties.point_count_abbreviated || f.properties.point_count || "");
-          el.appendChild(badge);
-          el.addEventListener("click", () => {
-            openClusterSheet(cid);
-          });
-          const m = new maplibregl.Marker({ element: el, anchor: "center" })
-            .setLngLat(f.geometry.coordinates)
-            .addTo(placesMap);
-          placesHtmlMarkers.push(m);
-        });
-      } catch {}
-    }
-  }
+  // Behold funktionen som no-op for at undgå runtime-fejl.
+  // Cluster- og punktvisning håndteres af MapLibre-lagene.
+  return;
 }
-    setTimeout(() => { try { placesMap.resize(); } catch {} }, 50);
 function updateScanButton() {
   if (state.scanning) {
     els.scanBtn.textContent = "Stop scan";
