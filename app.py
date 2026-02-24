@@ -1815,7 +1815,7 @@ def verify_2fa():
             if pref_days > 0:
                 token, max_age = _make_trust_cookie(int(row["id"]), pref_days)
                 if token:
-                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax")
+                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
         return render_template("2fa_verify.html", error="Ugyldig kode")
     # GET
