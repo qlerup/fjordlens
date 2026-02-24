@@ -39,7 +39,9 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
 DB_PATH = DATA_DIR / "fjordlens.db"
 
-SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
+VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
+SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
@@ -710,6 +712,12 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         "modified_fs": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
     }
 
+    # For video files, we don't attempt EXIF; capture minimal metadata
+    if metadata["ext"] in VIDEO_EXTS:
+        metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
+        # Keep width/height unknown; no EXIF; no phash
+        return metadata
+
     exif_map: Dict[str, Any] = {}
     thumb_name = None
     checksum = None
@@ -1256,6 +1264,12 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
             d["original_url"] = None
     else:
         d["original_url"] = None
+    # Annotate media type
+    try:
+        ext = (d.get("ext") or "").lower()
+        d["is_video"] = ext in VIDEO_EXTS
+    except Exception:
+        d["is_video"] = False
     return d
 
 

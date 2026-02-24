@@ -55,6 +55,7 @@ const els = {
   // viewer
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
+  viewerVideo: document.getElementById("viewerVideo"),
   viewerPrev: document.getElementById("viewerPrev"),
   viewerNext: document.getElementById("viewerNext"),
   viewerClose: document.getElementById("viewerClose"),
@@ -197,10 +198,11 @@ function getSizeLabel(w, h) {
 function cardHTML(item) {
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
-    : `<div class="card-thumb placeholder">Ingen thumbnail</div>`;
+    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : 'Ingen thumbnail'}</div>`;
 
   const aiPills = (item.ai_tags || []).slice(0, 3).map(t => `<span class="pill">${t}</span>`).join("");
   const favPill = item.favorite ? `<span class="pill fav">Favorit</span>` : "";
+  const vidPill = item.is_video ? `<span class="pill">Video</span>` : "";
   const sizeLabel = getSizeLabel(item.width, item.height);
 
   return `
@@ -212,7 +214,7 @@ function cardHTML(item) {
         <span>${fmtBytes(item.file_size)}</span>
         <span>${sizeLabel}</span>
       </div>
-      <div class="pills">${aiPills}${favPill}</div>
+      <div class="pills">${aiPills}${vidPill}${favPill}</div>
     </div>
   `;
 }
@@ -319,21 +321,52 @@ function openViewer(index) {
   state.selectedIndex = index;
   const it = state.items[index];
   if (!it || !it.original_url) return;
-  if (!els.viewer || !els.viewerImg) return;
-  els.viewerImg.src = it.original_url;
+  if (!els.viewer) return;
+  // Toggle media elements
+  if (els.viewerImg) {
+    els.viewerImg.style.display = it.is_video ? 'none' : 'block';
+    if (!it.is_video) els.viewerImg.src = it.original_url;
+    if (it.is_video) els.viewerImg.removeAttribute('src');
+  }
+  if (els.viewerVideo) {
+    els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
+    try { els.viewerVideo.pause(); } catch(_) {}
+    if (it.is_video) {
+      els.viewerVideo.src = it.original_url;
+      try { els.viewerVideo.play().catch(()=>{}); } catch(_) {}
+    } else {
+      els.viewerVideo.removeAttribute('src');
+    }
+  }
   els.viewer.classList.remove("hidden");
 }
 function closeViewer() {
-  if (!els.viewer || !els.viewerImg) return;
+  if (!els.viewer) return;
   els.viewer.classList.add("hidden");
-  els.viewerImg.removeAttribute("src");
+  if (els.viewerImg) els.viewerImg.removeAttribute("src");
+  if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.removeAttribute('src'); }
 }
 function nextViewer(step=1) {
   if (state.selectedIndex < 0) return;
   const n = state.items.length;
   state.selectedIndex = (state.selectedIndex + step + n) % n;
   const it = state.items[state.selectedIndex];
-  if (it && it.original_url && els.viewerImg) els.viewerImg.src = it.original_url;
+  if (!it || !it.original_url) return;
+  if (it.is_video) {
+    if (els.viewerVideo) {
+      try { els.viewerVideo.pause(); } catch(_) {}
+      els.viewerVideo.style.display = 'block';
+      if (els.viewerImg) els.viewerImg.style.display = 'none';
+      els.viewerVideo.src = it.original_url;
+      try { els.viewerVideo.play().catch(()=>{}); } catch(_) {}
+    }
+  } else {
+    if (els.viewerImg) {
+      els.viewerImg.style.display = 'block';
+      els.viewerImg.src = it.original_url;
+    }
+    if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.style.display = 'none'; }
+  }
 }
 
 async function loadPhotos() {

@@ -211,10 +211,11 @@
     </aside>
   </div>
 
-  <!-- Image viewer modal -->
+  <!-- Media viewer modal -->
   <div id="viewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;">
     <button id="viewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);">⟨</button>
-    <img id="viewerImg" alt="" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);" />
+    <img id="viewerImg" alt="" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;" />
+    <video id="viewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
     <button id="viewerClose" class="btn" style="position:absolute;right:12px;top:12px;">Luk</button>
   </div>

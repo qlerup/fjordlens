@@ -7,27 +7,55 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body style="padding:16px;">
-  <h1>Brugere</h1>
+  <h1 style="margin:0 0 10px;">Brugere</h1>
   {% if msg %}<div class="status ok">{{ msg }}</div>{% endif %}
-  <form method="post" style="display:flex;gap:8px;align-items:center;margin:10px 0;">
-    <input name="username" placeholder="Brugernavn" required class="input-number" style="flex:1;">
-    <input name="password" placeholder="Adgangskode" required class="input-number" style="flex:1;">
-    <button class="btn primary">Opret</button>
-  </form>
-  <table style="width:100%;border-collapse:collapse;">
-    <thead><tr><th style="text-align:left;">ID</th><th>Bruger</th><th>Admin</th><th>2FA</th><th>Oprettet</th></tr></thead>
-    <tbody>
-      {% for u in users %}
-      <tr>
-        <td>{{ u.id }}</td>
-        <td>{{ u.username }}</td>
-        <td>{{ 'Ja' if u.is_admin else 'Nej' }}</td>
-        <td>{{ 'Aktiv' if u.totp_enabled else '—' }}</td>
-        <td>{{ u.created_at }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  
+
+  <div class="panel" style="margin-bottom:12px;">
+    <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <form method="post" style="display:flex;gap:8px;align-items:center;flex:1;">
+        <input name="username" placeholder="Brugernavn" required class="input-number" style="flex:1;">
+        <input name="password" placeholder="Adgangskode" required class="input-number" style="flex:1;">
+        <button class="btn primary">Opret</button>
+      </form>
+      <div class="mini-label" style="margin-left:auto;">I alt: <strong>{{ users|length }}</strong></div>
+    </div>
+  </div>
+
+  <div class="data-table">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Bruger</th>
+          <th>Rolle</th>
+          <th>2FA</th>
+          <th>Oprettet</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="muted">#{{ u.id }}</td>
+          <td><strong>{{ u.username }}</strong></td>
+          <td>
+            {% if u.is_admin %}
+              <span class="badge admin">Admin</span>
+            {% else %}
+              <span class="badge">Bruger</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.totp_enabled %}
+              <span class="badge twofa">2FA</span>
+            {% else %}
+              <span class="badge muted">—</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ u.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </body>
 </html>

@@ -486,6 +486,21 @@ body:not(.view-library) #statusBar { display: none !important; }
 .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab-panel.hidden { display: none; }
 
+/* Panels and data tables */
+.panel { border:1px solid var(--border); background: var(--panel); border-radius:12px; padding:12px; }
+.data-table { border:1px solid var(--border); background: var(--panel); border-radius:12px; overflow:hidden; }
+.data-table table { width:100%; border-collapse: collapse; }
+.data-table thead th { text-align:left; font-size:0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; padding:10px 12px; background: var(--panel-2); }
+.data-table tbody td { padding:12px; border-top:1px solid var(--border); }
+.data-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.data-table td.muted, .data-table th.muted { color: var(--muted); }
+
+/* Badges */
+.badge { display:inline-block; background: var(--panel-3); color: #dbe4f8; border:1px solid var(--border); border-radius:999px; padding:3px 8px; font-size:0.72rem; font-weight:600; line-height:1; }
+.badge.admin { border-color: rgba(91,140,255,0.45); background: rgba(91,140,255,0.14); }
+.badge.twofa { border-color: rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.14); color:#d1fae5; }
+.badge.muted { color: var(--muted); }
+
 /* Map attribution text styling: force black text for readability */
 #placesMap .maplibregl-ctrl-attribution,
 #placesMap .maplibregl-ctrl-attrib,
