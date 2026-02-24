@@ -393,7 +393,9 @@ function initOrUpdatePlacesMap() {
     placesMap.addControl(new maplibregl.NavigationControl({ showCompass: false }));
     placesMap.on("load", () => {
       // Add clustered source + layers
-      addOrUpdatePlacesSource(buildPlacesGeoJSON(state.items));
+      const geo0 = buildPlacesGeoJSON(state.items);
+      console.log("[Steder] init features:", geo0.features.length);
+      addOrUpdatePlacesSource(geo0);
       addPlacesLayers();
 
       // Cluster click expands
@@ -446,6 +448,17 @@ function initOrUpdatePlacesMap() {
       addPlacesLayers();
     } else {
       placesMap.getSource("places").setData(geo);
+    }
+    const banner = document.getElementById("placesBanner");
+    if (banner) {
+      const n = (geo.features && geo.features.length) || 0;
+      if (n === 0) {
+        banner.style.display = "block";
+        banner.textContent = "Ingen GPS-billeder fundet i visningen";
+      } else {
+        banner.style.display = "block";
+        banner.textContent = `GPS-billeder: ${n}`;
+      }
     }
     // Fit bounds to data when entering view
     try {
