@@ -84,6 +84,9 @@ let state = {
   logsAfter: 0,
 };
 
+// mark initial view for CSS targeting
+document.body.classList.add("view-library");
+
 // Map state for "Steder"
 let placesMap = null;
 let placesSourceReady = false;
@@ -835,6 +838,7 @@ function setView(view) {
   });
   // Toggle body class to drive CSS for Settings view
   document.body.classList.toggle("view-settings", view === "settings");
+  document.body.classList.toggle("view-library", view === "library");
   if (view === "settings") {
     // show logs panel, do not load photos
     renderGrid();
@@ -865,6 +869,20 @@ els.favoriteBtn.addEventListener("click", toggleFavorite);
 
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => setView(btn.dataset.view));
+});
+
+// Settings tabs switching
+document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    // activate button
+    document.querySelectorAll('#settingsPanel .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // show panel
+    document.querySelectorAll('#settingsPanel .tab-panel').forEach(p => {
+      p.classList.toggle('hidden', p.dataset.tabpanel !== tab);
+    });
+  });
 });
 
 // viewer events

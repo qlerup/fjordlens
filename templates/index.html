@@ -49,8 +49,7 @@
       <div class="sidebar-footer">
         <a href="/api/health" target="_blank" class="mini-link">API health</a>
         <a href="/api/filters" target="_blank" class="mini-link">Filtre</a>
-        <a href="/account/2fa" class="mini-link">Min 2FA</a>
-        <a href="/admin/users" class="mini-link">Brugere</a>
+        <!-- Flyttet ind under Indstillinger som faner -->
         <a href="/logout" class="mini-link">Log ud</a>
       </div>
     </aside>
@@ -116,41 +115,62 @@
           <h1>Indstillinger</h1>
           <p>Vedligeholdelse, scan og logs</p>
         </div>
-        <div class="sidebar-card" style="margin-bottom:12px;">
-          <div class="sidebar-card-title">Vedligeholdelse</div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button id="scanBtn" class="btn primary">Scan bibliotek</button>
-            <button id="rescanBtn" class="btn">Rescan metadata</button>
-            <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
-            <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
-            <button id="dupesBtn" class="btn">Find dupletter</button>
+        <nav class="tabs">
+          <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
+          <button class="tab-btn" data-tab="other">Andet</button>
+          <button class="tab-btn" data-tab="logs">Logs</button>
+          <button class="tab-btn" data-tab="users">Brugere</button>
+          <button class="tab-btn" data-tab="twofa">Min 2FA</button>
+        </nav>
+
+        <!-- Vedligeholdelse -->
+        <div class="tab-panel" data-tabpanel="maint">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">Vedligeholdelse</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button id="scanBtn" class="btn primary">Scan bibliotek</button>
+              <button id="rescanBtn" class="btn">Rescan metadata</button>
+              <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
+              <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+            </div>
           </div>
         </div>
 
-        <div class="sidebar-card" id="dupeCard" style="margin-bottom:12px;">
-          <div class="sidebar-card-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <span>Dupletter</span>
-            <label class="mini-label" for="dupeDist">Afstand</label>
-            <input id="dupeDist" type="number" min="0" max="20" value="5" class="input-number small" />
-            <label class="mini-label" for="dupeMin">Min gruppe</label>
-            <input id="dupeMin" type="number" min="2" max="10" value="2" class="input-number small" />
-            <button id="dupesRun" class="btn">Scan</button>
+        <!-- Andet (dupletter) -->
+        <div class="tab-panel hidden" data-tabpanel="other">
+          <div class="sidebar-card" id="dupeCard" style="margin-bottom:12px;">
+            <div class="sidebar-card-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span>Dupletter</span>
+              <label class="mini-label" for="dupeDist">Afstand</label>
+              <input id="dupeDist" type="number" min="0" max="20" value="5" class="input-number small" />
+              <label class="mini-label" for="dupeMin">Min gruppe</label>
+              <input id="dupeMin" type="number" min="2" max="10" value="2" class="input-number small" />
+              <button id="dupesRun" class="btn">Scan</button>
+            </div>
+            <section id="dupeStatus" class="status hidden"></section>
+            <div id="dupeResults" class="dupe-groups"></div>
           </div>
-          <section id="dupeStatus" class="status hidden"></section>
-          <div id="dupeResults" class="dupe-groups"></div>
         </div>
 
-        <!-- Logs vises også her ved at aktivere logsPanel sammen med Indstillinger -->
-      </section>
-
-      <!-- Separat logs-visning (for "Logs" fanen) -->
-      <section id="logsPanel" class="hidden">
-        <div class="status" style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
-          <strong>Logs:</strong>
-          <button id="logsStart" class="btn">Stop</button>
-          <button id="mainLogsClear" class="btn">Ryd</button>
+        <!-- Logs -->
+        <div class="tab-panel hidden" data-tabpanel="logs" id="logsPanel">
+          <div class="status" style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
+            <strong>Logs:</strong>
+            <button id="logsStart" class="btn">Stop</button>
+            <button id="mainLogsClear" class="btn">Ryd</button>
+          </div>
+          <pre id="mainLogs" class="raw-meta" style="height:60vh;"></pre>
         </div>
-        <pre id="mainLogs" class="raw-meta" style="height:60vh;"></pre>
+
+        <!-- Brugere (indlejret) -->
+        <div class="tab-panel hidden" data-tabpanel="users">
+          <iframe src="/admin/users" title="Brugere" style="width:100%;height:70vh;border:1px solid var(--border);border-radius:12px;background:var(--panel);"></iframe>
+        </div>
+
+        <!-- Min 2FA (indlejret) -->
+        <div class="tab-panel hidden" data-tabpanel="twofa">
+          <iframe src="/account/2fa" title="Min 2FA" style="width:100%;height:70vh;border:1px solid var(--border);border-radius:12px;background:var(--panel);"></iframe>
+        </div>
       </section>
     </main>
 
