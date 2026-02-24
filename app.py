@@ -1827,7 +1827,10 @@ def verify_2fa():
 def setup_2fa():
     # Generate secret if missing
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT totp_secret, totp_enabled FROM users WHERE id=?", (current_user.id,)).fetchone()
+        row = conn.execute(
+            "SELECT totp_secret, totp_enabled, totp_remember_days FROM users WHERE id=?",
+            (current_user.id,),
+        ).fetchone()
     secret = row["totp_secret"] if row else None
     if not secret:
         secret = pyotp.random_base32()
