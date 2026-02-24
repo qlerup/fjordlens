@@ -322,17 +322,10 @@ def setup():
     if users_count() > 0:
         return redirect(url_for("login"))
     require_token = bool(_read_secret("SETUP_TOKEN"))
-            row = conn.execute("SELECT id, username, password_hash, is_admin, totp_enabled, totp_remember_days FROM users WHERE username=?", (username,)).fetchone()
-        if require_token:
-            if int(row["totp_enabled"] or 0) == 1:
-                # If trusted-device cookie is valid, skip 2FA
-                if _trust_cookie_valid_for(int(row["id"])):
-                    user = _row_to_user(row)
-                    login_user(user)
-                    next_url = request.args.get("next") or url_for("index")
-                    return redirect(next_url)
-            if token != _read_secret("SETUP_TOKEN"):
-                return render_template("setup.html", error="Forkert setup‑token", require_token=True)
+    if request.method == "POST":
+        token = (request.form.get("token") or "").strip()
+        if require_token and token != _read_secret("SETUP_TOKEN"):
+            return render_template("setup.html", error="Forkert setup‑token", require_token=True)
         u = (request.form.get("username") or "").strip()
         p = request.form.get("password") or ""
         if not u or not p:
