@@ -383,6 +383,10 @@ function initOrUpdatePlacesMap() {
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: [10, 56],
       zoom: 4,
+      pitch: 0,
+      bearing: 0,
+      dragRotate: false,
+      pitchWithRotate: false,
       attributionControl: false,
     });
     // Add attribution including MapLibre (plus source attributions from the style)
