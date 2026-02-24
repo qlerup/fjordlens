@@ -535,9 +535,59 @@ function clearPlacesMarkers() {
 }
 
 function renderPlacesMarkers() {
-  // Behold funktionen som no-op for at undgå runtime-fejl.
-  // Cluster- og punktvisning håndteres af MapLibre-lagene.
-  return;
+  if (!placesMap || !placesMap.isStyleLoaded()) return;
+  const src = placesMap.getSource("places");
+  if (!src) return;
+  clearPlacesMarkers();
+
+  try {
+    const clusterFeats = placesMap.queryRenderedFeatures({ layers: ["clusters"] }) || [];
+    for (const f of clusterFeats) {
+      const cid = f && f.properties ? f.properties.cluster_id : null;
+      const coords = f && f.geometry && f.geometry.coordinates ? f.geometry.coordinates : null;
+      if (cid == null || !coords) continue;
+      try {
+        src.getClusterLeaves(cid, 1, 0, (err, leaves) => {
+          const el = document.createElement("div");
+          el.className = "cluster-marker";
+          if (!err && leaves && leaves[0] && leaves[0].properties) {
+            const thumb = leaves[0].properties.thumb || null;
+            if (thumb) el.style.backgroundImage = `url(${thumb})`;
+          }
+          const badge = document.createElement("span");
+          badge.className = "cluster-badge";
+          badge.textContent = String(f.properties.point_count_abbreviated || f.properties.point_count || "");
+          el.appendChild(badge);
+          el.addEventListener("click", () => openClusterSheet(cid));
+          const m = new maplibregl.Marker({ element: el, anchor: "center" })
+            .setLngLat(coords)
+            .addTo(placesMap);
+          placesHtmlMarkers.push(m);
+        });
+      } catch {}
+    }
+
+    // Unclustered points: show small photo markers using thumbs
+    const pointFeats = placesMap.queryRenderedFeatures({ layers: ["unclustered-point"] }) || [];
+    for (const f of pointFeats) {
+      const p = f.properties || {};
+      const coords = f && f.geometry && f.geometry.coordinates ? f.geometry.coordinates : null;
+      if (!coords) continue;
+      const el = document.createElement("div");
+      el.className = "photo-marker";
+      if (p.thumb) el.style.backgroundImage = `url(${p.thumb})`;
+      el.title = p.name || "";
+      el.addEventListener("click", () => {
+        const pid = typeof p.id === "string" ? parseInt(p.id, 10) : p.id;
+        const idx = state.items.findIndex(i => i.id === pid);
+        if (idx >= 0) openViewer(idx);
+      });
+      const m = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat(coords)
+        .addTo(placesMap);
+      placesHtmlMarkers.push(m);
+    }
+  } catch {}
 }
 function updateScanButton() {
   if (state.scanning) {
