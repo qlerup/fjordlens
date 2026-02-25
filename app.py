@@ -59,14 +59,6 @@ app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
-
-@app.before_first_request
-def _bootstrap_db_once():
-    try:
-        init_db()
-    except Exception:
-        pass
-
 # Global scan control
 scan_stop_event = threading.Event()
 
