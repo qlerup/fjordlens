@@ -1851,18 +1851,23 @@ def login():
         password = request.form.get("password") or ""
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, password_hash, is_admin, role, totp_enabled, totp_remember_days FROM users WHERE username=?",
+                "SELECT id, username, password_hash, is_admin, role, totp_enabled, totp_secret, totp_setup_done, totp_remember_days FROM users WHERE username=?",
                 (username,),
             ).fetchone()
         if row and check_password_hash(row["password_hash"], password):
             if int(row["totp_enabled"] or 0) == 1:
-                # Skip 2FA if trusted cookie is valid
+                # If 2FA is enabled but not set up yet, send to setup
+                setup_done = int(row.get("totp_setup_done") or 0) if hasattr(row, "keys") else int(row["totp_setup_done"] or 0)
+                if not row.get("totp_secret") or setup_done == 0:
+                    user = _row_to_user(row)
+                    login_user(user)
+                    return redirect(url_for("setup_2fa"))
+                # Otherwise require 2FA unless trusted cookie is valid
                 if _trust_cookie_valid_for(int(row["id"])):
                     user = _row_to_user(row)
                     login_user(user)
                     next_url = request.args.get("next") or url_for("index")
                     return redirect(next_url)
-                # Otherwise require 2FA
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
                 return redirect(url_for("verify_2fa", next=request.args.get("next")))
