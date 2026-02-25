@@ -1853,8 +1853,13 @@ def login():
         if row and check_password_hash(row["password_hash"], password):
             if int(row["totp_enabled"] or 0) == 1:
                 # If 2FA is enabled but not set up yet, send to setup
-                setup_done = int(row.get("totp_setup_done") or 0) if hasattr(row, "keys") else int(row["totp_setup_done"] or 0)
-                if not row.get("totp_secret") or setup_done == 0:
+                try:
+                    keys = set(row.keys())
+                except Exception:
+                    keys = set()
+                setup_done = int(row["totp_setup_done"] or 0) if ("totp_setup_done" in keys) else 0
+                totp_secret = row["totp_secret"] if ("totp_secret" in keys) else None
+                if not totp_secret or setup_done == 0:
                     user = _row_to_user(row)
                     login_user(user)
                     return redirect(url_for("setup_2fa"))
