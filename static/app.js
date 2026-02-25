@@ -7,6 +7,8 @@ const els = {
   rethumbBtn: document.getElementById("rethumbBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
   aiIngestBtn: document.getElementById("aiIngestBtn"),
+  aiStopBtn: document.getElementById("aiStopBtn"),
+  aiStatus: document.getElementById("aiStatus"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -905,8 +907,36 @@ els.aiIngestBtn && els.aiIngestBtn.addEventListener("click", async () => {
       return;
     }
     showStatus("AI‑indeksering er startet i baggrunden.", "ok");
+    pollAiStatus();
   } catch { showStatus("Fejl ved start af AI‑indeksering.", "err"); }
 });
+
+els.aiStopBtn && els.aiStopBtn.addEventListener('click', async () => {
+  try { await fetch('/api/ai/stop', { method: 'POST' }); pollAiStatus(); } catch {}
+});
+
+async function pollAiStatus() {
+  try {
+    const r = await fetch('/api/ai/status');
+    const s = await r.json();
+    if (els.aiStatus) {
+      if (!s || !s.ok) { els.aiStatus.textContent = 'AI: —'; }
+      else {
+        const run = s.running ? 'kører' : 'stoppet';
+        els.aiStatus.textContent = `AI: ${run} · embedded ${s.embedded||0}/${s.total||0} · fejl ${s.failed||0}`;
+      }
+    }
+  } catch { if (els.aiStatus) els.aiStatus.textContent = 'AI: —'; }
+  // Poll mens der kører noget
+  try {
+    const r2 = await fetch('/api/ai/status');
+    const s2 = await r2.json();
+    if (s2 && s2.running) setTimeout(pollAiStatus, 1200);
+  } catch {}
+}
+
+// Start med at vise status hvis noget kører allerede
+pollAiStatus();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");

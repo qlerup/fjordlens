@@ -1785,14 +1785,15 @@ def api_rethumb_status():
 # --- AI: embeddings + search ---
 ai_thread = None
 ai_running = False
+ai_counts: Dict[str, int] = {"embedded": 0, "failed": 0, "total": 0}
+last_ai_result: Optional[Dict[str, Any]] = None
 
 
 def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
-    global ai_running
+    global ai_running, ai_counts, last_ai_result
     ai_running = True
-    ok = 0
-    fail = 0
-    total = 0
+    ai_counts = {"embedded": 0, "failed": 0, "total": 0}
+    log_event("ai_embed_start")
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT id, rel_path FROM photos WHERE (embedding_json IS NULL OR embedding_json = '')").fetchall()
     for row in rows:
@@ -1801,7 +1802,7 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
         pid = int(row["id"])
         rel = row["rel_path"]
         p = PHOTO_DIR / rel
-        total += 1
+        ai_counts["total"] += 1
         try:
             emb = _ai_embed_image_path(p)
             if emb:
@@ -1828,13 +1829,18 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
                             conn.commit()
                     except Exception:
                         pass
-                ok += 1
+                ai_counts["embedded"] += 1
+                log_event("ai_embed_ok", rel_path=rel)
             else:
-                fail += 1
+                ai_counts["failed"] += 1
+                log_event("ai_embed_fail", rel_path=rel)
         except Exception:
-            fail += 1
+            ai_counts["failed"] += 1
+            log_event("ai_embed_fail", rel_path=rel)
     ai_running = False
-    return {"ok": True, "embedded": ok, "failed": fail, "total": total}
+    last_ai_result = {"ok": True, **ai_counts}
+    log_event("ai_embed_done", **ai_counts)
+    return last_ai_result
 
 
 @app.route("/api/ai/ingest", methods=["POST"])
@@ -1848,6 +1854,22 @@ def api_ai_ingest():
     ai_thread = threading.Thread(target=run, daemon=True)
     ai_thread.start()
     return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/ai/stop", methods=["POST"])
+def api_ai_stop():
+    if not ai_running:
+        return jsonify({"ok": True, "running": False})
+    scan_stop_event.set()
+    return jsonify({"ok": True, "running": True, "stopping": True})
+
+
+@app.route("/api/ai/status")
+def api_ai_status():
+    resp: Dict[str, Any] = {"ok": True, "running": ai_running, **ai_counts}
+    if not ai_running and last_ai_result:
+        resp["last"] = last_ai_result
+    return jsonify(resp)
 
 
 @app.route("/api/ai/search")
