@@ -122,25 +122,21 @@ def _trust_cookie_valid_for(user_id: int) -> bool:
         return False
     if data.get("fp") != _ua_fingerprint():
         return False
-                    "SELECT id, username, password_hash, is_admin, role, totp_enabled, totp_secret, totp_setup_done, totp_remember_days FROM users WHERE username= ?",
+    return True
 
 
 class User(UserMixin):
-                if int(row["totp_enabled"] or 0) == 1:
-                    # If 2FA is enabled but user has not completed setup yet, log in and send to setup
-                    if not row.get("totp_secret") or int(row.get("totp_setup_done") or 0) == 0:
-                        user = _row_to_user(row)
-                        login_user(user)
-                        return redirect(url_for("setup_2fa"))
-                    # Otherwise enforce verification unless trusted device exists
-                    if _trust_cookie_valid_for(int(row["id"])):
-                        user = _row_to_user(row)
-                        login_user(user)
-                        next_url = request.args.get("next") or url_for("index")
-                        return redirect(next_url)
-                    from flask import session
-                    session["2fa_user_id"] = int(row["id"])
-                    return redirect(url_for("verify_2fa", next=request.args.get("next")))
+    def __init__(self, id: int, username: str, role: Optional[str] = None, is_admin_fallback: Optional[bool] = None):
+        self.id = str(id)
+        self.username = username
+        role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
+        if role_norm not in {"admin", "manager", "user"}:
+            role_norm = "user"
+        self.role = role_norm
+
+    @property
+    def is_admin(self) -> bool:
+        return (getattr(self, "role", "user") == "admin")
 
     @property
     def is_manager(self) -> bool:
