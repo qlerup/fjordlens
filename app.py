@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for
+from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 )
@@ -1961,7 +1961,9 @@ def setup_2fa():
                 conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
                 conn.commit()
             rdays = int(row["totp_remember_days"] or 0) if row else 0
-            resp = render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True, remember_days=rdays)
+            # Clear trusted-device cookie when disabling 2FA
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True, remember_days=rdays))
+            resp.set_cookie("fl_trust", "", max_age=0)
             return resp
         if action == "remember":
             try:
@@ -1971,7 +1973,15 @@ def setup_2fa():
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_remember_days=? WHERE id=?", (days, current_user.id))
                 conn.commit()
-            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], ok=True, remember_days=days)
+            # Set/refresh trusted-device cookie immediately after successful verification
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], ok=True, remember_days=days))
+            if days > 0:
+                token, max_age = _make_trust_cookie(int(current_user.id), days)
+                if token:
+                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
+            else:
+                resp.set_cookie("fl_trust", "", max_age=0)
+            return resp
         # enable flow (also accept preferred remember days)
         if pyotp.TOTP(secret).verify(code, valid_window=1):
             try:
@@ -1981,7 +1991,12 @@ def setup_2fa():
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1, totp_remember_days=? WHERE id=?", (days, current_user.id))
                 conn.commit()
-            return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True, remember_days=days)
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True, remember_days=days))
+            if days > 0:
+                token, max_age = _make_trust_cookie(int(current_user.id), days)
+                if token:
+                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
+            return resp
         rdays = int(row["totp_remember_days"] or 0) if row else 0
         return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
     rdays = int(row["totp_remember_days"] or 0) if row else 0
