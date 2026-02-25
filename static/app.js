@@ -332,15 +332,6 @@ function openViewer(index) {
   }
   if (els.viewerVideo) {
     els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
-      if (state.ai && state.view === "library" && state.q) {
-        const res = await fetch(`/api/ai/search?${new URLSearchParams({ q: state.q }).toString()}`);
-        const data = await res.json();
-        state.items = data.items || [];
-      } else {
-        const res = await fetch(`/api/photos?${qs.toString()}`);
-        const data = await res.json();
-        state.items = data.items || [];
-      }
     try { els.viewerVideo.pause(); } catch(_) {}
     if (it.is_video) {
       els.viewerVideo.src = it.original_url;
@@ -353,24 +344,6 @@ function openViewer(index) {
 }
 function closeViewer() {
   if (!els.viewer) return;
-    // AI toggle
-    els.aiToggle && els.aiToggle.addEventListener("click", () => {
-      state.ai = !state.ai;
-      els.aiToggle.classList.toggle("active", state.ai);
-      loadPhotos();
-    });
-    // Find similar
-    els.similarBtn && els.similarBtn.addEventListener("click", async () => {
-      if (!state.selectedId) return;
-      const res = await fetch(`/api/photos/${state.selectedId}/similar`);
-      const data = await res.json();
-      if (data && data.items) {
-        state.items = data.items;
-        state.view = "library";
-        document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
-        renderGrid();
-      }
-    });
   els.viewer.classList.add("hidden");
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
   if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.removeAttribute('src'); }
