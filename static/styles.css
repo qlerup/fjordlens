@@ -20,6 +20,10 @@ body {
   color: var(--text);
 }
 
+/* Drawer backdrop (ensure hidden by default on all viewports) */
+.drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; }
+body.drawer-open .drawer-backdrop { display: block; }
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -467,8 +471,7 @@ body {
     z-index: 10000;
   }
   body.drawer-open .sidebar { transform: translateX(0); box-shadow: 8px 0 24px rgba(0,0,0,0.45); }
-  .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; display: none; }
-  body.drawer-open .drawer-backdrop { display: block; }
+  /* backdrop rules moved to global section above */
 
   .topbar { flex-wrap: wrap; }
   .menu-btn { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; }

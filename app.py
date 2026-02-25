@@ -108,6 +108,53 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     return None
 
 
+# Zero-shot labels (initial simple vocabulary; can expand/customize later)
+AI_LABELS: list[str] = [
+    "person", "man", "woman", "child", "baby",
+    "dog", "cat", "bird", "horse",
+    "car", "bicycle", "motorcycle", "bus", "train", "boat", "airplane",
+    "tree", "flower", "sky", "clouds", "sunset", "beach", "sea", "mountain", "snow", "forest", "city", "building", "house", "road", "street", "lake", "river",
+    "food", "cake", "pizza", "drink", "coffee", "beer", "wine",
+    "phone", "laptop", "computer", "keyboard", "book", "document",
+    "lamp", "chair", "table", "bed", "sofa",
+]
+_LABEL_VECS: Optional[list[list[float]]] = None
+
+
+def _ensure_label_vecs() -> list[list[float]]:
+    global _LABEL_VECS
+    if _LABEL_VECS is not None:
+        return _LABEL_VECS
+    vecs: list[list[float]] = []
+    for t in AI_LABELS:
+        v = _ai_embed_text(t)
+        if v:
+            vecs.append(v)
+        else:
+            vecs.append([0.0])
+    _LABEL_VECS = vecs
+    return vecs
+
+
+def _classify_labels(img_vec: list[float], top_k: int = 5, thr: float = 0.24) -> list[str]:
+    try:
+        label_vecs = _ensure_label_vecs()
+        scores = []
+        for idx, lv in enumerate(label_vecs):
+            sc = _cosine(img_vec, lv)
+            scores.append((sc, idx))
+        scores.sort(key=lambda x: x[0], reverse=True)
+        out: list[str] = []
+        for sc, idx in scores[: top_k * 2]:  # check a bit wider then filter by thr
+            if sc >= thr:
+                out.append(AI_LABELS[idx])
+            if len(out) >= top_k:
+                break
+        return out
+    except Exception:
+        return []
+
+
 # --- 2FA trust helpers ---
 def _ua_fingerprint() -> str:
     ua = (request.headers.get("User-Agent") or "").encode("utf-8", errors="ignore")
@@ -1761,6 +1808,26 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
                 with closing(get_conn()) as conn:
                     conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), pid))
                     conn.commit()
+                # Derive simple zero-shot tags via CLIP
+                try:
+                    tags = _classify_labels(emb)
+                except Exception:
+                    tags = []
+                if tags:
+                    try:
+                        with closing(get_conn()) as conn:
+                            cur = conn.execute("SELECT ai_tags FROM photos WHERE id=?", (pid,)).fetchone()
+                            prev = []
+                            if cur and cur["ai_tags"]:
+                                try:
+                                    prev = json.loads(cur["ai_tags"]) or []
+                                except Exception:
+                                    prev = []
+                            merged = sorted({*(prev or []), *tags})
+                            conn.execute("UPDATE photos SET ai_tags=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), pid))
+                            conn.commit()
+                    except Exception:
+                        pass
                 ok += 1
             else:
                 fail += 1
@@ -1841,6 +1908,38 @@ def api_similar(photo_id: int):
     scored.sort(key=lambda x: x[0], reverse=True)
     items = [row_to_public(r) for (s, r) in scored[:limit] if s > -0.5]
     return jsonify({"items": items, "count": len(items)})
+
+
+@app.route("/api/photos/<int:photo_id>/ai-tags", methods=["POST"])
+def api_ai_tags(photo_id: int):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, rel_path, embedding_json, ai_tags FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    try:
+        emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+        if not emb:
+            p = PHOTO_DIR / row["rel_path"]
+            emb = _ai_embed_image_path(p)
+            if not emb:
+                return jsonify({"ok": False, "error": "embed_failed"}), 500
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), photo_id))
+                conn.commit()
+        tags = _classify_labels(emb)
+        with closing(get_conn()) as conn:
+            prev = []
+            if row["ai_tags"]:
+                try:
+                    prev = json.loads(row["ai_tags"]) or []
+                except Exception:
+                    prev = []
+            merged = sorted({*(prev or []), *(tags or [])})
+            conn.execute("UPDATE photos SET ai_tags=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), photo_id))
+            conn.commit()
+        return jsonify({"ok": True, "tags": merged})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 def clear_index() -> Dict[str, Any]:
