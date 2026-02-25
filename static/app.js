@@ -275,9 +275,6 @@ function renderGrid() {
     state.selectedId = null;
     setDetail(null);
   }
-      similarBtn: document.getElementById("similarBtn"),
-      aiToggle: document.getElementById("aiToggle"),
-
   renderStats();
 }
 
