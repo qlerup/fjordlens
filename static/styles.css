@@ -477,11 +477,14 @@ body {
 }
 
 /* Hide non-relevant chrome when viewing Settings */
-body.view-settings .topbar,
 body.view-settings .content-header,
 body.view-settings #statusBar,
 body.view-settings #emptyState,
 body.view-settings .gallery-grid { display: none !important; }
+
+/* In Settings, keep the topbar (for burger), but hide search/sort */
+body.view-settings .topbar .search-wrap,
+body.view-settings .topbar .select { display: none !important; }
 
 /* Hide status bar on all non-library views */
 body:not(.view-library) #statusBar { display: none !important; }

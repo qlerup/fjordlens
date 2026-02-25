@@ -334,11 +334,11 @@ def enforce_login_for_app():
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
         return redirect(url_for("login", next=request.path))
-    # Enforce initial 2FA setup: if user has never completed setup, force /account/2fa
+    # Enforce initial 2FA setup only when 2FA is enabled but not completed
     try:
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT totp_setup_done FROM users WHERE id=?", (current_user.id,)).fetchone()
-        if row and int(row["totp_setup_done"] or 0) == 0 and request.endpoint not in {"setup_2fa", "logout", "static"}:
+            row = conn.execute("SELECT totp_enabled, totp_setup_done FROM users WHERE id= ?", (current_user.id,)).fetchone()
+        if row and int(row["totp_enabled"] or 0) == 1 and int(row["totp_setup_done"] or 0) == 0 and request.endpoint not in {"setup_2fa", "logout", "static"}:
             return redirect(url_for("setup_2fa"))
     except Exception:
         pass
