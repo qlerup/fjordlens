@@ -7,9 +7,18 @@ services:
     environment:
       PHOTO_DIR: /photos
       DATA_DIR: /data
+      AI_URL: http://fjordlens-ai:8000
       TZ: ${TZ:-Europe/Copenhagen}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - "${PHOTO_DIR:-/volume1/photos}:/photos:ro"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
+    restart: unless-stopped
+
+  fjordlens-ai:
+    build: ./ai_service
+    container_name: fjordlens-ai
+    environment:
+      CLIP_MODEL: ViT-B-32
+      CLIP_PRETRAINED: openai
     restart: unless-stopped

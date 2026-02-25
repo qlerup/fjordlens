@@ -60,6 +60,7 @@
         <div class="search-wrap">
           <input id="searchInput" type="text" placeholder="Søg på dansk: strand, bil, skov, kamera, dato, filnavn...">
         </div>
+        <button id="aiToggle" class="btn" title="AI-søgning">AI</button>
         <select id="sortSelect" class="select">
           <option value="date_desc">Nyeste først</option>
           <option value="date_asc">Ældste først</option>
@@ -133,6 +134,7 @@
               <button id="rescanBtn" class="btn">Rescan metadata</button>
               <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+              <button id="aiIngestBtn" class="btn">Byg AI‑embeddings</button>
             </div>
           </div>
         </div>
@@ -188,6 +190,7 @@
         <div class="detail-header">
           <h3 id="detailName">-</h3>
           <button id="favoriteBtn" class="icon-btn" title="Favorit">☆</button>
+          <button id="similarBtn" class="btn" title="Find lignende">Lignende</button>
         </div>
 
         <div class="detail-path" id="detailPath">-</div>

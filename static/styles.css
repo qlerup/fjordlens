@@ -124,6 +124,7 @@ body {
   align-items: center;
   margin-bottom: 14px;
 }
+.topbar .btn.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91,140,255,0.12); }
 .menu-btn { display: none; }
 .search-wrap { flex: 1; }
 .search-wrap input, .select {

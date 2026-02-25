@@ -38,6 +38,7 @@ PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
 DB_PATH = DATA_DIR / "fjordlens.db"
+AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -72,6 +73,39 @@ def log_event(event: str, **data: Any) -> None:
     global LOG_SEQ
     LOG_SEQ += 1
     LOG_BUFFER.append({"id": LOG_SEQ, "t": now_iso(), "event": event, **data})
+
+
+# --- AI helpers (CLIP service) ---
+def _ai_health() -> dict:
+    try:
+        r = requests.get(f"{AI_URL}/health", timeout=5)
+        if r.ok:
+            return r.json()
+    except Exception:
+        pass
+    return {"ok": False}
+
+
+def _ai_embed_text(text: str) -> Optional[list[float]]:
+    try:
+        r = requests.post(f"{AI_URL}/embed/text", json={"text": text}, timeout=20)
+        if r.ok:
+            return r.json().get("embedding")
+    except Exception:
+        pass
+    return None
+
+
+def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
+    try:
+        with path.open("rb") as f:
+            files = {"file": (path.name, f, "image/jpeg")}
+            r = requests.post(f"{AI_URL}/embed/image", files=files, timeout=30)
+        if r.ok:
+            return r.json().get("embedding")
+    except Exception:
+        pass
+    return None
 
 
 # --- 2FA trust helpers ---
@@ -1323,6 +1357,19 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     return d
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    try:
+        import math
+        if not a or not b:
+            return -1.0
+        s = sum(x*y for x, y in zip(a, b))
+        na = math.sqrt(sum(x*x for x in a)) or 1.0
+        nb = math.sqrt(sum(y*y for y in b)) or 1.0
+        return s / (na * nb)
+    except Exception:
+        return -1.0
+
+
 DANISH_SYNONYMS = {
     "strand": {"strand", "beach", "hav", "kyst"},
     "hav": {"hav", "sea", "ocean", "strand", "kyst"},
@@ -1554,6 +1601,7 @@ def api_health():
         "photo_dir_exists": PHOTO_DIR.exists(),
         "data_dir": str(DATA_DIR),
         "db_path": str(DB_PATH),
+        "ai": _ai_health(),
     })
 
 
@@ -1685,6 +1733,114 @@ def api_rethumb_status():
     if not running and last_rethumb_result is not None:
         resp["result"] = last_rethumb_result
     return jsonify(resp)
+
+
+# --- AI: embeddings + search ---
+ai_thread = None
+ai_running = False
+
+
+def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
+    global ai_running
+    ai_running = True
+    ok = 0
+    fail = 0
+    total = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT id, rel_path FROM photos WHERE (embedding_json IS NULL OR embedding_json = '')").fetchall()
+    for row in rows:
+        if stop_event and stop_event.is_set():
+            break
+        pid = int(row["id"])
+        rel = row["rel_path"]
+        p = PHOTO_DIR / rel
+        total += 1
+        try:
+            emb = _ai_embed_image_path(p)
+            if emb:
+                with closing(get_conn()) as conn:
+                    conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), pid))
+                    conn.commit()
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+    ai_running = False
+    return {"ok": True, "embedded": ok, "failed": fail, "total": total}
+
+
+@app.route("/api/ai/ingest", methods=["POST"])
+def api_ai_ingest():
+    global ai_thread
+    if ai_thread and ai_thread.is_alive():
+        return jsonify({"ok": False, "error": "AI ingest already running"}), 409
+    scan_stop_event.clear()
+    def run():
+        _embed_missing_photos(stop_event=scan_stop_event)
+    ai_thread = threading.Thread(target=run, daemon=True)
+    ai_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/ai/search")
+def api_ai_search():
+    q = (request.args.get("q") or "").strip()
+    limit = max(1, min(200, int(request.args.get("limit", "60"))))
+    if not q:
+        return jsonify({"items": [], "count": 0})
+    vec = _ai_embed_text(q)
+    if not vec:
+        return jsonify({"items": [], "count": 0, "error": "embed_failed"})
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM photos WHERE embedding_json IS NOT NULL AND embedding_json != ''").fetchall()
+    scored = []
+    for r in rows:
+        try:
+            emb = json.loads(r["embedding_json"]) if r["embedding_json"] else None
+            sc = _cosine(vec, emb) if emb else -1.0
+            scored.append((sc, r))
+        except Exception:
+            continue
+    scored.sort(key=lambda x: x[0], reverse=True)
+    items = [row_to_public(r) for (s, r) in scored[:limit] if s > -0.5]
+    return jsonify({"items": items, "count": len(items), "q": q})
+
+
+@app.route("/api/photos/<int:photo_id>/similar")
+def api_similar(photo_id: int):
+    limit = max(1, min(200, int(request.args.get("limit", "60"))))
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    emb = None
+    try:
+        emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+    except Exception:
+        emb = None
+    if not emb:
+        # compute on the fly
+        p = PHOTO_DIR / row["rel_path"]
+        emb = _ai_embed_image_path(p)
+        if not emb:
+            return jsonify({"ok": False, "error": "embed_failed"}), 500
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), photo_id))
+            conn.commit()
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM photos WHERE embedding_json IS NOT NULL AND embedding_json != '' AND id<>?", (photo_id,)).fetchall()
+    scored = []
+    for r in rows:
+        try:
+            e2 = json.loads(r["embedding_json"]) if r["embedding_json"] else None
+            s = _cosine(emb, e2) if e2 else -1.0
+            scored.append((s, r))
+        except Exception:
+            continue
+    scored.sort(key=lambda x: x[0], reverse=True)
+    items = [row_to_public(r) for (s, r) in scored[:limit] if s > -0.5]
+    return jsonify({"items": items, "count": len(items)})
 
 
 def clear_index() -> Dict[str, Any]:
