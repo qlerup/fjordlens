@@ -59,6 +59,14 @@ app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
+
+@app.before_first_request
+def _bootstrap_db_once():
+    try:
+        init_db()
+    except Exception:
+        pass
+
 # Global scan control
 scan_stop_event = threading.Event()
 
@@ -126,23 +134,50 @@ def _trust_cookie_valid_for(user_id: int) -> bool:
 
 
 class User(UserMixin):
-    def __init__(self, id: int, username: str, is_admin: bool):
+    def __init__(self, id: int, username: str, role: Optional[str] = None, is_admin_fallback: Optional[bool] = None):
         self.id = str(id)
         self.username = username
-        self.is_admin = is_admin
+        role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
+        if role_norm not in {"admin", "manager", "user"}:
+            role_norm = "user"
+        self.role = role_norm
+
+    @property
+    def is_admin(self) -> bool:
+        return (getattr(self, "role", "user") == "admin")
+
+    @property
+    def is_manager(self) -> bool:
+        return (getattr(self, "role", "user") == "manager")
+
+    def can_manage_users(self) -> bool:
+        return self.is_admin
+
+    def can_maintain(self) -> bool:
+        return self.is_admin or self.is_manager
 
 
 def _row_to_user(row: sqlite3.Row) -> Optional[User]:
     if not row:
         return None
-    return User(int(row["id"]), row["username"], bool(row["is_admin"]))
+    role = None
+    try:
+        role = row["role"] if "role" in row.keys() else None
+    except Exception:
+        role = None
+    is_admin_fallback = False
+    try:
+        is_admin_fallback = bool(row["is_admin"]) if "is_admin" in row.keys() else False
+    except Exception:
+        is_admin_fallback = False
+    return User(int(row["id"]), row["username"], role, is_admin_fallback)
 
 
 @login_manager.user_loader
 def load_user(user_id: str) -> Optional[User]:
     try:
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, is_admin FROM users WHERE id=?", (user_id,)).fetchone()
+            row = conn.execute("SELECT id, username, is_admin, role FROM users WHERE id= ?", (user_id,)).fetchone()
         return _row_to_user(row)
     except Exception:
         return None
@@ -249,6 +284,7 @@ def init_db() -> None:
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 1,
+                role TEXT,
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
                 totp_setup_done INTEGER DEFAULT 0,
@@ -273,6 +309,17 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN totp_remember_days INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        # Add role column if missing and backfill values from is_admin
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("UPDATE users SET role='admin' WHERE (role IS NULL OR role='') AND is_admin=1")
+            conn.execute("UPDATE users SET role='user' WHERE (role IS NULL OR role='') AND is_admin=0")
+            conn.commit()
         except Exception:
             pass
 
@@ -303,6 +350,17 @@ def enforce_login_for_app():
             return redirect(url_for("setup_2fa"))
     except Exception:
         pass
+
+
+def _forbid_user_role_for_maintenance() -> Optional[Tuple[dict, int]]:
+    """Return (resp, code) when current user is basic 'user' and tries to access maint/log features."""
+    try:
+        role = getattr(current_user, "role", "user")
+    except Exception:
+        role = "user"
+    if role == "user":
+        return ({"ok": False, "error": "Forbidden"}, 403)
+    return None
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -1370,6 +1428,9 @@ def _hamdist_hex(a: str, b: str) -> int:
 
 @app.route("/api/duplicates")
 def api_duplicates():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     try:
         dist_thr = int(request.args.get("distance", "5"))
     except ValueError:
@@ -1486,7 +1547,11 @@ def api_duplicates():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    try:
+        role = getattr(current_user, "role", None)
+    except Exception:
+        role = None
+    return render_template("index.html", user_role=(role or "user"))
 
 
 @app.route("/api/health")
@@ -1510,6 +1575,9 @@ last_rethumb_result: Optional[Dict[str, Any]] = None
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     global scan_thread
     if scan_thread and scan_thread.is_alive():
         return jsonify({"ok": False, "error": "Scan already running"}), 409
@@ -1523,6 +1591,9 @@ def api_scan():
 # Stop scan
 @app.route("/api/scan/stop", methods=["POST"])
 def api_scan_stop():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     scan_stop_event.set()
     return jsonify({"ok": True, "stopped": True})
 
@@ -1535,6 +1606,9 @@ def api_scan_status():
 
 @app.route("/api/rescan", methods=["POST"])
 def api_rescan():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     global rescan_thread, last_rescan_result
     if rescan_thread and rescan_thread.is_alive():
         return jsonify({"ok": False, "error": "Rescan already running"}), 409
@@ -1594,6 +1668,9 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
 
 @app.route("/api/rethumb", methods=["POST"])
 def api_rethumb():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     global rethumb_thread, last_rethumb_result
     if rethumb_thread and rethumb_thread.is_alive():
         return jsonify({"ok": False, "error": "Rethumb already running"}), 409
@@ -1655,6 +1732,9 @@ def clear_index() -> Dict[str, Any]:
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     # Do not touch PHOTO_DIR; only DB + thumbs in DATA_DIR
     result = clear_index()
     return jsonify(result), 200
@@ -1744,6 +1824,9 @@ def api_debug_sample():
 
 @app.route("/api/logs")
 def api_logs():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     try:
         after = int(request.args.get("after", "0"))
     except ValueError:
@@ -1755,6 +1838,9 @@ def api_logs():
 
 @app.route("/api/logs/clear", methods=["POST"])
 def api_logs_clear():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     global LOG_SEQ
     LOG_BUFFER.clear()
     LOG_SEQ = 0
@@ -1769,7 +1855,7 @@ def login():
         password = request.form.get("password") or ""
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, password_hash, is_admin, totp_enabled, totp_remember_days FROM users WHERE username=?",
+                "SELECT id, username, password_hash, is_admin, role, totp_enabled, totp_remember_days FROM users WHERE username=?",
                 (username,),
             ).fetchone()
         if row and check_password_hash(row["password_hash"], password):
@@ -1811,7 +1897,7 @@ def verify_2fa():
     if request.method == "POST":
         code = (request.form.get("code") or "").strip()
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, is_admin, totp_secret, totp_remember_days FROM users WHERE id= ?", (uid,)).fetchone()
+            row = conn.execute("SELECT id, username, is_admin, role, totp_secret, totp_remember_days FROM users WHERE id= ?", (uid,)).fetchone()
         if not row or not row["totp_secret"]:
             return redirect(url_for("login"))
         totp = pyotp.TOTP(row["totp_secret"]) 
@@ -1907,21 +1993,56 @@ def admin_users():
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     msg = None
     if request.method == "POST":
-        u = (request.form.get("username") or "").strip()
-        p = request.form.get("password") or ""
-        if u and p:
+        action = (request.form.get("action") or "create").strip()
+        if action == "create":
+            u = (request.form.get("username") or "").strip()
+            p = request.form.get("password") or ""
+            role = (request.form.get("role") or "user").strip().lower()
+            if role not in {"admin", "manager", "user"}:
+                role = "user"
+            if u and p:
+                try:
+                    with closing(get_conn()) as conn:
+                        conn.execute(
+                            "INSERT INTO users(username, password_hash, is_admin, role, created_at) VALUES (?,?,?,?,?)",
+                            (u, generate_password_hash(p), 1 if role == "admin" else 0, role, now_iso()),
+                        )
+                        conn.commit()
+                    msg = "Bruger oprettet"
+                except Exception as e:
+                    msg = f"Fejl: {e}"
+        elif action == "delete":
             try:
-                with closing(get_conn()) as conn:
-                    conn.execute(
-                        "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?,?,?,?)",
-                        (u, generate_password_hash(p), 0, now_iso()),
-                    )
-                    conn.commit()
-                msg = "Bruger oprettet"
-            except Exception as e:
-                msg = f"Fejl: {e}"
+                uid = int(request.form.get("user_id") or 0)
+            except Exception:
+                uid = 0
+            if uid:
+                if str(uid) == str(current_user.id):
+                    msg = "Du kan ikke slette din egen bruger"
+                else:
+                    try:
+                        with closing(get_conn()) as conn:
+                            row = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+                            if not row:
+                                msg = "Bruger findes ikke"
+                            else:
+                                r = (row["role"] or "user").lower()
+                                if r == "admin":
+                                    c = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND id<>?", (uid,)).fetchone()
+                                    if not c or int(c["c"]) <= 0:
+                                        msg = "Kan ikke slette den sidste admin"
+                                    else:
+                                        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+                                        conn.commit()
+                                        msg = "Bruger slettet"
+                                else:
+                                    conn.execute("DELETE FROM users WHERE id=?", (uid,))
+                                    conn.commit()
+                                    msg = "Bruger slettet"
+                    except Exception as e:
+                        msg = f"Fejl: {e}"
     with closing(get_conn()) as conn:
-        users = conn.execute("SELECT id, username, is_admin, totp_enabled, created_at FROM users ORDER BY id").fetchall()
+        users = conn.execute("SELECT id, username, is_admin, role, totp_enabled, created_at FROM users ORDER BY id").fetchall()
     return render_template("admin_users.html", users=users, msg=msg)
 
 

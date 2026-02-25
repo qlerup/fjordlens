@@ -1,4 +1,4 @@
-# FjordLens for Synology (GitHub-ready starter)
+# FjordLens for Synology (GitHub‑ready starter)
 
 A Docker-based photo app starter for Synology NAS with:
 
@@ -7,15 +7,21 @@ A Docker-based photo app starter for Synology NAS with:
 - Metadata extraction (EXIF + file info)
 - Thumbnails
 - SQLite index database
-- Search/sort/filter
+- Search/sort/filter (with Danish-friendly synonyms)
 - Favorites
 - Detail view with raw metadata JSON
+- Reverse geocoding cache (offline RG with optional online fallbacks)
+- 2FA (TOTP) with trusted device option
+- Role-based access control (Admin, Manager, User)
 - **AI-ready data model** for later ONNX/CLIP and face recognition
 
 ## Current Status
 
 This version is a **testable base**:
 - ✅ Metadata + thumbnails + search work
+- ✅ Reverse geocoding (country/city) with cache
+- ✅ TOTP 2FA with trusted-device cookies
+- ✅ Role-based permissions and in‑UI user management
 - ✅ Ready for Synology Docker/Container Manager
 - ✅ GitHub ready (incl. GHCR workflow)
 - 🔜 Next steps: ONNX/CLIP (semantic search) + face recognition + clustering
@@ -187,6 +193,7 @@ During a scan the app stores, among other things:
 - dimensions
 - camera / lens (if EXIF exists)
 - GPS coordinates (if EXIF exists)
+- place information (country/city) via reverse geocoding with cache
 - SHA256 checksum
 - pHash (simple duplicate aid)
 - thumbnails
@@ -199,8 +206,20 @@ During a scan the app stores, among other things:
 ## 8) Search (now vs later)
 ### Now
 Search works on:
-- metadata (file name, camera, date, tags)
-- simple synonym tags (e.g. beach/sea, car, forest)
+- file name and folder path
+- camera make/model, lens model
+- dates (captured/modified) — try `2021` or `2021-12`
+- GPS name/city/country when available
+- AI placeholder tags
+- raw metadata JSON (free‑text match)
+
+Synonym expansion (Danish‑friendly) for common terms:
+- beach: `strand, hav, kyst, sea, ocean`
+- forest: `skov, forest, woods`
+- car: `bil, car, auto, tesla`
+- sunset: `solnedgang, sunset, aftenhimmel`
+- camera: `kamera, camera`
+- family: `familie, family, jul, middag`
 
 ### Later (next steps)
 We will add:
@@ -212,9 +231,8 @@ We will add:
 ---
 
 ## 9) Known Limitations (starter)
-- HEIC/HEIF may need extra decoders in some environments (Pillow can’t always open them directly)
-- No reverse geocoding yet (GPS → place name)
-- No production face recognition yet (tables prepared)
+- HEIC/HEIF may need extra decoders in some environments (we support pillow‑heif when available)
+- AI/face pipeline is not enabled yet (schema prepared)
 - SQLite is fine to start; PostgreSQL/pgvector recommended later
 
 ---
@@ -232,3 +250,48 @@ We will add:
 - Do **not** commit `.env` to GitHub
 - Mount photos `:ro` (read-only) as in the compose file
 - Store data (DB + thumbnails) in a persistent folder (`/volume1/docker/fjordlens/data`)
+
+---
+
+## Authentication & Users
+
+### Setup flow
+On first run (no users in DB), you’ll be redirected to a setup page to create the initial Admin.
+
+Optional: protect setup with a token via env `SETUP_TOKEN` or `SETUP_TOKEN_FILE`.
+
+### Login and 2FA
+- TOTP (e.g., Google Authenticator) can be enabled per user under “My 2FA”.
+- Trusted device: optionally set “remember this device (days)”; a signed cookie will skip 2FA on that browser for the selected number of days.
+
+### Roles and permissions
+- Admin: full access; can create/delete users and assign roles.
+- Manager: same as Admin except user management.
+- User: cannot access Maintenance, Logs, Other, or Users tabs. Endpoints for those actions return 403.
+
+Notes
+- You cannot delete yourself or the last remaining Admin.
+- User creation happens in a modal (“Add user”) where you choose role.
+
+---
+
+## Mobile UX
+- On small screens the left sidebar becomes a slide‑in drawer.
+- Use the hamburger button in the top bar to open/close.
+- The drawer closes on backdrop tap, Escape, or when selecting a menu item.
+
+---
+
+## Reverse Geocoding
+Reverse geocoding is enabled by default and uses an offline database (reverse_geocoder) for basic city/country. It can optionally fall back to online providers.
+
+Environment variables:
+- `GEOCODE_ENABLE` (default `1`): set `0` to disable.
+- `GEOCODE_PROVIDER` (`rg` | `nominatim` | `bigdatacloud` | `photon`; default `rg`)
+- `GEOCODE_EMAIL` (used for polite User‑Agent for providers)
+- `GEOCODE_TIMEOUT` (seconds), `GEOCODE_RETRIES`, `GEOCODE_DELAY` (seconds between requests)
+- `GEOCODE_LANG` (e.g., `da`, `en`)
+
+Other relevant envs:
+- `PHASH_MATCH_THRESHOLD` (default `8`) for visual match when enriching EXIF from sibling files.
+- `SECRET_KEY` (Flask secret; can also be supplied via `SECRET_KEY_FILE`).

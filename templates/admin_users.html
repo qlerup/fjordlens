@@ -12,12 +12,41 @@
 
   <div class="panel" style="margin-bottom:12px;">
     <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <form method="post" style="display:flex;gap:8px;align-items:center;flex:1;">
-        <input name="username" placeholder="Brugernavn" required class="input-number" style="flex:1;">
-        <input name="password" placeholder="Adgangskode" required class="input-number" style="flex:1;">
-        <button class="btn primary">Opret</button>
-      </form>
+      <button id="openCreateModal" class="btn primary">Tilføj bruger</button>
       <div class="mini-label" style="margin-left:auto;">I alt: <strong>{{ users|length }}</strong></div>
+    </div>
+  </div>
+
+  <!-- Opret bruger modal -->
+  <div id="createModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
+    <div style="width:520px;max-width:92vw;background:var(--panel,#0f1115);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 style="margin:0;">Tilføj bruger</h3>
+        <button id="closeCreateModal" class="btn">Luk</button>
+      </div>
+      <form method="post" style="display:grid;gap:10px;">
+        <input type="hidden" name="action" value="create">
+        <label>
+          <div class="mini-label">Brugernavn</div>
+          <input name="username" placeholder="Brugernavn" required class="input-number" style="width:100%;">
+        </label>
+        <label>
+          <div class="mini-label">Adgangskode</div>
+          <input name="password" placeholder="Adgangskode" required class="input-number" style="width:100%;" type="password">
+        </label>
+        <label>
+          <div class="mini-label">Rolle</div>
+          <select name="role" class="select" style="width:100%;">
+            <option value="admin">Admin</option>
+            <option value="manager">Manager</option>
+            <option value="user" selected>Bruger</option>
+          </select>
+        </label>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button type="button" id="cancelCreate" class="btn">Annuller</button>
+          <button class="btn primary" type="submit">Opret</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -29,6 +58,7 @@
           <th>Bruger</th>
           <th>Rolle</th>
           <th>2FA</th>
+          <th>Handling</th>
           <th>Oprettet</th>
         </tr>
       </thead>
@@ -38,8 +68,11 @@
           <td class="muted">#{{ u.id }}</td>
           <td><strong>{{ u.username }}</strong></td>
           <td>
-            {% if u.is_admin %}
+            {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
+            {% if role == 'admin' %}
               <span class="badge admin">Admin</span>
+            {% elif role == 'manager' %}
+              <span class="badge">Manager</span>
             {% else %}
               <span class="badge">Bruger</span>
             {% endif %}
@@ -51,11 +84,40 @@
               <span class="badge muted">—</span>
             {% endif %}
           </td>
+          <td>
+            <form method="post" onsubmit="return confirm('Slet bruger \"{{ u.username }}\"?');" style="margin:0;">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
+              {% if role == 'admin' and users|selectattr('role', 'equalto', 'admin')|list|length <= 1 %}
+                <button class="btn danger" disabled>Kan ikke slette sidste admin</button>
+              {% else %}
+                <button class="btn danger" {% if u.id|string == current_user.id|string %}disabled{% endif %}>Slet</button>
+              {% endif %}
+            </form>
+          </td>
           <td class="muted">{{ u.created_at }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  <script>
+  (function(){
+    const modal = document.getElementById('createModal');
+    const openBtn = document.getElementById('openCreateModal');
+    const closeBtn = document.getElementById('closeCreateModal');
+    const cancelBtn = document.getElementById('cancelCreate');
+    function open(){ if(modal) modal.classList.remove('hidden'); }
+    function close(){ if(modal) modal.classList.add('hidden'); }
+    openBtn && openBtn.addEventListener('click', open);
+    closeBtn && closeBtn.addEventListener('click', close);
+    cancelBtn && cancelBtn.addEventListener('click', close);
+    // Close on backdrop click
+    modal && modal.addEventListener('click', (e)=>{ if(e.target === modal) close(); });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
+  })();
+  </script>
 </body>
 </html>

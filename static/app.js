@@ -59,6 +59,8 @@ const els = {
   viewerPrev: document.getElementById("viewerPrev"),
   viewerNext: document.getElementById("viewerNext"),
   viewerClose: document.getElementById("viewerClose"),
+  menuBtn: document.getElementById("menuBtn"),
+  drawerBackdrop: document.getElementById("drawerBackdrop"),
 };
 
 const NAV_LABELS = {
@@ -901,7 +903,11 @@ els.toggleRawBtn.addEventListener("click", () => {
 els.favoriteBtn.addEventListener("click", toggleFavorite);
 
 document.querySelectorAll(".nav-item").forEach(btn => {
-  btn.addEventListener("click", () => setView(btn.dataset.view));
+  btn.addEventListener("click", () => {
+    setView(btn.dataset.view);
+    // Close drawer on mobile nav selection
+    document.body.classList.remove("drawer-open");
+  });
 });
 
 // Settings tabs switching
@@ -928,6 +934,15 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") nextViewer(-1);
   if (e.key === "ArrowRight") nextViewer(1);
 });
+
+// Mobile drawer toggle
+function openDrawer(){ document.body.classList.add("drawer-open"); }
+function closeDrawer(){ document.body.classList.remove("drawer-open"); }
+els.menuBtn && els.menuBtn.addEventListener("click", () => {
+  if (document.body.classList.contains("drawer-open")) closeDrawer(); else openDrawer();
+});
+els.drawerBackdrop && els.drawerBackdrop.addEventListener("click", closeDrawer);
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
 // Initial load
 loadPhotos().then(() => {

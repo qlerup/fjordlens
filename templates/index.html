@@ -56,6 +56,7 @@
 
     <main class="main">
       <header class="topbar">
+        <button id="menuBtn" class="btn menu-btn" aria-label="Menu" title="Menu">☰</button>
         <div class="search-wrap">
           <input id="searchInput" type="text" placeholder="Søg på dansk: strand, bil, skov, kamera, dato, filnavn...">
         </div>
@@ -219,6 +220,35 @@
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
     <button id="viewerClose" class="btn" style="position:absolute;right:12px;top:12px;">Luk</button>
   </div>
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    (function(){
+      const ROLE = {{ (user_role or 'user')|tojson }};
+      // Hide Settings tabs based on role
+      function hideTab(tab){
+        const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
+        const panel = document.querySelector(`#settingsPanel .tab-panel[data-tabpanel="${tab}"]`);
+        if(btn) btn.style.display = 'none';
+        if(panel) panel.parentElement && panel.parentElement.removeChild(panel);
+      }
+      if(ROLE === 'user'){
+        hideTab('users');
+        hideTab('other');
+        hideTab('maint');
+        hideTab('logs');
+      } else if(ROLE === 'manager'){
+        hideTab('users');
+      }
+      // Ensure one visible tab is active
+      const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');
+      if (!activeBtn || activeBtn.style.display === 'none'){
+        const firstVisible = Array.from(document.querySelectorAll('#settingsPanel .tab-btn')).find(b => b.style.display !== 'none');
+        if (firstVisible) {
+          firstVisible.click();
+        }
+      }
+    })();
+  </script>
 </body>
 </html>
