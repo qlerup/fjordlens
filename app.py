@@ -1883,11 +1883,8 @@ def login():
 @app.route("/logout")
 @login_required
 def logout():
-    resp = redirect(url_for("login"))
-    # Clear trusted-device cookie on explicit logout
-    resp.set_cookie("fl_trust", "", max_age=0)
     logout_user()
-    return resp
+    return redirect(url_for("login"))
 
 
 @app.route("/login/2fa", methods=["GET", "POST"])
