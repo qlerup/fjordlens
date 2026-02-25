@@ -99,12 +99,18 @@ def _ai_embed_text(text: str) -> Optional[list[float]]:
 def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     try:
         with path.open("rb") as f:
-            files = {"file": (path.name, f, "image/jpeg")}
-            r = requests.post(f"{AI_URL}/embed/image", files=files, timeout=30)
+            # Use generic content-type to avoid server rejections
+            files = {"file": (path.name, f, "application/octet-stream")}
+            r = requests.post(f"{AI_URL}/embed/image", files=files, timeout=60)
         if r.ok:
-            return r.json().get("embedding")
-    except Exception:
-        pass
+            try:
+                return r.json().get("embedding")
+            except Exception as e:
+                log_event("ai_http_error", rel_path=str(path), error=f"json:{e}")
+        else:
+            log_event("ai_http_error", rel_path=str(path), error=f"status:{r.status_code}")
+    except Exception as e:
+        log_event("ai_http_error", rel_path=str(path), error=str(e))
     return None
 
 
