@@ -11,8 +11,10 @@
     <h2 style="margin:0 0 10px;">To-faktor godkendelse</h2>
     {% if enabled %}
       <p>2FA er aktiveret for din konto.</p>
-      <form method="post" style="margin:10px 0; display:flex; gap:8px; align-items:center;">
-        <input type="hidden" name="action" value="remember">
+      {% if error %}<div class="status err" style="margin-bottom:8px;">{{ error }}</div>{% endif %}
+      {% if ok %}<div class="status ok" style="margin-bottom:8px;">Indstillinger gemt.</div>{% endif %}
+      <form method="post" style="margin:10px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="hidden" name="action" value="save">
         <label for="remember_days" class="mini-label">Husk denne enhed</label>
         <select id="remember_days" name="days" class="select">
           <option value="0" {% if (remember_days or 0) == 0 %}selected{% endif %}>Hver gang</option>
@@ -21,13 +23,12 @@
           <option value="5" {% if (remember_days or 0) == 5 %}selected{% endif %}>5 dage</option>
           <option value="7" {% if (remember_days or 0) == 7 %}selected{% endif %}>7 dage</option>
         </select>
-        <input name="code" placeholder="2FA kode" class="input-number" style="width:110px;" inputmode="numeric" pattern="\d{6}" maxlength="6" required>
+        <label style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" name="disable" />
+          <span>Deaktivér 2FA</span>
+        </label>
+        <input name="code" placeholder="2FA kode (kræves ved ændringer)" class="input-number" style="width:170px;" inputmode="numeric" pattern="\d{6}" maxlength="6">
         <button class="btn" type="submit">Gem</button>
-      </form>
-      <form method="post" style="margin:10px 0; display:flex; gap:8px; align-items:center;">
-        <input type="hidden" name="action" value="disable">
-        <input name="code" placeholder="2FA kode" class="input-number" style="width:110px;" inputmode="numeric" pattern="\d{6}" maxlength="6" required>
-        <button class="btn danger" type="submit">Deaktivér 2FA</button>
       </form>
     {% else %}
       <p>Scan QR-koden i din Authenticator-app, og indtast koden for at aktivere.</p>
@@ -50,7 +51,8 @@
         <button class="btn primary">Aktivér</button>
       </form>
     {% endif %}
-    <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+    <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <a class="btn" href="/">Luk</a>
       <a class="mini-link" href="/logout">Log ud</a>
     </div>
   </div>

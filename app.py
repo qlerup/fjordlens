@@ -1952,10 +1952,12 @@ def setup_2fa():
         action = (request.form.get("action") or "").strip()
         # Verify code for any sensitive change (disable/change remember)
         code = (request.form.get("code") or "").strip()
-        if action in {"disable", "remember"}:
+        if action in {"disable", "remember", "save"}:
             if not pyotp.TOTP(secret).verify(code, valid_window=1):
                 rdays = int(row["totp_remember_days"] or 0) if row else 0
-                return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+                # For 'save', we only require code if changes are sensitive; we re-check below
+                if action != "save":
+                    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
         if action == "disable":
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
@@ -1964,6 +1966,34 @@ def setup_2fa():
             # Clear trusted-device cookie when disabling 2FA
             resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True, remember_days=rdays))
             resp.set_cookie("fl_trust", "", max_age=0)
+            return resp
+        if action == "save":
+            try:
+                new_days = max(0, min(30, int(request.form.get("days") or 0)))
+            except ValueError:
+                new_days = 0
+            disable = (request.form.get("disable") in ("1", "on", "true", "True"))
+            cur_days = int(row["totp_remember_days"] or 0) if row else 0
+            cur_enabled = int(row["totp_enabled"] or 0) if row else 0
+            needs_code = (cur_enabled == 1) and (disable or (new_days != cur_days))
+            if needs_code and not pyotp.TOTP(secret).verify(code, valid_window=1):
+                return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=cur_enabled, error="Ugyldig kode", remember_days=cur_days)
+            enabled_after = cur_enabled
+            with closing(get_conn()) as conn:
+                if disable and cur_enabled == 1:
+                    conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
+                    enabled_after = 0
+                # Always update days to what the user chose
+                conn.execute("UPDATE users SET totp_remember_days=? WHERE id=?", (new_days, current_user.id))
+                conn.commit()
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=bool(enabled_after), ok=True, remember_days=new_days))
+            # Manage trusted-device cookie according to new days and enabled state
+            if enabled_after == 1 and new_days > 0:
+                token, max_age = _make_trust_cookie(int(current_user.id), new_days)
+                if token:
+                    resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
+            else:
+                resp.set_cookie("fl_trust", "", max_age=0)
             return resp
         if action == "remember":
             try:
