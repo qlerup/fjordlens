@@ -537,8 +537,11 @@ def setup():
             return render_template("setup.html", error="Forkert setup‑token", require_token=True)
         u = (request.form.get("username") or "").strip()
         p = request.form.get("password") or ""
+        p2 = request.form.get("password2") or ""
         if not u or not p:
             return render_template("setup.html", error="Udfyld felterne", require_token=require_token)
+        if p != p2:
+            return render_template("setup.html", error="Adgangskoder matcher ikke", require_token=require_token)
         try:
             with closing(get_conn()) as conn:
                 conn.execute(

@@ -25,7 +25,8 @@
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     {% if ok %}<div class="ok">Bruger oprettet. Du kan nu logge ind.</div>{% endif %}
     <div class="form-row"><input name="username" placeholder="Brugernavn" required></div>
-    <div class="form-row"><input name="password" placeholder="Adgangskode" required type="password"></div>
+    <div class="form-row"><input name="password" placeholder="Adgangskode" required type="password" autocomplete="new-password"></div>
+    <div class="form-row"><input name="password2" placeholder="Gentag adgangskode" required type="password" autocomplete="new-password"></div>
     <div class="actions" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
       <a class="mini-link" href="/">Tilbage</a>
       <button class="btn primary">Opret admin</button>
