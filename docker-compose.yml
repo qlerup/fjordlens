@@ -31,7 +31,7 @@ services:
       # Optional: expose for debugging from host
       - "${AI_DEBUG_PORT:-8001}:8000"
     volumes:
-      - "${DATA_DIR:-/volume1/docker/fjordlens/data}/ai_cache:/cache"
+      - ai_cache:/cache
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys;\n\ntry:\n    r=urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)\n    sys.exit(0 if r.getcode()==200 else 1)\nexcept Exception:\n    sys.exit(1)\n\" "]
       interval: 10s
@@ -39,3 +39,6 @@ services:
       retries: 10
       start_period: 45s
     restart: unless-stopped
+
+volumes:
+  ai_cache:
