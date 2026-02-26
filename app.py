@@ -549,7 +549,8 @@ def setup():
                     (u, generate_password_hash(p), 1, now_iso()),
                 )
                 conn.commit()
-            return render_template("setup.html", ok=True, require_token=require_token)
+            # Redirect directly to login after successful creation
+            return redirect(url_for("login", created=1))
         except Exception as e:
             return render_template("setup.html", error=str(e), require_token=require_token)
     return render_template("setup.html", require_token=require_token)
@@ -2288,7 +2289,8 @@ def login():
             next_url = request.args.get("next") or url_for("index")
             return redirect(next_url)
         return render_template("login.html", error="Forkert brugernavn eller adgangskode")
-    return render_template("login.html")
+    created = True if (request.args.get("created") in ("1", "true", "True")) else False
+    return render_template("login.html", created=created)
 
 
 @app.route("/logout")
