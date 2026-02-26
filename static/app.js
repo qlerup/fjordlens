@@ -981,6 +981,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     document.querySelectorAll('#settingsPanel .tab-panel').forEach(p => {
       p.classList.toggle('hidden', p.dataset.tabpanel !== tab);
     });
+    // lazy-load embedded admin panels
+    if (tab === 'users') renderUsersPanel();
+    if (tab === 'twofa') renderTwofaPanel();
   });
 });
 
@@ -1018,6 +1021,115 @@ loadPhotos().then(() => {
   // logs always running
   startLogs();
 });
+
+// --- Embedded Admin Panels ---
+async function renderUsersPanel(){
+  const wrap = document.getElementById('usersPanelInner');
+  if (!wrap) return;
+  wrap.textContent = 'Indlæser…';
+  try{
+    const r = await fetch('/api/admin/users');
+    const js = await r.json();
+    if (!r.ok || !js.ok){
+      wrap.innerHTML = `<div class="empty">Kan ikke hente brugere. ${js && js.error ? js.error : ''}</div>`;
+      return;
+    }
+    const rows = (js.items||[]).map(u => `
+      <tr>
+        <td>${u.id}</td>
+        <td>${u.username}</td>
+        <td>${u.role}</td>
+        <td>${u.totp_enabled ? '✓' : ''}</td>
+        <td><button data-del="${u.id}" class="btn danger small">Slet</button></td>
+      </tr>`).join('');
+    wrap.innerHTML = `
+      <table class="table">
+        <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>2FA</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=5>Ingen brugere</td></tr>'}</tbody>
+      </table>
+      <h4>Opret bruger</h4>
+      <div class="form-row"><input id="nu_username" placeholder="Brugernavn"></div>
+      <div class="form-row"><input id="nu_password" placeholder="Adgangskode" type="password"></div>
+      <div class="form-row">
+        <select id="nu_role">
+          <option value="user">User</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <button id="nu_save" class="btn primary">Opret</button>
+    `;
+    // bind delete
+    wrap.querySelectorAll('button[data-del]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.getAttribute('data-del');
+        if (!confirm('Slet bruger #' + id + '?')) return;
+        const rr = await fetch('/api/admin/users/'+id, {method:'DELETE'});
+        const jj = await rr.json();
+        if (!rr.ok || !jj.ok){ showStatus('Kunne ikke slette: ' + (jj && jj.error || ''), 'err'); return; }
+        showStatus('Bruger slettet', 'ok');
+        renderUsersPanel();
+      });
+    });
+    // bind create
+    const saveBtn = document.getElementById('nu_save');
+    if (saveBtn){
+      saveBtn.addEventListener('click', async ()=>{
+        const payload = {
+          username: document.getElementById('nu_username').value.trim(),
+          password: document.getElementById('nu_password').value,
+          role: document.getElementById('nu_role').value
+        };
+        const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        const jj = await rr.json();
+        if (!rr.ok || !jj.ok){ showStatus('Kunne ikke oprette: ' + (jj && jj.error || ''), 'err'); return; }
+        showStatus('Bruger oprettet', 'ok');
+        renderUsersPanel();
+      });
+    }
+  }catch(e){ wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`; }
+}
+
+async function renderTwofaPanel(){
+  const wrap = document.getElementById('twofaPanelInner');
+  if (!wrap) return;
+  wrap.textContent = 'Indlæser…';
+  try{
+    const r = await fetch('/api/me/2fa');
+    const js = await r.json();
+    if (!r.ok || !js.ok){ wrap.innerHTML = `<div class="empty">Kan ikke hente 2FA-status.</div>`; return; }
+    wrap.innerHTML = `
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+        <img src="${js.qr}" alt="QR" style="width:140px;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"/>
+        <div style="flex:1;min-width:240px;">
+          <div class="form-row"><label>Bruger</label><input value="${js.user}" disabled></div>
+          <div class="form-row"><label>Hemmelig nøgle</label><input value="${js.secret}" disabled></div>
+          <div class="form-row"><label>Husk dage</label><input id="tf_days" type="number" min="0" max="30" value="${js.remember_days||0}"></div>
+          <div class="form-row"><label>Engangskode</label><input id="tf_code" placeholder="6-cifret kode" autocomplete="one-time-code"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="tf_enable" class="btn primary">Aktivér</button>
+            <button id="tf_save" class="btn">Gem dage</button>
+            <button id="tf_disable" class="btn danger">Deaktivér</button>
+            <button id="tf_regen" class="btn">Forny QR / nøgle</button>
+          </div>
+          <div style="margin-top:6px;color:var(--muted)">Status: ${js.enabled ? 'Aktiveret' : 'Deaktiveret'}</div>
+        </div>
+      </div>
+    `;
+    async function post(action){
+      const payload = { action, code: document.getElementById('tf_code').value.trim(), days: parseInt(document.getElementById('tf_days').value || '0',10) };
+      const rr = await fetch('/api/me/2fa', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      const jj = await rr.json();
+      if (!rr.ok || !jj.ok){ showStatus('2FA-fejl: ' + (jj && jj.error || ''), 'err'); return; }
+      showStatus('2FA opdateret', 'ok');
+      renderTwofaPanel();
+    }
+    document.getElementById('tf_enable').addEventListener('click', ()=>post('enable'));
+    document.getElementById('tf_save').addEventListener('click', ()=>post('save'));
+    document.getElementById('tf_disable').addEventListener('click', ()=>post('disable'));
+    document.getElementById('tf_regen').addEventListener('click', ()=>post('regen'));
+  }catch(e){ wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`; }
+}
 
 // Duplicates UI
 async function fetchDuplicates() {

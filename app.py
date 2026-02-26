@@ -2504,6 +2504,147 @@ def admin_users():
     return render_template("admin_users.html", users=users, msg=msg)
 
 
+# --- JSON APIs for embedded UI ---
+@app.route("/api/admin/users", methods=["GET", "POST"])
+@login_required
+def api_admin_users():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, created_at FROM users ORDER BY id").fetchall()
+        items = []
+        for r in rows:
+            items.append({
+                "id": int(r["id"]),
+                "username": r["username"],
+                "role": (r["role"] or ("admin" if int(r["is_admin"] or 0) else "user")),
+                "is_admin": bool(r["is_admin"] or 0),
+                "totp_enabled": bool(r["totp_enabled"] or 0),
+                "created_at": r["created_at"],
+            })
+        return jsonify({"ok": True, "items": items})
+    # POST create user
+    data = request.get_json(silent=True) or {}
+    u = (data.get("username") or "").strip()
+    p = data.get("password") or ""
+    role = (data.get("role") or "user").strip().lower()
+    if role not in {"admin", "manager", "user"}:
+        role = "user"
+    if not u or not p:
+        return jsonify({"ok": False, "error": "username_password_required"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO users(username, password_hash, is_admin, role, created_at) VALUES (?,?,?,?,?)",
+                (u, generate_password_hash(p), 1 if role == "admin" else 0, role, now_iso()),
+            )
+            conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
+@login_required
+def api_admin_users_delete(uid: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    if str(uid) == str(current_user.id):
+        return jsonify({"ok": False, "error": "cannot_delete_self"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+            if not row:
+                return jsonify({"ok": False, "error": "not_found"}), 404
+            r = (row["role"] or "user").lower()
+            if r == "admin":
+                c = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND id<>?", (uid,)).fetchone()
+                if not c or int(c["c"]) <= 0:
+                    return jsonify({"ok": False, "error": "last_admin"}), 400
+            conn.execute("DELETE FROM users WHERE id=?", (uid,))
+            conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/me/2fa", methods=["GET", "POST"])
+@login_required
+def api_me_2fa():
+    # fetch current state
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT totp_secret, totp_enabled, totp_remember_days FROM users WHERE id=?",
+            (current_user.id,),
+        ).fetchone()
+    secret = row["totp_secret"] if row else None
+    enabled = bool(row["totp_enabled"] or 0) if row else False
+    remember_days = int(row["totp_remember_days"] or 0) if row else 0
+
+    if request.method == "GET":
+        # Ensure secret exists for viewing
+        if not secret:
+            secret = pyotp.random_base32()
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
+                conn.commit()
+        issuer = "FjordLens"
+        user_label = f"{issuer}:{current_user.username}"
+        otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
+        img = qrcode.make(otp_uri)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        return jsonify({
+            "ok": True,
+            "enabled": enabled,
+            "remember_days": remember_days,
+            "secret": secret,
+            "qr": data_url,
+            "user": current_user.username,
+        })
+
+    # POST: actions
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    days = int(data.get("days") or 0)
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT totp_secret, totp_enabled, totp_remember_days FROM users WHERE id=?",
+            (current_user.id,),
+        ).fetchone()
+    secret = row["totp_secret"] if row else None
+    if not secret:
+        secret = pyotp.random_base32()
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
+            conn.commit()
+
+    if action == "regen":
+        secret = pyotp.random_base32()
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE users SET totp_secret=?, totp_enabled=0, totp_setup_done=0 WHERE id=?", (secret, current_user.id))
+            conn.commit()
+        return jsonify({"ok": True, "secret": secret})
+
+    if action in {"enable", "disable", "remember", "save"}:
+        if not pyotp.TOTP(secret).verify(code, valid_window=1):
+            return jsonify({"ok": False, "error": "invalid_code"}), 400
+        with closing(get_conn()) as conn:
+            if action == "disable":
+                conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
+            elif action in {"enable", "save", "remember"}:
+                days = max(0, min(30, int(days or 0)))
+                conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1, totp_remember_days=? WHERE id=?", (days, current_user.id))
+            conn.commit()
+        return jsonify({"ok": True})
+
+    return jsonify({"ok": False, "error": "unknown_action"}), 400
+
+
 if __name__ == "__main__":
     init_db()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)

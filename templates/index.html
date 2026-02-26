@@ -167,21 +167,19 @@
           <pre id="mainLogs" class="raw-meta" style="height:60vh;"></pre>
         </div>
 
-        <!-- Brugere (åbnes som egen side for stabil auth) -->
+        <!-- Brugere (indlejret UI via JSON, ingen iframes) -->
         <div class="tab-panel hidden" data-tabpanel="users">
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Brugere</div>
-            <p style="color:var(--muted)">Brugeradministration åbnes i fuld visning for at sikre korrekt login/roller og undgå iframe‑begrænsninger.</p>
-            <a class="btn primary" href="/admin/users" style="display:inline-block;">Åbn Brugere</a>
+            <div id="usersPanelInner">Indlæser…</div>
           </div>
         </div>
 
-        <!-- Min 2FA (fuld side for at undgå cookie/SameSite problemer i iframe) -->
+        <!-- Min 2FA (indlejret UI via JSON) -->
         <div class="tab-panel hidden" data-tabpanel="twofa">
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Min 2FA</div>
-            <p style="color:var(--muted)">For sikkerhedens skyld åbner 2FA‑siden i fuld visning. Klik herunder:</p>
-            <a class="btn primary" href="/account/2fa" style="display:inline-block;">Åbn Min 2FA</a>
+            <div id="twofaPanelInner">Indlæser…</div>
           </div>
         </div>
       </section>
