@@ -13,4 +13,5 @@ COPY . .
 # App listens on a fixed internal port; host port is mapped in compose
 EXPOSE 8080
 
-CMD ["python", "app.py"]
+# Run with Gunicorn in containers for production-grade serving
+CMD ["gunicorn", "--workers", "2", "--worker-class", "gthread", "--threads", "4", "--timeout", "120", "--bind", "0.0.0.0:8080", "wsgi:application"]

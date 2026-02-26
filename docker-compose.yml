@@ -4,12 +4,28 @@ services:
     container_name: fjordlens
     ports:
       - "${APP_PORT:-9080}:8080"
+    # DS920+ profile: 2 workers x 8 threads (I/O heavy, low RAM)
+    command: >
+      gunicorn wsgi:application
+      --worker-class gthread
+      --workers 2
+      --threads 8
+      --bind 0.0.0.0:8080
+      --timeout 120 --graceful-timeout 30 --keep-alive 5
+      --max-requests 1000 --max-requests-jitter 100
+      --access-logfile - --log-level ${GUNICORN_LOG_LEVEL:-info}
     environment:
       PHOTO_DIR: /photos
       DATA_DIR: /data
       AI_URL: http://fjordlens-ai:8000
       TZ: ${TZ:-Europe/Copenhagen}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     depends_on:
       fjordlens-ai:
         condition: service_healthy
