@@ -37,8 +37,11 @@ APP_PORT = 8080
 PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
+CONVERT_DIR = DATA_DIR / "converted"
 DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
+AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
+AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -98,9 +101,16 @@ def _ai_embed_text(text: str) -> Optional[list[float]]:
 
 def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     try:
-        with path.open("rb") as f:
+        # Use a browser/AI-friendly copy for HEIC/HEIF
+        rel_guess = None
+        try:
+            rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
+        except Exception:
+            rel_guess = path.name
+        ai_src = ensure_viewable_copy(path, rel_guess)
+        with ai_src.open("rb") as f:
             # Use generic content-type to avoid server rejections
-            files = {"file": (path.name, f, "application/octet-stream")}
+            files = {"file": (ai_src.name, f, "application/octet-stream")}
             r = requests.post(f"{AI_URL}/embed/image", files=files, timeout=60)
         if r.ok:
             try:
@@ -271,6 +281,7 @@ def users_count() -> int:
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    CONVERT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -370,6 +381,11 @@ def init_db() -> None:
                 totp_remember_days INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
             """
         )
         conn.commit()
@@ -398,6 +414,18 @@ def init_db() -> None:
         try:
             conn.execute("UPDATE users SET role='admin' WHERE (role IS NULL OR role='') AND is_admin=1")
             conn.execute("UPDATE users SET role='user' WHERE (role IS NULL OR role='') AND is_admin=0")
+            conn.commit()
+        except Exception:
+            pass
+
+        # Seed defaults for AI settings if not present
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key='ai_enabled'").fetchone()
+            if not row:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_enabled", "1" if AI_ENV_ENABLED_DEFAULT else "0"))
+            row2 = conn.execute("SELECT value FROM settings WHERE key='ai_auto_ingest'").fetchone()
+            if not row2:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_auto_ingest", "1" if AI_ENV_AUTO_INGEST_DEFAULT else "0"))
             conn.commit()
         except Exception:
             pass
@@ -440,6 +468,48 @@ def _forbid_user_role_for_maintenance() -> Optional[Tuple[dict, int]]:
     if role == "user":
         return ({"ok": False, "error": "Forbidden"}, 403)
     return None
+
+
+# --- App settings helpers ---
+def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if not row:
+                return default
+            try:
+                return row["value"]  # sqlite3.Row
+            except Exception:
+                return row[0]
+    except Exception:
+        return default
+
+
+def _set_setting(key: str, value: str) -> None:
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _get_setting_bool(key: str, default: bool = False) -> bool:
+    v = _get_setting(key, None)
+    if v is None:
+        return default
+    return str(v).strip() not in {"0", "false", "False", "no", "off", ""}
+
+
+def ai_feature_enabled() -> bool:
+    return _get_setting_bool("ai_enabled", AI_ENV_ENABLED_DEFAULT)
+
+
+def ai_auto_ingest_enabled() -> bool:
+    return _get_setting_bool("ai_auto_ingest", AI_ENV_AUTO_INGEST_DEFAULT)
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -836,6 +906,34 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     thumb.thumbnail(THUMB_SIZE)
     thumb.save(thumb_path, format="JPEG", quality=85, optimize=True)
     return thumb_name
+
+
+def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
+    """Return a path that browsers and AI can read.
+    For HEIC/HEIF originals (which browsers can't display and some libs can't stream),
+    create a cached JPEG copy under CONVERT_DIR mirroring the folder structure,
+    with suffix `_HEIC.jpg`. Reuse if up-to-date.
+    """
+    ext = path.suffix.lower()
+    if ext not in {".heic", ".heif"}:
+        return path
+    try:
+        dest_rel = Path(rel_path).with_suffix("")
+        dest_rel = Path(str(dest_rel) + "_HEIC.jpg")
+        dest = CONVERT_DIR / dest_rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Rebuild if missing or source newer
+        if (not dest.exists()) or (path.stat().st_mtime > dest.stat().st_mtime):
+            with Image.open(path) as im:
+                try:
+                    im = ImageOps.exif_transpose(im)
+                except Exception:
+                    pass
+                rgb = im.convert("RGB")
+                rgb.save(dest, format="JPEG", quality=92, optimize=True)
+        return dest
+    except Exception:
+        return path
 
 
 def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) -> Dict[str, Any]:
@@ -1396,11 +1494,15 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     rel = d.get("rel_path") or d.get("filename")
     if rel:
         try:
-            d["original_url"] = f"/api/original/{quote(rel)}"
+            # Serve a browser-friendly copy when needed
+            d["original_url"] = f"/api/viewable/{quote(rel)}"
+            d["download_url"] = f"/api/original/{quote(rel)}"
         except Exception:
             d["original_url"] = None
+            d["download_url"] = None
     else:
         d["original_url"] = None
+        d["download_url"] = None
     # Annotate media type
     try:
         ext = (d.get("ext") or "").lower()
@@ -2088,6 +2190,29 @@ def api_original(rel_path: str):
     safe_rel = rel_path.replace("..", "").lstrip("/")
     directory = str(PHOTO_DIR)
     return send_from_directory(directory, safe_rel)
+
+
+@app.route("/api/viewable/<path:rel_path>")
+def api_viewable(rel_path: str):
+    # Return a browser/AI-friendly version; convert HEIC→JPEG into CONVERT_DIR when needed
+    safe_rel = rel_path.replace("..", "").lstrip("/")
+    src = PHOTO_DIR / safe_rel
+    if not src.exists():
+        # Fallback: maybe already a converted file reference
+        cand = CONVERT_DIR / safe_rel
+        if cand.exists():
+            return send_from_directory(CONVERT_DIR, safe_rel)
+        return ("Not found", 404)
+    view_path = ensure_viewable_copy(src, safe_rel)
+    # Serve from the appropriate root
+    try:
+        if str(view_path).startswith(str(CONVERT_DIR)):
+            rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
+            return send_from_directory(CONVERT_DIR, rel_conv)
+        else:
+            return send_from_directory(PHOTO_DIR, safe_rel)
+    except Exception as e:
+        return (str(e), 500)
 
 
 @app.route("/api/debug/sample")

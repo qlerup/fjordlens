@@ -62,6 +62,7 @@ const els = {
   viewerPrev: document.getElementById("viewerPrev"),
   viewerNext: document.getElementById("viewerNext"),
   viewerClose: document.getElementById("viewerClose"),
+  viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
 };
@@ -329,7 +330,12 @@ function openViewer(index) {
   // Toggle media elements
   if (els.viewerImg) {
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
-    if (!it.is_video) els.viewerImg.src = it.original_url;
+    if (!it.is_video) {
+      // Browsers cannot render HEIC/HEIF. Use thumbnail as preview.
+      const ext = (it.ext || '').toLowerCase();
+      const src = (ext === '.heic' || ext === '.heif') && it.thumb_url ? it.thumb_url : it.original_url;
+      els.viewerImg.src = src;
+    }
     if (it.is_video) els.viewerImg.removeAttribute('src');
   }
   if (els.viewerVideo) {
@@ -343,6 +349,12 @@ function openViewer(index) {
     }
   }
   els.viewer.classList.remove("hidden");
+  if (els.viewerOpenOrig) {
+    const dl = (it.download_url || it.original_url || '');
+    els.viewerOpenOrig.href = dl;
+    els.viewerOpenOrig.download = it.filename || '';
+    els.viewerOpenOrig.style.display = 'inline-block';
+  }
 }
 function closeViewer() {
   if (!els.viewer) return;
@@ -367,9 +379,15 @@ function nextViewer(step=1) {
   } else {
     if (els.viewerImg) {
       els.viewerImg.style.display = 'block';
-      els.viewerImg.src = it.original_url;
+      const ext = (it.ext || '').toLowerCase();
+      els.viewerImg.src = (ext === '.heic' || ext === '.heif') && it.thumb_url ? it.thumb_url : it.original_url;
     }
     if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.style.display = 'none'; }
+  }
+  if (els.viewerOpenOrig) {
+    const dl = (it.download_url || it.original_url || '');
+    els.viewerOpenOrig.href = dl;
+    els.viewerOpenOrig.download = it.filename || '';
   }
 }
 

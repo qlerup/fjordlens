@@ -10,6 +10,12 @@ import torch
 import numpy as np
 from PIL import Image
 import open_clip
+try:
+    # Enable HEIC/HEIF decoding when the wheel is available
+    from pillow_heif import register_heif_opener  # type: ignore
+    register_heif_opener()
+except Exception:
+    pass
 
 MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
