@@ -44,7 +44,7 @@
         <div style="display:grid;place-items:center;margin:10px 0;">
           <img src="{{ qrcode_url }}" alt="QR" style="width:220px;height:220px;border-radius:12px;border:1px solid var(--border);background:#fff;"/>
         </div>
-        <p style="color:var(--muted);word-break:break-all;">Secret: {{ secret }}</p>
+        
         {% if error %}<div class="err">{{ error }}</div>{% endif %}
         {% if ok %}<div class="status ok">2FA er nu slået til.</div>{% endif %}
         <form id="setupForm" method="post" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">

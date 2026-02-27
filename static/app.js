@@ -1044,9 +1044,9 @@ async function renderUsersPanel(){
       </tr>`).join('');
     wrap.innerHTML = `
       <div class="panel" style="margin-bottom:12px;">
-        <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <div class="toolbar">
           <strong>Brugere</strong>
-          <div class="mini-label" style="margin-left:auto;">I alt: <strong>${(js.items||[]).length}</strong></div>
+          <button id="nu_open" class="btn primary" style="margin-left:auto;">Tilføj bruger</button>
         </div>
       </div>
       <div class="data-table" style="margin-bottom:12px;">
@@ -1055,19 +1055,30 @@ async function renderUsersPanel(){
           <tbody>${rows || '<tr><td colspan=5 class="muted">Ingen brugere</td></tr>'}</tbody>
         </table>
       </div>
-      <div class="panel">
-        <div class="mini-label" style="margin-bottom:6px;">Opret ny bruger</div>
-        <div class="form-row"><label for="nu_username">Brugernavn</label><input id="nu_username" placeholder="Brugernavn"></div>
-        <div class="form-row"><label for="nu_password">Adgangskode</label><input id="nu_password" placeholder="Adgangskode" type="password"></div>
-        <div class="form-row"><label for="nu_role">Rolle</label>
-          <select id="nu_role" class="select">
-            <option value="user">Bruger</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin</option>
-          </select>
-        </div>
-        <div class="actions" style="justify-content:flex-end;">
-          <button id="nu_save" class="btn primary">Opret</button>
+      <!-- Create user modal -->
+      <div id="nu_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
+        <div style="width:520px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h3 style="margin:0;">Tilføj bruger</h3>
+            <button id="nu_close" class="btn">Luk</button>
+          </div>
+          <div class="form-row"><label for="nu_username">Brugernavn</label><input id="nu_username" placeholder="Brugernavn"></div>
+          <div class="form-row"><label for="nu_password">Adgangskode</label><input id="nu_password" placeholder="Adgangskode" type="password"></div>
+          <div class="form-row"><label for="nu_role">Rolle</label>
+            <select id="nu_role" class="select">
+              <option value="user">Bruger</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin:6px 0 2px;">
+            <input type="checkbox" id="nu_2fa" />
+            <span>Aktivér 2FA fra start</span>
+          </label>
+          <div class="actions" style="justify-content:flex-end;">
+            <button id="nu_cancel" class="btn">Annuller</button>
+            <button id="nu_save" class="btn primary">Opret</button>
+          </div>
         </div>
       </div>
     `;
@@ -1083,19 +1094,43 @@ async function renderUsersPanel(){
         renderUsersPanel();
       });
     });
-    // bind create
+    // modal wiring
+    const modal = document.getElementById('nu_modal');
+    const openBtn = document.getElementById('nu_open');
+    const closeBtn = document.getElementById('nu_close');
+    const cancelBtn = document.getElementById('nu_cancel');
+    function open(){ if(modal) modal.classList.remove('hidden'); }
+    function clear(){
+      const u = document.getElementById('nu_username');
+      const p = document.getElementById('nu_password');
+      const r = document.getElementById('nu_role');
+      const f = document.getElementById('nu_2fa');
+      if (u) u.value = '';
+      if (p) p.value = '';
+      if (r) r.value = 'user';
+      if (f) f.checked = false;
+    }
+    function close(){ if(modal) { modal.classList.add('hidden'); clear(); } }
+    openBtn && openBtn.addEventListener('click', open);
+    closeBtn && closeBtn.addEventListener('click', close);
+    cancelBtn && cancelBtn.addEventListener('click', close);
+    modal && modal.addEventListener('click', (e)=>{ if(e.target === modal) close(); });
+
+    // bind create (modal)
     const saveBtn = document.getElementById('nu_save');
     if (saveBtn){
       saveBtn.addEventListener('click', async ()=>{
-        const payload = {
-          username: document.getElementById('nu_username').value.trim(),
-          password: document.getElementById('nu_password').value,
-          role: document.getElementById('nu_role').value
-        };
+        const username = (document.getElementById('nu_username').value || '').trim();
+        const password = document.getElementById('nu_password').value || '';
+        const role = document.getElementById('nu_role').value || 'user';
+        const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
+        if (!username || !password){ showStatus('Udfyld brugernavn og adgangskode.', 'err'); return; }
+        const payload = { username, password, role, enforce_2fa };
         const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         const jj = await rr.json();
         if (!rr.ok || !jj.ok){ showStatus('Kunne ikke oprette: ' + (jj && jj.error || ''), 'err'); return; }
         showStatus('Bruger oprettet', 'ok');
+        close();
         renderUsersPanel();
       });
     }
@@ -1110,36 +1145,45 @@ async function renderTwofaPanel(){
     const r = await fetch('/api/me/2fa');
     const js = await r.json();
     if (!r.ok || !js.ok){ wrap.innerHTML = `<div class="empty">Kan ikke hente 2FA-status.</div>`; return; }
+    const enabled = !!js.enabled;
+    const daysVal = (js.remember_days||0);
+    // Build UI depending on state
+    let leftCol = '';
+    if (!enabled && js.qr) {
+      leftCol = `<img src="${js.qr}" alt="QR" style="width:140px;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"/>`;
+    }
+    let secretRow = '';
+    const toggleLabel = enabled ? 'Deaktivér' : 'Aktivér';
+    const toggleClass = enabled ? 'btn danger' : 'btn primary';
+    const regenBtnHtml = enabled ? '<button id="tf_regen" class="btn">Forny QR / nøgle</button>' : '';
     wrap.innerHTML = `
       <div class="panel" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
-        <img src="${js.qr}" alt="QR" style="width:140px;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"/>
+        ${leftCol}
         <div style="flex:1;min-width:260px;">
-          <div class="form-row"><label>Bruger</label><input value="${js.user}" disabled></div>
-          <div class="form-row"><label>Hemmelig nøgle</label><input value="${js.secret}" disabled></div>
-          <div class="form-row"><label>Husk dage</label><input id="tf_days" class="input-number" type="number" min="0" max="30" value="${js.remember_days||0}"></div>
+          <div class="form-row"><label>Husk dage</label><input id="tf_days" class="input-number" type="number" min="0" max="30" value="${daysVal}"></div>
+          ${secretRow}
           <div class="form-row"><label>Engangskode</label><input id="tf_code" class="input-number" placeholder="6-cifret kode" autocomplete="one-time-code"></div>
           <div class="actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start;">
-            <button id="tf_enable" class="btn primary">Aktivér</button>
-            <button id="tf_save" class="btn">Gem dage</button>
-            <button id="tf_disable" class="btn danger">Deaktivér</button>
-            <button id="tf_regen" class="btn">Forny QR / nøgle</button>
+            <button id="tf_toggle" class="${toggleClass}">${toggleLabel}</button>
+            <button id="tf_save" class="btn">Gem</button>
+            ${regenBtnHtml}
           </div>
-          <div class="mini-label" style="margin-top:6px;">Status: <strong>${js.enabled ? 'Aktiveret' : 'Deaktiveret'}</strong></div>
+          <div class="mini-label" style="margin-top:6px;">Status: <strong>${enabled ? 'Aktiveret' : 'Deaktiveret'}</strong></div>
         </div>
       </div>
     `;
     async function post(action){
-      const payload = { action, code: document.getElementById('tf_code').value.trim(), days: parseInt(document.getElementById('tf_days').value || '0',10) };
+      const payload = { action, code: (document.getElementById('tf_code').value||'').trim(), days: parseInt(document.getElementById('tf_days').value || '0',10) };
       const rr = await fetch('/api/me/2fa', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       const jj = await rr.json();
       if (!rr.ok || !jj.ok){ showStatus('2FA-fejl: ' + (jj && jj.error || ''), 'err'); return; }
       showStatus('2FA opdateret', 'ok');
       renderTwofaPanel();
     }
-    document.getElementById('tf_enable').addEventListener('click', ()=>post('enable'));
+    document.getElementById('tf_toggle').addEventListener('click', ()=>post(enabled ? 'disable' : 'enable'));
     document.getElementById('tf_save').addEventListener('click', ()=>post('save'));
-    document.getElementById('tf_disable').addEventListener('click', ()=>post('disable'));
-    document.getElementById('tf_regen').addEventListener('click', ()=>post('regen'));
+    const regenBtn = document.getElementById('tf_regen');
+    regenBtn && regenBtn.addEventListener('click', ()=>post('regen'));
   }catch(e){ wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`; }
 }
 

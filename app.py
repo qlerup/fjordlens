@@ -249,9 +249,9 @@ class User(UserMixin):
 def _row_to_user(row: sqlite3.Row) -> Optional[User]:
     if not row:
         return None
-    role = None
-    try:
-        role = row["role"] if "role" in row.keys() else None
+        qr_url = None
+        secret_out = None
+        if not enabled:
     except Exception:
         role = None
     is_admin_fallback = False
@@ -264,7 +264,7 @@ def _row_to_user(row: sqlite3.Row) -> Optional[User]:
 
 @login_manager.user_loader
 def load_user(user_id: str) -> Optional[User]:
-    try:
+            secret_out = None  # do not leak secret; pairing is via QR only
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, username, is_admin, role FROM users WHERE id= ?", (user_id,)).fetchone()
         return _row_to_user(row)
@@ -2349,14 +2349,17 @@ def setup_2fa():
         with closing(get_conn()) as conn:
             conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
             conn.commit()
-    issuer = "FjordLens"
-    user_label = f"{issuer}:{current_user.username}"
-    otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
-    # Render QR as data URL
-    img = qrcode.make(otp_uri)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    enabled_flag = int(row["totp_enabled"] or 0) if row else 0
+    # Only prepare QR/secret for template when not enabled
+    data_url = None
+    if enabled_flag == 0:
+        issuer = "FjordLens"
+        user_label = f"{issuer}:{current_user.username}"
+        otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
+        img = qrcode.make(otp_uri)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
@@ -2367,14 +2370,14 @@ def setup_2fa():
                 rdays = int(row["totp_remember_days"] or 0) if row else 0
                 # For 'save', we only require code if changes are sensitive; we re-check below
                 if action != "save":
-                    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+                    return render_template("2fa_setup.html", qrcode_url=data_url, secret=None, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
         if action == "disable":
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
                 conn.commit()
             rdays = int(row["totp_remember_days"] or 0) if row else 0
             # Clear trusted-device cookie when disabling 2FA
-            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=False, ok=True, remember_days=rdays))
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=None, secret=None, enabled=False, ok=True, remember_days=rdays))
             resp.set_cookie("fl_trust", "", max_age=0)
             return resp
         if action == "save":
@@ -2387,7 +2390,7 @@ def setup_2fa():
             cur_enabled = int(row["totp_enabled"] or 0) if row else 0
             needs_code = (cur_enabled == 1) and (disable or (new_days != cur_days))
             if needs_code and not pyotp.TOTP(secret).verify(code, valid_window=1):
-                return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=cur_enabled, error="Ugyldig kode", remember_days=cur_days)
+                return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=cur_enabled, error="Ugyldig kode", remember_days=cur_days)
             enabled_after = cur_enabled
             with closing(get_conn()) as conn:
                 if disable and cur_enabled == 1:
@@ -2396,7 +2399,7 @@ def setup_2fa():
                 # Always update days to what the user chose
                 conn.execute("UPDATE users SET totp_remember_days=? WHERE id=?", (new_days, current_user.id))
                 conn.commit()
-            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=bool(enabled_after), ok=True, remember_days=new_days))
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=(data_url if enabled_after == 0 else None), secret=(secret if enabled_after == 0 else None), enabled=bool(enabled_after), ok=True, remember_days=new_days))
             # Manage trusted-device cookie according to new days and enabled state
             if enabled_after == 1 and new_days > 0:
                 token, max_age = _make_trust_cookie(int(current_user.id), new_days)
@@ -2414,7 +2417,7 @@ def setup_2fa():
                 conn.execute("UPDATE users SET totp_remember_days=? WHERE id=?", (days, current_user.id))
                 conn.commit()
             # Set/refresh trusted-device cookie immediately after successful verification
-            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], ok=True, remember_days=days))
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], ok=True, remember_days=days))
             if days > 0:
                 token, max_age = _make_trust_cookie(int(current_user.id), days)
                 if token:
@@ -2431,16 +2434,16 @@ def setup_2fa():
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=1, totp_setup_done=1, totp_remember_days=? WHERE id=?", (days, current_user.id))
                 conn.commit()
-            resp = make_response(render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=True, ok=True, remember_days=days))
+            resp = make_response(render_template("2fa_setup.html", qrcode_url=None, secret=None, enabled=True, ok=True, remember_days=days))
             if days > 0:
                 token, max_age = _make_trust_cookie(int(current_user.id), days)
                 if token:
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
         rdays = int(row["totp_remember_days"] or 0) if row else 0
-        return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+        return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
     rdays = int(row["totp_remember_days"] or 0) if row else 0
-    return render_template("2fa_setup.html", qrcode_url=data_url, secret=secret, enabled=row["totp_enabled"], remember_days=rdays) 
+    return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], remember_days=rdays) 
 
 
 @app.route("/admin/users", methods=["GET", "POST"]) 
@@ -2583,25 +2586,29 @@ def api_me_2fa():
     remember_days = int(row["totp_remember_days"] or 0) if row else 0
 
     if request.method == "GET":
-        # Ensure secret exists for viewing
-        if not secret:
-            secret = pyotp.random_base32()
-            with closing(get_conn()) as conn:
-                conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
-                conn.commit()
-        issuer = "FjordLens"
-        user_label = f"{issuer}:{current_user.username}"
-        otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
-        img = qrcode.make(otp_uri)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        # Only show secret/QR during initial setup (not enabled yet)
+        qr_url = None
+        secret_out = None
+        if not enabled:
+            if not secret:
+                secret = pyotp.random_base32()
+                with closing(get_conn()) as conn:
+                    conn.execute("UPDATE users SET totp_secret=? WHERE id=?", (secret, current_user.id))
+                    conn.commit()
+            issuer = "FjordLens"
+            user_label = f"{issuer}:{current_user.username}"
+            otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
+            img = qrcode.make(otp_uri)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            qr_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+            secret_out = secret
         return jsonify({
             "ok": True,
             "enabled": enabled,
             "remember_days": remember_days,
-            "secret": secret,
-            "qr": data_url,
+            "secret": secret_out,  # null when enabled
+            "qr": qr_url,          # null when enabled
             "user": current_user.username,
         })
 
@@ -2624,11 +2631,22 @@ def api_me_2fa():
             conn.commit()
 
     if action == "regen":
+        # Regenerate secret; if already enabled, require current valid code to rotate
+        if enabled:
+            if not pyotp.TOTP(secret).verify(code, valid_window=1):
+                return jsonify({"ok": False, "error": "invalid_code"}), 400
         secret = pyotp.random_base32()
         with closing(get_conn()) as conn:
             conn.execute("UPDATE users SET totp_secret=?, totp_enabled=0, totp_setup_done=0 WHERE id=?", (secret, current_user.id))
             conn.commit()
-        return jsonify({"ok": True, "secret": secret})
+        issuer = "FjordLens"
+        user_label = f"{issuer}:{current_user.username}"
+        otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
+        img = qrcode.make(otp_uri)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        return jsonify({"ok": True, "qr": data_url})
 
     if action in {"enable", "disable", "remember", "save"}:
         if not pyotp.TOTP(secret).verify(code, valid_window=1):
