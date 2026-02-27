@@ -266,9 +266,12 @@ def _row_to_user(row: sqlite3.Row) -> Optional[User]:
 
 @login_manager.user_loader
 def load_user(user_id: str) -> Optional[User]:
-            secret_out = None  # do not leak secret; pairing is via QR only
+    try:
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, username, is_admin, role FROM users WHERE id= ?", (user_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id, username, is_admin, role FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
         return _row_to_user(row)
     except Exception:
         return None
