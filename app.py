@@ -249,9 +249,11 @@ class User(UserMixin):
 def _row_to_user(row: sqlite3.Row) -> Optional[User]:
     if not row:
         return None
-        qr_url = None
-        secret_out = None
-        if not enabled:
+    qr_url = None
+    secret_out = None
+    # if not enabled:  # (Uncomment and implement if needed)
+    try:
+        role = row["role"] if "role" in row.keys() else None
     except Exception:
         role = None
     is_admin_fallback = False
