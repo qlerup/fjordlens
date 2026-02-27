@@ -32,12 +32,14 @@ try:
 except Exception:
     pass
 from urllib.parse import quote
+from werkzeug.utils import secure_filename
 
 APP_PORT = 8080
 PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
 CONVERT_DIR = DATA_DIR / "converted"
+UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
@@ -58,7 +60,30 @@ GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
+
+
+def _get_secret_key() -> bytes:
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        try:
+            return env_key.encode("utf-8")
+        except Exception:
+            pass
+    key_file = DATA_DIR / "secret.key"
+    try:
+        if key_file.exists():
+            return key_file.read_bytes().strip()
+        # First run: create a persistent key so multiple workers share it
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key = os.urandom(32)
+        key_file.write_bytes(key)
+        return key
+    except Exception:
+        # Last-resort deterministic fallback to avoid per-process randomness
+        return b"fjordlens-dev-secret-key"
+
+
+app.secret_key = _get_secret_key()
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
@@ -287,6 +312,7 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     CONVERT_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -1392,7 +1418,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
         conn.commit()
 
 
-def iter_photo_files(root: Path) -> Iterable[Tuple[Path, str]]:
+def iter_photo_files(root: Path, prefix: str = "") -> Iterable[Tuple[Path, str]]:
     if not root.exists():
         return
     for p in root.rglob("*"):
@@ -1412,6 +1438,8 @@ def iter_photo_files(root: Path) -> Iterable[Tuple[Path, str]]:
             rel = str(p.relative_to(root)).replace("\\", "/")
         except Exception:
             rel = p.name
+        if prefix:
+            rel = f"{prefix.rstrip('/')}/{rel}"
         yield p, rel
 
 
@@ -1443,7 +1471,37 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
         }
 
 
+    # Scan primary photo directory
     for path, rel_path in iter_photo_files(PHOTO_DIR):
+        if stop_event and stop_event.is_set():
+            break
+        scanned += 1
+        try:
+            log_event("scan_check", rel_path=rel_path)
+            stat = path.stat()
+            modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+            file_size = stat.st_size
+            prev = existing.get(rel_path)
+            if prev:
+                unchanged = (prev["modified_fs"] == modified_fs and prev["file_size"] == file_size)
+                missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
+                if unchanged and not missing_meta:
+                    log_event("skip_unchanged", rel_path=rel_path)
+                    log_event("no_new", rel_path=rel_path)
+                    continue
+
+            meta = extract_metadata(path, rel_path)
+            upsert_photo(meta)
+            updated += 1
+            log_event("indexed", rel_path=rel_path)
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=rel_path, error=str(e))
+            if len(error_samples) < 5:
+                error_samples.append(f"{rel_path}: {e}")
+
+    # Also scan uploaded files stored under DATA_DIR/uploads (prefixed as 'uploads/...')
+    for path, rel_path in iter_photo_files(UPLOAD_DIR, prefix="uploads"):
         if stop_event and stop_event.is_set():
             break
         scanned += 1
@@ -2197,6 +2255,10 @@ def api_original(rel_path: str):
     # Serve original file safely from PHOTO_DIR
     # Prevent path escape
     safe_rel = rel_path.replace("..", "").lstrip("/")
+    # If uploaded file (prefixed with 'uploads/'), serve from UPLOAD_DIR
+    if safe_rel.startswith("uploads/"):
+        up_rel = safe_rel[len("uploads/"):]
+        return send_from_directory(str(UPLOAD_DIR), up_rel)
     directory = str(PHOTO_DIR)
     return send_from_directory(directory, safe_rel)
 
@@ -2205,7 +2267,10 @@ def api_original(rel_path: str):
 def api_viewable(rel_path: str):
     # Return a browser/AI-friendly version; convert HEIC→JPEG into CONVERT_DIR when needed
     safe_rel = rel_path.replace("..", "").lstrip("/")
-    src = PHOTO_DIR / safe_rel
+    if safe_rel.startswith("uploads/"):
+        src = UPLOAD_DIR / safe_rel[len("uploads/"):]
+    else:
+        src = PHOTO_DIR / safe_rel
     if not src.exists():
         # Fallback: maybe already a converted file reference
         cand = CONVERT_DIR / safe_rel
@@ -2243,6 +2308,48 @@ def api_logs():
     items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
     next_id = (items[-1]["id"] if items else (LOG_BUFFER[-1]["id"] if LOG_BUFFER else after))
     return jsonify({"items": items[:200], "next": next_id})
+
+
+# --- Upload endpoint (drag & drop) ---
+@app.route("/api/upload", methods=["POST"])
+@login_required
+def api_upload():
+    if not current_user.is_authenticated:
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    ensure_dirs()
+    files = request.files.getlist("files") or []
+    if not files:
+        return jsonify({"ok": False, "error": "No files"}), 400
+    saved = []
+    errors: list[str] = []
+    for f in files:
+        try:
+            name = secure_filename(f.filename or "")
+            if not name:
+                continue
+            ext = Path(name).suffix.lower()
+            if ext not in SUPPORTED_EXTS:
+                errors.append(f"Unsupported: {name}")
+                continue
+            # Ensure unique filename
+            target = UPLOAD_DIR / name
+            stem = Path(name).stem
+            suffix = Path(name).suffix
+            i = 1
+            while target.exists():
+                target = UPLOAD_DIR / f"{stem}_{i}{suffix}"
+                i += 1
+            f.save(str(target))
+            rel = f"uploads/{target.name}"
+            try:
+                meta = extract_metadata(target, rel)
+                upsert_photo(meta)
+            except Exception as e:
+                errors.append(f"Index fail: {target.name}: {e}")
+            saved.append(target.name)
+        except Exception as e:
+            errors.append(str(e))
+    return jsonify({"ok": True, "saved": saved, "errors": errors})
 
 
 @app.route("/api/logs/clear", methods=["POST"])

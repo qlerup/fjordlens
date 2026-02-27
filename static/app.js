@@ -410,6 +410,42 @@ async function loadPhotos() {
   renderGrid();
 }
 
+// --- Drag & Drop Upload ---
+async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []).filter(f => !!f && f.name);
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f, f.name);
+  try {
+    showStatus('Uploader billeder...', 'ok');
+    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      showStatus(data.error || 'Upload fejlede', 'err');
+      return;
+    }
+    const saved = (data.saved || []).length;
+    const errs = (data.errors || []).length;
+    showStatus(`Upload fuldført: ${saved} fil(er)${errs?`, fejl: ${errs}`:''}`, errs? 'err':'ok');
+    await loadPhotos();
+  } catch (e) {
+    console.error(e);
+    showStatus('Upload fejlede', 'err');
+  }
+}
+
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('drop', (e) => {
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    e.preventDefault();
+    uploadFiles(e.dataTransfer.files);
+  }
+});
+
 function buildPlacesGeoJSON(items) {
   const feats = [];
   for (const it of items) {
