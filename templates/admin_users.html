@@ -1,112 +1,109 @@
-<!doctype html>
-<html lang="da">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Brugere · FjordLens</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-</head>
-<body style="padding:16px;">
-  <h1 style="margin:0 0 10px;">Brugere</h1>
-  {% if msg %}<div class="status ok">{{ msg }}</div>{% endif %}
+{% extends "base.html" %}
+{% block title %}Brugere · FjordLens{% endblock %}
+{% block body %}
+  <div class="page-wrap">
+    <h1 style="margin:0 0 10px;">Brugere</h1>
+    {% if msg %}<div class="status ok">{{ msg }}</div>{% endif %}
 
-  <div class="panel" style="margin-bottom:12px;">
-    <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <button id="openCreateModal" class="btn primary">Tilføj bruger</button>
-      <div class="mini-label" style="margin-left:auto;">I alt: <strong>{{ users|length }}</strong></div>
-    </div>
-  </div>
-
-  <!-- Opret bruger modal -->
-  <div id="createModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
-    <div style="width:520px;max-width:92vw;background:var(--panel,#0f1115);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <h3 style="margin:0;">Tilføj bruger</h3>
-        <button id="closeCreateModal" class="btn">Luk</button>
+    <div class="panel" style="margin-bottom:12px;">
+      <div class="toolbar">
+        <button id="openCreateModal" class="btn primary">Tilføj bruger</button>
+        <div class="mini-label" style="margin-left:auto;">I alt: <strong>{{ users|length }}</strong></div>
       </div>
-      <form method="post" style="display:grid;gap:10px;">
-        <input type="hidden" name="action" value="create">
-        <label>
-          <div class="mini-label">Brugernavn</div>
-          <input name="username" placeholder="Brugernavn" required class="input-number" style="width:100%;">
-        </label>
-        <label>
-          <div class="mini-label">Adgangskode</div>
-          <input name="password" placeholder="Adgangskode" required class="input-number" style="width:100%;" type="password">
-        </label>
-        <label>
-          <div class="mini-label">Rolle</div>
-          <select name="role" class="select" style="width:100%;">
-            <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
-            <option value="user" selected>Bruger</option>
-          </select>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" name="enforce_2fa" />
-          <span>Aktivér 2FA fra start (kræver opsætning ved første login)</span>
-        </label>
-        <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button type="button" id="cancelCreate" class="btn">Annuller</button>
-          <button class="btn primary" type="submit">Opret</button>
+    </div>
+
+    <!-- Opret bruger modal -->
+    <div id="createModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
+      <div style="width:520px;max-width:92vw;background:var(--panel,#0f1115);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h3 style="margin:0;">Tilføj bruger</h3>
+          <button id="closeCreateModal" class="btn">Luk</button>
         </div>
-      </form>
+        <form method="post" style="display:grid;gap:10px;">
+          <input type="hidden" name="action" value="create">
+          <label>
+            <div class="mini-label">Brugernavn</div>
+            <input name="username" placeholder="Brugernavn" required class="input-number" style="width:100%;">
+          </label>
+          <label>
+            <div class="mini-label">Adgangskode</div>
+            <input name="password" placeholder="Adgangskode" required class="input-number" style="width:100%;" type="password">
+          </label>
+          <label>
+            <div class="mini-label">Rolle</div>
+            <select name="role" class="select" style="width:100%;">
+              <option value="admin">Admin</option>
+              <option value="manager">Manager</option>
+              <option value="user" selected>Bruger</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" name="enforce_2fa" />
+            <span>Aktivér 2FA fra start (kræver opsætning ved første login)</span>
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button type="button" id="cancelCreate" class="btn">Annuller</button>
+            <button class="btn primary" type="submit">Opret</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="data-table" style="margin-top:8px;">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Bruger</th>
+            <th>Rolle</th>
+            <th>2FA</th>
+            <th>Handling</th>
+            <th>Oprettet</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td class="muted">#{{ u.id }}</td>
+            <td><strong>{{ u.username }}</strong></td>
+            <td>
+              {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
+              {% if role == 'admin' %}
+                <span class="badge admin">Admin</span>
+              {% elif role == 'manager' %}
+                <span class="badge">Manager</span>
+              {% else %}
+                <span class="badge">Bruger</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.totp_enabled %}
+                <span class="badge twofa">2FA</span>
+              {% else %}
+                <span class="badge muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" onsubmit="return confirm('Slet bruger \"{{ u.username }}\"?');" style="margin:0;">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
+                {% if role == 'admin' and users|selectattr('role', 'equalto', 'admin')|list|length <= 1 %}
+                  <button class="btn danger" disabled>Kan ikke slette sidste admin</button>
+                {% else %}
+                  <button class="btn danger" {% if u.id|string == current_user.id|string %}disabled{% endif %}>Slet</button>
+                {% endif %}
+              </form>
+            </td>
+            <td class="muted">{{ u.created_at }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
-
-  <div class="data-table">
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Bruger</th>
-          <th>Rolle</th>
-          <th>2FA</th>
-          <th>Handling</th>
-          <th>Oprettet</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for u in users %}
-        <tr>
-          <td class="muted">#{{ u.id }}</td>
-          <td><strong>{{ u.username }}</strong></td>
-          <td>
-            {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
-            {% if role == 'admin' %}
-              <span class="badge admin">Admin</span>
-            {% elif role == 'manager' %}
-              <span class="badge">Manager</span>
-            {% else %}
-              <span class="badge">Bruger</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if u.totp_enabled %}
-              <span class="badge twofa">2FA</span>
-            {% else %}
-              <span class="badge muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            <form method="post" onsubmit="return confirm('Slet bruger \"{{ u.username }}\"?');" style="margin:0;">
-              <input type="hidden" name="action" value="delete">
-              <input type="hidden" name="user_id" value="{{ u.id }}">
-              {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
-              {% if role == 'admin' and users|selectattr('role', 'equalto', 'admin')|list|length <= 1 %}
-                <button class="btn danger" disabled>Kan ikke slette sidste admin</button>
-              {% else %}
-                <button class="btn danger" {% if u.id|string == current_user.id|string %}disabled{% endif %}>Slet</button>
-              {% endif %}
-            </form>
-          </td>
-          <td class="muted">{{ u.created_at }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
+{% endblock %}
+{% block scripts %}
   <script>
   (function(){
     const modal = document.getElementById('createModal');
@@ -123,5 +120,4 @@
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
   })();
   </script>
-</body>
-</html>
+{% endblock %}

@@ -1,24 +1,22 @@
-<!doctype html>
-<html lang="da">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>2FA Login · FjordLens</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-</head>
-<body style="display:grid;min-height:100vh;place-items:center;">
-  <form id="verifyForm" class="login-card" method="post" style="width:360px;max-width:92vw;border:1px solid var(--border);background:var(--panel);border-radius:12px;padding:16px;">
-    <h2 style="margin:0 0 10px;">Indtast 2FA-kode</h2>
-    {% if error %}<div class="err">{{ error }}</div>{% endif %}
-    <div class="form-row">
-      <label for="code">6-cifret kode</label>
-      <input id="code" name="code" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" placeholder="••••••">
-    </div>
-    <div class="actions">
-      <a class="mini-link" href="/login">Tilbage</a>
-      <button class="btn primary" type="submit">Bekræft</button>
-    </div>
-  </form>
+{% extends "base.html" %}
+{% block title %}2FA Login · FjordLens{% endblock %}
+{% block body %}
+  <div class="center-screen">
+    <form id="verifyForm" class="login-card small" method="post">
+      <h2 style="margin:0 0 10px;">Indtast 2FA-kode</h2>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <div class="form-row">
+        <label for="code">6-cifret kode</label>
+        <input id="code" name="code" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" placeholder="••••••">
+      </div>
+      <div class="actions">
+        <a class="mini-link" href="/login">Tilbage</a>
+        <button class="btn primary" type="submit">Bekræft</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}
+{% block scripts %}
   <script>
     (function(){
       const input = document.getElementById('code');
@@ -34,5 +32,4 @@
       input.focus();
     })();
   </script>
-</body>
-</html>
+{% endblock %}

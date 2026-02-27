@@ -1036,28 +1036,40 @@ async function renderUsersPanel(){
     }
     const rows = (js.items||[]).map(u => `
       <tr>
-        <td>${u.id}</td>
-        <td>${u.username}</td>
+        <td class="muted">#${u.id}</td>
+        <td><strong>${u.username}</strong></td>
         <td>${u.role}</td>
-        <td>${u.totp_enabled ? '✓' : ''}</td>
-        <td><button data-del="${u.id}" class="btn danger small">Slet</button></td>
+        <td>${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
+        <td style="text-align:right"><button data-del="${u.id}" class="btn danger small">Slet</button></td>
       </tr>`).join('');
     wrap.innerHTML = `
-      <table class="table">
-        <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>2FA</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=5>Ingen brugere</td></tr>'}</tbody>
-      </table>
-      <h4>Opret bruger</h4>
-      <div class="form-row"><input id="nu_username" placeholder="Brugernavn"></div>
-      <div class="form-row"><input id="nu_password" placeholder="Adgangskode" type="password"></div>
-      <div class="form-row">
-        <select id="nu_role">
-          <option value="user">User</option>
-          <option value="manager">Manager</option>
-          <option value="admin">Admin</option>
-        </select>
+      <div class="panel" style="margin-bottom:12px;">
+        <div class="toolbar" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <strong>Brugere</strong>
+          <div class="mini-label" style="margin-left:auto;">I alt: <strong>${(js.items||[]).length}</strong></div>
+        </div>
       </div>
-      <button id="nu_save" class="btn primary">Opret</button>
+      <div class="data-table" style="margin-bottom:12px;">
+        <table>
+          <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>2FA</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan=5 class="muted">Ingen brugere</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="mini-label" style="margin-bottom:6px;">Opret ny bruger</div>
+        <div class="form-row"><label for="nu_username">Brugernavn</label><input id="nu_username" placeholder="Brugernavn"></div>
+        <div class="form-row"><label for="nu_password">Adgangskode</label><input id="nu_password" placeholder="Adgangskode" type="password"></div>
+        <div class="form-row"><label for="nu_role">Rolle</label>
+          <select id="nu_role" class="select">
+            <option value="user">Bruger</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="actions" style="justify-content:flex-end;">
+          <button id="nu_save" class="btn primary">Opret</button>
+        </div>
+      </div>
     `;
     // bind delete
     wrap.querySelectorAll('button[data-del]').forEach(btn=>{
@@ -1099,20 +1111,20 @@ async function renderTwofaPanel(){
     const js = await r.json();
     if (!r.ok || !js.ok){ wrap.innerHTML = `<div class="empty">Kan ikke hente 2FA-status.</div>`; return; }
     wrap.innerHTML = `
-      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+      <div class="panel" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
         <img src="${js.qr}" alt="QR" style="width:140px;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"/>
-        <div style="flex:1;min-width:240px;">
+        <div style="flex:1;min-width:260px;">
           <div class="form-row"><label>Bruger</label><input value="${js.user}" disabled></div>
           <div class="form-row"><label>Hemmelig nøgle</label><input value="${js.secret}" disabled></div>
-          <div class="form-row"><label>Husk dage</label><input id="tf_days" type="number" min="0" max="30" value="${js.remember_days||0}"></div>
-          <div class="form-row"><label>Engangskode</label><input id="tf_code" placeholder="6-cifret kode" autocomplete="one-time-code"></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="form-row"><label>Husk dage</label><input id="tf_days" class="input-number" type="number" min="0" max="30" value="${js.remember_days||0}"></div>
+          <div class="form-row"><label>Engangskode</label><input id="tf_code" class="input-number" placeholder="6-cifret kode" autocomplete="one-time-code"></div>
+          <div class="actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start;">
             <button id="tf_enable" class="btn primary">Aktivér</button>
             <button id="tf_save" class="btn">Gem dage</button>
             <button id="tf_disable" class="btn danger">Deaktivér</button>
             <button id="tf_regen" class="btn">Forny QR / nøgle</button>
           </div>
-          <div style="margin-top:6px;color:var(--muted)">Status: ${js.enabled ? 'Aktiveret' : 'Deaktiveret'}</div>
+          <div class="mini-label" style="margin-top:6px;">Status: <strong>${js.enabled ? 'Aktiveret' : 'Deaktiveret'}</strong></div>
         </div>
       </div>
     `;
