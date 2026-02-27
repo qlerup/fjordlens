@@ -2280,11 +2280,14 @@ def api_viewable(rel_path: str):
     view_path = ensure_viewable_copy(src, safe_rel)
     # Serve from the appropriate root
     try:
-        if str(view_path).startswith(str(CONVERT_DIR)):
+        vp = str(view_path)
+        if vp.startswith(str(CONVERT_DIR)):
             rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
             return send_from_directory(CONVERT_DIR, rel_conv)
-        else:
-            return send_from_directory(PHOTO_DIR, safe_rel)
+        # No conversion: serve from the original location
+        if safe_rel.startswith("uploads/"):
+            return send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
+        return send_from_directory(PHOTO_DIR, safe_rel)
     except Exception as e:
         return (str(e), 500)
 
