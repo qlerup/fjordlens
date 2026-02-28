@@ -1,4 +1,5 @@
 import hashlib
+import re
 import hmac
 import io
 import json
@@ -44,6 +45,7 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
+FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -147,6 +149,140 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     except Exception as e:
         log_event("ai_http_error", rel_path=str(path), error=str(e))
     return None
+
+
+def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
+    """Send a viewable copy of the image to AI service for face detection/embeddings."""
+    try:
+        rel_guess = None
+        try:
+            rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
+        except Exception:
+            rel_guess = path.name
+        ai_src = ensure_viewable_copy(path, rel_guess)
+        with ai_src.open("rb") as f:
+            files = {"file": (ai_src.name, f, "application/octet-stream")}
+            r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        if r.ok:
+            js = r.json() or {}
+            if js.get("ok") and isinstance(js.get("faces"), list):
+                return js.get("faces")
+    except Exception as e:
+        log_event("error", rel_path=str(path), error=f"ai_faces: {e}")
+    return None
+
+
+def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tuple[int, bool, float]:
+    """Return (person_id, created_new, score). Find best match by cosine; create 'Ukendt-#' if below threshold."""
+    best_pid: Optional[int] = None
+    best_score = -1.0
+    try:
+        rows = conn.execute("SELECT id, embedding_json, person_id FROM faces WHERE embedding_json IS NOT NULL").fetchall()
+        for row in rows:
+            try:
+                vec = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+            except Exception:
+                vec = None
+            if not vec:
+                continue
+            sc = _cosine(emb, vec)
+            if sc > best_score:
+                best_score = sc
+                best_pid = row["person_id"]
+    except Exception:
+        best_pid = None
+        best_score = -1.0
+
+    if best_pid is not None and best_score >= FACE_MATCH_THRESHOLD:
+        return int(best_pid), False, float(best_score)
+
+    # Create a new 'unknown' person with unique name
+    base = "Ukendt"
+    i = 1
+    while True:
+        name = f"{base}-{i}"
+        try:
+            cur = conn.execute("INSERT INTO people(name, created_at) VALUES(?,?)", (name, now_iso()))
+            conn.commit()
+            return int(cur.lastrowid), True, float(best_score)
+        except Exception:
+            i += 1
+
+
+def index_faces_for_photo(rel_path: str) -> None:
+    """Detect faces for a photo and store into DB; updates people_count."""
+    try:
+        # Resolve disk path
+        if rel_path.startswith("uploads/"):
+            disk_path = UPLOAD_DIR / rel_path.split("/", 1)[1]
+        else:
+            disk_path = PHOTO_DIR / rel_path
+        if not disk_path.exists():
+            return
+        log_event("faces_index_start", rel_path=rel_path)
+        faces = _ai_detect_faces_path(disk_path) or []
+        log_event("faces_detect", rel_path=rel_path, count=len(faces))
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+            if not row:
+                return
+            photo_id = int(row["id"])
+            # Clear previous faces for this photo (re-index)
+            try:
+                conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+                conn.commit()
+            except Exception:
+                pass
+            count = 0
+            created_new = 0
+            matched_existing = 0
+            for fc in faces:
+                emb = fc.get("embedding") or []
+                bbox = fc.get("bbox") or [0, 0, 0, 0]
+                try:
+                    x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+                    bx, by = max(0, x1), max(0, y1)
+                    bw, bh = max(0, x2 - x1), max(0, y2 - y1)
+                except Exception:
+                    bx = by = bw = bh = 0
+                try:
+                    if emb:
+                        pid, created, score = _find_or_create_person_id(conn, emb)
+                        if created:
+                            created_new += 1
+                        else:
+                            matched_existing += 1
+                    else:
+                        pid, created, score = (None, False, -1.0)
+                except Exception:
+                    pid, created, score = (None, False, -1.0)
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            photo_id,
+                            pid,
+                            bx, by, bw, bh,
+                            json.dumps(emb, ensure_ascii=False),
+                            float(fc.get("confidence") or 1.0),
+                            now_iso(),
+                        ),
+                    )
+                    count += 1
+                    log_event("face_saved", rel_path=rel_path, photo_id=photo_id, person_id=pid, bbox=[bx,by,bw,bh], score=score)
+                except Exception as e:
+                    log_event("error", rel_path=rel_path, error=f"face_insert: {e}")
+            try:
+                conn.execute("UPDATE photos SET people_count=? WHERE id=?", (count, photo_id))
+                conn.commit()
+            except Exception:
+                pass
+            log_event("faces_index_done", rel_path=rel_path, faces=count, matched=matched_existing, created=created_new)
+    except Exception as e:
+        log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {e}")
 
 
 # Zero-shot labels (initial simple vocabulary; can expand/customize later)
@@ -1358,6 +1494,42 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
     return result
 
 
+# --- Face indexing API ---
+_faces_running = threading.Event()
+
+
+def _index_faces_worker(all_photos: bool = False):
+    try:
+        with closing(get_conn()) as conn:
+            if all_photos:
+                rows = conn.execute("SELECT rel_path FROM photos").fetchall()
+            else:
+                rows = conn.execute("SELECT rel_path FROM photos WHERE people_count=0").fetchall()
+        for row in rows:
+            if not _faces_running.is_set():
+                break
+            rel = row["rel_path"]
+            log_event("faces_index", rel_path=rel)
+            index_faces_for_photo(rel)
+    finally:
+        _faces_running.clear()
+
+
+@app.route("/api/faces/index", methods=["POST"])
+def api_faces_index():
+    if _faces_running.is_set():
+        return jsonify({"ok": False, "error": "Faces indexing already running"}), 409
+    _faces_running.set()
+    all_photos = (request.args.get("all") in {"1", "true", "True"})
+    threading.Thread(target=_index_faces_worker, args=(all_photos,), daemon=True).start()
+    return jsonify({"ok": True, "running": True})
+
+
+@app.route("/api/faces/status")
+def api_faces_status():
+    return jsonify({"ok": True, "running": _faces_running.is_set()})
+
+
 def upsert_photo(meta: Dict[str, Any]) -> None:
     with closing(get_conn()) as conn:
         conn.execute(
@@ -1576,7 +1748,219 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
         d["is_video"] = ext in VIDEO_EXTS
     except Exception:
         d["is_video"] = False
+    # Friendly device and lens labels
+    try:
+        make = (d.get("camera_make") or "").strip()
+        model = (d.get("camera_model") or "").strip()
+        dev_label = " ".join([x for x in [make, model] if x]).strip()
+        d["device_label"] = dev_label if dev_label else None
+        lens = (d.get("lens_model") or "").strip()
+        if lens and dev_label:
+            # remove occurrences of device make/model in lens text (case-insensitive)
+            lm = lens
+            for s in {make, model, dev_label}:
+                if s:
+                    try:
+                        lm = re.sub(re.escape(s), "", lm, flags=re.IGNORECASE)
+                    except re.error:
+                        pass
+            lm = re.sub(r"\s{2,}", " ", lm).strip(" -,")
+            d["lens_label"] = lm if lm else lens
+        else:
+            d["lens_label"] = lens or None
+    except Exception:
+        d["device_label"] = (d.get("camera_model") or d.get("camera_make"))
+        d["lens_label"] = d.get("lens_model")
     return d
+
+
+@app.route("/api/people")
+def api_people_list():
+    """List people with face counts and a sample thumbnail."""
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.name, COUNT(f.id) AS face_count,
+                   MAX(f.id) as any_face_id,
+                   MAX(f.photo_id) as any_photo_id
+            FROM people p
+            LEFT JOIN faces f ON f.person_id = p.id
+            GROUP BY p.id, p.name
+            ORDER BY p.name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        people = []
+        for r in rows:
+            pid = int(r["id"])
+            name = r["name"]
+            cnt = int(r["face_count"] or 0)
+            thumb_url = None
+            # Prefer a face-based thumbnail for the person
+            face_row = conn.execute("SELECT id FROM faces WHERE person_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+            if face_row:
+                thumb_url = f"/api/face-thumb/{int(face_row['id'])}"
+            elif r["any_photo_id"]:
+                prow = conn.execute("SELECT thumb_name FROM photos WHERE id=?", (int(r["any_photo_id"]),)).fetchone()
+                if prow and prow["thumb_name"]:
+                    thumb_url = f"/api/thumbs/{prow['thumb_name']}"
+            people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url})
+        # Add a synthetic 'Ukendte' group for faces without a person_id
+        unk = conn.execute(
+            "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
+        ).fetchone()
+        if unk and int(unk["c"] or 0) > 0:
+            # Prefer a face-based thumbnail for unknown group
+            frow = conn.execute(
+                "SELECT id FROM faces WHERE person_id IS NULL ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if frow:
+                thumb_url = f"/api/face-thumb/{int(frow['id'])}"
+            else:
+                prow = conn.execute(
+                    "SELECT p.thumb_name FROM photos p INNER JOIN faces f ON f.photo_id = p.id WHERE f.person_id IS NULL ORDER BY f.id DESC LIMIT 1"
+                ).fetchone()
+                thumb_url = f"/api/thumbs/{prow['thumb_name']}" if prow and prow["thumb_name"] else None
+            people.insert(0, {"id": "unknown", "name": "Ukendte", "count": int(unk["c"] or 0), "thumb_url": thumb_url})
+    return jsonify({"ok": True, "items": people})
+
+
+@app.route("/api/people/<int:pid>/photos")
+def api_people_photos(pid: int):
+    """List photos that include a given person id."""
+    items: list[Dict[str, Any]] = []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.*
+            FROM photos p
+            INNER JOIN faces f ON f.photo_id = p.id
+            WHERE f.person_id = ?
+            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC
+            """,
+            (pid,),
+        ).fetchall()
+        for r in rows:
+            items.append(row_to_public(r))
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/people/unknown/photos-faces")
+def api_people_unknown_photos_faces():
+    items: list[Dict[str, Any]] = []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.*, f.id as face_id, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
+            FROM photos p
+            INNER JOIN faces f ON f.photo_id = p.id
+            WHERE f.person_id IS NULL
+            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, f.id DESC
+            """
+        ).fetchall()
+        # Group faces per photo
+        by_photo: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            pid_ = int(r["id"])  # photo id
+            if pid_ not in by_photo:
+                by_photo[pid_] = row_to_public(r)
+                by_photo[pid_]["faces"] = []
+            try:
+                w = float(r["width"] or 0) or 1.0
+                h = float(r["height"] or 0) or 1.0
+            except Exception:
+                w, h = 1.0, 1.0
+            x = max(0.0, float(r["bbox_x"] or 0) / w)
+            y = max(0.0, float(r["bbox_y"] or 0) / h)
+            bw = max(0.0, float(r["bbox_w"] or 0) / w)
+            bh = max(0.0, float(r["bbox_h"] or 0) / h)
+            by_photo[pid_]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"])})
+    items = list(by_photo.values())
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/face-thumb/<int:face_id>")
+def api_face_thumb(face_id: int):
+    # Generate or serve a cropped face thumbnail for a given face id
+    try:
+        with closing(get_conn()) as conn:
+            r = conn.execute(
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                (face_id,),
+            ).fetchone()
+        if not r:
+            return ("Not found", 404)
+        src_rel = r["rel_path"]
+        src_path = (UPLOAD_DIR / src_rel.split("/",1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
+        safe_rel = src_rel
+        view_path = ensure_viewable_copy(src_path, safe_rel)
+        # Prepare output path
+        out_name = f"face_{face_id}.jpg"
+        out_path = THUMB_DIR / out_name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # Build/crop if missing or stale
+        try:
+            if (not out_path.exists()) or (view_path.stat().st_mtime > out_path.stat().st_mtime):
+                with Image.open(view_path) as im:
+                    try:
+                        im = ImageOps.exif_transpose(im)
+                    except Exception:
+                        pass
+                    x = max(0, int(r["bbox_x"] or 0))
+                    y = max(0, int(r["bbox_y"] or 0))
+                    w = max(1, int(r["bbox_w"] or 1))
+                    h = max(1, int(r["bbox_h"] or 1))
+                    # Add a bit of padding around face
+                    pad = int(max(w, h) * 0.25)
+                    cx1 = max(0, x - pad)
+                    cy1 = max(0, y - pad)
+                    cx2 = min(im.width, x + w + pad)
+                    cy2 = min(im.height, y + h + pad)
+                    crop = im.crop((cx1, cy1, cx2, cy2)).convert("RGB")
+                    crop.thumbnail((300, 300))
+                    crop.save(out_path, format="JPEG", quality=90, optimize=True)
+        except Exception as e:
+            log_event("error", rel_path=src_rel, error=f"face_thumb: {e}")
+        return send_from_directory(str(THUMB_DIR), out_name)
+    except Exception as e:
+        return (str(e), 500)
+
+
+@app.route("/api/people/unknown/photos")
+def api_people_unknown_photos():
+    items: list[Dict[str, Any]] = []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT p.*
+            FROM photos p
+            INNER JOIN faces f ON f.photo_id = p.id
+            WHERE f.person_id IS NULL
+            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC
+            """
+        ).fetchall()
+        for r in rows:
+            items.append(row_to_public(r))
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/people/<int:pid>/rename", methods=["POST"])
+def api_people_rename(pid: int):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    data = request.get_json(silent=True) or {}
+    new_name = (data.get("name") or "").strip()
+    if not new_name:
+        return jsonify({"ok": False, "error": "Missing name"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE people SET name=? WHERE id=?", (new_name, pid))
+            conn.commit()
+        return jsonify({"ok": True, "id": pid, "name": new_name})
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "Name already exists"}), 409
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -1639,8 +2023,8 @@ def matches_search(photo: Dict[str, Any], q: str) -> bool:
 
 def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dict[str, Any]]:
     sort_map = {
-        "date_desc": "COALESCE(captured_at, modified_fs) DESC",
-        "date_asc": "COALESCE(captured_at, modified_fs) ASC",
+        "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
+        "date_asc": "COALESCE(captured_at, modified_fs, created_fs) ASC",
         "name_asc": "filename ASC",
         "name_desc": "filename DESC",
         "size_desc": "file_size DESC",
@@ -2214,6 +2598,87 @@ def api_photo_detail(photo_id: int):
     return jsonify({"ok": True, "item": row_to_public(row)})
 
 
+@app.route("/api/photos/<int:photo_id>/captured-at", methods=["POST"])
+@login_required
+def api_update_captured_at(photo_id: int):
+    try:
+        data = request.get_json(silent=True) or {}
+        raw = str(data.get("captured_at") or "").strip()
+        if not raw:
+            return jsonify({"ok": False, "error": "Missing date"}), 400
+        # Accept 'YYYY-MM-DDTHH:MM' or 'YYYY-MM-DDTHH:MM:SS' (local)
+        if len(raw) == 16:
+            raw = raw + ":00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid date format"}), 400
+        iso = dt.isoformat(timespec="seconds")
+        with closing(get_conn()) as conn:
+            # Update DB
+            conn.execute("UPDATE photos SET captured_at=? WHERE id=?", (iso, photo_id))
+            row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
+            conn.commit()
+        # Update file mtime to help sorting when EXIF is absent
+        try:
+            rel = row["rel_path"] if row else None
+            if rel:
+                safe_rel = rel.replace("..", "").lstrip("/")
+                if safe_rel.startswith("uploads/"):
+                    fpath = UPLOAD_DIR / safe_rel[len("uploads/"):]
+                else:
+                    fpath = PHOTO_DIR / safe_rel
+                if fpath.exists():
+                    ts = dt.timestamp()
+                    os.utime(fpath, (ts, ts))
+        except Exception:
+            pass
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        return jsonify({"ok": True, "item": row_to_public(row)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/photos/<int:photo_id>/gps", methods=["POST"])
+@login_required
+def api_update_gps(photo_id: int):
+    try:
+        data = request.get_json(silent=True) or {}
+        lat = data.get("lat")
+        lon = data.get("lon")
+        if lat is None or lon is None:
+            return jsonify({"ok": False, "error": "Missing coordinates"}), 400
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
+        country, city = reverse_geocode_with_cache(lat_f, lon_f)
+        name = ", ".join([x for x in [city, country] if x]) if (country or city) else None
+        with closing(get_conn()) as conn:
+            # Update columns + metadata_json.geo
+            row0 = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+            mj = {}
+            try:
+                mj = json.loads(row0["metadata_json"]) if row0 and row0["metadata_json"] else {}
+            except Exception:
+                mj = {}
+            geo = mj.get("geo", {})
+            if country: geo["country"] = country
+            if city: geo["city"] = city
+            mj["geo"] = geo
+            conn.execute(
+                "UPDATE photos SET gps_lat=?, gps_lon=?, gps_name=?, metadata_json=? WHERE id=?",
+                (lat_f, lon_f, name, json.dumps(mj, ensure_ascii=False), photo_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        return jsonify({"ok": True, "item": row_to_public(row)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/photos/<int:photo_id>/favorite", methods=["POST"])
 def api_toggle_favorite(photo_id: int):
     with closing(get_conn()) as conn:
@@ -2321,10 +2786,26 @@ def api_upload():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     ensure_dirs()
     files = request.files.getlist("files") or []
+    try:
+        log_event("upload_start", count=len(files))
+    except Exception:
+        pass
     if not files:
         return jsonify({"ok": False, "error": "No files"}), 400
     saved = []
     errors: list[str] = []
+    # Optional client-side metadata (array of {name,lastModified})
+    client_meta = {}
+    try:
+        meta_raw = request.form.get("meta")
+        if meta_raw:
+            for entry in json.loads(meta_raw):
+                n = str(entry.get("name"))
+                lm = int(entry.get("lastModified")) if entry.get("lastModified") is not None else None
+                if n and lm:
+                    client_meta[n] = lm
+    except Exception:
+        client_meta = {}
     for f in files:
         try:
             name = secure_filename(f.filename or "")
@@ -2333,6 +2814,8 @@ def api_upload():
             ext = Path(name).suffix.lower()
             if ext not in SUPPORTED_EXTS:
                 errors.append(f"Unsupported: {name}")
+                try: log_event("upload_skip_unsupported", filename=name, ext=ext)
+                except Exception: pass
                 continue
             # Ensure unique filename
             target = UPLOAD_DIR / name
@@ -2343,15 +2826,43 @@ def api_upload():
                 target = UPLOAD_DIR / f"{stem}_{i}{suffix}"
                 i += 1
             f.save(str(target))
+            try: log_event("upload_saved", filename=name, path=str(target))
+            except Exception: pass
+            # If client provided lastModified, set file mtime to preserve original date
+            try:
+                lm_ms = client_meta.get(f.filename)
+                if lm_ms:
+                    ts = float(lm_ms) / 1000.0
+                    os.utime(target, (ts, ts))
+            except Exception:
+                pass
             rel = f"uploads/{target.name}"
             try:
                 meta = extract_metadata(target, rel)
                 upsert_photo(meta)
+                try: log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
+                except Exception: pass
+                # Start face indexing in background for this uploaded image
+                try:
+                    threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
+                    try: log_event("faces_queued", rel_path=rel)
+                    except Exception: pass
+                except Exception as e:
+                    try: log_event("error", rel_path=rel, error=f"faces_queue: {e}")
+                    except Exception: pass
             except Exception as e:
                 errors.append(f"Index fail: {target.name}: {e}")
+                try: log_event("error", filename=target.name, rel_path=rel, error=str(e))
+                except Exception: pass
             saved.append(target.name)
         except Exception as e:
             errors.append(str(e))
+            try: log_event("error", filename=(f.filename if f else None), error=str(e))
+            except Exception: pass
+    try:
+        log_event("upload_done", saved=len(saved), errors=len(errors))
+    except Exception:
+        pass
     return jsonify({"ok": True, "saved": saved, "errors": errors})
 
 

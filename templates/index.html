@@ -30,7 +30,7 @@
       </div>
 
       <nav class="nav">
-        <button class="nav-item active" data-view="library">📷 Bibliotek</button>
+        <button class="nav-item active" data-view="timeline">📅 Tidlinje</button>
         <button class="nav-item" data-view="favorites">⭐ Favoritter</button>
         <button class="nav-item" data-view="steder">📍 Steder</button>
         <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
@@ -136,6 +136,8 @@
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
               <button id="aiIngestBtn" class="btn">Byg AI‑embeddings</button>
               <button id="aiStopBtn" class="btn danger">Stop AI</button>
+              <button id="facesIndexBtn" class="btn">Indekser ansigter</button>
+              <span id="facesStatus" class="mini-label" style="align-self:center;">Ansigter: —</span>
               <span id="aiStatus" class="mini-label" style="align-self:center;">AI: —</span>
             </div>
           </div>
@@ -197,6 +199,8 @@
 
         <div class="detail-header">
           <h3 id="detailName">-</h3>
+        </div>
+        <div class="detail-actions">
           <button id="favoriteBtn" class="icon-btn" title="Favorit">☆</button>
           <button id="similarBtn" class="btn" title="Find lignende">Lignende</button>
         </div>
@@ -204,12 +208,43 @@
         <div class="detail-path" id="detailPath">-</div>
 
         <div class="detail-list">
-          <div class="detail-row"><span>Dato</span><strong id="detailDate">-</strong></div>
+          <div class="detail-row"><span>Dato</span>
+            <div class="detail-val">
+              <strong id="detailDate">-</strong>
+              <button id="editDateBtn" class="icon-btn tiny" title="Rediger dato">✎</button>
+            </div>
+            <div id="dateEditWrap" class="date-popover hidden">
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input id="dateInput" type="datetime-local" class="input-number" style="flex:1; min-width: 220px;" />
+                <button id="dateSaveBtn" class="btn small primary">Gem</button>
+                <button id="dateCancelBtn" class="btn small">Luk</button>
+              </div>
+            </div>
+          </div>
           <div class="detail-row"><span>Størrelse</span><strong id="detailSize">-</strong></div>
           <div class="detail-row"><span>Dimensioner</span><strong id="detailDims">-</strong></div>
-          <div class="detail-row"><span>Kamera</span><strong id="detailCamera">-</strong></div>
+          <div class="detail-row"><span>Enhed</span><strong id="detailDevice">-</strong></div>
           <div class="detail-row"><span>Linse</span><strong id="detailLens">-</strong></div>
-          <div class="detail-row"><span>GPS</span><strong id="detailGps">-</strong></div>
+          <div class="detail-row"><span>GPS</span>
+            <div class="detail-val">
+              <strong id="detailGps">-</strong>
+              <button id="editGpsBtn" class="icon-btn tiny" title="Rediger GPS">✎</button>
+            </div>
+            <div id="gpsEditWrap" class="gps-modal hidden">
+              <div class="gps-search">
+                <input id="gpsSearchInput" type="text" placeholder="Søg adresse…" />
+                <div id="gpsSearchList" class="gps-results hidden"></div>
+              </div>
+              <div id="gpsMap" class="gps-map"></div>
+              <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+                <div id="gpsCoordText" class="mini-label">Klik på kortet for at vælge</div>
+                <div>
+                  <button id="gpsSaveBtn" class="btn small primary">Gem</button>
+                  <button id="gpsCancelBtn" class="btn small">Luk</button>
+                </div>
+              </div>
+            </div>
+          </div>
             <div class="detail-row"><span>Land</span><strong id="detailCountry">-</strong></div>
             <div class="detail-row"><span>By</span><strong id="detailCity">-</strong></div>
           <div class="detail-row"><span>AI tags</span><strong id="detailAiTags">-</strong></div>
@@ -234,6 +269,14 @@
   </div>
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <!-- Drag & Drop Upload Overlay -->
+  <div id="uploadOverlay" class="upload-overlay hidden">
+    <div class="upload-box">
+      <div class="upload-title">Slip filer her for at uploade</div>
+      <div class="upload-progress"><div id="uploadProgressBar" class="bar"></div></div>
+      <div id="uploadProgressText" class="upload-text"></div>
+    </div>
+  </div>
   <script>
     (function(){
       const ROLE = {{ (user_role or 'user')|tojson }};

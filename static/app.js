@@ -9,6 +9,8 @@ const els = {
   aiIngestBtn: document.getElementById("aiIngestBtn"),
   aiStopBtn: document.getElementById("aiStopBtn"),
   aiStatus: document.getElementById("aiStatus"),
+  facesIndexBtn: document.getElementById("facesIndexBtn"),
+  facesStatus: document.getElementById("facesStatus"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -28,7 +30,7 @@ const els = {
   detailDate: document.getElementById("detailDate"),
   detailSize: document.getElementById("detailSize"),
   detailDims: document.getElementById("detailDims"),
-  detailCamera: document.getElementById("detailCamera"),
+  detailDevice: document.getElementById("detailDevice"),
   detailLens: document.getElementById("detailLens"),
   detailGps: document.getElementById("detailGps"),
   detailCountry: document.getElementById("detailCountry"),
@@ -65,10 +67,40 @@ const els = {
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
+  // date edit controls
+  editDateBtn: document.getElementById('editDateBtn'),
+  dateEditWrap: document.getElementById('dateEditWrap'),
+  dateInput: document.getElementById('dateInput'),
+  dateSaveBtn: document.getElementById('dateSaveBtn'),
+  dateCancelBtn: document.getElementById('dateCancelBtn'),
+  // gps edit controls
+  editGpsBtn: document.getElementById('editGpsBtn'),
+  gpsEditWrap: document.getElementById('gpsEditWrap'),
+  gpsMapEl: document.getElementById('gpsMap'),
+  gpsCoordText: document.getElementById('gpsCoordText'),
+  gpsSaveBtn: document.getElementById('gpsSaveBtn'),
+  gpsCancelBtn: document.getElementById('gpsCancelBtn'),
+  gpsEarthBtn: document.getElementById('gpsEarthBtn'),
+  gpsSearchInput: document.getElementById('gpsSearchInput'),
+  gpsSearchList: document.getElementById('gpsSearchList'),
+  // upload overlay
+  uploadOverlay: document.getElementById("uploadOverlay"),
+  uploadProgressBar: document.getElementById("uploadProgressBar"),
+  uploadProgressText: document.getElementById("uploadProgressText"),
 };
 
+// Immediate emergency cleanup in case an overlay/backdrop was left in DOM
+(function immediateCleanup(){
+  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.add('hidden')); } catch{}
+})();
+try { window.addEventListener('DOMContentLoaded', ()=>{
+  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.add('hidden')); } catch{}
+}); } catch{}
+
 const NAV_LABELS = {
-  library: ["Bibliotek", "Scan din fotomappe og søg/sortér i metadata"],
+  timeline: ["Tidlinje", "Dato-grupperet oversigt (år/måned)"],
   favorites: ["Favoritter", "Markerede billeder"],
   steder: ["Steder", "Billeder med GPS/placeringsdata"],
   kameraer: ["Kameraer", "Filtreret på billeder med kameradata"],
@@ -80,7 +112,7 @@ const NAV_LABELS = {
 let state = {
   items: [],
   selectedId: null,
-  view: "library",
+  view: "timeline",
   sort: "date_desc",
   q: "",
   scanning: false,
@@ -89,10 +121,13 @@ let state = {
   // logs
   logsRunning: true,
   logsAfter: 0,
+  // people view state
+  people: [],
+  personView: { mode: 'list', personId: null, personName: null },
 };
 
 // mark initial view for CSS targeting
-document.body.classList.add("view-library");
+document.body.classList.add("view-timeline");
 
 // Map state for "Steder"
 let placesMap = null;
@@ -108,7 +143,7 @@ function hideStatus() {
 }
 
 function fmtBytes(bytes) {
-  if (!bytes && bytes !== 0) return "-";
+  if (bytes == null) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let val = Number(bytes);
   let idx = 0;
@@ -124,6 +159,18 @@ function fmtDims(w, h) {
   return `${w} × ${h}`;
 }
 
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"'`]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '`': '&#96;'
+  })[ch]);
+}
+
 function fmtDate(s) {
   if (!s) return "-";
   try {
@@ -134,9 +181,9 @@ function fmtDate(s) {
 }
 
 function renderStats() {
-  els.photoCount.textContent = state.items.length;
-  els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
-  els.selectedCount.textContent = state.selectedId ? "1" : "0";
+  if (els.photoCount) els.photoCount.textContent = state.items.length;
+  if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
+  if (els.selectedCount) els.selectedCount.textContent = state.selectedId ? "1" : "0";
 }
 
 function renderEmpty(message) {
@@ -168,11 +215,24 @@ function setDetail(item) {
 
   els.detailName.textContent = item.filename || "-";
   els.detailPath.textContent = item.rel_path || "-";
-  els.detailDate.textContent = fmtDate(item.captured_at || item.modified_fs);
+  els.detailDate.textContent = fmtDate(item.captured_at || item.modified_fs || item.created_fs);
+  // Prefill date editor
+  try {
+    const iso = (item.captured_at || item.modified_fs || item.created_fs || '').toString();
+    if (els.dateInput && iso) {
+      const d = new Date(iso);
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const da = String(d.getDate()).padStart(2,'0');
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      els.dateInput.value = `${y}-${m}-${da}T${hh}:${mm}`;
+    }
+  } catch {}
   els.detailSize.textContent = fmtBytes(item.file_size);
   els.detailDims.textContent = fmtDims(item.width, item.height);
-  els.detailCamera.textContent = [item.camera_make, item.camera_model].filter(Boolean).join(" ") || "-";
-  els.detailLens.textContent = item.lens_model || "-";
+  els.detailDevice.textContent = (item.device_label || [item.camera_make, item.camera_model].filter(Boolean).join(" ") ) || "-";
+  els.detailLens.textContent = (item.lens_label || item.lens_model) || "-";
   if (item.gps_lat != null && item.gps_lon != null) {
     els.detailGps.textContent = `${Number(item.gps_lat).toFixed(5)}, ${Number(item.gps_lon).toFixed(5)}`;
   } else {
@@ -246,8 +306,91 @@ function renderGrid() {
     initOrUpdatePlacesMap();
     return;
   }
-  // Default views (library, mapper, etc.)
+  // Handle People (Personer) view
+  if (state.view === 'personer') {
+    els.grid.innerHTML = '';
+    els.grid.classList.add('gallery-grid');
+    els.grid.classList.remove('timeline-wrap');
+    const people = state.personView.mode === 'list' ? (state.people || []) : [];
+    if (state.personView.mode === 'list') {
+      if (!people.length) {
+        renderEmpty("Ingen personer endnu. Upload billeder med ansigter eller kør ansigtsindeksering.");
+        renderStats();
+        setDetail(null);
+        return;
+      }
+      hideEmpty();
+      people.forEach(p => appendPersonCard(p));
+      renderStats();
+      return;
+    } else if (state.personView.mode === 'photos') {
+      hideEmpty();
+      const head = document.createElement('div');
+      head.className = 'timeline-header';
+      head.style.cursor = 'pointer';
+      head.textContent = `← ${state.personView.personName || 'Person'}`;
+      head.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
+      els.grid.appendChild(head);
+      const wrap = document.createElement('div');
+      wrap.className = 'timeline-grid';
+      els.grid.appendChild(wrap);
+      (state.items||[]).forEach(it => appendCardTo(it, wrap));
+      renderStats();
+      return;
+    }
+  }
+  // Timeline view: group by year-month headers
+  if (state.view === "timeline") {
+    els.grid.innerHTML = "";
+    // Ensure vertical stacking container (not the gallery grid)
+    els.grid.classList.remove('gallery-grid');
+    els.grid.classList.add('timeline-wrap');
+    hideEmpty();
+    const items = state.items.slice();
+    if (!items.length) {
+      renderEmpty("Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.");
+      renderStats();
+      setDetail(null);
+      return;
+    }
+    const groups = new Map(); // key: YYYY-MM label
+    for (const it of items) {
+      const d = new Date(it.captured_at || it.modified_fs || it.created_fs || Date.now());
+      const y = d.getFullYear();
+      const m = d.toLocaleString("da-DK", { month: "long" });
+      const key = `${y}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const label = `${m} ${y}`;
+      if (!groups.has(key)) groups.set(key, { label, arr: [] });
+      groups.get(key).arr.push(it);
+    }
+    // Sort groups according to selection (date_desc or date_asc)
+    const asc = state.sort === 'date_asc';
+    const ordered = Array.from(groups.entries()).sort((a,b)=> {
+      if (a[0] === b[0]) return 0;
+      return asc ? (a[0] > b[0] ? 1 : -1) : (a[0] < b[0] ? 1 : -1);
+    });
+    for (const [, grp] of ordered) {
+      const h = document.createElement('div');
+      h.className = 'timeline-header';
+      h.textContent = grp.label;
+      const wrap = document.createElement('div');
+      wrap.className = 'timeline-grid';
+      els.grid.appendChild(h);
+      els.grid.appendChild(wrap);
+      grp.arr.forEach(it => appendCardTo(it, wrap));
+    }
+    if (!state.items.some(i => i.id === state.selectedId)) {
+      state.selectedId = null; setDetail(null);
+    }
+    renderStats();
+    return;
+  }
+
+  // Default views (mapper, etc.)
   els.grid.innerHTML = "";
+  // Restore gallery grid layout for non-timeline views
+  els.grid.classList.add('gallery-grid');
+  els.grid.classList.remove('timeline-wrap');
   if (!state.items.length) {
     const msg = state.view === "personer"
       ? "Ingen personer endnu. Det bliver fyldt når face-service/ansigtsgenkendelse aktiveres."
@@ -281,10 +424,45 @@ function renderGrid() {
   renderStats();
 }
 
-function appendCard(item) {
+function appendCardTo(item, container) {
   const card = document.createElement("article");
   card.className = "photo-card" + (state.selectedId === item.id ? " active" : "");
   card.innerHTML = cardHTML(item);
+  // If viewing 'Ukendte' person folder, overlay detected face boxes on the thumbnail
+  try {
+    if (state.personView && state.personView.personId === 'unknown' && item && Array.isArray(item.faces) && item.faces.length) {
+      const thumb = card.querySelector('.card-thumb');
+      const img = thumb && thumb.querySelector('img');
+      if (thumb && img) {
+        thumb.style.position = 'relative';
+        img.style.objectFit = 'contain';
+        img.style.background = '#0d1016';
+        const faces = item.faces.slice(0, 2);
+        const draw = () => {
+          try {
+            const cw = thumb.clientWidth; const ch = thumb.clientHeight;
+            const iw = img.naturalWidth || (item.width||1); const ih = img.naturalHeight || (item.height||1);
+            const scale = Math.min(cw/iw, ch/ih);
+            const dw = iw*scale; const dh = ih*scale;
+            const offX = (cw - dw)/2; const offY = (ch - dh)/2;
+            faces.forEach(fc => {
+              const box = document.createElement('div');
+              box.style.position = 'absolute';
+              box.style.left = `${offX + (fc.x*dw)}px`;
+              box.style.top = `${offY + (fc.y*dh)}px`;
+              box.style.width = `${fc.w*dw}px`;
+              box.style.height = `${fc.h*dh}px`;
+              box.style.border = '2px solid #e33';
+              box.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.4) inset';
+              box.style.pointerEvents = 'none';
+              thumb.appendChild(box);
+            });
+          } catch {}
+        };
+        if (img.complete) draw(); else img.addEventListener('load', draw, { once: true });
+      }
+    }
+  } catch {}
   card.addEventListener("click", () => {
     state.selectedId = item.id;
     renderGrid();
@@ -295,8 +473,10 @@ function appendCard(item) {
     const idx = state.items.findIndex(i => i.id === item.id);
     if (idx >= 0) openViewer(idx);
   });
-  els.grid.appendChild(card);
+  (container || els.grid).appendChild(card);
 }
+
+function appendCard(item){ return appendCardTo(item, els.grid); }
 
 function appendFolderCard(folder, arr) {
   const previews = arr.slice(0, 4);
@@ -313,10 +493,44 @@ function appendFolderCard(folder, arr) {
       </div>
     </div>`;
   card.addEventListener("click", () => {
-    state.view = "library";
+    state.view = "timeline";
     state.folder = folder === "(root)" ? "" : folder;
     document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
     loadPhotos();
+  });
+  els.grid.appendChild(card);
+}
+
+function appendPersonCard(p) {
+  const card = document.createElement('article');
+  card.className = 'photo-card';
+  const img = p.thumb_url ? `<img src="${p.thumb_url}" alt="${p.name}">` : `<div class="card-thumb placeholder">🙂</div>`;
+  card.innerHTML = `
+    <div class="card-thumb">${img}</div>
+    <div class="card-body">
+      <h4 class="card-title">${escapeHtml(p.name || 'Ukendt')}</h4>
+      <div class="card-meta"><span>${p.count||0} billede(r)</span></div>
+      <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
+        <button class="btn tiny" data-act="open">Åbn</button>
+        <button class="btn tiny" data-act="rename">Omdøb</button>
+      </div>
+    </div>
+  `;
+  card.querySelector('[data-act="open"]').addEventListener('click', ()=> {
+    if (p.id === 'unknown') loadPersonPhotos('unknown', 'Ukendte');
+    else loadPersonPhotos(p.id, p.name);
+  });
+  card.querySelector('[data-act="rename"]').addEventListener('click', async ()=>{
+    const nv = prompt('Nyt navn for person:', p.name || '');
+    if (!nv) return;
+    if (p.id === 'unknown') { showStatus('Ukendte kan ikke omdøbes', 'err'); return; }
+    try {
+      const r = await fetch(`/api/people/${p.id}/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: nv })});
+      const d = await r.json();
+      if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke omdøbe', 'err'); return; }
+      showStatus('Navn opdateret', 'ok');
+      loadPeople();
+    } catch { showStatus('Fejl ved omdøbning', 'err'); }
   });
   els.grid.appendChild(card);
 }
@@ -331,10 +545,8 @@ function openViewer(index) {
   if (els.viewerImg) {
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
-      // Browsers cannot render HEIC/HEIF. Use thumbnail as preview.
-      const ext = (it.ext || '').toLowerCase();
-      const src = (ext === '.heic' || ext === '.heif') && it.thumb_url ? it.thumb_url : it.original_url;
-      els.viewerImg.src = src;
+      // Always use the server-provided original_url (it serves a viewable copy for HEIC/HEIF)
+      els.viewerImg.src = it.original_url || it.thumb_url || '';
     }
     if (it.is_video) els.viewerImg.removeAttribute('src');
   }
@@ -379,8 +591,8 @@ function nextViewer(step=1) {
   } else {
     if (els.viewerImg) {
       els.viewerImg.style.display = 'block';
-      const ext = (it.ext || '').toLowerCase();
-      els.viewerImg.src = (ext === '.heic' || ext === '.heif') && it.thumb_url ? it.thumb_url : it.original_url;
+      // Use original_url for full-resolution viewing (server handles HEIC conversion)
+      els.viewerImg.src = it.original_url || it.thumb_url || '';
     }
     if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.style.display = 'none'; }
   }
@@ -410,39 +622,104 @@ async function loadPhotos() {
   renderGrid();
 }
 
+async function loadPeople() {
+  try {
+    const res = await fetch('/api/people');
+    const data = await res.json();
+    state.people = data.items || [];
+  } catch { state.people = []; }
+  // Update headings for People view
+  const [title, subtitle] = NAV_LABELS['personer'] || ["Personer", ""];
+  if (els.viewTitle) els.viewTitle.textContent = title;
+  if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
+  renderGrid();
+}
+
+async function loadPersonPhotos(pid, name) {
+  try {
+    const url = (pid === 'unknown') ? '/api/people/unknown/photos-faces' : `/api/people/${pid}/photos`;
+    const res = await fetch(url);
+    const data = await res.json();
+    state.items = data.items || [];
+    state.personView = { mode: 'photos', personId: pid, personName: name };
+  } catch { state.items = []; }
+  renderGrid();
+}
+
 // --- Drag & Drop Upload ---
 async function uploadFiles(fileList) {
   const files = Array.from(fileList || []).filter(f => !!f && f.name);
   if (!files.length) return;
   const fd = new FormData();
-  for (const f of files) fd.append('files', f, f.name);
+  const meta = [];
+  for (const f of files) { fd.append('files', f, f.name); meta.push({ name: f.name, lastModified: f.lastModified }); }
+  fd.append('meta', JSON.stringify(meta));
+  const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
+  // Show overlay
+  if (els.uploadOverlay) els.uploadOverlay.classList.add('active');
+  if (els.uploadProgressBar) els.uploadProgressBar.style.width = '0%';
+  if (els.uploadProgressText) els.uploadProgressText.textContent = `${files.length} fil(er)`;
   try {
-    showStatus('Uploader billeder...', 'ok');
-    const res = await fetch('/api/upload', { method: 'POST', body: fd });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.ok === false) {
-      showStatus(data.error || 'Upload fejlede', 'err');
-      return;
-    }
-    const saved = (data.saved || []).length;
-    const errs = (data.errors || []).length;
-    showStatus(`Upload fuldført: ${saved} fil(er)${errs?`, fejl: ${errs}`:''}`, errs? 'err':'ok');
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || '{}');
+          if (xhr.status >= 200 && xhr.status < 300 && data && data.ok !== false) {
+            const saved = (data.saved||[]).length;
+            const errs = (data.errors||[]).length;
+            showStatus(`Upload fuldført: ${saved} fil(er)${errs?`, fejl: ${errs}`:''}`, errs? 'err':'ok');
+            resolve();
+          } else {
+            showStatus((data && data.error) || 'Upload fejlede', 'err');
+            reject(new Error('upload failed'));
+          }
+        } catch (e) { showStatus('Upload fejlede', 'err'); reject(e); }
+      };
+      xhr.onerror = () => { showStatus('Upload fejlede (netværk)', 'err'); reject(new Error('net')); };
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round((e.loaded / e.total) * 100);
+        if (els.uploadProgressBar) els.uploadProgressBar.style.width = pct + '%';
+        if (els.uploadProgressText) {
+          const mbLoaded = (e.loaded/1024/1024).toFixed(1);
+          const mbTotal = (e.total/1024/1024).toFixed(1);
+          els.uploadProgressText.textContent = `${pct}% · ${mbLoaded}/${mbTotal} MB`;
+        }
+      };
+      xhr.send(fd);
+    });
     await loadPhotos();
   } catch (e) {
     console.error(e);
-    showStatus('Upload fejlede', 'err');
+  } finally {
+    if (els.uploadOverlay) els.uploadOverlay.classList.remove('active');
   }
 }
 
 window.addEventListener('dragover', (e) => {
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
+    if (els.uploadOverlay) els.uploadOverlay.classList.add('active');
+    if (els.uploadProgressBar) els.uploadProgressBar.style.width = '0%';
+    if (els.uploadProgressText) els.uploadProgressText.textContent = 'Slip filer for at uploade';
   }
 });
 window.addEventListener('drop', (e) => {
   if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
     e.preventDefault();
     uploadFiles(e.dataTransfer.files);
+  }
+  // If nothing to upload, hide overlay
+  if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) {
+    if (els.uploadOverlay) els.uploadOverlay.classList.remove('active');
+  }
+});
+window.addEventListener('dragleave', (e) => {
+  // Hide when leaving window
+  if (e.screenX === 0 && e.screenY === 0) {
+    if (els.uploadOverlay) els.uploadOverlay.classList.add('hidden');
   }
 });
 
@@ -495,7 +772,6 @@ function initOrUpdatePlacesMap() {
       console.log("[Steder] init features:", geo0.features.length);
       addOrUpdatePlacesSource(geo0);
       addPlacesLayers();
-
       // Cluster click expands
       placesMap.on("click", "clusters", (e) => {
         const features = placesMap.queryRenderedFeatures(e.point, { layers: ["clusters"] });
@@ -506,7 +782,6 @@ function initOrUpdatePlacesMap() {
           placesMap.easeTo({ center: features[0].geometry.coordinates, zoom });
         });
       });
-
       // Single point click shows popup
       placesMap.on("click", "unclustered-point", (e) => {
         const f = e.features && e.features[0];
@@ -523,21 +798,18 @@ function initOrUpdatePlacesMap() {
           .setHTML(html)
           .addTo(placesMap);
       });
-
       placesMap.on("mouseenter", "clusters", () => (placesMap.getCanvas().style.cursor = "pointer"));
       placesMap.on("mouseleave", "clusters", () => (placesMap.getCanvas().style.cursor = ""));
       placesMap.on("mouseenter", "unclustered-point", () => (placesMap.getCanvas().style.cursor = "pointer"));
       placesMap.on("mouseleave", "unclustered-point", () => (placesMap.getCanvas().style.cursor = ""));
-
       placesSourceReady = true;
-        // Render initial HTML markers and keep them updated
-        renderPlacesMarkers();
-        placesMap.on("moveend", renderPlacesMarkers);
-        placesMap.on("zoomend", renderPlacesMarkers);
-        placesMap.on("data", (e) => { if (e.sourceId === "places" && e.isSourceLoaded) renderPlacesMarkers(); });
+      // Render initial HTML markers and keep them updated
+      renderPlacesMarkers();
+      placesMap.on("moveend", renderPlacesMarkers);
+      placesMap.on("zoomend", renderPlacesMarkers);
+      placesMap.on("data", (e) => { if (e.sourceId === "places" && e.isSourceLoaded) renderPlacesMarkers(); });
     });
   }
-
   // Update data if map already loaded
   if (placesMap && placesMap.isStyleLoaded()) {
     const geo = buildPlacesGeoJSON(state.items);
@@ -929,10 +1201,13 @@ function setView(view) {
   });
   // Toggle body class to drive CSS for Settings view
   document.body.classList.toggle("view-settings", view === "settings");
-  document.body.classList.toggle("view-library", view === "library");
+  document.body.classList.toggle("view-timeline", view === "timeline");
   if (view === "settings") {
     // show logs panel, do not load photos
     renderGrid();
+  } else if (view === 'personer') {
+    state.personView = { mode: 'list', personId: null, personName: null };
+    loadPeople();
   } else {
     loadPhotos();
   }
@@ -969,6 +1244,52 @@ els.aiStopBtn && els.aiStopBtn.addEventListener('click', async () => {
   try { await fetch('/api/ai/stop', { method: 'POST' }); pollAiStatus(); } catch {}
 });
 
+// Faces indexing controls
+async function pollFacesStatus() {
+  try {
+    const r = await fetch('/api/faces/status');
+    const s = await r.json();
+    if (els.facesStatus) {
+      const run = s && s.running ? 'kører' : 'stoppet';
+      els.facesStatus.textContent = `Ansigter: ${run}`;
+    }
+    if (s && s.running) {
+      setTimeout(pollFacesStatus, 1500);
+    } else {
+      // refresh lists when done
+      if (state.view === 'personer') loadPeople();
+      else loadPhotos();
+      if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
+    }
+  } catch {
+    if (els.facesStatus) els.facesStatus.textContent = 'Ansigter: —';
+    if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
+  }
+}
+
+async function startFacesIndex(all=true) {
+  try {
+    if (els.facesIndexBtn) els.facesIndexBtn.disabled = true;
+    showStatus('Starter ansigtsindeksering…', 'ok');
+    const url = all ? '/api/faces/index?all=1' : '/api/faces/index';
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showStatus(data && data.error ? data.error : 'Kunne ikke starte ansigtsindeksering', 'err');
+      if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
+      return;
+    }
+    pollFacesStatus();
+  } catch (e) {
+    showStatus('Fejl ved start af ansigtsindeksering', 'err');
+    if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
+  }
+}
+
+if (els.facesIndexBtn) {
+  els.facesIndexBtn.addEventListener('click', () => startFacesIndex(true));
+}
+
 async function pollAiStatus() {
   try {
     const r = await fetch('/api/ai/status');
@@ -997,6 +1318,280 @@ els.toggleRawBtn.addEventListener("click", () => {
   els.toggleRawBtn.textContent = hidden ? "Vis rå metadata (JSON)" : "Skjul rå metadata (JSON)";
 });
 els.favoriteBtn.addEventListener("click", toggleFavorite);
+
+// Date edit interactions
+if (els.editDateBtn) {
+  els.editDateBtn.addEventListener('click', () => {
+    if (els.dateEditWrap) {
+      els.dateEditWrap.classList.remove('hidden');
+      els.dateEditWrap.classList.add('floating');
+      // Position under the pencil button (viewport coordinates)
+      try {
+        const r = els.editDateBtn.getBoundingClientRect();
+        const w = Math.min(420, Math.max(300, window.innerWidth - 24));
+        let left = r.right - w;
+        const margin = 12;
+        if (left < margin) left = margin;
+        if (left + w > window.innerWidth - margin) left = window.innerWidth - margin - w;
+        els.dateEditWrap.style.width = w + 'px';
+        els.dateEditWrap.style.left = left + 'px';
+        els.dateEditWrap.style.top = (r.bottom + 8) + 'px';
+        els.dateEditWrap.style.zIndex = '100000';
+      } catch {}
+    }
+    try {
+      const row = els.editDateBtn.closest('.detail-row');
+      if (row) row.classList.add('popover-open');
+    } catch {}
+  });
+}
+if (els.dateCancelBtn) {
+  els.dateCancelBtn.addEventListener('click', () => {
+    if (els.dateEditWrap) { els.dateEditWrap.classList.add('hidden'); els.dateEditWrap.classList.remove('floating'); els.dateEditWrap.style.left=''; els.dateEditWrap.style.top=''; }
+    try {
+      const row = els.editDateBtn.closest('.detail-row');
+      if (row) row.classList.remove('popover-open');
+    } catch {}
+  });
+}
+if (els.dateSaveBtn) {
+  els.dateSaveBtn.addEventListener('click', async () => {
+    if (!state.selectedId || !els.dateInput) return;
+    const v = els.dateInput.value;
+    if (!v) return;
+    try {
+      const res = await fetch(`/api/photos/${state.selectedId}/captured-at`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ captured_at: v })});
+      const data = await res.json();
+      if (!res.ok || !data.ok) { showStatus(data.error || 'Kunne ikke opdatere dato', 'err'); return; }
+      const item = data.item;
+      const idx = state.items.findIndex(i => i.id === item.id);
+      if (idx >= 0) state.items[idx] = item;
+      showStatus('Dato opdateret', 'ok');
+      renderGrid();
+      setDetail(item);
+      if (els.dateEditWrap) { els.dateEditWrap.classList.add('hidden'); els.dateEditWrap.classList.remove('floating'); els.dateEditWrap.style.left=''; els.dateEditWrap.style.top=''; }
+      try {
+        const row = els.editDateBtn.closest('.detail-row');
+        if (row) row.classList.remove('popover-open');
+      } catch {}
+    } catch (e) {
+      showStatus('Fejl ved opdatering', 'err');
+    }
+  });
+}
+
+// --- GPS editor (MapLibre) ---
+let gpsMap = null;
+let gpsMarker = null;
+let gpsLat = null;
+let gpsLon = null;
+let gpsPrevParent = null;
+let gpsPrevNext = null;
+let gpsBackdrop = null;
+let gpsEarthOn = true;
+let gpsSearchTimer = null;
+
+function initGpsMap(item) {
+  if (!els.gpsMapEl) return;
+  if (!gpsMap) {
+    gpsMap = new maplibregl.Map({
+      container: els.gpsMapEl,
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [10,56], zoom: 4, attributionControl: false,
+    });
+    gpsMap.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+    gpsMap.on('click', (e)=> setGpsPoint(e.lngLat.lng, e.lngLat.lat));
+    try { gpsMap.on('load', ()=> { gpsMap.getCanvas().style.cursor='crosshair'; }); } catch{}
+  }
+  ensureEarthLayer();
+  try { if (gpsMap.getLayer('esri')) gpsMap.setLayoutProperty('esri','visibility', gpsEarthOn ? 'visible' : 'none'); } catch{}
+  applySatelliteLabelMode();
+  if (item && item.gps_lon != null && item.gps_lat != null) {
+    setGpsPoint(Number(item.gps_lon), Number(item.gps_lat), { fly:true });
+  } else {
+    if (gpsMarker) { gpsMarker.remove(); gpsMarker=null; }
+    gpsLat=gpsLon=null;
+    if (els.gpsCoordText) els.gpsCoordText.textContent = 'Klik på kortet for at vælge';
+    try { gpsMap.jumpTo({ center:[10,56], zoom:4 }); } catch {}
+  }
+}
+function ensureEarthLayer(){
+  if (!gpsMap) return;
+  const add = ()=>{
+    try {
+      if (!gpsMap.getSource('esri')) {
+        gpsMap.addSource('esri', { type:'raster', tiles:['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, attribution:'Esri' });
+      }
+      if (!gpsMap.getLayer('esri')) {
+        // Insert raster below first symbol (labels) layer so labels stay on top
+        let beforeId = null;
+        try {
+          const layers = gpsMap.getStyle().layers || [];
+          for (const lyr of layers) { if (lyr.type === 'symbol') { beforeId = lyr.id; break; } }
+        } catch {}
+        gpsMap.addLayer({ id:'esri', type:'raster', source:'esri', layout:{ visibility: gpsEarthOn ? 'visible' : 'none' } }, beforeId || undefined);
+      } else {
+        gpsMap.setLayoutProperty('esri','visibility', gpsEarthOn ? 'visible' : 'none');
+      }
+      applySatelliteLabelMode();
+    } catch(e){}
+  };
+  try { if (gpsMap.isStyleLoaded()) add(); else gpsMap.once('load', add); } catch { add(); }
+}
+
+// Keep only labels (symbol layers) above satellite and make text black
+function applySatelliteLabelMode(){
+  if (!gpsMap) return;
+  try {
+    const style = gpsMap.getStyle(); if (!style || !style.layers) return;
+    for (const lyr of style.layers) {
+      const id = lyr.id; const tp = lyr.type;
+      if (id === 'esri') continue; // keep satellite
+      if (tp && tp !== 'symbol') {
+        if (id !== 'esri' && id !== 'pickCircle') {
+          try { gpsMap.setLayoutProperty(id, 'visibility', 'none'); } catch {}
+        }
+      } else if (tp === 'symbol') {
+        try { gpsMap.setLayoutProperty(id, 'visibility', 'visible'); } catch {}
+        try { gpsMap.setPaintProperty(id, 'text-color', '#000000'); } catch {}
+        try { gpsMap.setPaintProperty(id, 'text-halo-color', '#ffffff'); } catch {}
+        try { gpsMap.setPaintProperty(id, 'text-halo-width', 0.8); } catch {}
+      }
+    }
+  } catch {}
+}
+function setGpsPoint(lon, lat, opts={}){
+  gpsLat=lat; gpsLon=lon;
+  if (els.gpsCoordText) els.gpsCoordText.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+  // Update circle layer data for precise rendering (no DOM transform issues)
+  try {
+    const src = gpsMap.getSource('pick');
+    if (src) {
+      src.setData({ type:'FeatureCollection', features:[{ type:'Feature', geometry:{ type:'Point', coordinates:[lon,lat] } }] });
+    }
+  } catch {}
+  // Tilføj eller flyt markør på kortet
+  try {
+    if (gpsMarker) { gpsMarker.remove(); gpsMarker = null; }
+    gpsMarker = new maplibregl.Marker({ color: '#d00', draggable: false })
+      .setLngLat([lon, lat])
+      .addTo(gpsMap);
+  } catch {}
+  if (opts.fly) { try { gpsMap.jumpTo({ center:[lon,lat], zoom:11 }); } catch {} }
+}
+if (els.editGpsBtn) {
+  els.editGpsBtn.addEventListener('click', () => {
+    // Safety: remove any stray backdrops before opening
+    try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+    if (els.gpsEditWrap) {
+      // Reparent to body and show centered modal with backdrop
+      try { gpsPrevParent = els.gpsEditWrap.parentElement; gpsPrevNext = els.gpsEditWrap.nextElementSibling; document.body.appendChild(els.gpsEditWrap); } catch {}
+      if (!gpsBackdrop) { gpsBackdrop = document.createElement('div'); gpsBackdrop.className='modal-backdrop'; gpsBackdrop.addEventListener('click', (e)=> { if (e.target === gpsBackdrop && els.gpsCancelBtn) els.gpsCancelBtn.click(); }); }
+      document.body.appendChild(gpsBackdrop);
+      // place modal inside backdrop (centered via flex)
+      gpsBackdrop.appendChild(els.gpsEditWrap);
+      els.gpsEditWrap.classList.remove('hidden');
+      els.gpsEditWrap.classList.add('gps-modal');
+      gpsBackdrop.classList.add('active');
+      const item = state.items.find(i => i.id === state.selectedId);
+      initGpsMap(item);
+      // Ensure correct size/transform after showing modal (fixes wrong click coords)
+      try {
+        if (gpsMap) {
+          // resize now and on next frame
+          gpsMap.resize();
+          requestAnimationFrame(()=>{ try { gpsMap.resize(); } catch{} });
+        }
+      } catch {}
+    }
+  });
+}
+if (els.gpsCancelBtn) {
+  els.gpsCancelBtn.addEventListener('click', ()=>{
+    if (els.gpsEditWrap) { els.gpsEditWrap.classList.add('hidden'); els.gpsEditWrap.classList.remove('floating'); els.gpsEditWrap.classList.remove('gps-modal');
+      try { if (gpsPrevParent) { if (gpsPrevNext) gpsPrevParent.insertBefore(els.gpsEditWrap, gpsPrevNext); else gpsPrevParent.appendChild(els.gpsEditWrap); } } catch {}
+      try { if (gpsBackdrop) gpsBackdrop.classList.remove('active'); } catch{}
+      try { if (gpsBackdrop && gpsBackdrop.parentElement) gpsBackdrop.parentElement.removeChild(gpsBackdrop); } catch{}
+      gpsBackdrop = null;
+    }
+  });
+}
+if (els.gpsSaveBtn) {
+  els.gpsSaveBtn.addEventListener('click', async ()=>{
+    if (!state.selectedId || gpsLat==null || gpsLon==null) return;
+    try {
+      const res = await fetch(`/api/photos/${state.selectedId}/gps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat: gpsLat, lon: gpsLon })});
+      const data = await res.json();
+      if (!res.ok || !data.ok) { showStatus(data.error || 'Kunne ikke opdatere GPS', 'err'); return; }
+      const item = data.item; const idx = state.items.findIndex(i => i.id === item.id); if (idx>=0) state.items[idx]=item;
+      showStatus('GPS opdateret', 'ok'); renderGrid(); setDetail(item);
+      if (els.gpsEditWrap) { els.gpsEditWrap.classList.add('hidden'); els.gpsEditWrap.classList.remove('floating'); els.gpsEditWrap.classList.remove('gps-modal');
+        try { if (gpsPrevParent) { if (gpsPrevNext) gpsPrevParent.insertBefore(els.gpsEditWrap, gpsPrevNext); else gpsPrevParent.appendChild(els.gpsEditWrap); } } catch {}
+        try { if (gpsBackdrop) gpsBackdrop.classList.remove('active'); } catch{}
+        try { if (gpsBackdrop && gpsBackdrop.parentElement) gpsBackdrop.parentElement.removeChild(gpsBackdrop); } catch{}
+        gpsBackdrop = null;
+      }
+    } catch(e){ showStatus('Fejl ved opdatering', 'err'); }
+  });
+}
+
+function ensurePickLayer(){
+  if (!gpsMap) return;
+  const add = ()=>{
+    try {
+      if (!gpsMap.getSource('pick')) {
+        gpsMap.addSource('pick', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+      }
+      if (!gpsMap.getLayer('pickCircle')) {
+        gpsMap.addLayer({ id:'pickCircle', type:'circle', source:'pick', paint: { 'circle-radius': 6, 'circle-color':'#5b8cff', 'circle-stroke-color':'#ffffff', 'circle-stroke-width': 2 } });
+      }
+    } catch(e){}
+  };
+  try { if (gpsMap.isStyleLoaded()) add(); else gpsMap.once('load', add); } catch { add(); }
+}
+
+// --- Address search (Nominatim) ---
+async function searchAddress(q){
+  q = (q || '').trim();
+  if (!els.gpsSearchList) return;
+  if (!q) { els.gpsSearchList.classList.add('hidden'); els.gpsSearchList.innerHTML=''; return; }
+  try{
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=da&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const data = await res.json();
+    if (!Array.isArray(data)) { els.gpsSearchList.classList.add('hidden'); return; }
+    const html = data.map(r=>`<div class="gps-result-item" data-lat="${r.lat}" data-lon="${r.lon}">${(r.display_name||'').replaceAll('<','&lt;')}</div>`).join('');
+    els.gpsSearchList.innerHTML = html || '<div class="gps-result-item">Ingen resultater</div>';
+    els.gpsSearchList.classList.remove('hidden');
+    els.gpsSearchList.querySelectorAll('.gps-result-item').forEach(it=>{
+      it.addEventListener('click', ()=>{
+        const lat = parseFloat(it.getAttribute('data-lat'));
+        const lon = parseFloat(it.getAttribute('data-lon'));
+        setGpsPoint(lon, lat, { fly:true });
+        els.gpsSearchList.classList.add('hidden');
+      });
+    });
+  } catch{
+    els.gpsSearchList.classList.add('hidden');
+  }
+}
+
+if (els.gpsSearchInput){
+  els.gpsSearchInput.addEventListener('input', ()=>{
+    const q = els.gpsSearchInput.value;
+    if (gpsSearchTimer) clearTimeout(gpsSearchTimer);
+    gpsSearchTimer = setTimeout(()=> searchAddress(q), 350);
+  });
+}
+// Earth overlay toggle
+if (els.gpsEarthBtn) {
+  els.gpsEarthBtn.addEventListener('click', ()=>{
+    gpsEarthOn = !gpsEarthOn;
+    if (els.gpsEarthBtn) els.gpsEarthBtn.classList.toggle('toggled', gpsEarthOn);
+    ensureEarthLayer();
+    try { if (gpsMap && gpsMap.getLayer('esri')) gpsMap.setLayoutProperty('esri','visibility', gpsEarthOn?'visible':'none'); } catch{}
+  });
+}
 
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -1056,6 +1651,19 @@ loadPhotos().then(() => {
   }).catch(() => {});
   // logs always running
   startLogs();
+  // Safety: remove any stray backdrops/overlays that might block UI after reload
+  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}
+  // Watchdog: every 5s remove any backdrop with no visible modal child
+  setInterval(()=>{
+    try {
+      document.querySelectorAll('.modal-backdrop').forEach(el=>{
+        const hasModal = !!el.querySelector('.gps-modal:not(.hidden)');
+        if (!hasModal) { if (el.parentElement) el.parentElement.removeChild(el); }
+      });
+      document.querySelectorAll('.upload-overlay').forEach(el=>{ if (!el.classList.contains('active')) el.classList.remove('active'); });
+    } catch{}
+  }, 1000);
 });
 
 // --- Embedded Admin Panels ---
