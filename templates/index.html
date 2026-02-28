@@ -77,17 +77,21 @@
           <p id="viewSubtitle">Scan din fotomappe og søg/sortér i metadata</p>
         </div>
         <div class="stats">
-          <div class="stat-card">
-            <span class="stat-label">Billeder</span>
+          <div class="stat-card" id="statPhotos">
+            <span class="stat-label" id="photoCountLabel">Billeder</span>
             <span class="stat-value" id="photoCount">0</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Favoritter</span>
+          <div class="stat-card" id="statFavorites">
+            <span class="stat-label" id="favoriteCountLabel">Favoritter</span>
             <span class="stat-value" id="favoriteCount">0</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">Valgt</span>
+          <div class="stat-card" id="statSelected">
+            <span class="stat-label" id="selectedCountLabel">Valgt</span>
             <span class="stat-value" id="selectedCount">0</span>
+          </div>
+          <div class="stat-card" id="statHiddenToggle" style="display:none;align-items:center;gap:10px;">
+            <label class="stat-label" for="showHiddenToggle">Vis skjulte</label>
+            <input id="showHiddenToggle" class="switch" type="checkbox" />
           </div>
         </div>
       </section>
@@ -265,7 +269,24 @@
     <video id="viewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
     <button id="viewerClose" class="btn" style="position:absolute;right:12px;top:12px;">Luk</button>
+    <button id="viewerInfoBtn" class="btn" title="Vis info" style="position:absolute;right:12px;top:54px;">Info</button>
     <a id="viewerOpenOrig" class="btn" target="_blank" rel="noopener" style="position:absolute;left:12px;top:12px;">Åbn original</a>
+    <!-- Slide-out info panel inside viewer -->
+    <aside id="viewerInfo" class="viewer-info hidden">
+      <div class="detail-panel viewer-info-inner">
+        <h3 id="viTitle" style="margin:0 0 8px;">—</h3>
+        <div class="detail-row"><span>Dato</span><strong id="viDate">—</strong></div>
+        <div class="detail-row"><span>Størrelse</span><strong id="viSize">—</strong></div>
+        <div class="detail-row"><span>Dimensioner</span><strong id="viDims">—</strong></div>
+        <div class="detail-row"><span>Enhed</span><strong id="viDevice">—</strong></div>
+        <div class="detail-row"><span>Linse</span><strong id="viLens">—</strong></div>
+        <div class="detail-row"><span>GPS</span><strong id="viGps">—</strong></div>
+        <div class="detail-row"><span>AI tags</span><strong id="viTags">—</strong></div>
+        <div class="vi-actions" style="margin-top:10px;display:flex;gap:8px;">
+          <a id="viDownload" class="btn" href="#" target="_blank" rel="noopener">Download</a>
+        </div>
+      </div>
+    </aside>
   </div>
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

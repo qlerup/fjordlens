@@ -557,6 +557,14 @@ def init_db() -> None:
         )
         conn.commit()
         # Simple migration for old DBs
+        # Add people.hidden if missing
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(people)").fetchall()]  # type: ignore[index]
+            if "hidden" not in cols:
+                conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0")
+                conn.commit()
+        except Exception:
+            pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
         except Exception:
@@ -1777,23 +1785,26 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
 @app.route("/api/people")
 def api_people_list():
     """List people with face counts and a sample thumbnail."""
+    include_hidden = request.args.get("include_hidden") in {"1", "true", "True"}
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            """
-            SELECT p.id, p.name, COUNT(f.id) AS face_count,
+        where = "" if include_hidden else "WHERE COALESCE(p.hidden,0)=0"
+        q = f"""
+            SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden, COUNT(f.id) AS face_count,
                    MAX(f.id) as any_face_id,
                    MAX(f.photo_id) as any_photo_id
             FROM people p
             LEFT JOIN faces f ON f.person_id = p.id
-            GROUP BY p.id, p.name
+            {where}
+            GROUP BY p.id, p.name, hidden
             ORDER BY p.name COLLATE NOCASE ASC
-            """
-        ).fetchall()
+        """
+        rows = conn.execute(q).fetchall()
         people = []
         for r in rows:
             pid = int(r["id"])
             name = r["name"]
             cnt = int(r["face_count"] or 0)
+            hidden = bool(int(r["hidden"] or 0))
             thumb_url = None
             # Prefer a face-based thumbnail for the person
             face_row = conn.execute("SELECT id FROM faces WHERE person_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
@@ -1803,7 +1814,7 @@ def api_people_list():
                 prow = conn.execute("SELECT thumb_name FROM photos WHERE id=?", (int(r["any_photo_id"]),)).fetchone()
                 if prow and prow["thumb_name"]:
                     thumb_url = f"/api/thumbs/{prow['thumb_name']}"
-            people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url})
+            people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url, "hidden": hidden})
         # Add a synthetic 'Ukendte' group for faces without a person_id
         unk = conn.execute(
             "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
@@ -1822,6 +1833,23 @@ def api_people_list():
                 thumb_url = f"/api/thumbs/{prow['thumb_name']}" if prow and prow["thumb_name"] else None
             people.insert(0, {"id": "unknown", "name": "Ukendte", "count": int(unk["c"] or 0), "thumb_url": thumb_url})
     return jsonify({"ok": True, "items": people})
+
+
+@app.route("/api/people/<int:pid>/hide", methods=["POST"])
+def api_people_hide(pid: int):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    try:
+        data = request.get_json(silent=True) or {}
+        val = data.get("hidden")
+        hidden = 1 if (val in (1, True, "1", "true", "True", None)) else 0
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE people SET hidden=? WHERE id=?", (hidden, pid))
+            conn.commit()
+        return jsonify({"ok": True, "id": pid, "hidden": bool(hidden)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/people/<int:pid>/photos")

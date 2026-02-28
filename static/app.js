@@ -16,8 +16,16 @@ const els = {
   empty: document.getElementById("emptyState"),
 
   photoCount: document.getElementById("photoCount"),
+  photoCountLabel: document.getElementById("photoCountLabel"),
   favoriteCount: document.getElementById("favoriteCount"),
+  favoriteCountLabel: document.getElementById("favoriteCountLabel"),
   selectedCount: document.getElementById("selectedCount"),
+  selectedCountLabel: document.getElementById("selectedCountLabel"),
+  statPhotos: document.getElementById("statPhotos"),
+  statFavorites: document.getElementById("statFavorites"),
+  statSelected: document.getElementById("statSelected"),
+  statHiddenToggle: document.getElementById("statHiddenToggle"),
+  showHiddenToggle: document.getElementById("showHiddenToggle"),
 
   viewTitle: document.getElementById("viewTitle"),
   viewSubtitle: document.getElementById("viewSubtitle"),
@@ -99,6 +107,16 @@ try { window.addEventListener('DOMContentLoaded', ()=>{
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.add('hidden')); } catch{}
 }); } catch{}
 
+// People: toggle 'Vis skjulte'
+try {
+  if (els.showHiddenToggle) {
+    els.showHiddenToggle.addEventListener('change', ()=>{
+      state.showHiddenPeople = !!els.showHiddenToggle.checked;
+      if (state.view === 'personer') loadPeople();
+    });
+  }
+} catch {}
+
 const NAV_LABELS = {
   timeline: ["Tidlinje", "Dato-grupperet oversigt (år/måned)"],
   favorites: ["Favoritter", "Markerede billeder"],
@@ -124,6 +142,7 @@ let state = {
   // people view state
   people: [],
   personView: { mode: 'list', personId: null, personName: null },
+  showHiddenPeople: false,
 };
 
 // mark initial view for CSS targeting
@@ -181,9 +200,18 @@ function fmtDate(s) {
 }
 
 function renderStats() {
-  if (els.photoCount) els.photoCount.textContent = state.items.length;
-  if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
-  if (els.selectedCount) els.selectedCount.textContent = state.selectedId ? "1" : "0";
+  const inPeople = (state.view === 'personer');
+  if (els.photoCountLabel) els.photoCountLabel.textContent = inPeople ? 'Personer' : 'Billeder';
+  if (els.statFavorites) els.statFavorites.style.display = inPeople ? 'none' : '';
+  if (els.statSelected) els.statSelected.style.display = inPeople ? 'none' : '';
+
+  if (inPeople) {
+    if (els.photoCount) els.photoCount.textContent = Array.isArray(state.people) ? state.people.length : 0;
+  } else {
+    if (els.photoCount) els.photoCount.textContent = state.items.length;
+    if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
+    if (els.selectedCount) els.selectedCount.textContent = state.selectedId ? "1" : "0";
+  }
 }
 
 function renderEmpty(message) {
@@ -266,23 +294,8 @@ function cardHTML(item) {
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
     : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : 'Ingen thumbnail'}</div>`;
 
-  const aiPills = (item.ai_tags || []).slice(0, 3).map(t => `<span class="pill">${t}</span>`).join("");
-  const favPill = item.favorite ? `<span class="pill fav">Favorit</span>` : "";
-  const vidPill = item.is_video ? `<span class="pill">Video</span>` : "";
-  const sizeLabel = getSizeLabel(item.width, item.height);
-
-  return `
-    ${thumb}
-    <div class="card-body">
-      <h4 class="card-title">${item.filename || "Ukendt"}</h4>
-      <div class="card-meta">
-        <span>${fmtDate(item.captured_at || item.modified_fs)}</span>
-        <span>${fmtBytes(item.file_size)}</span>
-        <span>${sizeLabel}</span>
-      </div>
-      <div class="pills">${aiPills}${vidPill}${favPill}</div>
-    </div>
-  `;
+  // Gridkort uden extra tekst/metadata – kun selve billedet
+  return `${thumb}`;
 }
 
 function renderGrid() {
@@ -308,9 +321,13 @@ function renderGrid() {
   }
   // Handle People (Personer) view
   if (state.view === 'personer') {
+    if (els.statHiddenToggle) {
+      els.statHiddenToggle.style.display = '';
+      if (els.showHiddenToggle) els.showHiddenToggle.checked = !!state.showHiddenPeople;
+    }
     els.grid.innerHTML = '';
-    els.grid.classList.add('gallery-grid');
-    els.grid.classList.remove('timeline-wrap');
+      els.grid.classList.remove('timeline-wrap');
+      els.grid.classList.add('gallery-grid');
     const people = state.personView.mode === 'list' ? (state.people || []) : [];
     if (state.personView.mode === 'list') {
       if (!people.length) {
@@ -325,6 +342,8 @@ function renderGrid() {
       return;
     } else if (state.personView.mode === 'photos') {
       hideEmpty();
+      // Ensure the container is not a gallery grid so inner grid can span full width
+      els.grid.classList.remove('gallery-grid');
       const head = document.createElement('div');
       head.className = 'timeline-header';
       head.style.cursor = 'pointer';
@@ -338,6 +357,10 @@ function renderGrid() {
       renderStats();
       return;
     }
+  }
+  // Hide hidden-toggle outside People view
+  if (state.view !== 'personer' && els.statHiddenToggle) {
+    els.statHiddenToggle.style.display = 'none';
   }
   // Timeline view: group by year-month headers
   if (state.view === "timeline") {
@@ -463,13 +486,10 @@ function appendCardTo(item, container) {
       }
     }
   } catch {}
-  card.addEventListener("click", () => {
+  // Single-click opens viewer directly
+  card.addEventListener("click", (ev) => {
     state.selectedId = item.id;
-    renderGrid();
     setDetail(item);
-  });
-  // double-click opens viewer
-  card.addEventListener("dblclick", () => {
     const idx = state.items.findIndex(i => i.id === item.id);
     if (idx >= 0) openViewer(idx);
   });
@@ -510,13 +530,16 @@ function appendPersonCard(p) {
     <div class="card-body">
       <h4 class="card-title">${escapeHtml(p.name || 'Ukendt')}</h4>
       <div class="card-meta"><span>${p.count||0} billede(r)</span></div>
+      <div class="pills">${p.hidden ? '<span class="pill">Skjult</span>' : ''}</div>
       <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
-        <button class="btn tiny" data-act="open">Åbn</button>
         <button class="btn tiny" data-act="rename">Omdøb</button>
+        ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${p.hidden?'Vis':'Skjul'}</button>`}
       </div>
     </div>
   `;
-  card.querySelector('[data-act="open"]').addEventListener('click', ()=> {
+  // Klik på hele kortet åbner personens billeder (undtagen når man klikker på en knap)
+  card.addEventListener('click', (e)=>{
+    if (e.target && e.target.closest('[data-act]')) return;
     if (p.id === 'unknown') loadPersonPhotos('unknown', 'Ukendte');
     else loadPersonPhotos(p.id, p.name);
   });
@@ -532,6 +555,31 @@ function appendPersonCard(p) {
       loadPeople();
     } catch { showStatus('Fejl ved omdøbning', 'err'); }
   });
+  const hideBtn = card.querySelector('[data-act="hide"]');
+  if (hideBtn) {
+    hideBtn.addEventListener('click', async ()=>{
+      if (!confirm('Skjul denne person fra listen?')) return;
+      try {
+        const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
+        const d = await r.json();
+        if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke skjule', 'err'); return; }
+        showStatus('Person skjult', 'ok');
+        loadPeople();
+      } catch { showStatus('Fejl ved skjul', 'err'); }
+    });
+  }
+  const unhideBtn = card.querySelector('[data-act="unhide"]');
+  if (unhideBtn) {
+    unhideBtn.addEventListener('click', async ()=>{
+      try {
+        const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })});
+        const d = await r.json();
+        if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke gendanne', 'err'); return; }
+        showStatus('Person vist igen', 'ok');
+        loadPeople();
+      } catch { showStatus('Fejl ved gendannelse', 'err'); }
+    });
+  }
   els.grid.appendChild(card);
 }
 
@@ -561,6 +609,46 @@ function openViewer(index) {
     }
   }
   els.viewer.classList.remove("hidden");
+  // Populate slide-out info with the current item's metadata
+  try {
+    const title = (it.filename || it.rel_path || "-");
+    const date = fmtDate(it.captured_at || it.modified_fs || it.created_fs);
+    const dims = it.width && it.height ? `${it.width} × ${it.height}` : "-";
+    const dev = it.device_label || (it.camera_make || "");
+    const lens = it.lens_label || it.lens_model || "-";
+    const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
+    const tags = (it.ai_tags && it.ai_tags.length) ? it.ai_tags.join(", ") : "-";
+    const dl = (it.download_url || it.original_url || '#');
+    const q = (id)=>document.getElementById(id);
+    q('viTitle').textContent = title;
+    q('viDate').textContent = date;
+    q('viSize').textContent = fmtBytes(it.file_size);
+    q('viDims').textContent = dims;
+    q('viDevice').textContent = dev || '-';
+    q('viLens').textContent = lens;
+    q('viGps').textContent = gps;
+    q('viTags').textContent = tags;
+    const viDL = q('viDownload'); if (viDL) viDL.href = dl;
+  } catch {}
+
+  // Position the info panel so it appears to slide out from "under" the media
+  try {
+    const vi = document.getElementById('viewerInfo');
+    if (vi) {
+      const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
+      const r = mediaEl.getBoundingClientRect();
+      // Hide panel "under" image: set its left so it sits fully beneath media
+      const w = vi.offsetWidth || 360;
+      vi.style.left = `${Math.round(r.right - w)}px`;
+      vi.style.right = 'auto';
+      // Size/position vertically to be slightly smaller than image (50px padding on top/bottom)
+      const top = Math.max(0, Math.round(r.top + 50));
+      const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+      vi.style.top = `${top}px`;
+      vi.style.bottom = `${bottomGap}px`;
+      vi.style.height = '';
+    }
+  } catch {}
   if (els.viewerOpenOrig) {
     const dl = (it.download_url || it.original_url || '');
     els.viewerOpenOrig.href = dl;
@@ -624,7 +712,8 @@ async function loadPhotos() {
 
 async function loadPeople() {
   try {
-    const res = await fetch('/api/people');
+    const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
+    const res = await fetch(url);
     const data = await res.json();
     state.people = data.items || [];
   } catch { state.people = []; }
@@ -1629,6 +1718,69 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight") nextViewer(1);
 });
 
+// Close viewer when clicking the dark backdrop (outside media/content)
+if (els.viewer) {
+  els.viewer.addEventListener('click', (e) => {
+    if (e.target === els.viewer) closeViewer();
+  });
+}
+
+// Viewer Info toggle
+const viPanel = document.getElementById('viewerInfo');
+const viBtn = document.getElementById('viewerInfoBtn');
+if (viBtn && viPanel) {
+  viBtn.addEventListener('click', ()=>{
+    if (viPanel.classList.contains('open')) {
+      viPanel.classList.remove('open'); // slide back under image (still present but under)
+    } else {
+      // Ensure visible, start from under state, then slide out
+      viPanel.classList.remove('hidden');
+      // Recompute anchor to media edge before opening (in case window resized)
+      try {
+        const it = state.items[state.selectedIndex] || {};
+        const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
+        const r = mediaEl.getBoundingClientRect();
+        const w = viPanel.offsetWidth || 360;
+        viPanel.style.left = `${Math.round(r.right - w)}px`;
+        viPanel.style.right = 'auto';
+        const top = Math.max(0, Math.round(r.top + 50));
+        const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+        viPanel.style.top = `${top}px`;
+        viPanel.style.bottom = `${bottomGap}px`;
+        viPanel.style.height = '';
+      } catch {}
+      // force reflow so transition starts from transform:0 (under)
+      void viPanel.offsetWidth;
+      viPanel.classList.add('open');
+    }
+  });
+}
+// Hide panel on close
+const _origCloseViewer = closeViewer;
+closeViewer = function(){
+  try { if (viPanel) { viPanel.classList.remove('open'); /* keep under image, no hidden */ } } catch {}
+  _origCloseViewer();
+}
+
+// Keep the slide-out anchored to the media edge on resize
+window.addEventListener('resize', ()=>{
+  try {
+    const vi = document.getElementById('viewerInfo');
+    if (!vi) return;
+    const it = state.items[state.selectedIndex] || {};
+    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
+    const r = mediaEl.getBoundingClientRect();
+    const w = vi.offsetWidth || 360;
+    vi.style.left = `${Math.round(r.right - w)}px`;
+    vi.style.right = 'auto';
+    const top = Math.max(0, Math.round(r.top + 50));
+    const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+    vi.style.top = `${top}px`;
+    vi.style.bottom = `${bottomGap}px`;
+    vi.style.height = '';
+  } catch {}
+});
+
 // Mobile drawer toggle
 function openDrawer(){ document.body.classList.add("drawer-open"); }
 function closeDrawer(){ document.body.classList.remove("drawer-open"); }
@@ -1889,23 +2041,34 @@ els.dupesBtn && els.dupesBtn.addEventListener('click', fetchDuplicates);
 els.dupesRun && els.dupesRun.addEventListener('click', fetchDuplicates);
 
 // Live logs
-function appendLogLine(text) {
-  if (els.logsBox) {
-    els.logsBox.textContent += (els.logsBox.textContent ? "\n" : "") + text;
-    const lines = els.logsBox.textContent.split("\n");
-    if (lines.length > 400) {
-      els.logsBox.textContent = lines.slice(-400).join("\n");
+// Determine severity for a log event -> one of: 'ok' | 'warn' | 'err' | 'info'
+function classifySeverity(eventName) {
+  const ev = String(eventName || '').toLowerCase();
+  // Errors: hard failures
+  if (ev === 'error' || ev.endsWith('_error') || ev.endsWith('_fail') || ev === 'ai_http_error') return 'err';
+  // Warnings: skipped or not critical changes
+  if (ev === 'skip_unchanged' || ev === 'no_new' || ev === 'upload_skip_unsupported' || ev === 'missing' || ev.endsWith('_check')) return 'warn';
+  // Success/info: the rest of positive events
+  if (ev.endsWith('_done') || ev.endsWith('_saved') || ev.endsWith('_ok') || ev === 'indexed' || ev === 'faces_detect' || ev === 'faces_index_done' || ev === 'face_saved' || ev === 'upload_indexed' || ev === 'rethumb_ok') return 'ok';
+  return 'info';
+}
+
+function appendLogLine(text, level = 'info') {
+  const makeLineEl = (container) => {
+    if (!container) return;
+    const line = document.createElement('span');
+    line.className = `log-line log-${level}`;
+    line.textContent = text;
+    container.appendChild(line);
+    // Trim to keep DOM light
+    const maxLines = (container.id === 'mainLogs') ? 1200 : 400;
+    while (container.childElementCount > maxLines) {
+      container.removeChild(container.firstElementChild);
     }
-    els.logsBox.scrollTop = els.logsBox.scrollHeight;
-  }
-  if (els.mainLogsBox) {
-    els.mainLogsBox.textContent += (els.mainLogsBox.textContent ? "\n" : "") + text;
-    const lines2 = els.mainLogsBox.textContent.split("\n");
-    if (lines2.length > 1200) {
-      els.mainLogsBox.textContent = lines2.slice(-1200).join("\n");
-    }
-    els.mainLogsBox.scrollTop = els.mainLogsBox.scrollHeight;
-  }
+    container.scrollTop = container.scrollHeight;
+  };
+  makeLineEl(els.logsBox);
+  makeLineEl(els.mainLogsBox);
 }
 
 async function pollLogs() {
@@ -1926,7 +2089,8 @@ async function pollLogs() {
         if (it.error) extra += ` :: ${it.error}`;
         const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
         const msg = `[${it.t}] ${label}${extra}`;
-        appendLogLine(msg);
+        const lvl = classifySeverity(it.event);
+        appendLogLine(msg, lvl);
         state.logsAfter = it.id;
       }
     }
@@ -1947,8 +2111,8 @@ function stopLogs() {
 async function clearLogs() {
   try { await fetch('/api/logs/clear', { method: 'POST' }); } catch {}
   state.logsAfter = 0;
-  if (els.logsBox) els.logsBox.textContent = "";
-  if (els.mainLogsBox) els.mainLogsBox.textContent = "";
+  if (els.logsBox) els.logsBox.innerHTML = "";
+  if (els.mainLogsBox) els.mainLogsBox.innerHTML = "";
 }
 
 els.logsStart && els.logsStart.addEventListener('click', () => {

@@ -269,7 +269,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 12px;
 }
 .places-map-popup {
@@ -330,7 +330,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 .card-thumb {
   background: #1b1f29;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 1 / 1; /* more square thumbs */
   display: block;
 }
 .card-thumb img {
@@ -380,6 +380,13 @@ body.drawer-open .drawer-backdrop { display: block; }
 .pills {
   margin-top: 8px;
   display: flex;
+
+/* Colored log lines */
+.raw-meta .log-line { display: block; white-space: pre-wrap; }
+.raw-meta .log-ok { color: #2ecc71; }
+.raw-meta .log-warn { color: #f1c40f; }
+.raw-meta .log-err { color: #e74c3c; }
+.raw-meta .log-info { color: var(--muted); }
   gap: 5px;
   flex-wrap: wrap;
 }
@@ -395,6 +402,53 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-color: rgba(255, 221, 89, 0.35);
   background: rgba(255, 221, 89, 0.08);
 }
+
+/* Simple toggle control */
+.toggle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+.toggle .switch { margin-right:2px; }
+
+/* Switch (custom checkbox) */
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 42px;
+  height: 24px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  position: relative;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  transition: left 0.2s ease;
+}
+.switch:checked {
+  background: #2ecc71; /* green on */
+  border-color: rgba(46, 204, 113, 0.6);
+}
+.switch:checked::after { left: 21px; }
+
+/* Viewer slide-out info */
+.viewer-info { position: absolute; top: 0; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(0); transition: transform .44s cubic-bezier(.22,1,.36,1); box-shadow: -6px 0 18px rgba(0,0,0,0.35); z-index: 1; will-change: transform; pointer-events: none; }
+.viewer-info.open { transform: translateX(100%); pointer-events: auto; }
+.viewer-info.hidden { display: none; }
+.viewer-info-inner { padding: 14px; height: 100%; overflow: auto; }
+.viewer-info-inner h3 { margin: 0 0 10px; font-size: 1.05rem; }
+.vi-actions { margin-top: 12px; display:flex; gap:8px; }
+
+/* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
+#viewerImg, #viewerVideo { position: relative; z-index: 2; }
 
 /* Detail panel */
 .detail-panel {
@@ -588,7 +642,7 @@ body:not(.view-timeline) #statusBar { display: none !important; }
   font-size: 1.2rem;
   color: var(--text);
 }
-.timeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.timeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 
 /* Upload overlay */
 .upload-overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(15,17,21,0.55); z-index: 10001; pointer-events: none; }
