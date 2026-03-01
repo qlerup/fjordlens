@@ -287,6 +287,47 @@ body.drawer-open .drawer-backdrop { display: block; }
 .mapper-tools-row #mapperUpBtn {
   padding: 8px 12px;
 }
+.mapper-tree {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.01);
+  border-radius: 10px;
+  padding: 8px;
+}
+.mapper-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.mapper-tree-caret,
+.mapper-tree-link {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mapper-tree-caret {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+}
+.mapper-tree-link {
+  flex: 1;
+  text-align: left;
+  padding: 5px 8px;
+}
+.mapper-tree-link:hover,
+.mapper-tree-caret:hover {
+  border-color: var(--border);
+  background: rgba(255,255,255,0.03);
+}
+.mapper-tree-link.active {
+  border-color: rgba(91,140,255,0.45);
+  background: rgba(91,140,255,0.12);
+}
 .btn.loading {
   position: relative;
   pointer-events: none;

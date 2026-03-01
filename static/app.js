@@ -24,6 +24,8 @@ const els = {
   mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
+  mapperTreeToggleBtn: document.getElementById("mapperTreeToggleBtn"),
+  mapperTreeNav: document.getElementById("mapperTreeNav"),
   mapperDropZone: document.getElementById("mapperDropZone"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
@@ -161,7 +163,151 @@ let state = {
   mapperFolders: [],
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
+  mapperTreeOpen: false,
+  mapperTreeExpanded: new Set([""]),
 };
+
+const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
+
+function _loadMapperTreeUiState() {
+  try {
+    const raw = localStorage.getItem(MAPPER_TREE_UI_STATE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      state.mapperTreeOpen = !!parsed.open;
+      const expanded = Array.isArray(parsed.expanded) ? parsed.expanded : [];
+      const cleaned = expanded
+        .map(v => _normalizeMapperPath(v))
+        .filter(v => v === '' || !!v);
+      state.mapperTreeExpanded = new Set(['', ...cleaned]);
+    }
+  } catch {}
+}
+
+function _saveMapperTreeUiState() {
+  try {
+    const expanded = Array.from(state.mapperTreeExpanded || []).map(v => _normalizeMapperPath(v));
+    localStorage.setItem(MAPPER_TREE_UI_STATE_KEY, JSON.stringify({
+      open: !!state.mapperTreeOpen,
+      expanded: Array.from(new Set(['', ...expanded])),
+    }));
+  } catch {}
+}
+
+_loadMapperTreeUiState();
+
+function _expandMapperAncestors(path) {
+  const parts = String(path || '').split('/').filter(Boolean);
+  let acc = '';
+  state.mapperTreeExpanded.add('');
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    state.mapperTreeExpanded.add(acc);
+  }
+  _saveMapperTreeUiState();
+}
+
+function _buildMapperTree(paths) {
+  const nodes = new Map();
+  nodes.set('', { path: '', name: 'uploads', children: new Set() });
+  for (const rawPath of (paths || [])) {
+    const safePath = _normalizeMapperPath(rawPath);
+    if (!safePath) continue;
+    const parts = safePath.split('/').filter(Boolean);
+    let parent = '';
+    let acc = '';
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      if (!nodes.has(acc)) nodes.set(acc, { path: acc, name: part, children: new Set() });
+      if (!nodes.has(parent)) nodes.set(parent, { path: parent, name: parent || 'uploads', children: new Set() });
+      nodes.get(parent).children.add(acc);
+      parent = acc;
+    }
+  }
+  return nodes;
+}
+
+function renderMapperTree() {
+  if (!els.mapperTreeNav || !els.mapperTreeToggleBtn) return;
+  els.mapperTreeToggleBtn.textContent = state.mapperTreeOpen ? 'Mappe-menu ▴' : 'Mappe-menu ▾';
+  if (!state.mapperTreeOpen) {
+    els.mapperTreeNav.classList.add('hidden');
+    return;
+  }
+
+  const tree = _buildMapperTree(state.mapperFolders || []);
+  _expandMapperAncestors(state.mapperPath || '');
+  const root = tree.get('');
+  const rootChildren = root ? Array.from(root.children) : [];
+
+  els.mapperTreeNav.classList.remove('hidden');
+  if (!rootChildren.length) {
+    els.mapperTreeNav.innerHTML = '<div class="mini-label">Ingen mapper endnu.</div>';
+    return;
+  }
+  els.mapperTreeNav.innerHTML = '';
+
+  const renderNode = (path, depth = 0) => {
+    const node = tree.get(path);
+    if (!node) return;
+
+    const children = Array.from(node.children || []).sort((a, b) => {
+      const an = (tree.get(a)?.name || a).toLocaleLowerCase('da-DK');
+      const bn = (tree.get(b)?.name || b).toLocaleLowerCase('da-DK');
+      return an.localeCompare(bn, 'da-DK');
+    });
+    const hasChildren = children.length > 0;
+    const isExpanded = state.mapperTreeExpanded.has(path) || String(state.mapperPath || '').startsWith(path ? `${path}/` : '');
+
+    const row = document.createElement('div');
+    row.className = 'mapper-tree-item';
+    row.style.paddingLeft = `${depth * 14}px`;
+
+    const caret = document.createElement('button');
+    caret.className = 'mapper-tree-caret';
+    caret.type = 'button';
+    caret.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '·';
+    caret.disabled = !hasChildren;
+    if (hasChildren) {
+      caret.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.mapperTreeExpanded.has(path)) state.mapperTreeExpanded.delete(path);
+        else state.mapperTreeExpanded.add(path);
+        _saveMapperTreeUiState();
+        renderMapperTree();
+      });
+    }
+    row.appendChild(caret);
+
+    const link = document.createElement('button');
+    link.className = 'mapper-tree-link' + (String(state.mapperPath || '') === path ? ' active' : '');
+    link.type = 'button';
+    link.textContent = node.name;
+    link.addEventListener('click', async () => {
+      state.mapperPath = path;
+      state.folder = path || null;
+      _expandMapperAncestors(path);
+      renderMapperContext(path);
+      await loadMapperTools(path);
+      await loadPhotos();
+    });
+    row.appendChild(link);
+    els.mapperTreeNav.appendChild(row);
+
+    if (hasChildren && isExpanded) {
+      for (const ch of children) renderNode(ch, depth + 1);
+    }
+  };
+
+  for (const ch of rootChildren.sort((a, b) => {
+    const an = (tree.get(a)?.name || a).toLocaleLowerCase('da-DK');
+    const bn = (tree.get(b)?.name || b).toLocaleLowerCase('da-DK');
+    return an.localeCompare(bn, 'da-DK');
+  })) {
+    renderNode(ch, 0);
+  }
+}
 
 function _normalizeMapperPath(path) {
   const raw = String(path || '').replace(/\\/g, '/').trim();
@@ -1070,6 +1216,10 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperFolderNewInput) els.mapperFolderNewInput.disabled = !!state.mapperEditMode;
   if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
+  if (els.mapperTreeToggleBtn) {
+    els.mapperTreeToggleBtn.disabled = false;
+  }
+  renderMapperTree();
 }
 
 async function loadMapperTools(preferred = null) {
@@ -1087,6 +1237,7 @@ async function loadMapperTools(preferred = null) {
     const wanted = _normalizeMapperPath(wantedRaw);
     state.mapperPath = wanted;
     state.folder = wanted || null;
+    _expandMapperAncestors(wanted);
     renderMapperContext(state.mapperPath);
     if (state.view === 'mapper') _syncRouteStateToUrl();
   } catch {}
@@ -1162,8 +1313,14 @@ async function deleteSelectedMapperFolders() {
   }
   const ok = confirm(`Slet ${selected.length} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.`);
   if (!ok) return;
+  const deleteBtn = els.mapperDeleteBtn;
+  const originalLabel = deleteBtn ? deleteBtn.textContent : 'Slet valgte';
   try {
-    if (els.mapperDeleteBtn) els.mapperDeleteBtn.disabled = true;
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.classList.add('loading');
+      deleteBtn.textContent = 'Sletter...';
+    }
     const res = await fetch('/api/settings/upload-folder-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1185,6 +1342,10 @@ async function deleteSelectedMapperFolders() {
   } catch {
     showStatus('Fejl ved sletning af mapper.', 'err');
   } finally {
+    if (deleteBtn) {
+      deleteBtn.classList.remove('loading');
+      deleteBtn.textContent = originalLabel || 'Slet valgte';
+    }
     renderMapperContext(state.mapperPath || '');
   }
 }
@@ -2119,6 +2280,11 @@ els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
 });
 
 els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
+els.mapperTreeToggleBtn && els.mapperTreeToggleBtn.addEventListener('click', () => {
+  state.mapperTreeOpen = !state.mapperTreeOpen;
+  _saveMapperTreeUiState();
+  renderMapperTree();
+});
 els.mapperEditBtn && els.mapperEditBtn.addEventListener('click', () => setMapperEditMode(!state.mapperEditMode));
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
