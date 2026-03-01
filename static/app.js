@@ -113,6 +113,12 @@ const els = {
   uploadProgressText: document.getElementById("uploadProgressText"),
 };
 
+function ensureUploadOverlayRefs() {
+  if (!els.uploadOverlay) els.uploadOverlay = document.getElementById("uploadOverlay");
+  if (!els.uploadProgressBar) els.uploadProgressBar = document.getElementById("uploadProgressBar");
+  if (!els.uploadProgressText) els.uploadProgressText = document.getElementById("uploadProgressText");
+}
+
 // Immediate emergency cleanup in case an overlay/backdrop was left in DOM
 (function immediateCleanup(){
   try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
@@ -1142,6 +1148,7 @@ async function createUploadFolder() {
 }
 
 async function uploadFiles(fileList, options = {}) {
+  ensureUploadOverlayRefs();
   const files = Array.from(fileList || []).filter(f => !!f && f.name);
   if (!files.length) return;
   const fd = new FormData();
@@ -1356,6 +1363,7 @@ async function deleteSelectedMapperFolders() {
 let _dragDepth = 0;
 
 function _showGlobalDropOverlay() {
+  ensureUploadOverlayRefs();
   if (!els.uploadOverlay) return;
   const canUploadHere = (state.view === 'mapper' && !state.mapperEditMode);
   const targetLabel = state.mapperPath ? `uploads/${state.mapperPath}` : 'uploads (rodmappe)';
@@ -1380,6 +1388,7 @@ function _showGlobalDropOverlay() {
 }
 
 function _hideGlobalDropOverlay() {
+  ensureUploadOverlayRefs();
   if (!els.uploadOverlay) return;
   els.uploadOverlay.classList.remove('active', 'upload-ready', 'upload-blocked');
   els.uploadOverlay.classList.add('hidden');
