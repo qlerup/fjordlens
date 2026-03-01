@@ -24,7 +24,7 @@ const els = {
   mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
-  mapperTreeToggleBtn: document.getElementById("mapperTreeToggleBtn"),
+  mapperNavMenu: document.getElementById("mapperNavMenu"),
   mapperTreeNav: document.getElementById("mapperTreeNav"),
   mapperDropZone: document.getElementById("mapperDropZone"),
   stopScanBtn: null,
@@ -229,12 +229,14 @@ function _buildMapperTree(paths) {
 }
 
 function renderMapperTree() {
-  if (!els.mapperTreeNav || !els.mapperTreeToggleBtn) return;
-  els.mapperTreeToggleBtn.textContent = state.mapperTreeOpen ? 'Mappe-menu ▴' : 'Mappe-menu ▾';
-  if (!state.mapperTreeOpen) {
+  if (!els.mapperTreeNav) return;
+  if (state.view !== 'mapper' || !state.mapperTreeOpen) {
+    if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
     els.mapperTreeNav.classList.add('hidden');
     return;
   }
+
+  if (els.mapperNavMenu) els.mapperNavMenu.classList.remove('hidden');
 
   const tree = _buildMapperTree(state.mapperFolders || []);
   _expandMapperAncestors(state.mapperPath || '');
@@ -267,10 +269,14 @@ function renderMapperTree() {
     const caret = document.createElement('button');
     caret.className = 'mapper-tree-caret';
     caret.type = 'button';
-    caret.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '·';
+    caret.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '';
     caret.disabled = !hasChildren;
+    if (!hasChildren) caret.style.visibility = 'hidden';
     if (hasChildren) {
+      caret.title = isExpanded ? 'Fold mappe sammen' : 'Fold mappe ud';
+      caret.setAttribute('aria-label', isExpanded ? 'Fold mappe sammen' : 'Fold mappe ud');
       caret.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
         if (state.mapperTreeExpanded.has(path)) state.mapperTreeExpanded.delete(path);
         else state.mapperTreeExpanded.add(path);
@@ -1216,9 +1222,6 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperFolderNewInput) els.mapperFolderNewInput.disabled = !!state.mapperEditMode;
   if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
-  if (els.mapperTreeToggleBtn) {
-    els.mapperTreeToggleBtn.disabled = false;
-  }
   renderMapperTree();
 }
 
@@ -1851,6 +1854,10 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
+  if (nextView !== 'mapper' && els.mapperTreeNav) {
+    if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
+    els.mapperTreeNav.classList.add('hidden');
+  }
   if (syncUrl) _syncRouteStateToUrl();
 
   if (nextView === "settings") {
@@ -2248,6 +2255,13 @@ if (els.gpsEarthBtn) {
 
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => {
+    if (btn.dataset.view === 'mapper' && state.view === 'mapper') {
+      state.mapperTreeOpen = !state.mapperTreeOpen;
+      _saveMapperTreeUiState();
+      renderMapperTree();
+      document.body.classList.remove("drawer-open");
+      return;
+    }
     setView(btn.dataset.view);
     // Close drawer on mobile nav selection
     document.body.classList.remove("drawer-open");
@@ -2280,11 +2294,6 @@ els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
 });
 
 els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
-els.mapperTreeToggleBtn && els.mapperTreeToggleBtn.addEventListener('click', () => {
-  state.mapperTreeOpen = !state.mapperTreeOpen;
-  _saveMapperTreeUiState();
-  renderMapperTree();
-});
 els.mapperEditBtn && els.mapperEditBtn.addEventListener('click', () => setMapperEditMode(!state.mapperEditMode));
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {

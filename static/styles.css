@@ -110,6 +110,60 @@ body.drawer-open .drawer-backdrop { display: block; }
   background: rgba(91,140,255,0.12);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+.mapper-nav-menu {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.sidebar .mapper-tree {
+  margin-top: 0;
+  background: transparent;
+  border: none !important;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  padding: 2px 6px 4px 8px;
+}
+.sidebar .mapper-tree-link {
+  font-size: 0.88rem;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  color: var(--muted);
+}
+.sidebar .mapper-tree-item {
+  padding: 1px 0;
+}
+.sidebar .mapper-tree-caret {
+  width: 28px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.sidebar .mapper-tree-caret:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.05);
+}
+.sidebar .mapper-tree-caret:disabled {
+  cursor: default;
+  background: transparent;
+}
+.sidebar .mapper-tree-link:hover {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline;
+}
+.sidebar .mapper-tree-link.active {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+}
 .sidebar-card {
   margin-top: 14px;
   border: 1px solid var(--border);
