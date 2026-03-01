@@ -936,6 +936,8 @@ def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
         acc = ""
         for part in parts:
             acc = f"{acc}/{part}" if acc else part
+            if acc == "uploads":
+                continue
             folders.add(acc)
     return sorted(folders, key=lambda x: x.lower())
 

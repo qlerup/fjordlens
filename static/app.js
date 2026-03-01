@@ -313,6 +313,8 @@ const I18N = {
     users_status_username_password_required: 'Udfyld brugernavn og adgangskode.',
     users_status_create_failed: 'Kunne ikke oprette:',
     users_status_created: 'Bruger oprettet',
+    users_select_all: 'Markér alle',
+    users_clear_all: 'Fjern alle markeringer',
   },
   en: {
     nav_timeline: '📅 Timeline',
@@ -470,6 +472,8 @@ const I18N = {
     users_status_username_password_required: 'Fill in username and password.',
     users_status_create_failed: 'Could not create:',
     users_status_created: 'User created',
+    users_select_all: 'Select all',
+    users_clear_all: 'Clear all selections',
   },
 };
 
@@ -3244,15 +3248,17 @@ async function renderUsersPanel(){
       <div id="ua_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
         <div style="width:700px;max-width:95vw;max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
-            <h3 style="margin:0;">Mappeadgang</h3>
-            <button id="ua_close" class="btn">Luk</button>
+            <h3 style="margin:0;">${escapeHtml(tr('users_folders_title'))}</h3>
+            <button id="ua_close" class="btn">${escapeHtml(tr('users_close'))}</button>
           </div>
           <div id="ua_user" class="mini-label" style="margin-bottom:8px;"></div>
-          <div id="ua_hint" class="mini-label" style="margin-bottom:8px;">Vælg mapper brugeren må se. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti.</div>
+          <div id="ua_hint" class="mini-label" style="margin-bottom:8px;">${escapeHtml(tr('users_folders_hint'))}</div>
           <div id="ua_folder_access" style="max-height:55vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
           <div class="actions" style="justify-content:flex-end;margin-top:10px;">
-            <button id="ua_cancel" class="btn">Annuller</button>
-            <button id="ua_save" class="btn primary">Gem adgang</button>
+            <button id="ua_select_all" class="btn">${escapeHtml(tr('users_select_all'))}</button>
+            <button id="ua_clear_all" class="btn">${escapeHtml(tr('users_clear_all'))}</button>
+            <button id="ua_cancel" class="btn">${escapeHtml(tr('users_cancel'))}</button>
+            <button id="ua_save" class="btn primary">${escapeHtml(tr('users_save_access'))}</button>
           </div>
         </div>
       </div>
@@ -3260,11 +3266,25 @@ async function renderUsersPanel(){
 
     const byId = new Map(items.map(u => [String(u.id), u]));
 
+    const normalizeAclFolder = (value) => String(value || '')
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\/+|\/+$/g, '');
+
     const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
       const root = document.getElementById(containerId);
       if (!root) return;
       if (Array.isArray(allFolders) && allFolders.length) {
-        root.innerHTML = allFolders.map((folder) => {
+        const seen = new Set();
+        const filteredFolders = allFolders
+          .map((folder) => normalizeAclFolder(folder))
+          .filter((folder) => folder && folder !== 'uploads')
+          .filter((folder) => {
+            if (seen.has(folder)) return false;
+            seen.add(folder);
+            return true;
+          });
+        root.innerHTML = filteredFolders.map((folder) => {
           const depth = String(folder || '').split('/').filter(Boolean).length;
           const pad = Math.max(0, (depth - 1) * 14);
           const label = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
@@ -3276,11 +3296,13 @@ async function renderUsersPanel(){
           `;
         }).join('');
       } else if (!root.children.length) {
-        root.innerHTML = '<div class="mini-label muted">Ingen mapper fundet endnu.</div>';
+        root.innerHTML = `<div class="mini-label muted">${escapeHtml(tr('users_acl_none_found'))}</div>`;
       }
-      const selected = new Set((selectedFolders || []).map(v => String(v || '')));
+      const selected = new Set((selectedFolders || [])
+        .map(v => normalizeAclFolder(v))
+        .filter(v => !!v && v !== 'uploads'));
       root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
-        const key = String(el.getAttribute('data-folder') || '');
+        const key = normalizeAclFolder(el.getAttribute('data-folder') || '');
         el.checked = selected.has(key);
       });
     };
@@ -3289,13 +3311,33 @@ async function renderUsersPanel(){
       const root = document.getElementById(containerId);
       if (!root) return [];
       return Array.from(root.querySelectorAll('input[type="checkbox"][data-folder]:checked'))
-        .map((el) => String(el.getAttribute('data-folder') || ''))
-        .filter(Boolean);
+        .map((el) => normalizeAclFolder(el.getAttribute('data-folder') || ''))
+        .filter((folder) => !!folder && folder !== 'uploads');
+    };
+
+    const bindAclHierarchy = (containerId) => {
+      const root = document.getElementById(containerId);
+      if (!root) return;
+      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
+        el.addEventListener('change', () => {
+          const folder = normalizeAclFolder(el.getAttribute('data-folder') || '');
+          if (!folder) return;
+          if (!el.checked) return;
+          root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((other) => {
+            if (other === el) return;
+            const otherFolder = normalizeAclFolder(other.getAttribute('data-folder') || '');
+            if (!otherFolder || !otherFolder.startsWith(folder + '/')) return;
+            other.checked = true;
+          });
+        });
+      });
     };
 
     const aclModal = document.getElementById('ua_modal');
     const aclCloseBtn = document.getElementById('ua_close');
     const aclCancelBtn = document.getElementById('ua_cancel');
+    const aclSelectAllBtn = document.getElementById('ua_select_all');
+    const aclClearAllBtn = document.getElementById('ua_clear_all');
     const aclSaveBtn = document.getElementById('ua_save');
     const aclUserLabel = document.getElementById('ua_user');
     let aclEditingUserId = null;
@@ -3314,15 +3356,30 @@ async function renderUsersPanel(){
         aclEditingUserId = user.id;
         if (aclUserLabel) {
           const count = Array.isArray(user.allowed_folders) ? user.allowed_folders.length : 0;
-          aclUserLabel.textContent = `Bruger: ${user.username} (#${user.id}) — ${count ? `${count} valgte mapper` : 'Alle mapper (ingen begrænsning)'}`;
+          aclUserLabel.textContent = `${tr('users_acl_user_prefix')}: ${user.username} (#${user.id}) — ${count ? `${count} ${tr('users_acl_selected_suffix')}` : tr('users_acl_all_folders')}`;
         }
         setFolderSelection('ua_folder_access', user.allowed_folders || [], availableFolders);
+        bindAclHierarchy('ua_folder_access');
         if (aclModal) aclModal.classList.remove('hidden');
       });
     });
 
     aclCloseBtn && aclCloseBtn.addEventListener('click', closeAclModal);
     aclCancelBtn && aclCancelBtn.addEventListener('click', closeAclModal);
+    aclSelectAllBtn && aclSelectAllBtn.addEventListener('click', () => {
+      const root = document.getElementById('ua_folder_access');
+      if (!root) return;
+      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
+        el.checked = true;
+      });
+    });
+    aclClearAllBtn && aclClearAllBtn.addEventListener('click', () => {
+      const root = document.getElementById('ua_folder_access');
+      if (!root) return;
+      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
+        el.checked = false;
+      });
+    });
     aclModal && aclModal.addEventListener('click', (e)=>{ if(e.target === aclModal) closeAclModal(); });
     aclSaveBtn && aclSaveBtn.addEventListener('click', async () => {
       if (!aclEditingUserId) return;
