@@ -199,6 +199,50 @@ body.drawer-open .drawer-backdrop { display: block; }
 
 /* Small form bits */
 .mini-label { color: var(--muted); font-size: 0.82rem; }
+.ai-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.ai-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.ai-toggle-slider {
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background .15s ease, border-color .15s ease;
+}
+.ai-toggle-slider::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform .15s ease;
+}
+.ai-toggle-input:checked + .ai-toggle-slider {
+  background: rgba(91,140,255,0.28);
+  border-color: var(--accent);
+}
+.ai-toggle-input:checked + .ai-toggle-slider::after {
+  transform: translateX(20px);
+}
+.ai-toggle-input:focus-visible + .ai-toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .input-number {
   background: var(--panel);
   border: 1px solid var(--border);

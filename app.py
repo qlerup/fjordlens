@@ -48,6 +48,7 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
+FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
 UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
@@ -432,11 +433,7 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
 def index_faces_for_photo(rel_path: str) -> None:
     """Detect faces for a photo/video and store into DB; updates people_count."""
     try:
-        # Resolve disk path
-        if rel_path.startswith("uploads/"):
-            disk_path = UPLOAD_DIR / rel_path.split("/", 1)[1]
-        else:
-            disk_path = PHOTO_DIR / rel_path
+        disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
             return
         log_event("faces_index_start", rel_path=rel_path)
@@ -864,6 +861,9 @@ def init_db() -> None:
             row2 = conn.execute("SELECT value FROM settings WHERE key='ai_auto_ingest'").fetchone()
             if not row2:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_auto_ingest", "1" if AI_ENV_AUTO_INGEST_DEFAULT else "0"))
+            row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
+            if not row2b:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
             row3 = conn.execute("SELECT value FROM settings WHERE key='upload_destination'").fetchone()
             if not row3:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_destination", UPLOAD_DEST_DEFAULT))
@@ -981,6 +981,18 @@ def ai_feature_enabled() -> bool:
 
 def ai_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_auto_ingest", AI_ENV_AUTO_INGEST_DEFAULT)
+
+
+def faces_auto_index_enabled() -> bool:
+    return _get_setting_bool("faces_auto_index", FACES_ENV_AUTO_INDEX_DEFAULT)
+
+
+def _disk_path_from_rel_path(rel_path: str) -> Path:
+    rel = str(rel_path or "")
+    if rel.startswith("uploads/"):
+        leaf = rel.split("/", 1)[1] if "/" in rel else ""
+        return UPLOAD_DIR / leaf
+    return PHOTO_DIR / rel
 
 
 def get_upload_destination() -> str:
@@ -2043,16 +2055,30 @@ def api_faces_index():
     global faces_counts
     if _faces_running.is_set():
         return jsonify({"ok": False, "error": "Faces indexing already running"}), 409
+    scope = (request.args.get("scope") or "").strip().lower()
+    _set_setting("faces_auto_index", "1")
+    if scope == "new":
+        return jsonify({"ok": True, "running": False, "auto_index": True, "scope": "new"})
+
     _faces_running.set()
     faces_counts = {"processed": 0, "total": 0}
-    all_photos = (request.args.get("all") in {"1", "true", "True"})
+    all_photos = True if scope == "all" else (request.args.get("all") in {"1", "true", "True"})
     threading.Thread(target=_index_faces_worker, args=(all_photos,), daemon=True).start()
-    return jsonify({"ok": True, "running": True})
+    return jsonify({"ok": True, "running": True, "auto_index": True, "scope": (scope or ("all" if all_photos else "missing"))})
+
+
+@app.route("/api/faces/stop", methods=["POST"])
+def api_faces_stop():
+    _set_setting("faces_auto_index", "0")
+    if _faces_running.is_set():
+        _faces_running.clear()
+        return jsonify({"ok": True, "running": True, "stopping": True, "auto_index": False})
+    return jsonify({"ok": True, "running": False, "auto_index": False})
 
 
 @app.route("/api/faces/status")
 def api_faces_status():
-    resp: Dict[str, Any] = {"ok": True, "running": _faces_running.is_set(), **faces_counts}
+    resp: Dict[str, Any] = {"ok": True, "running": _faces_running.is_set(), "auto_index": faces_auto_index_enabled(), **faces_counts}
     if not _faces_running.is_set() and last_faces_result:
         resp["last"] = last_faces_result
     return jsonify(resp)
@@ -2976,6 +3002,42 @@ ai_counts: Dict[str, int] = {"embedded": 0, "failed": 0, "total": 0}
 last_ai_result: Optional[Dict[str, Any]] = None
 
 
+def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
+    disk_path = _disk_path_from_rel_path(rel_path)
+    if not disk_path.exists():
+        return False
+    emb = _ai_embed_image_path(disk_path)
+    if not emb:
+        return False
+
+    with closing(get_conn()) as conn:
+        conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), photo_id))
+        conn.commit()
+
+    try:
+        tags = _classify_labels(emb)
+    except Exception:
+        tags = []
+
+    if tags:
+        try:
+            with closing(get_conn()) as conn:
+                cur = conn.execute("SELECT ai_tags FROM photos WHERE id=?", (photo_id,)).fetchone()
+                prev = []
+                if cur and cur["ai_tags"]:
+                    try:
+                        prev = json.loads(cur["ai_tags"]) or []
+                    except Exception:
+                        prev = []
+                merged = sorted({*(prev or []), *tags})
+                conn.execute("UPDATE photos SET ai_tags=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), photo_id))
+                conn.commit()
+        except Exception:
+            pass
+
+    return True
+
+
 def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
     global ai_running, ai_counts, last_ai_result
     ai_running = True
@@ -2988,34 +3050,9 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
             break
         pid = int(row["id"])
         rel = row["rel_path"]
-        p = PHOTO_DIR / rel
         ai_counts["total"] += 1
         try:
-            emb = _ai_embed_image_path(p)
-            if emb:
-                with closing(get_conn()) as conn:
-                    conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), pid))
-                    conn.commit()
-                # Derive simple zero-shot tags via CLIP
-                try:
-                    tags = _classify_labels(emb)
-                except Exception:
-                    tags = []
-                if tags:
-                    try:
-                        with closing(get_conn()) as conn:
-                            cur = conn.execute("SELECT ai_tags FROM photos WHERE id=?", (pid,)).fetchone()
-                            prev = []
-                            if cur and cur["ai_tags"]:
-                                try:
-                                    prev = json.loads(cur["ai_tags"]) or []
-                                except Exception:
-                                    prev = []
-                            merged = sorted({*(prev or []), *tags})
-                            conn.execute("UPDATE photos SET ai_tags=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), pid))
-                            conn.commit()
-                    except Exception:
-                        pass
+            if _embed_one_photo(pid, rel):
                 ai_counts["embedded"] += 1
                 log_event("ai_embed_ok", rel_path=rel)
             else:
@@ -3030,30 +3067,52 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
     return last_ai_result
 
 
+def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, embedding_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+        if not row:
+            return
+        if row["embedding_json"]:
+            return
+        pid = int(row["id"])
+        if _embed_one_photo(pid, rel_path):
+            log_event("ai_embed_ok", rel_path=rel_path, source="upload")
+        else:
+            log_event("ai_embed_fail", rel_path=rel_path, source="upload")
+    except Exception as e:
+        log_event("ai_embed_fail", rel_path=rel_path, source="upload", error=str(e))
+
+
 @app.route("/api/ai/ingest", methods=["POST"])
 def api_ai_ingest():
     global ai_thread
     if ai_thread and ai_thread.is_alive():
         return jsonify({"ok": False, "error": "AI ingest already running"}), 409
+    scope = (request.args.get("scope") or "").strip().lower()
+    _set_setting("ai_auto_ingest", "1")
+    if scope == "new":
+        return jsonify({"ok": True, "started": False, "running": False, "auto_ingest": True, "scope": "new"})
     scan_stop_event.clear()
     def run():
         _embed_missing_photos(stop_event=scan_stop_event)
     ai_thread = threading.Thread(target=run, daemon=True)
     ai_thread.start()
-    return jsonify({"ok": True, "started": True})
+    return jsonify({"ok": True, "started": True, "auto_ingest": True, "scope": (scope or "all")})
 
 
 @app.route("/api/ai/stop", methods=["POST"])
 def api_ai_stop():
+    _set_setting("ai_auto_ingest", "0")
     if not ai_running:
-        return jsonify({"ok": True, "running": False})
+        return jsonify({"ok": True, "running": False, "auto_ingest": False})
     scan_stop_event.set()
-    return jsonify({"ok": True, "running": True, "stopping": True})
+    return jsonify({"ok": True, "running": True, "stopping": True, "auto_ingest": False})
 
 
 @app.route("/api/ai/status")
 def api_ai_status():
-    resp: Dict[str, Any] = {"ok": True, "running": ai_running, **ai_counts}
+    resp: Dict[str, Any] = {"ok": True, "running": ai_running, "auto_ingest": ai_auto_ingest_enabled(), **ai_counts}
     if not ai_running and last_ai_result:
         resp["last"] = last_ai_result
     return jsonify(resp)
@@ -3655,14 +3714,22 @@ def api_upload():
                 upsert_photo(meta)
                 try: log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
                 except Exception: pass
-                # Start face indexing in background for this uploaded image
-                try:
-                    threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
-                    try: log_event("faces_queued", rel_path=rel)
-                    except Exception: pass
-                except Exception as e:
-                    try: log_event("error", rel_path=rel, error=f"faces_queue: {e}")
-                    except Exception: pass
+                if ai_auto_ingest_enabled():
+                    try:
+                        threading.Thread(target=_embed_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
+                        try: log_event("ai_embed_queued", rel_path=rel)
+                        except Exception: pass
+                    except Exception as e:
+                        try: log_event("error", rel_path=rel, error=f"ai_embed_queue: {e}")
+                        except Exception: pass
+                if faces_auto_index_enabled():
+                    try:
+                        threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
+                        try: log_event("faces_queued", rel_path=rel)
+                        except Exception: pass
+                    except Exception as e:
+                        try: log_event("error", rel_path=rel, error=f"faces_queue: {e}")
+                        except Exception: pass
             except Exception as e:
                 errors.append(f"Index fail: {target.name}: {e}")
                 try: log_event("error", filename=target.name, rel_path=rel, error=str(e))

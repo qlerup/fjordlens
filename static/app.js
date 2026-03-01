@@ -6,14 +6,16 @@ const els = {
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
-  aiIngestBtn: document.getElementById("aiIngestBtn"),
+  aiIngestToggle: document.getElementById("aiIngestToggle"),
+  aiIngestToggleText: document.getElementById("aiIngestToggleText"),
   aiPanelTitle: document.getElementById("aiPanelTitle"),
   aiEmbedTitle: document.getElementById("aiEmbedTitle"),
   aiEmbedDesc: document.getElementById("aiEmbedDesc"),
   aiFacesTitle: document.getElementById("aiFacesTitle"),
   aiFacesDesc: document.getElementById("aiFacesDesc"),
   aiStatus: document.getElementById("aiStatus"),
-  facesIndexBtn: document.getElementById("facesIndexBtn"),
+  facesToggle: document.getElementById("facesToggle"),
+  facesToggleText: document.getElementById("facesToggleText"),
   facesStatus: document.getElementById("facesStatus"),
   mapperTools: document.getElementById("mapperTools"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
@@ -96,6 +98,13 @@ const els = {
   scanModalClose: document.getElementById("scanModalClose"),
   scanModalCancel: document.getElementById("scanModalCancel"),
   scanModalStart: document.getElementById("scanModalStart"),
+  aiScopeModal: document.getElementById("aiScopeModal"),
+  aiScopeModalTitle: document.getElementById("aiScopeModalTitle"),
+  aiScopeModalText: document.getElementById("aiScopeModalText"),
+  aiScopeModalClose: document.getElementById("aiScopeModalClose"),
+  aiScopeModalCancel: document.getElementById("aiScopeModalCancel"),
+  aiScopeModalNew: document.getElementById("aiScopeModalNew"),
+  aiScopeModalAll: document.getElementById("aiScopeModalAll"),
   // date edit controls
   editDateBtn: document.getElementById('editDateBtn'),
   dateEditWrap: document.getElementById('dateEditWrap'),
@@ -210,6 +219,8 @@ const I18N = {
     btn_reset_index: 'Nulstil indeks',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
+    btn_start_faces: 'Start ansigter',
+    btn_stop_faces: 'Stop ansigter',
     btn_index_faces: 'Indekser ansigter',
     status_faces_prefix: 'Ansigter',
     status_ai_prefix: 'AI',
@@ -249,6 +260,12 @@ const I18N = {
     scan_modal_close: 'Luk',
     scan_modal_cancel: 'Annuller',
     scan_modal_start: 'Start scan',
+    ai_scope_title_ai: 'Start AI-embeddings',
+    ai_scope_title_faces: 'Start ansigtsindeksering',
+    ai_scope_text: 'Vil du køre på alle eksisterende filer, eller kun på nye uploads fremover?',
+    ai_scope_all: 'Alle eksisterende',
+    ai_scope_new: 'Kun nye uploads fremover',
+    ai_scope_cancel: 'Annuller',
   },
   en: {
     nav_timeline: '📅 Timeline',
@@ -312,6 +329,8 @@ const I18N = {
     btn_reset_index: 'Reset index',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
+    btn_start_faces: 'Start faces',
+    btn_stop_faces: 'Stop faces',
     btn_index_faces: 'Index faces',
     status_faces_prefix: 'Faces',
     status_ai_prefix: 'AI',
@@ -351,6 +370,12 @@ const I18N = {
     scan_modal_close: 'Close',
     scan_modal_cancel: 'Cancel',
     scan_modal_start: 'Start scan',
+    ai_scope_title_ai: 'Start AI embeddings',
+    ai_scope_title_faces: 'Start face indexing',
+    ai_scope_text: 'Do you want to run on all existing files, or only on new uploads from now on?',
+    ai_scope_all: 'All existing',
+    ai_scope_new: 'Only new uploads from now on',
+    ai_scope_cancel: 'Cancel',
   },
 };
 
@@ -367,10 +392,21 @@ function tr(key) {
 }
 
 function updateAiToggleButton() {
-  if (!els.aiIngestBtn) return;
-  const running = !!state.aiRunning;
-  els.aiIngestBtn.textContent = running ? tr('btn_stop_ai') : tr('btn_start_ai');
-  els.aiIngestBtn.classList.toggle('danger', running);
+  if (!els.aiIngestToggle) return;
+  const enabled = !!state.aiAutoEnabled || !!state.aiRunning;
+  els.aiIngestToggle.checked = enabled;
+  if (els.aiIngestToggleText) {
+    els.aiIngestToggleText.textContent = enabled ? tr('btn_stop_ai') : tr('btn_start_ai');
+  }
+}
+
+function updateFacesToggleButton() {
+  if (!els.facesToggle) return;
+  const enabled = !!state.facesAutoEnabled || !!state.facesRunning;
+  els.facesToggle.checked = enabled;
+  if (els.facesToggleText) {
+    els.facesToggleText.textContent = enabled ? tr('btn_stop_faces') : tr('btn_start_faces');
+  }
 }
 
 function navLabels() {
@@ -415,6 +451,10 @@ let state = {
   uiLanguage: resolveUiLanguage(APP_PROFILE.ui_language || 'da'),
   searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
   aiRunning: false,
+  aiAutoEnabled: false,
+  facesRunning: false,
+  facesAutoEnabled: false,
+  aiScopePendingFeature: null,
 };
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
@@ -2143,7 +2183,7 @@ function applyUiLanguage() {
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
   updateAiToggleButton();
-  if (els.facesIndexBtn) els.facesIndexBtn.textContent = tr('btn_index_faces');
+  updateFacesToggleButton();
 
   const logsLabel = document.querySelector('#logsPanel strong');
   if (logsLabel) logsLabel.textContent = tr('logs_label');
@@ -2161,6 +2201,15 @@ function applyUiLanguage() {
   if (els.scanModalClose) els.scanModalClose.textContent = tr('scan_modal_close');
   if (els.scanModalCancel) els.scanModalCancel.textContent = tr('scan_modal_cancel');
   if (els.scanModalStart) els.scanModalStart.textContent = tr('scan_modal_start');
+  if (els.aiScopeModalText) els.aiScopeModalText.textContent = tr('ai_scope_text');
+  if (els.aiScopeModalCancel) els.aiScopeModalCancel.textContent = tr('ai_scope_cancel');
+  if (els.aiScopeModalClose) els.aiScopeModalClose.textContent = tr('scan_modal_close');
+  if (els.aiScopeModalNew) els.aiScopeModalNew.textContent = tr('ai_scope_new');
+  if (els.aiScopeModalAll) els.aiScopeModalAll.textContent = tr('ai_scope_all');
+  if (els.aiScopeModalTitle) {
+    const feature = state.aiScopePendingFeature;
+    els.aiScopeModalTitle.textContent = feature === 'faces' ? tr('ai_scope_title_faces') : tr('ai_scope_title_ai');
+  }
 
   const labels = navLabels();
   const [title, subtitle] = labels[state.view] || ['FjordLens', ''];
@@ -2193,6 +2242,26 @@ function closeScanModal() {
   els.scanModal.classList.add('hidden');
 }
 
+function openAiScopeModal(feature) {
+  state.aiScopePendingFeature = feature === 'faces' ? 'faces' : 'ai';
+  if (els.aiScopeModalTitle) {
+    els.aiScopeModalTitle.textContent = state.aiScopePendingFeature === 'faces' ? tr('ai_scope_title_faces') : tr('ai_scope_title_ai');
+  }
+  if (els.aiScopeModalText) els.aiScopeModalText.textContent = tr('ai_scope_text');
+  if (els.aiScopeModalNew) els.aiScopeModalNew.textContent = tr('ai_scope_new');
+  if (els.aiScopeModalAll) els.aiScopeModalAll.textContent = tr('ai_scope_all');
+  if (els.aiScopeModalCancel) els.aiScopeModalCancel.textContent = tr('ai_scope_cancel');
+  if (els.aiScopeModalClose) els.aiScopeModalClose.textContent = tr('scan_modal_close');
+  if (els.aiScopeModal) els.aiScopeModal.classList.remove('hidden');
+}
+
+function closeAiScopeModal() {
+  if (els.aiScopeModal) els.aiScopeModal.classList.add('hidden');
+  state.aiScopePendingFeature = null;
+  updateAiToggleButton();
+  updateFacesToggleButton();
+}
+
 // Events
 els.search.addEventListener("input", () => {
   state.q = els.search.value.trim();
@@ -2212,17 +2281,23 @@ els.scanBtn.addEventListener("click", () => {
 els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
 els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
 els.clearIndexBtn && els.clearIndexBtn.addEventListener("click", clearIndex);
-async function startAiIngest() {
+async function startAiIngest(scope = 'all') {
   try {
     showStatus("Starter AI‑indeksering (embeddings)...", "ok");
-    const res = await fetch('/api/ai/ingest', { method: 'POST' });
+    const qs = (scope === 'new') ? '?scope=new' : '?scope=all';
+    const res = await fetch(`/api/ai/ingest${qs}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.ok) {
       showStatus("Kunne ikke starte AI‑indeksering.", "err");
       return;
     }
-    showStatus("AI‑indeksering er startet i baggrunden.", "ok");
-    state.aiRunning = true;
+    if (scope === 'new') {
+      showStatus('AI aktiveret for nye uploads fremover.', 'ok');
+    } else {
+      showStatus("AI‑indeksering er startet i baggrunden.", "ok");
+    }
+    state.aiAutoEnabled = true;
+    state.aiRunning = !!(data && data.running);
     updateAiToggleButton();
     pollAiStatus();
   } catch { showStatus("Fejl ved start af AI‑indeksering.", "err"); }
@@ -2238,6 +2313,7 @@ async function stopAiIngest() {
     }
     showStatus('AI‑indeksering stoppet.', 'ok');
     state.aiRunning = false;
+    state.aiAutoEnabled = false;
     updateAiToggleButton();
     pollAiStatus();
   } catch {
@@ -2245,12 +2321,12 @@ async function stopAiIngest() {
   }
 }
 
-els.aiIngestBtn && els.aiIngestBtn.addEventListener('click', async () => {
-  if (state.aiRunning) {
-    await stopAiIngest();
+els.aiIngestToggle && els.aiIngestToggle.addEventListener('change', async () => {
+  if (els.aiIngestToggle.checked) {
+    openAiScopeModal('ai');
     return;
   }
-  await startAiIngest();
+  await stopAiIngest();
 });
 
 // Faces indexing controls
@@ -2258,6 +2334,9 @@ async function pollFacesStatus() {
   try {
     const r = await fetch('/api/faces/status');
     const s = await r.json();
+    state.facesRunning = !!(s && s.ok && s.running);
+    state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
+    updateFacesToggleButton();
     if (els.facesStatus) {
       const run = s && s.running ? tr('status_running') : tr('status_stopped');
       const source = (!s.running && s.last) ? s.last : s;
@@ -2271,35 +2350,63 @@ async function pollFacesStatus() {
       // refresh lists when done
       if (state.view === 'personer') loadPeople();
       else loadPhotos();
-      if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
     }
   } catch {
+    state.facesRunning = false;
+    state.facesAutoEnabled = false;
+    updateFacesToggleButton();
     if (els.facesStatus) els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${tr('status_dash')}`;
-    if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
   }
 }
 
-async function startFacesIndex(all=true) {
+async function startFacesIndex(scope = 'all') {
   try {
-    if (els.facesIndexBtn) els.facesIndexBtn.disabled = true;
     showStatus('Starter ansigtsindeksering…', 'ok');
-    const url = all ? '/api/faces/index?all=1' : '/api/faces/index';
+    const url = (scope === 'new') ? '/api/faces/index?scope=new' : '/api/faces/index?scope=all';
     const res = await fetch(url, { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.ok) {
       showStatus(data && data.error ? data.error : 'Kunne ikke starte ansigtsindeksering', 'err');
-      if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
       return;
+    }
+    state.facesAutoEnabled = true;
+    state.facesRunning = !!(data && data.running);
+    updateFacesToggleButton();
+    if (scope === 'new') {
+      showStatus('Ansigtsindeksering aktiveret for nye uploads fremover.', 'ok');
     }
     pollFacesStatus();
   } catch (e) {
     showStatus('Fejl ved start af ansigtsindeksering', 'err');
-    if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
   }
 }
 
-if (els.facesIndexBtn) {
-  els.facesIndexBtn.addEventListener('click', () => startFacesIndex(true));
+async function stopFacesIndex() {
+  try {
+    const res = await fetch('/api/faces/stop', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) {
+      showStatus('Kunne ikke stoppe ansigtsindeksering.', 'err');
+      return;
+    }
+    showStatus('Ansigtsindeksering stoppet.', 'ok');
+    state.facesAutoEnabled = false;
+    state.facesRunning = false;
+    updateFacesToggleButton();
+    pollFacesStatus();
+  } catch {
+    showStatus('Fejl ved stop af ansigtsindeksering.', 'err');
+  }
+}
+
+if (els.facesToggle) {
+  els.facesToggle.addEventListener('change', async () => {
+    if (els.facesToggle.checked) {
+      openAiScopeModal('faces');
+      return;
+    }
+    await stopFacesIndex();
+  });
 }
 
 async function pollAiStatus() {
@@ -2307,6 +2414,7 @@ async function pollAiStatus() {
     const r = await fetch('/api/ai/status');
     const s = await r.json();
     state.aiRunning = !!(s && s.ok && s.running);
+    state.aiAutoEnabled = !!(s && s.ok && s.auto_ingest);
     updateAiToggleButton();
     if (els.aiStatus) {
       if (!s || !s.ok) { els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`; }
@@ -2321,6 +2429,7 @@ async function pollAiStatus() {
     }
   } catch {
     state.aiRunning = false;
+    state.aiAutoEnabled = false;
     updateAiToggleButton();
     if (els.aiStatus) els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`;
   }
@@ -2334,6 +2443,7 @@ async function pollAiStatus() {
 
 // Start med at vise status hvis noget kører allerede
 pollAiStatus();
+pollFacesStatus();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
@@ -2663,6 +2773,39 @@ if (els.scanModalStart) {
 if (els.scanModal) {
   els.scanModal.addEventListener('click', (e) => {
     if (e.target === els.scanModal) closeScanModal();
+  });
+}
+if (els.aiScopeModalClose) {
+  els.aiScopeModalClose.addEventListener('click', closeAiScopeModal);
+}
+if (els.aiScopeModalCancel) {
+  els.aiScopeModalCancel.addEventListener('click', closeAiScopeModal);
+}
+if (els.aiScopeModalNew) {
+  els.aiScopeModalNew.addEventListener('click', async () => {
+    const feature = state.aiScopePendingFeature;
+    closeAiScopeModal();
+    if (feature === 'faces') {
+      await startFacesIndex('new');
+    } else {
+      await startAiIngest('new');
+    }
+  });
+}
+if (els.aiScopeModalAll) {
+  els.aiScopeModalAll.addEventListener('click', async () => {
+    const feature = state.aiScopePendingFeature;
+    closeAiScopeModal();
+    if (feature === 'faces') {
+      await startFacesIndex('all');
+    } else {
+      await startAiIngest('all');
+    }
+  });
+}
+if (els.aiScopeModal) {
+  els.aiScopeModal.addEventListener('click', (e) => {
+    if (e.target === els.aiScopeModal) closeAiScopeModal();
   });
 }
 

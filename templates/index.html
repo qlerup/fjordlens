@@ -168,7 +168,11 @@
                 <div id="aiEmbedTitle" class="mini-label" style="font-weight:700; margin-bottom:6px;">AI-embeddings</div>
                 <p id="aiEmbedDesc" class="hint" style="margin:0 0 8px 0;">Starter/stopper embedding-job for billeder uden embedding.</p>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
-                  <button id="aiIngestBtn" class="btn">Start AI</button>
+                  <label class="ai-toggle-row" for="aiIngestToggle">
+                    <input id="aiIngestToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="AI embeddings toggle" />
+                    <span class="ai-toggle-slider" aria-hidden="true"></span>
+                    <span id="aiIngestToggleText" class="mini-label">Start AI</span>
+                  </label>
                 </div>
                 <div id="aiStatus" class="mini-label">AI: —</div>
               </div>
@@ -177,7 +181,11 @@
                 <div id="aiFacesTitle" class="mini-label" style="font-weight:700; margin-bottom:6px;">Ansigtsindeksering</div>
                 <p id="aiFacesDesc" class="hint" style="margin:0 0 8px 0;">Scanner billeder for ansigter og opdaterer persondata.</p>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
-                  <button id="facesIndexBtn" class="btn">Indekser ansigter</button>
+                  <label class="ai-toggle-row" for="facesToggle">
+                    <input id="facesToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Face indexing toggle" />
+                    <span class="ai-toggle-slider" aria-hidden="true"></span>
+                    <span id="facesToggleText" class="mini-label">Start ansigter</span>
+                  </label>
                 </div>
                 <div id="facesStatus" class="mini-label">Ansigter: —</div>
               </div>
@@ -365,6 +373,20 @@
       <div class="actions" style="justify-content:flex-end;gap:8px;">
         <button id="scanModalCancel" class="btn">Annuller</button>
         <button id="scanModalStart" class="btn primary">Start scan</button>
+      </div>
+    </div>
+  </div>
+  <div id="aiScopeModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 id="aiScopeModalTitle" style="margin:0;">Start processing</h3>
+        <button id="aiScopeModalClose" class="btn">Luk</button>
+      </div>
+      <p id="aiScopeModalText" class="mini-label" style="margin:0 0 14px;line-height:1.5;">Do you want to process all existing items, or only new uploads from now on?</p>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="aiScopeModalCancel" class="btn">Annuller</button>
+        <button id="aiScopeModalNew" class="btn">Kun nye uploads</button>
+        <button id="aiScopeModalAll" class="btn primary">Alle eksisterende</button>
       </div>
     </div>
   </div>
