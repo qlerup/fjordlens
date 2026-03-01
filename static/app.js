@@ -1353,7 +1353,6 @@ async function deleteSelectedMapperFolders() {
   }
 }
 
-window.addEventListener('dragover', (e) => {
 let _dragDepth = 0;
 
 function _showGlobalDropOverlay() {
