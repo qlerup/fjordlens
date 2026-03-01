@@ -11,12 +11,6 @@ const els = {
   aiStatus: document.getElementById("aiStatus"),
   facesIndexBtn: document.getElementById("facesIndexBtn"),
   facesStatus: document.getElementById("facesStatus"),
-  uploadDestSelect: document.getElementById("uploadDestSelect"),
-  uploadDestSaveBtn: document.getElementById("uploadDestSaveBtn"),
-  uploadDestHint: document.getElementById("uploadDestHint"),
-  uploadSubdirSelect: document.getElementById("uploadSubdirSelect"),
-  uploadFolderNewInput: document.getElementById("uploadFolderNewInput"),
-  uploadFolderCreateBtn: document.getElementById("uploadFolderCreateBtn"),
   mapperTools: document.getElementById("mapperTools"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
   mapperUpBtn: document.getElementById("mapperUpBtn"),
@@ -92,6 +86,12 @@ const els = {
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
   profileLink: document.getElementById("profileLink"),
+  profileModal: document.getElementById("profileModal"),
+  profileModalClose: document.getElementById("profileModalClose"),
+  scanModal: document.getElementById("scanModal"),
+  scanModalClose: document.getElementById("scanModalClose"),
+  scanModalCancel: document.getElementById("scanModalCancel"),
+  scanModalStart: document.getElementById("scanModalStart"),
   // date edit controls
   editDateBtn: document.getElementById('editDateBtn'),
   dateEditWrap: document.getElementById('dateEditWrap'),
@@ -156,6 +156,7 @@ const I18N = {
     logout_link: 'Log ud',
     search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
     tab_maint: 'Vedligeholdelse',
+    tab_ai: 'AI',
     tab_logs: 'Logs',
     tab_users: 'Brugere',
     tab_twofa: 'Min 2FA',
@@ -175,6 +176,69 @@ const I18N = {
     view_personer_sub: 'Klar til ansigtsgenkendelse (kommer med ONNX face-service)',
     view_settings_title: 'Indstillinger',
     view_settings_sub: 'Vedligeholdelse, scan og administration',
+    sort_date_desc: 'Nyeste først',
+    sort_date_asc: 'Ældste først',
+    sort_name_asc: 'Navn A-Å',
+    sort_name_desc: 'Navn Å-A',
+    sort_size_desc: 'Størst først',
+    sort_size_asc: 'Mindst først',
+    stat_photos: 'Billeder',
+    stat_people: 'Personer',
+    stat_favorites: 'Favoritter',
+    stat_selected: 'Valgt',
+    stat_show_hidden: 'Vis skjulte',
+    empty_people: 'Ingen personer endnu. Upload billeder med ansigter eller kør ansigtsindeksering.',
+    empty_no_photos: 'Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.',
+    empty_no_matches: "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.",
+    empty_mapper_tree: 'Ingen mapper endnu.',
+    no_thumb: 'Ingen thumbnail',
+    settings_title: 'Indstillinger',
+    settings_sub: 'Vedligeholdelse, scan og logs',
+    maint_title: 'Vedligeholdelse',
+    btn_scan_library: 'Scan bibliotek',
+    btn_rescan_metadata: 'Rescan metadata',
+    btn_rebuild_thumbs: 'Genbyg thumbnails',
+    btn_reset_index: 'Nulstil indeks',
+    btn_build_embeddings: 'Byg AI-embeddings',
+    btn_start_ai: 'Start AI',
+    btn_stop_ai: 'Stop AI',
+    btn_index_faces: 'Indekser ansigter',
+    status_faces_prefix: 'Ansigter',
+    status_ai_prefix: 'AI',
+    status_stopped: 'stoppet',
+    status_running: 'kører',
+    status_dash: '—',
+    upload_new_folder_placeholder: 'Ny mappe (fx ferie eller 2026/rejse)',
+    upload_create_folder: 'Opret mappe',
+    logs_label: 'Logs:',
+    btn_stop: 'Stop',
+    btn_start: 'Start',
+    btn_clear: 'Ryd',
+    mapper_current_folder: 'Aktuel mappe',
+    mapper_root_folder: 'uploads (rodmappe)',
+    mapper_drop_here: 'Slip filer her for at uploade til',
+    mapper_up: 'Op',
+    mapper_done: 'Færdig',
+    mapper_edit: '!edit',
+    mapper_delete_selected: 'Slet valgte',
+    profile_title: 'Profil',
+    profile_close: 'Luk',
+    profile_username: 'Brugernavn',
+    profile_password_new_optional: 'Nyt password (valgfrit)',
+    profile_password_repeat: 'Gentag nyt password',
+    profile_password_repeat_placeholder: 'Gentag password',
+    profile_password_unchanged_placeholder: 'Tom = uændret',
+    profile_ui_lang: 'UI-sprog',
+    profile_search_lang: 'Søgesprog',
+    profile_save: 'Gem profil',
+    profile_saved: 'Profil opdateret',
+    status_errors_label: 'fejl',
+    status_ready_scan: "Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.",
+    scan_modal_title: 'Scan bibliotek',
+    scan_modal_text: 'Vil du starte en fuld scanning af biblioteket nu?',
+    scan_modal_close: 'Luk',
+    scan_modal_cancel: 'Annuller',
+    scan_modal_start: 'Start scan',
   },
   en: {
     nav_timeline: '📅 Timeline',
@@ -188,6 +252,7 @@ const I18N = {
     logout_link: 'Log out',
     search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
     tab_maint: 'Maintenance',
+    tab_ai: 'AI',
     tab_logs: 'Logs',
     tab_users: 'Users',
     tab_twofa: 'My 2FA',
@@ -207,6 +272,69 @@ const I18N = {
     view_personer_sub: 'Face-recognition ready (ONNX face service)',
     view_settings_title: 'Settings',
     view_settings_sub: 'Maintenance, scan and administration',
+    sort_date_desc: 'Newest first',
+    sort_date_asc: 'Oldest first',
+    sort_name_asc: 'Name A-Z',
+    sort_name_desc: 'Name Z-A',
+    sort_size_desc: 'Largest first',
+    sort_size_asc: 'Smallest first',
+    stat_photos: 'Photos',
+    stat_people: 'People',
+    stat_favorites: 'Favorites',
+    stat_selected: 'Selected',
+    stat_show_hidden: 'Show hidden',
+    empty_people: 'No people yet. Upload photos with faces or run face indexing.',
+    empty_no_photos: 'No photos yet. Drop files to upload or scan the library.',
+    empty_no_matches: "No photos match the current filters yet. Try 'Scan library'.",
+    empty_mapper_tree: 'No folders yet.',
+    no_thumb: 'No thumbnail',
+    settings_title: 'Settings',
+    settings_sub: 'Maintenance, scan and logs',
+    maint_title: 'Maintenance',
+    btn_scan_library: 'Scan library',
+    btn_rescan_metadata: 'Rescan metadata',
+    btn_rebuild_thumbs: 'Rebuild thumbnails',
+    btn_reset_index: 'Reset index',
+    btn_build_embeddings: 'Build AI embeddings',
+    btn_start_ai: 'Start AI',
+    btn_stop_ai: 'Stop AI',
+    btn_index_faces: 'Index faces',
+    status_faces_prefix: 'Faces',
+    status_ai_prefix: 'AI',
+    status_stopped: 'stopped',
+    status_running: 'running',
+    status_dash: '—',
+    upload_new_folder_placeholder: 'New folder (e.g. holiday or 2026/trip)',
+    upload_create_folder: 'Create folder',
+    logs_label: 'Logs:',
+    btn_stop: 'Stop',
+    btn_start: 'Start',
+    btn_clear: 'Clear',
+    mapper_current_folder: 'Current folder',
+    mapper_root_folder: 'uploads (root)',
+    mapper_drop_here: 'Drop files here to upload to',
+    mapper_up: 'Up',
+    mapper_done: 'Done',
+    mapper_edit: '!edit',
+    mapper_delete_selected: 'Delete selected',
+    profile_title: 'Profile',
+    profile_close: 'Close',
+    profile_username: 'Username',
+    profile_password_new_optional: 'New password (optional)',
+    profile_password_repeat: 'Repeat new password',
+    profile_password_repeat_placeholder: 'Repeat password',
+    profile_password_unchanged_placeholder: 'Empty = unchanged',
+    profile_ui_lang: 'UI language',
+    profile_search_lang: 'Search language',
+    profile_save: 'Save profile',
+    profile_saved: 'Profile updated',
+    status_errors_label: 'failures',
+    status_ready_scan: "Ready. Press 'Scan library' to index your photos.",
+    scan_modal_title: 'Scan library',
+    scan_modal_text: 'Do you want to start a full library scan now?',
+    scan_modal_close: 'Close',
+    scan_modal_cancel: 'Cancel',
+    scan_modal_start: 'Start scan',
   },
 };
 
@@ -220,6 +348,13 @@ function tr(key) {
   const lang = resolveUiLanguage(state.uiLanguage || 'da');
   const dict = I18N[lang] || I18N.da;
   return (dict[key] || I18N.da[key] || key);
+}
+
+function updateAiToggleButton() {
+  if (!els.aiStopBtn) return;
+  const running = !!state.aiRunning;
+  els.aiStopBtn.textContent = running ? tr('btn_stop_ai') : tr('btn_start_ai');
+  els.aiStopBtn.classList.toggle('danger', running);
 }
 
 function navLabels() {
@@ -263,6 +398,7 @@ let state = {
   },
   uiLanguage: resolveUiLanguage(APP_PROFILE.ui_language || 'da'),
   searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
+  aiRunning: false,
 };
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
@@ -343,7 +479,7 @@ function renderMapperTree() {
 
   els.mapperTreeNav.classList.remove('hidden');
   if (!rootChildren.length) {
-    els.mapperTreeNav.innerHTML = '<div class="mini-label">Ingen mapper endnu.</div>';
+    els.mapperTreeNav.innerHTML = `<div class="mini-label">${escapeHtml(tr('empty_mapper_tree'))}</div>`;
     return;
   }
   els.mapperTreeNav.innerHTML = '';
@@ -514,7 +650,11 @@ function fmtDate(s) {
 
 function renderStats() {
   const inPeople = (state.view === 'personer');
-  if (els.photoCountLabel) els.photoCountLabel.textContent = inPeople ? 'Personer' : 'Billeder';
+  if (els.photoCountLabel) els.photoCountLabel.textContent = inPeople ? tr('stat_people') : tr('stat_photos');
+  if (els.favoriteCountLabel) els.favoriteCountLabel.textContent = tr('stat_favorites');
+  if (els.selectedCountLabel) els.selectedCountLabel.textContent = tr('stat_selected');
+  const showHiddenLabel = document.querySelector('label[for="showHiddenToggle"]');
+  if (showHiddenLabel) showHiddenLabel.textContent = tr('stat_show_hidden');
   if (els.statFavorites) els.statFavorites.style.display = inPeople ? 'none' : '';
   if (els.statSelected) els.statSelected.style.display = inPeople ? 'none' : '';
 
@@ -605,7 +745,7 @@ function getSizeLabel(w, h) {
 function cardHTML(item) {
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
-    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : 'Ingen thumbnail'}</div>`;
+    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : escapeHtml(tr('no_thumb'))}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
     : "";
@@ -648,7 +788,7 @@ function renderGrid() {
     const people = state.personView.mode === 'list' ? (state.people || []) : [];
     if (state.personView.mode === 'list') {
       if (!people.length) {
-        renderEmpty("Ingen personer endnu. Upload billeder med ansigter eller kør ansigtsindeksering.");
+        renderEmpty(tr('empty_people'));
         renderStats();
         setDetail(null);
         return;
@@ -688,7 +828,7 @@ function renderGrid() {
     hideEmpty();
     const items = state.items.slice();
     if (!items.length) {
-      renderEmpty("Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.");
+      renderEmpty(tr('empty_no_photos'));
       renderStats();
       setDetail(null);
       return;
@@ -697,7 +837,7 @@ function renderGrid() {
     for (const it of items) {
       const d = new Date(it.captured_at || it.modified_fs || it.created_fs || Date.now());
       const y = d.getFullYear();
-      const m = d.toLocaleString("da-DK", { month: "long" });
+      const m = d.toLocaleString((state.uiLanguage === 'en') ? 'en-GB' : 'da-DK', { month: "long" });
       const key = `${y}-${String(d.getMonth()+1).padStart(2,'0')}`;
       const label = `${m} ${y}`;
       if (!groups.has(key)) groups.set(key, { label, arr: [] });
@@ -736,8 +876,8 @@ function renderGrid() {
   els.grid.classList.remove('timeline-wrap');
   if (!state.items.length && state.view !== "mapper") {
     const msg = state.view === "personer"
-      ? "Ingen personer endnu. Det bliver fyldt når face-service/ansigtsgenkendelse aktiveres."
-      : "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.";
+      ? tr('empty_people')
+      : tr('empty_no_matches');
     renderEmpty(msg);
     renderStats();
     setDetail(null);
@@ -1121,126 +1261,12 @@ async function loadPersonPhotos(pid, name) {
   renderGrid();
 }
 
-// --- Drag & Drop Upload ---
-function setUploadDestinationHint(dest, photoDir, uploadDir, subdir = '') {
-  if (!els.uploadDestHint) return;
-  const base = (dest === 'library') ? (photoDir || 'ukendt sti') : (uploadDir || 'ukendt sti');
-  const fullPath = subdir ? `${base}/${subdir}` : base;
-  if (dest === 'library') {
-    els.uploadDestHint.textContent = `Drag & drop kopieres til fotobiblioteket (${fullPath}). Scan kopierer ikke filer.`;
-  } else {
-    els.uploadDestHint.textContent = `Drag & drop kopieres til uploads-mappen (${fullPath}). Scan kopierer ikke filer.`;
-  }
-}
-
-function renderUploadSubdirs(folders, selectedSubdir, destination = 'uploads', photoDir = '', uploadDir = '') {
-  if (!els.uploadSubdirSelect) return;
-  const list = Array.isArray(folders) ? [...folders] : [];
-  if (!list.includes('')) list.unshift('');
-  const unique = Array.from(new Set(list));
-  const rootSource = (destination === 'library') ? photoDir : uploadDir;
-  const rootName = (String(rootSource || '').split(/[\\/]/).filter(Boolean).pop() || (destination === 'library' ? 'photos' : 'uploads'));
-  els.uploadSubdirSelect.innerHTML = unique
-    .map(path => {
-      const label = path ? path : `${rootName} (rodmappe)`;
-      return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
-    })
-    .join('');
-  const subdir = selectedSubdir || '';
-  if (!unique.includes(subdir)) {
-    const opt = document.createElement('option');
-    opt.value = subdir;
-    opt.textContent = subdir || '(rodmappe)';
-    els.uploadSubdirSelect.appendChild(opt);
-  }
-  els.uploadSubdirSelect.value = subdir;
-}
-
 async function fetchUploadDestinationConfig(destination = null) {
   let url = '/api/settings/upload-destination';
   if (destination) url += `?destination=${encodeURIComponent(destination)}`;
   const res = await fetch(url);
   const data = await res.json();
   return { res, data };
-}
-
-async function loadUploadDestination(previewDestination = null, keepDestinationSelection = false) {
-  if (!els.uploadDestSelect) return;
-  try {
-    const { res, data } = await fetchUploadDestinationConfig(previewDestination);
-    if (!res.ok || !data || !data.ok) {
-      if (els.uploadDestHint) els.uploadDestHint.textContent = 'Kunne ikke hente kopi-placering for drag & drop.';
-      return;
-    }
-    const savedDest = (data.saved_destination === 'library') ? 'library' : 'uploads';
-    const loadedDest = (data.destination === 'library') ? 'library' : 'uploads';
-    const dest = loadedDest || savedDest;
-    if (!keepDestinationSelection) {
-      els.uploadDestSelect.value = savedDest;
-    }
-    renderUploadSubdirs(data.folders || [], data.subdir || '', dest, data.photo_dir || '', data.upload_dir || '');
-    setUploadDestinationHint(dest, data.photo_dir, data.upload_dir, data.subdir || '');
-  } catch {
-    if (els.uploadDestHint) els.uploadDestHint.textContent = 'Kunne ikke hente kopi-placering for drag & drop.';
-  }
-}
-
-async function saveUploadDestination() {
-  if (!els.uploadDestSelect) return;
-  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
-  const subdir = els.uploadSubdirSelect ? (els.uploadSubdirSelect.value || '') : '';
-  try {
-    if (els.uploadDestSaveBtn) els.uploadDestSaveBtn.disabled = true;
-    const res = await fetch('/api/settings/upload-destination', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination, subdir }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || 'Kunne ikke gemme kopi-placering for drag & drop', 'err');
-      return;
-    }
-    renderUploadSubdirs(data.folders || [], data.subdir || '', data.destination || destination, data.photo_dir || '', data.upload_dir || '');
-    setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || '');
-    showStatus('Kopi-placering for drag & drop gemt.', 'ok');
-  } catch {
-    showStatus('Fejl ved gem af kopi-placering for drag & drop.', 'err');
-  } finally {
-    if (els.uploadDestSaveBtn) els.uploadDestSaveBtn.disabled = false;
-  }
-}
-
-async function createUploadFolder() {
-  if (!els.uploadDestSelect || !els.uploadFolderNewInput) return;
-  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
-  const parent = els.uploadSubdirSelect ? (els.uploadSubdirSelect.value || '') : '';
-  const path = (els.uploadFolderNewInput.value || '').trim();
-  if (!path) {
-    showStatus('Skriv mappenavn først.', 'err');
-    return;
-  }
-  try {
-    if (els.uploadFolderCreateBtn) els.uploadFolderCreateBtn.disabled = true;
-    const res = await fetch('/api/settings/upload-folder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination, parent, path }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || 'Kunne ikke oprette mappe', 'err');
-      return;
-    }
-    if (els.uploadFolderNewInput) els.uploadFolderNewInput.value = '';
-    renderUploadSubdirs(data.folders || [], data.created || data.subdir || '', data.destination || destination, data.photo_dir || '', data.upload_dir || '');
-    setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || data.created || '');
-    showStatus('Mappe oprettet. Husk at gemme placering.', 'ok');
-  } catch {
-    showStatus('Fejl ved oprettelse af mappe.', 'err');
-  } finally {
-    if (els.uploadFolderCreateBtn) els.uploadFolderCreateBtn.disabled = false;
-  }
 }
 
 async function uploadFiles(fileList, options = {}) {
@@ -1305,26 +1331,31 @@ async function uploadFiles(fileList, options = {}) {
 function renderMapperContext(path = '') {
   const p = String(path || '');
   if (els.mapperCurrentPath) {
-    els.mapperCurrentPath.textContent = `Aktuel mappe: ${p ? `uploads/${p}` : 'uploads (rodmappe)'}`;
+    els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p ? `uploads/${p}` : tr('mapper_root_folder')}`;
   }
   if (els.mapperDropZone) {
-    els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${p || 'uploads (rodmappe)'}`;
+    els.mapperDropZone.textContent = `${tr('mapper_drop_here')}: ${p || tr('mapper_root_folder')}`;
     els.mapperDropZone.classList.toggle('hidden', !!state.mapperEditMode);
   }
   if (els.mapperUpBtn) {
+    els.mapperUpBtn.textContent = tr('mapper_up');
     els.mapperUpBtn.disabled = !p;
   }
   if (els.mapperEditBtn) {
-    els.mapperEditBtn.textContent = state.mapperEditMode ? 'Færdig' : '!edit';
+    els.mapperEditBtn.textContent = state.mapperEditMode ? tr('mapper_done') : tr('mapper_edit');
   }
   if (els.mapperDeleteBtn) {
     const count = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
     els.mapperDeleteBtn.classList.toggle('hidden', !state.mapperEditMode);
     els.mapperDeleteBtn.disabled = count === 0;
-    els.mapperDeleteBtn.textContent = count > 0 ? `Slet valgte (${count})` : 'Slet valgte';
+    els.mapperDeleteBtn.textContent = count > 0 ? `${tr('mapper_delete_selected')} (${count})` : tr('mapper_delete_selected');
   }
   if (els.mapperFolderNewInput) els.mapperFolderNewInput.disabled = !!state.mapperEditMode;
-  if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
+  if (els.mapperFolderNewInput) els.mapperFolderNewInput.placeholder = tr('upload_new_folder_placeholder');
+  if (els.mapperFolderCreateBtn) {
+    els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
+    els.mapperFolderCreateBtn.textContent = tr('upload_create_folder');
+  }
   renderMapperTree();
 }
 
@@ -2031,6 +2062,21 @@ function applyUiLanguage() {
   try { document.documentElement.lang = state.uiLanguage || 'da'; } catch {}
   if (els.search) els.search.placeholder = tr('search_placeholder');
 
+  if (els.sort) {
+    const sortTexts = {
+      date_desc: tr('sort_date_desc'),
+      date_asc: tr('sort_date_asc'),
+      name_asc: tr('sort_name_asc'),
+      name_desc: tr('sort_name_desc'),
+      size_desc: tr('sort_size_desc'),
+      size_asc: tr('sort_size_asc'),
+    };
+    Object.entries(sortTexts).forEach(([val, text]) => {
+      const opt = els.sort.querySelector(`option[value="${val}"]`);
+      if (opt) opt.textContent = text;
+    });
+  }
+
   const navMap = {
     timeline: tr('nav_timeline'),
     favorites: tr('nav_favorites'),
@@ -2051,6 +2097,7 @@ function applyUiLanguage() {
 
   const tabText = {
     maint: tr('tab_maint'),
+    ai: tr('tab_ai'),
     logs: tr('tab_logs'),
     users: tr('tab_users'),
     twofa: tr('tab_twofa'),
@@ -2061,6 +2108,39 @@ function applyUiLanguage() {
     const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
     if (btn) btn.textContent = text;
   });
+
+  const settingsHeaderTitle = document.querySelector('#settingsPanel .settings-header h1');
+  const settingsHeaderSub = document.querySelector('#settingsPanel .settings-header p');
+  if (settingsHeaderTitle) settingsHeaderTitle.textContent = tr('settings_title');
+  if (settingsHeaderSub) settingsHeaderSub.textContent = tr('settings_sub');
+
+  const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
+  if (maintTitle) maintTitle.textContent = tr('maint_title');
+
+  if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
+  if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
+  if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
+  if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
+  if (els.aiIngestBtn) els.aiIngestBtn.textContent = tr('btn_build_embeddings');
+  updateAiToggleButton();
+  if (els.facesIndexBtn) els.facesIndexBtn.textContent = tr('btn_index_faces');
+
+  const logsLabel = document.querySelector('#logsPanel strong');
+  if (logsLabel) logsLabel.textContent = tr('logs_label');
+  if (els.logsStart) els.logsStart.textContent = state.logsRunning ? tr('btn_stop') : tr('btn_start');
+  if (els.mainLogsClear) els.mainLogsClear.textContent = tr('btn_clear');
+
+  const profileModalTitle = document.querySelector('#profileModal h3');
+  if (profileModalTitle) profileModalTitle.textContent = tr('profile_title');
+  if (els.profileModalClose) els.profileModalClose.textContent = tr('profile_close');
+
+  const scanModalTitle = document.getElementById('scanModalTitle');
+  const scanModalText = document.getElementById('scanModalText');
+  if (scanModalTitle) scanModalTitle.textContent = tr('scan_modal_title');
+  if (scanModalText) scanModalText.textContent = tr('scan_modal_text');
+  if (els.scanModalClose) els.scanModalClose.textContent = tr('scan_modal_close');
+  if (els.scanModalCancel) els.scanModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.scanModalStart) els.scanModalStart.textContent = tr('scan_modal_start');
 
   const labels = navLabels();
   const [title, subtitle] = labels[state.view] || ['FjordLens', ''];
@@ -2073,6 +2153,26 @@ function activateSettingsTab(tab) {
   if (btn) btn.click();
 }
 
+function openProfileModal() {
+  if (!els.profileModal) return;
+  els.profileModal.classList.remove('hidden');
+}
+
+function closeProfileModal() {
+  if (!els.profileModal) return;
+  els.profileModal.classList.add('hidden');
+}
+
+function openScanModal() {
+  if (!els.scanModal) return;
+  els.scanModal.classList.remove('hidden');
+}
+
+function closeScanModal() {
+  if (!els.scanModal) return;
+  els.scanModal.classList.add('hidden');
+}
+
 // Events
 els.search.addEventListener("input", () => {
   state.q = els.search.value.trim();
@@ -2082,11 +2182,17 @@ els.sort.addEventListener("change", () => {
   state.sort = els.sort.value;
   loadPhotos();
 });
-els.scanBtn.addEventListener("click", scanLibrary);
+els.scanBtn.addEventListener("click", () => {
+  if (state.scanning) {
+    scanLibrary();
+    return;
+  }
+  openScanModal();
+});
 els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
 els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
 els.clearIndexBtn && els.clearIndexBtn.addEventListener("click", clearIndex);
-els.aiIngestBtn && els.aiIngestBtn.addEventListener("click", async () => {
+async function startAiIngest() {
   try {
     showStatus("Starter AI‑indeksering (embeddings)...", "ok");
     const res = await fetch('/api/ai/ingest', { method: 'POST' });
@@ -2096,12 +2202,37 @@ els.aiIngestBtn && els.aiIngestBtn.addEventListener("click", async () => {
       return;
     }
     showStatus("AI‑indeksering er startet i baggrunden.", "ok");
+    state.aiRunning = true;
+    updateAiToggleButton();
     pollAiStatus();
   } catch { showStatus("Fejl ved start af AI‑indeksering.", "err"); }
-});
+}
+
+async function stopAiIngest() {
+  try {
+    const res = await fetch('/api/ai/stop', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data && data.ok === false)) {
+      showStatus('Kunne ikke stoppe AI‑indeksering.', 'err');
+      return;
+    }
+    showStatus('AI‑indeksering stoppet.', 'ok');
+    state.aiRunning = false;
+    updateAiToggleButton();
+    pollAiStatus();
+  } catch {
+    showStatus('Fejl ved stop af AI‑indeksering.', 'err');
+  }
+}
+
+els.aiIngestBtn && els.aiIngestBtn.addEventListener("click", startAiIngest);
 
 els.aiStopBtn && els.aiStopBtn.addEventListener('click', async () => {
-  try { await fetch('/api/ai/stop', { method: 'POST' }); pollAiStatus(); } catch {}
+  if (state.aiRunning) {
+    await stopAiIngest();
+    return;
+  }
+  await startAiIngest();
 });
 
 // Faces indexing controls
@@ -2110,8 +2241,8 @@ async function pollFacesStatus() {
     const r = await fetch('/api/faces/status');
     const s = await r.json();
     if (els.facesStatus) {
-      const run = s && s.running ? 'kører' : 'stoppet';
-      els.facesStatus.textContent = `Ansigter: ${run}`;
+      const run = s && s.running ? tr('status_running') : tr('status_stopped');
+      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run}`;
     }
     if (s && s.running) {
       setTimeout(pollFacesStatus, 1500);
@@ -2122,7 +2253,7 @@ async function pollFacesStatus() {
       if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
     }
   } catch {
-    if (els.facesStatus) els.facesStatus.textContent = 'Ansigter: —';
+    if (els.facesStatus) els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${tr('status_dash')}`;
     if (els.facesIndexBtn) els.facesIndexBtn.disabled = false;
   }
 }
@@ -2154,14 +2285,20 @@ async function pollAiStatus() {
   try {
     const r = await fetch('/api/ai/status');
     const s = await r.json();
+    state.aiRunning = !!(s && s.ok && s.running);
+    updateAiToggleButton();
     if (els.aiStatus) {
-      if (!s || !s.ok) { els.aiStatus.textContent = 'AI: —'; }
+      if (!s || !s.ok) { els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`; }
       else {
-        const run = s.running ? 'kører' : 'stoppet';
-        els.aiStatus.textContent = `AI: ${run} · embedded ${s.embedded||0}/${s.total||0} · fejl ${s.failed||0}`;
+        const run = s.running ? tr('status_running') : tr('status_stopped');
+        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · embedded ${s.embedded||0}/${s.total||0} · ${tr('status_errors_label')} ${s.failed||0}`;
       }
     }
-  } catch { if (els.aiStatus) els.aiStatus.textContent = 'AI: —'; }
+  } catch {
+    state.aiRunning = false;
+    updateAiToggleButton();
+    if (els.aiStatus) els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`;
+  }
   // Poll mens der kører noget
   try {
     const r2 = await fetch('/api/ai/status');
@@ -2172,7 +2309,6 @@ async function pollAiStatus() {
 
 // Start med at vise status hvis noget kører allerede
 pollAiStatus();
-loadUploadDestination();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
@@ -2472,9 +2608,36 @@ document.querySelectorAll(".nav-item").forEach(btn => {
 if (els.profileLink) {
   els.profileLink.addEventListener('click', async (e) => {
     e.preventDefault();
-    await setView('settings');
-    activateSettingsTab('profile');
+    await renderProfilePanel();
+    openProfileModal();
     document.body.classList.remove('drawer-open');
+  });
+}
+
+if (els.profileModalClose) {
+  els.profileModalClose.addEventListener('click', closeProfileModal);
+}
+if (els.profileModal) {
+  els.profileModal.addEventListener('click', (e) => {
+    if (e.target === els.profileModal) closeProfileModal();
+  });
+}
+
+if (els.scanModalClose) {
+  els.scanModalClose.addEventListener('click', closeScanModal);
+}
+if (els.scanModalCancel) {
+  els.scanModalCancel.addEventListener('click', closeScanModal);
+}
+if (els.scanModalStart) {
+  els.scanModalStart.addEventListener('click', async () => {
+    closeScanModal();
+    await scanLibrary();
+  });
+}
+if (els.scanModal) {
+  els.scanModal.addEventListener('click', (e) => {
+    if (e.target === els.scanModal) closeScanModal();
   });
 }
 
@@ -2492,16 +2655,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
     if (tab === 'twofa') renderTwofaPanel();
-    if (tab === 'profile') renderProfilePanel();
-    if (tab === 'maint') loadUploadDestination();
   });
-});
-
-els.uploadDestSaveBtn && els.uploadDestSaveBtn.addEventListener('click', saveUploadDestination);
-els.uploadFolderCreateBtn && els.uploadFolderCreateBtn.addEventListener('click', createUploadFolder);
-els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
-  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
-  loadUploadDestination(destination, true);
 });
 
 els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
@@ -2679,7 +2833,7 @@ if (state.view === 'mapper') {
 applyUiLanguage();
 
 setView(state.view, { syncUrl: false }).then(() => {
-  showStatus("Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.", "ok");
+  showStatus(tr('status_ready_scan'), "ok");
   // Start with a quick status check in case scan was running
   fetch("/api/scan/status").then(r => r.json()).then(d => {
     if (d && d.running) {
@@ -2994,36 +3148,51 @@ async function renderTwofaPanel(){
 async function renderProfilePanel() {
   const wrap = document.getElementById('profilePanelInner');
   if (!wrap) return;
-  wrap.textContent = 'Indlæser…';
+  wrap.textContent = '...';
+
+  const setProfileInlineStatus = (text, type = 'ok') => {
+    const box = document.getElementById('pf_status');
+    if (!box) return;
+    if (!text) {
+      box.textContent = '';
+      box.className = 'mini-label hidden';
+      return;
+    }
+    box.textContent = text;
+    box.className = `status ${type}`;
+    box.classList.remove('hidden');
+  };
+
   try {
     const r = await fetch('/api/me');
     const js = await r.json();
     if (!r.ok || !js.ok || !js.item) {
-      wrap.innerHTML = `<div class="empty">Kan ikke hente profil. ${js && js.error ? js.error : ''}</div>`;
+      wrap.innerHTML = `<div class="empty">${state.uiLanguage === 'en' ? 'Could not load profile.' : 'Kan ikke hente profil.'} ${js && js.error ? js.error : ''}</div>`;
       return;
     }
     const me = js.item;
     state.currentUser = { id: me.id, username: me.username, role: me.role || 'user' };
     wrap.innerHTML = `
       <div class="panel" style="max-width:700px;">
-        <div class="form-row"><label for="pf_username">Brugernavn</label><input id="pf_username" value="${escapeHtml(me.username || '')}" /></div>
-        <div class="form-row"><label for="pf_password">Nyt password (valgfrit)</label><input id="pf_password" type="password" placeholder="Tom = uændret" /></div>
-        <div class="form-row"><label for="pf_password2">Gentag nyt password</label><input id="pf_password2" type="password" placeholder="Gentag password" /></div>
-        <div class="form-row"><label for="pf_ui_language">UI-sprog</label>
+        <div class="form-row"><label for="pf_username">${tr('profile_username')}</label><input id="pf_username" value="${escapeHtml(me.username || '')}" /></div>
+        <div class="form-row"><label for="pf_password">${tr('profile_password_new_optional')}</label><input id="pf_password" type="password" placeholder="${tr('profile_password_unchanged_placeholder')}" /></div>
+        <div class="form-row"><label for="pf_password2">${tr('profile_password_repeat')}</label><input id="pf_password2" type="password" placeholder="${tr('profile_password_repeat_placeholder')}" /></div>
+        <div class="form-row"><label for="pf_ui_language">${tr('profile_ui_lang')}</label>
           <select id="pf_ui_language" class="select">
             <option value="da">Dansk</option>
             <option value="en">English</option>
           </select>
         </div>
-        <div class="form-row"><label for="pf_search_language">Søgesprog</label>
+        <div class="form-row"><label for="pf_search_language">${tr('profile_search_lang')}</label>
           <select id="pf_search_language" class="select">
             <option value="da">Dansk</option>
             <option value="en">English</option>
           </select>
         </div>
         <div class="actions" style="justify-content:flex-end;">
-          <button id="pf_save" class="btn primary">Gem profil</button>
+          <button id="pf_save" class="btn primary">${tr('profile_save')}</button>
         </div>
+        <div id="pf_status" class="mini-label hidden" style="margin-top:8px;"></div>
       </div>
     `;
 
@@ -3040,8 +3209,10 @@ async function renderProfilePanel() {
         const password2 = document.getElementById('pf_password2').value || '';
         const ui_language = document.getElementById('pf_ui_language').value || 'da';
         const search_language = document.getElementById('pf_search_language').value || 'da';
-        if (!username) { showStatus('Brugernavn må ikke være tomt.', 'err'); return; }
-        if (password && password !== password2) { showStatus('Password matcher ikke.', 'err'); return; }
+        if (!username) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Username cannot be empty.' : 'Brugernavn må ikke være tomt.', 'err'); return; }
+        if (password && password !== password2) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Passwords do not match.' : 'Password matcher ikke.', 'err'); return; }
+
+        setProfileInlineStatus('', 'ok');
 
         const payload = { username, ui_language, search_language };
         if (password) payload.password = password;
@@ -3053,7 +3224,7 @@ async function renderProfilePanel() {
         });
         const jj = await rr.json();
         if (!rr.ok || !jj.ok) {
-          showStatus('Kunne ikke gemme profil: ' + ((jj && jj.error) || ''), 'err');
+          setProfileInlineStatus((state.uiLanguage === 'en' ? 'Could not save profile: ' : 'Kunne ikke gemme profil: ') + ((jj && jj.error) || ''), 'err');
           return;
         }
 
@@ -3062,7 +3233,7 @@ async function renderProfilePanel() {
         state.searchLanguage = resolveUiLanguage(search_language);
         applyUiLanguage();
         await loadPhotos();
-        showStatus('Profil opdateret', 'ok');
+        setProfileInlineStatus(tr('profile_saved'), 'ok');
         const p1 = document.getElementById('pf_password');
         const p2 = document.getElementById('pf_password2');
         if (p1) p1.value = '';
@@ -3070,7 +3241,7 @@ async function renderProfilePanel() {
       });
     }
   } catch (e) {
-    wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`;
+    wrap.innerHTML = `<div class="empty">${state.uiLanguage === 'en' ? 'Error' : 'Fejl'}: ${e}</div>`;
   }
 }
 

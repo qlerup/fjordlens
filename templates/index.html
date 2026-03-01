@@ -139,10 +139,10 @@
         </div>
         <nav class="tabs">
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
+          <button class="tab-btn" data-tab="ai">AI</button>
           <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
           <button class="tab-btn" data-tab="twofa">Min 2FA</button>
-          <button class="tab-btn" data-tab="profile">Profil</button>
           <button class="tab-btn" data-tab="other">Andet</button>
         </nav>
 
@@ -155,26 +155,20 @@
               <button id="rescanBtn" class="btn">Rescan metadata</button>
               <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI -->
+        <div class="tab-panel hidden" data-tabpanel="ai">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">AI</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
               <button id="aiIngestBtn" class="btn">Byg AI‑embeddings</button>
               <button id="aiStopBtn" class="btn danger">Stop AI</button>
               <button id="facesIndexBtn" class="btn">Indekser ansigter</button>
-              <span id="facesStatus" class="mini-label" style="align-self:center;">Ansigter: —</span>
-              <span id="aiStatus" class="mini-label" style="align-self:center;">AI: —</span>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;">
-              <label class="mini-label" for="uploadDestSelect">Drag &amp; drop kopiér til</label>
-              <select id="uploadDestSelect" class="select" style="min-width:220px;">
-                <option value="uploads">Uploads-mappen</option>
-                <option value="library">Fotobiblioteket</option>
-              </select>
-              <button id="uploadDestSaveBtn" class="btn">Gem placering</button>
-              <span id="uploadDestHint" class="mini-label">Scan kopierer ikke filer.</span>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
-              <label class="mini-label" for="uploadSubdirSelect">Undermappe</label>
-              <select id="uploadSubdirSelect" class="select" style="min-width:260px;"></select>
-              <input id="uploadFolderNewInput" type="text" placeholder="Ny mappe (fx ferie eller 2026/rejse)" style="min-width:240px;" />
-              <button id="uploadFolderCreateBtn" class="btn">Opret mappe</button>
+              <span id="facesStatus" class="mini-label">Ansigter: —</span>
+              <span id="aiStatus" class="mini-label">AI: —</span>
             </div>
           </div>
         </div>
@@ -221,13 +215,6 @@
           </div>
         </div>
 
-        <!-- Profil -->
-        <div class="tab-panel hidden" data-tabpanel="profile">
-          <div class="sidebar-card" style="margin-bottom:12px;">
-            <div class="sidebar-card-title">Profil</div>
-            <div id="profilePanelInner">Indlæser…</div>
-          </div>
-        </div>
       </section>
     </main>
 
@@ -347,6 +334,32 @@
     </aside>
   </div>
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
+  <div id="profileModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:620px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 style="margin:0;">Profil</h3>
+        <button id="profileModalClose" class="btn">Luk</button>
+      </div>
+      <div id="profilePanelInner">Indlæser…</div>
+    </div>
+  </div>
+  <div id="scanModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:520px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 id="scanModalTitle" style="margin:0;">Scan bibliotek</h3>
+        <button id="scanModalClose" class="btn">Luk</button>
+      </div>
+      <p id="scanModalText" class="mini-label" style="margin:0 0 14px;line-height:1.5;">Vil du starte en fuld scanning af biblioteket nu?</p>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="scanModalCancel" class="btn">Annuller</button>
+        <button id="scanModalStart" class="btn primary">Start scan</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    window.APP_PROFILE = {{ (user_profile or {})|tojson }};
+    window.APP_ROLE = {{ (user_role or 'user')|tojson }};
+  </script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
   <!-- Drag & Drop Upload Overlay -->
   <div id="uploadOverlay" class="upload-overlay hidden">
@@ -358,8 +371,7 @@
   </div>
   <script>
     (function(){
-      const ROLE = {{ (user_role or 'user')|tojson }};
-      window.APP_PROFILE = {{ (user_profile or {})|tojson }};
+      const ROLE = window.APP_ROLE || 'user';
       // Hide Settings tabs based on role
       function hideTab(tab){
         const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
