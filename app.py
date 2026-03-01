@@ -1,4 +1,5 @@
 import hashlib
+import shutil
 import subprocess
 import tempfile
 import re
@@ -1053,6 +1054,45 @@ def _upload_settings_payload(destination: str) -> dict:
             {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
         ],
     }
+
+
+def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
+    prefixes = [str(p or "").strip("/") for p in (rel_prefixes or []) if str(p or "").strip("/")]
+    if not prefixes:
+        return {"photos": 0, "faces": 0, "thumbs": 0}
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+    for pref in prefixes:
+        where_parts.append("(rel_path = ? OR rel_path LIKE ?)")
+        params.extend([pref, pref + "/%"])
+
+    q = "SELECT id, thumb_name FROM photos WHERE " + " OR ".join(where_parts)
+    with closing(get_conn()) as conn:
+        rows = conn.execute(q, params).fetchall()
+        if not rows:
+            return {"photos": 0, "faces": 0, "thumbs": 0}
+
+        photo_ids = [int(r["id"]) for r in rows]
+        thumbs = [str(r["thumb_name"]) for r in rows if r["thumb_name"]]
+
+        ph = ",".join(["?"] * len(photo_ids))
+        faces_removed = int(conn.execute(f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph})", photo_ids).fetchone()["c"] or 0)
+        conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph})", photo_ids)
+        conn.execute(f"DELETE FROM photos WHERE id IN ({ph})", photo_ids)
+        conn.commit()
+
+    thumbs_removed = 0
+    for tn in thumbs:
+        try:
+            p = THUMB_DIR / tn
+            if p.exists():
+                p.unlink()
+                thumbs_removed += 1
+        except Exception:
+            continue
+
+    return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed}
 
 
 def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
@@ -3350,6 +3390,83 @@ def api_settings_upload_folder():
     _set_upload_subdir(destination, new_subdir)
     payload = _upload_settings_payload(destination)
     payload["created"] = new_subdir
+    return jsonify(payload)
+
+
+@app.route("/api/settings/upload-folder-delete", methods=["POST"])
+def api_settings_upload_folder_delete():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    body = request.get_json(silent=True) or {}
+    destination = str(body.get("destination") or "uploads").strip().lower()
+    if destination != UPLOAD_DEST_UPLOADS:
+        return jsonify({"ok": False, "error": "Sletning understøttes kun i uploads-mappen"}), 400
+
+    raw_paths = body.get("paths")
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    if not isinstance(raw_paths, list):
+        return jsonify({"ok": False, "error": "Angiv liste af mapper"}), 400
+
+    normalized: list[str] = []
+    for rp in raw_paths:
+        try:
+            safe = _normalize_upload_subdir(str(rp or ""))
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+        if safe:
+            normalized.append(safe)
+    if not normalized:
+        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+
+    # Keep top-most selected folders only (children of selected parents are redundant)
+    normalized = sorted(set(normalized), key=lambda x: (x.count("/"), x.lower()))
+    selected: list[str] = []
+    for path in normalized:
+        if any(path == p or path.startswith(p + "/") for p in selected):
+            continue
+        selected.append(path)
+
+    target_root, rel_prefix = _upload_target_for_destination(destination)
+    try:
+        base = target_root.resolve()
+    except Exception:
+        return jsonify({"ok": False, "error": "Upload-rodmappe kunne ikke læses"}), 500
+
+    deleted: list[str] = []
+    missing: list[str] = []
+    for subdir in selected:
+        try:
+            target = (target_root / subdir).resolve()
+            target.relative_to(base)
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+
+        if not target.exists() or not target.is_dir():
+            missing.append(subdir)
+            continue
+        try:
+            shutil.rmtree(target)
+            deleted.append(subdir)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Kunne ikke slette mappe '{subdir}': {e}"}), 400
+
+    # Clean stale selected subdir setting if deleted
+    current_subdir = get_upload_subdir(destination)
+    if current_subdir and any(current_subdir == d or current_subdir.startswith(d + "/") for d in deleted):
+        _set_upload_subdir(destination, "")
+
+    rel_prefixes = [f"{rel_prefix}{d}" if rel_prefix else d for d in deleted]
+    removed = _delete_indexed_photos_for_prefixes(rel_prefixes)
+
+    payload = _upload_settings_payload(destination)
+    payload["deleted"] = deleted
+    payload["missing"] = missing
+    payload["removed_photos"] = removed.get("photos", 0)
+    payload["removed_faces"] = removed.get("faces", 0)
+    payload["removed_thumbs"] = removed.get("thumbs", 0)
     return jsonify(payload)
 
 

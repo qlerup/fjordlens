@@ -22,6 +22,8 @@ const els = {
   mapperUpBtn: document.getElementById("mapperUpBtn"),
   mapperFolderNewInput: document.getElementById("mapperFolderNewInput"),
   mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
+  mapperEditBtn: document.getElementById("mapperEditBtn"),
+  mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperDropZone: document.getElementById("mapperDropZone"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
@@ -157,6 +159,8 @@ let state = {
   showHiddenPeople: false,
   mapperPath: "",
   mapperFolders: [],
+  mapperEditMode: false,
+  mapperSelectedFolders: new Set(),
 };
 
 function _normalizeMapperPath(path) {
@@ -610,11 +614,13 @@ function appendCard(item){ return appendCardTo(item, els.grid); }
 function appendFolderCard(folder, arr, opts = {}) {
   const previews = arr.slice(0, 4);
   const card = document.createElement("article");
-  card.className = "photo-card folder-card";
+  const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
+  card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
   const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
   const title = opts.title || folder;
+  const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   card.innerHTML = `
-    <div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div></div>
+    <div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div>${selBadge}</div>
     <div class="card-body">
       <h4 class="card-title">${title}</h4>
       <div class="card-meta">
@@ -623,6 +629,10 @@ function appendFolderCard(folder, arr, opts = {}) {
       </div>
     </div>`;
   card.addEventListener("click", () => {
+    if (state.mapperEditMode) {
+      toggleMapperFolderSelection(folder);
+      return;
+    }
     if (typeof opts.onOpen === 'function') {
       opts.onOpen();
       return;
@@ -1044,10 +1054,22 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperDropZone) {
     els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${p || 'uploads (rodmappe)'}`;
+    els.mapperDropZone.classList.toggle('hidden', !!state.mapperEditMode);
   }
   if (els.mapperUpBtn) {
     els.mapperUpBtn.disabled = !p;
   }
+  if (els.mapperEditBtn) {
+    els.mapperEditBtn.textContent = state.mapperEditMode ? 'Færdig' : '!edit';
+  }
+  if (els.mapperDeleteBtn) {
+    const count = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
+    els.mapperDeleteBtn.classList.toggle('hidden', !state.mapperEditMode);
+    els.mapperDeleteBtn.disabled = count === 0;
+    els.mapperDeleteBtn.textContent = count > 0 ? `Slet valgte (${count})` : 'Slet valgte';
+  }
+  if (els.mapperFolderNewInput) els.mapperFolderNewInput.disabled = !!state.mapperEditMode;
+  if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
 }
 
 async function loadMapperTools(preferred = null) {
@@ -1056,6 +1078,11 @@ async function loadMapperTools(preferred = null) {
     if (!res.ok || !data || !data.ok) return;
     const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperFolders = folders;
+    if (state.mapperSelectedFolders && state.mapperSelectedFolders.size) {
+      state.mapperSelectedFolders = new Set(
+        Array.from(state.mapperSelectedFolders).filter(f => folders.includes(f))
+      );
+    }
     const wantedRaw = (preferred !== null) ? String(preferred || '') : String(state.mapperPath || data.subdir || '');
     const wanted = _normalizeMapperPath(wantedRaw);
     state.mapperPath = wanted;
@@ -1073,8 +1100,14 @@ async function createMapperFolder() {
     showStatus('Skriv mappenavn først.', 'err');
     return;
   }
+  const createBtn = els.mapperFolderCreateBtn;
+  const originalLabel = createBtn ? createBtn.textContent : 'Opret mappe';
   try {
-    if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = true;
+    if (createBtn) {
+      createBtn.disabled = true;
+      createBtn.classList.add('loading');
+      createBtn.textContent = 'Opretter...';
+    }
     const res = await fetch('/api/settings/upload-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1096,36 +1129,82 @@ async function createMapperFolder() {
   } catch {
     showStatus('Fejl ved oprettelse af mappe.', 'err');
   } finally {
-    if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = false;
+    if (createBtn) {
+      createBtn.classList.remove('loading');
+      createBtn.textContent = originalLabel || 'Opret mappe';
+      createBtn.disabled = !!state.mapperEditMode;
+    }
+  }
+}
+
+function setMapperEditMode(enabled) {
+  state.mapperEditMode = !!enabled;
+  if (!state.mapperEditMode) {
+    state.mapperSelectedFolders = new Set();
+  }
+  renderMapperContext(state.mapperPath || '');
+  if (state.view === 'mapper') renderGrid();
+}
+
+function toggleMapperFolderSelection(folderPath) {
+  if (!state.mapperSelectedFolders) state.mapperSelectedFolders = new Set();
+  if (state.mapperSelectedFolders.has(folderPath)) state.mapperSelectedFolders.delete(folderPath);
+  else state.mapperSelectedFolders.add(folderPath);
+  renderMapperContext(state.mapperPath || '');
+  if (state.view === 'mapper') renderGrid();
+}
+
+async function deleteSelectedMapperFolders() {
+  const selected = Array.from(state.mapperSelectedFolders || []);
+  if (!selected.length) {
+    showStatus('Vælg mindst én mappe at slette.', 'err');
+    return;
+  }
+  const ok = confirm(`Slet ${selected.length} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.`);
+  if (!ok) return;
+  try {
+    if (els.mapperDeleteBtn) els.mapperDeleteBtn.disabled = true;
+    const res = await fetch('/api/settings/upload-folder-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination: 'uploads', paths: selected }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || 'Kunne ikke slette mapper', 'err');
+      return;
+    }
+    state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
+    state.mapperSelectedFolders = new Set();
+    setMapperEditMode(false);
+    await loadMapperTools(state.mapperPath || '');
+    await loadPhotos();
+    const deletedCount = Array.isArray(data.deleted) ? data.deleted.length : 0;
+    const removedPhotos = Number(data.removed_photos || 0);
+    showStatus(`Slettet ${deletedCount} mappe(r) og ${removedPhotos} indekserede filer.`, 'ok');
+  } catch {
+    showStatus('Fejl ved sletning af mapper.', 'err');
+  } finally {
+    renderMapperContext(state.mapperPath || '');
   }
 }
 
 window.addEventListener('dragover', (e) => {
-  if (state.view === 'mapper') return;
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
-    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('hidden'); els.uploadOverlay.classList.add('active'); }
-    if (els.uploadProgressBar) els.uploadProgressBar.style.width = '0%';
-    if (els.uploadProgressText) els.uploadProgressText.textContent = 'Slip filer for at uploade';
   }
 });
 window.addEventListener('drop', (e) => {
-  if (state.view === 'mapper') return;
   if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
     e.preventDefault();
-    uploadFiles(e.dataTransfer.files);
+    if (state.view !== 'mapper') {
+      showStatus('Upload er kun aktiv i Mapper-sektionen.', 'err');
+    }
   }
-  // If nothing to upload, hide overlay
-  if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) {
-    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
-  }
+  if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
 });
 window.addEventListener('dragleave', (e) => {
-  if (state.view === 'mapper') return;
-  // Hide when leaving window
-  if (e.screenX === 0 && e.screenY === 0) {
-    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
-  }
+  if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
 });
 
 function buildPlacesGeoJSON(items) {
@@ -2040,6 +2119,8 @@ els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
 });
 
 els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
+els.mapperEditBtn && els.mapperEditBtn.addEventListener('click', () => setMapperEditMode(!state.mapperEditMode));
+els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');
   if (!cur) return;
