@@ -97,13 +97,14 @@ vi .env
 Example:
 ```env
 APP_PORT=9080
-PHOTO_DIR=/volume1/photos
+PHOTO_DIR=/volume1/docker/fjordlens/Photos
 DATA_DIR=/volume1/docker/fjordlens/data
 TZ=Europe/Copenhagen
 LOG_LEVEL=INFO
 ```
 
-> Set `PHOTO_DIR` to the folder where your photos are located on the NAS.
+> Standard setup uses `Photos` + `data` inside `/volume1/docker/fjordlens`.
+> If you already have another photo share, you can point `PHOTO_DIR` to that instead.
 
 ### Start the container
 ```bash

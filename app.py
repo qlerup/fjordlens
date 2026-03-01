@@ -51,6 +51,10 @@ UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
 UPLOAD_DEST_CHOICES = {UPLOAD_DEST_UPLOADS, UPLOAD_DEST_LIBRARY}
+UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
+    UPLOAD_DEST_UPLOADS: "uploads",
+    UPLOAD_DEST_LIBRARY: "Photos",
+}
 FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
 VIDEO_FACE_SAMPLE_INTERVAL_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_INTERVAL_SEC", "3.0"))
 VIDEO_FACE_SAMPLE_MAX_FRAMES = int(os.environ.get("VIDEO_FACE_SAMPLE_MAX_FRAMES", "24"))
@@ -830,6 +834,12 @@ def init_db() -> None:
             row4 = conn.execute("SELECT value FROM settings WHERE key='upload_subdir'").fetchone()
             if not row4:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_subdir", ""))
+            row5 = conn.execute("SELECT value FROM settings WHERE key='upload_subdir_uploads'").fetchone()
+            if not row5:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_subdir_uploads", ""))
+            row6 = conn.execute("SELECT value FROM settings WHERE key='upload_subdir_library'").fetchone()
+            if not row6:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_subdir_library", ""))
             conn.commit()
         except Exception:
             pass
@@ -940,9 +950,45 @@ def _normalize_upload_subdir(raw: Optional[str]) -> str:
     return "/".join(safe_parts)
 
 
-def get_upload_subdir() -> str:
+def _upload_subdir_setting_key(destination: str) -> str:
+    if destination == UPLOAD_DEST_LIBRARY:
+        return "upload_subdir_library"
+    return "upload_subdir_uploads"
+
+
+def get_upload_subdir(destination: Optional[str] = None) -> str:
+    dest = destination or get_upload_destination()
     try:
-        return _normalize_upload_subdir(_get_setting("upload_subdir", ""))
+        by_dest = _get_setting(_upload_subdir_setting_key(dest), "")
+        legacy = _get_setting("upload_subdir", "")
+        raw = by_dest if (by_dest or "").strip() else legacy
+        return _normalize_upload_subdir(raw)
+    except Exception:
+        return ""
+
+
+def _set_upload_subdir(destination: str, subdir: str) -> None:
+    safe = _normalize_upload_subdir(subdir)
+    _set_setting(_upload_subdir_setting_key(destination), safe)
+    # Keep legacy key in sync for backward compatibility
+    _set_setting("upload_subdir", safe)
+
+
+def _ensure_default_upload_subdir(destination: str, target_root: Path, current_subdir: str) -> str:
+    if current_subdir:
+        return current_subdir
+    default_name = UPLOAD_DEFAULT_SUBDIR_BY_DEST.get(destination, "")
+    if not default_name:
+        return ""
+    try:
+        safe = _normalize_upload_subdir(default_name)
+    except Exception:
+        return ""
+    try:
+        target = target_root / safe
+        target.mkdir(parents=True, exist_ok=True)
+        _set_upload_subdir(destination, safe)
+        return safe
     except Exception:
         return ""
 
@@ -975,8 +1021,9 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
 
 def _upload_settings_payload(destination: str) -> dict:
     saved_destination = get_upload_destination()
-    subdir = get_upload_subdir()
+    subdir = get_upload_subdir(destination)
     target_root, _ = _upload_target_for_destination(destination)
+    subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     folders = _list_upload_subdirs(target_root)
     if subdir and subdir not in folders:
         folders.append(subdir)
@@ -3177,7 +3224,7 @@ def api_settings_upload_destination():
                 subdir = _normalize_upload_subdir(str(body.get("subdir") or ""))
             except Exception:
                 return jsonify({"ok": False, "error": "Ugyldig undermappe"}), 400
-            _set_setting("upload_subdir", subdir)
+            _set_upload_subdir(destination, subdir)
         _set_setting("upload_destination", destination)
         return jsonify(_upload_settings_payload(destination))
 
@@ -3223,7 +3270,7 @@ def api_settings_upload_folder():
     except Exception as e:
         return jsonify({"ok": False, "error": f"Kunne ikke oprette mappe: {e}"}), 400
 
-    _set_setting("upload_subdir", new_subdir)
+    _set_upload_subdir(destination, new_subdir)
     payload = _upload_settings_payload(destination)
     payload["created"] = new_subdir
     return jsonify(payload)
@@ -3237,8 +3284,9 @@ def api_upload():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     ensure_dirs()
     destination = get_upload_destination()
-    subdir = get_upload_subdir()
+    subdir = get_upload_subdir(destination)
     target_root, rel_prefix = _upload_target_for_destination(destination)
+    subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
