@@ -1,298 +1,290 @@
-# FjordLens for Synology (GitHub‑ready starter)
+# FjordLens for Synology
 
-A Docker-based photo app starter for Synology NAS with:
+FjordLens is a Docker-based photo library app for Synology NAS (and local Docker hosts), with a Flask web UI, metadata indexing, folder-based uploads, AI embedding controls, and face indexing.
 
-- Web UI (Flask + HTML/CSS/JS)
-- Photo library scan (`/photos`)
-- Metadata extraction (EXIF + file info)
-- Thumbnails
-- SQLite index database
-- Search/sort/filter (with Danish-friendly synonyms)
-- Favorites
-- Detail view with raw metadata JSON
-- Reverse geocoding cache (offline RG with optional online fallbacks)
-- 2FA (TOTP) with trusted device option
-- Role-based access control (Admin, Manager, User)
-- **AI-ready data model** for later ONNX/CLIP and face recognition
+## Quick Start
 
-## Current Status
-
-This version is a **testable base**:
-- ✅ Metadata + thumbnails + search work
-- ✅ Reverse geocoding (country/city) with cache
-- ✅ TOTP 2FA with trusted-device cookies
-- ✅ Role-based permissions and in‑UI user management
-- ✅ Ready for Synology Docker/Container Manager
-- ✅ GitHub ready (incl. GHCR workflow)
-- 🔜 Next steps: ONNX/CLIP (semantic search) + face recognition + clustering
-
----
-
-## Project Structure
-
-```txt
-fjordlens/
-├─ app.py
-├─ Dockerfile
-├─ docker-compose.yml
-├─ docker-compose.ghcr.yml.example
-├─ requirements.txt
-├─ .env.example
-├─ .gitignore
-├─ README.md
-├─ scripts/
-│  ├─ first_install_nas.sh
-│  └─ update.sh
-├─ .github/
-│  └─ workflows/
-│     └─ docker-ghcr.yml
-├─ templates/
-│  └─ index.html
-└─ static/
-   ├─ styles.css
-   └─ app.js
-```
-
----
-
-## 1) Local Test (optional)
-
-If you want to test on your PC first:
+### Local / Docker host
 
 ```bash
 cp .env.example .env
-# optionally adjust PHOTO_DIR and DATA_DIR
 docker compose up -d --build
 ```
 
 Open:
-- `http://localhost:9080` (or the port you set in `.env`)
+- `http://localhost:9080` (or your `APP_PORT`)
 
----
+### Synology NAS (SSH)
 
-## 2) Synology Installation via SSH (recommended)
-
-### Enable SSH in DSM
-- Control Panel → Terminal & SNMP → Enable SSH
-
-### Log in to NAS
 ```bash
-ssh youruser@YOUR_NAS_IP
-```
-
-### Get the code (from GitHub) or copy the project
-```bash
-mkdir -p /volume1/docker
 cd /volume1/docker
 git clone https://github.com/YOUR_USER/YOUR_REPO.git fjordlens
 cd fjordlens
-```
-
-### Create `.env`
-```bash
 cp .env.example .env
-vi .env
-```
-
-Example:
-```env
-APP_PORT=9080
-PHOTO_DIR=/volume1/docker/fjordlens/Photos
-DATA_DIR=/volume1/docker/fjordlens/data
-TZ=Europe/Copenhagen
-LOG_LEVEL=INFO
-```
-
-> Standard setup uses `Photos` + `data` inside `/volume1/docker/fjordlens`.
-> If you already have another photo share, you can point `PHOTO_DIR` to that instead.
-
-### Start the container
-```bash
 docker compose up -d --build
 ```
 
 Open:
 - `http://YOUR_NAS_IP:9080`
 
-Then press **“Scan library”** in the UI.
+## What’s Included
 
----
+- Web app: Flask + vanilla JS UI
+- Photo indexing from mounted `/photos`
+- EXIF/file metadata extraction
+- Thumbnails + detail panel
+- Danish/English UI language support per user
+- Danish/English search language support per user
+- Role-based auth: Admin, Manager, User
+- 2FA (TOTP)
+- Favorites, Places, Cameras, People, Folders views
+- Folder management + drag/drop upload to selected folder
+- AI embeddings ingest (start/stop) with progress
+- Face indexing with progress
+- Docker Compose stack with dedicated AI service
 
-## 3) Synology Container Manager (GUI)
-You can also use **Projects** in Container Manager:
+## What Changed Recently
 
-1. Upload the project to `/volume1/docker/fjordlens`
-2. Create `.env`
-3. In Container Manager → Project → Create
-4. Point to `docker-compose.yml`
-5. Start the project
+- Settings was cleaned up and split into clearer tabs.
+- AI controls now live in a dedicated `AI` tab.
+- AI tab now has **two vertical sections**:
+  - Embeddings section (single start/stop toggle button)
+  - Face indexing section
+- Each AI section has its own explanation text and status line.
+- Deprecated upload destination controls were removed from Maintenance.
+- Folder upload workflow is now centered in the `Folders` view.
+- Profile editing is available from footer `Profile` link (modal).
+- Admin user management supports editing username/password/role/languages.
 
----
+## Where to Find What (UI Map)
 
-## 4) GitHub Setup (repo)
+### Left navigation
 
-If you start from a local folder and want to push to GitHub:
+- `Timeline`: Date-grouped gallery
+- `Favorites`: Starred items
+- `Places`: Map/location-oriented browsing
+- `Cameras`: Camera metadata filter view
+- `Folders`: Folder tree + folder actions + drag/drop upload target
+- `People`: Face/person browsing
+- `Settings`: Operational tools and administration
+
+### Footer links
+
+- `Profile`: Edit your own account/profile settings
+- `API health`: Quick backend health endpoint
+- `Filters`: API filter debug endpoint
+- `Log out`
+
+## Settings Tabs
+
+### Maintenance
+
+Use this tab for library maintenance tasks:
+- Scan library
+- Rescan metadata
+- Rebuild thumbnails
+- Reset index
+
+### AI
+
+The AI tab is split into two clear sections:
+
+1. **AI embeddings**
+   - One toggle button: `Start AI` / `Stop AI`
+   - Starts/stops embeddings ingest for photos missing embeddings
+   - Status line shows:
+     - running/stopped
+     - embedded/total
+     - failures
+
+2. **Face indexing**
+   - Button: `Index faces`
+   - Runs face indexing job for photos
+   - Status line shows:
+     - running/stopped
+     - processed/total
+
+### Logs
+
+- Live operations log controls (`Start/Stop`, `Clear`)
+- Main log output panel
+
+### Users (Admin)
+
+- Create users
+- Edit existing users
+- Set role
+- Set per-user UI language and search language
+
+### My 2FA
+
+- Enable/disable TOTP
+- Manage trusted device behavior
+
+### Other
+
+- Duplicate scan tools
+
+## Profile and User Preferences
+
+Open `Profile` from the sidebar footer to edit your own account:
+- Username
+- Optional password change
+- UI language (`da`/`en`)
+- Search language (`da`/`en`)
+
+Preferences persist per user and are applied on refresh/login.
+
+## Folders and Upload Workflow
+
+Folder workflows now happen in `Folders` view:
+
+- Navigate folder tree
+- Create subfolders
+- Drag & drop files into the folder dropzone
+- Upload target follows current folder context
+
+This replaced the old maintenance upload destination controls.
+
+## Search and Sorting
+
+Search supports:
+- Filename/path
+- Camera/lens metadata
+- Date-like terms
+- Location fields (when available)
+- AI tags/metadata fields
+
+Sorting:
+- Date ascending/descending
+- Name ascending/descending
+- Size ascending/descending
+
+## Authentication and Roles
+
+- First run redirects to setup to create initial admin user.
+- Roles:
+  - `Admin`: full access, user administration
+  - `Manager`: operations access (without user admin)
+  - `User`: restricted from admin/maintenance operations
+
+Safety rules include protection against removing the last admin.
+
+## Deployment and Updates
+
+### Standard update flow
 
 ```bash
-git init
-git add .
-git commit -m "Initial FjordLens Synology starter"
-git branch -M main
-git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
-git push -u origin main
-```
-
-### Private repo?
-Use either:
-- GitHub Personal Access Token (PAT), or
-- SSH keys
-
----
-
-## 5) Easy Updates Later (NAS)
-Once the repo is cloned on your NAS:
-
-```bash
-cd /volume1/docker/fjordlens
 git pull
 docker compose up -d --build
 ```
 
-You can also use the script:
+### Full restart flow
+
 ```bash
-sh scripts/update.sh
+docker compose down
+docker compose up -d --build
 ```
 
----
+### Helper scripts
 
-## 6) GitHub Container Registry (GHCR) ready (optional)
-There is a workflow in the repo:
-- `.github/workflows/docker-ghcr.yml`
+- `scripts/first_install_nas.sh`
+- `scripts/update.sh`
 
-It builds and publishes an image to GHCR on:
-- push to `main`
-- tags like `v1.0.0`
+## GHCR Option (Prebuilt Images)
 
-### Benefit
-Then the NAS **does not need to build** the image itself.
+A GHCR compose example is included:
+- `docker-compose.ghcr.yml.example`
 
-### Use GHCR image on NAS
-Copy `docker-compose.ghcr.yml.example` to `docker-compose.yml` and set the image name:
+Use this if you prefer pulling prebuilt images instead of building on NAS.
 
-```yaml
-image: ghcr.io/YOUR_GITHUB_USERNAME/fjordlens:latest
+## Configuration
+
+Key environment variables (see `.env.example`):
+
+- `APP_PORT`: Web UI host port (default `9080`)
+- `PHOTO_DIR`: Host path mounted as `/photos` (read-only recommended)
+- `DATA_DIR`: Persistent app data path (`db`, `thumbs`, uploads data)
+- `TZ`: Time zone
+- `LOG_LEVEL`: App log level
+- `AI_DEBUG_PORT`: Optional host exposure for AI service
+- `AI_URL`: Internal backend -> AI service URL (compose default uses service name)
+
+### Geocoding / behavior flags
+
+- `GEOCODE_ENABLE`
+- `GEOCODE_PROVIDER`
+- `GEOCODE_LANG`
+- `GEOCODE_TIMEOUT`
+- `GEOCODE_RETRIES`
+- `GEOCODE_DELAY`
+
+## Health and Validation
+
+Useful checks:
+
+- App health: `GET /api/health`
+- Compose status:
+
+```bash
+docker compose ps
 ```
 
----
+Expected after successful deploy:
+- `fjordlens`: healthy
+- `fjordlens-ai`: healthy
 
-## 7) What the app indexes (now)
-During a scan the app stores, among other things:
+## Security Notes
 
-- file name / path
-- file size
-- date (EXIF if possible, otherwise file date)
-- dimensions
-- camera / lens (if EXIF exists)
-- GPS coordinates (if EXIF exists)
-- place information (country/city) via reverse geocoding with cache
-- SHA256 checksum
-- pHash (simple duplicate aid)
-- thumbnails
-- raw metadata JSON (`metadata_json`)
-- `ai_tags` (placeholder for future semantic search)
-- fields for future `embedding_json`
+- Never commit `.env` with secrets.
+- Keep `/photos` mounted read-only when possible.
+- Use strong admin password + enable 2FA.
+- Keep `DATA_DIR` on persistent storage.
 
----
+## Project Structure
 
-## 8) Search (now vs later)
-### Now
-Search works on:
-- file name and folder path
-- camera make/model, lens model
-- dates (captured/modified) — try `2021` or `2021-12`
-- GPS name/city/country when available
-- AI placeholder tags
-- raw metadata JSON (free‑text match)
+```txt
+fjordlens/
+├─ app.py
+├─ wsgi.py
+├─ Dockerfile
+├─ docker-compose.yml
+├─ docker-compose.ghcr.yml.example
+├─ requirements.txt
+├─ .env.example
+├─ README.md
+├─ ai_service/
+│  ├─ app.py
+│  ├─ Dockerfile
+│  ├─ requirements.txt
+│  └─ download_models.py
+├─ templates/
+│  ├─ index.html
+│  ├─ login.html
+│  ├─ setup.html
+│  ├─ 2fa_setup.html
+│  ├─ 2fa_verify.html
+│  └─ admin_users.html
+├─ static/
+│  ├─ app.js
+│  ├─ styles.css
+│  └─ icons/
+├─ scripts/
+│  ├─ first_install_nas.sh
+│  └─ update.sh
+└─ data/
+```
 
-Synonym expansion (Danish‑friendly) for common terms:
-- beach: `strand, hav, kyst, sea, ocean`
-- forest: `skov, forest, woods`
-- car: `bil, car, auto, tesla`
-- sunset: `solnedgang, sunset, aftenhimmel`
-- camera: `kamera, camera`
-- family: `familie, family, jul, middag`
+## Troubleshooting
 
-### Later (next steps)
-We will add:
-- **ONNX/CLIP** for real semantic search
-- **Face service** (detection + embeddings)
-- **Clustering** (grouping of people)
-- optionally PostgreSQL + pgvector
-
----
-
-## 9) Known Limitations (starter)
-- HEIC/HEIF may need extra decoders in some environments (we support pillow‑heif when available)
-- AI/face pipeline is not enabled yet (schema prepared)
-- SQLite is fine to start; PostgreSQL/pgvector recommended later
-
----
-
-## 10) Recommended Next Steps
-1. ONNX Runtime container for face detection + embeddings
-2. ONNX/CLIP text↔image embeddings for semantic search
-3. Job queue (Redis) + worker for background indexing
-4. PostgreSQL + pgvector
-5. People/Places views with proper grouping
+- If AI service is healthy but embeddings do not move:
+  - Check AI section status counters (`embedded/total/failures`).
+  - Check logs in `Settings -> Logs`.
+- If containers keep restarting:
+  - Run `docker compose ps` and `docker compose logs`.
+- If UI text seems stale after deploy:
+  - Hard refresh browser (`Ctrl+F5`) to invalidate cached JS/CSS.
 
 ---
 
-## Security / Operations
-- Do **not** commit `.env` to GitHub
-- Mount photos `:ro` (read-only) as in the compose file
-- Store data (DB + thumbnails) in a persistent folder (`/volume1/docker/fjordlens/data`)
-
----
-
-## Authentication & Users
-
-### Setup flow
-On first run (no users in DB), you’ll be redirected to a setup page to create the initial Admin.
-
-Optional: protect setup with a token via env `SETUP_TOKEN` or `SETUP_TOKEN_FILE`.
-
-### Login and 2FA
-- TOTP (e.g., Google Authenticator) can be enabled per user under “My 2FA”.
-- Trusted device: optionally set “remember this device (days)”; a signed cookie will skip 2FA on that browser for the selected number of days.
-
-### Roles and permissions
-- Admin: full access; can create/delete users and assign roles.
-- Manager: same as Admin except user management.
-- User: cannot access Maintenance, Logs, Other, or Users tabs. Endpoints for those actions return 403.
-
-Notes
-- You cannot delete yourself or the last remaining Admin.
-- User creation happens in a modal (“Add user”) where you choose role.
-
----
-
-## Mobile UX
-- On small screens the left sidebar becomes a slide‑in drawer.
-- Use the hamburger button in the top bar to open/close.
-- The drawer closes on backdrop tap, Escape, or when selecting a menu item.
-
----
-
-## Reverse Geocoding
-Reverse geocoding is enabled by default and uses an offline database (reverse_geocoder) for basic city/country. It can optionally fall back to online providers.
-
-Environment variables:
-- `GEOCODE_ENABLE` (default `1`): set `0` to disable.
-- `GEOCODE_PROVIDER` (`rg` | `nominatim` | `bigdatacloud` | `photon`; default `rg`)
-- `GEOCODE_EMAIL` (used for polite User‑Agent for providers)
-- `GEOCODE_TIMEOUT` (seconds), `GEOCODE_RETRIES`, `GEOCODE_DELAY` (seconds between requests)
-- `GEOCODE_LANG` (e.g., `da`, `en`)
-
-Other relevant envs:
-- `PHASH_MATCH_THRESHOLD` (default `8`) for visual match when enriching EXIF from sibling files.
-- `SECRET_KEY` (Flask secret; can also be supplied via `SECRET_KEY_FILE`).
+If you want, the next step can be adding screenshots per tab (in English) directly inside this README.
