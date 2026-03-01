@@ -1036,8 +1036,9 @@ def _upload_settings_payload(destination: str) -> dict:
     if destination == UPLOAD_DEST_UPLOADS and "uploads" in folders:
         folders = [f for f in folders if f != "uploads"]
     if subdir and subdir not in folders:
-        folders.append(subdir)
-        folders = sorted(folders, key=lambda x: (x != "", x.lower()))
+        # Stored folder no longer exists on disk: remove stale reference
+        _set_upload_subdir(destination, "")
+        subdir = ""
     return {
         "ok": True,
         "destination": destination,
@@ -2415,34 +2416,66 @@ def _cosine(a: list[float], b: list[float]) -> float:
         return -1.0
 
 
-DANISH_SYNONYMS = {
-    "strand": {"strand", "beach", "hav", "kyst"},
-    "hav": {"hav", "sea", "ocean", "strand", "kyst"},
-    "skov": {"skov", "forest", "woods"},
-    "bil": {"bil", "car", "auto", "tesla"},
-    "solnedgang": {"solnedgang", "sunset", "aftenhimmel"},
-    "kamera": {"kamera", "camera"},
-    "familie": {"familie", "family", "jul", "middag"},
+QUERY_STOPWORDS_DA = {
+    "der", "som", "og", "i", "på", "ved", "til", "af", "for", "med",
+    "en", "et", "den", "det", "de", "er", "at", "om",
 }
 
 
-def normalize_query_terms(q: str) -> set[str]:
+DANISH_SYNONYM_GROUPS = [
+    {"strand", "beach", "hav", "kyst"},
+    {"hav", "sea", "ocean", "strand", "kyst"},
+    {"skov", "forest", "woods"},
+    {"bil", "car", "auto", "tesla"},
+    {"solnedgang", "sunset", "aftenhimmel"},
+    {"kamera", "camera"},
+    {"familie", "family", "jul", "middag"},
+    {
+        "svømmer", "svøm", "svømme", "svømning", "bader", "bade", "badning",
+        "svommer", "svoemmer", "swim", "swimming", "bathing",
+    },
+]
+
+
+def _fold_danish(text: str) -> str:
+    return (
+        (text or "")
+        .lower()
+        .replace("æ", "ae")
+        .replace("ø", "oe")
+        .replace("å", "aa")
+    )
+
+
+SYNONYM_LOOKUP: Dict[str, set[str]] = {}
+for _group in DANISH_SYNONYM_GROUPS:
+    expanded = set(_group)
+    for _term in list(_group):
+        expanded.add(_fold_danish(_term))
+    for _term in expanded:
+        SYNONYM_LOOKUP[_term] = expanded
+
+
+def _query_term_groups(q: str) -> list[set[str]]:
     q = (q or "").strip().lower()
     if not q:
-        return set()
-    words = {w for w in q.replace(",", " ").split() if w}
-    expanded = set(words)
-    for w in list(words):
-        for key, group in DANISH_SYNONYMS.items():
-            if w in group or w == key:
-                expanded |= group
-                expanded.add(key)
-    return expanded
+        return []
+    raw_words = [w for w in re.findall(r"[0-9a-zA-ZæøåÆØÅ]+", q) if w]
+    words = [w.lower() for w in raw_words if w.lower() not in QUERY_STOPWORDS_DA]
+    groups: list[set[str]] = []
+    for w in words:
+        key = _fold_danish(w)
+        group = SYNONYM_LOOKUP.get(key)
+        if group:
+            groups.append(group)
+        else:
+            groups.append({w, key})
+    return groups
 
 
 def matches_search(photo: Dict[str, Any], q: str) -> bool:
-    terms = normalize_query_terms(q)
-    if not terms:
+    term_groups = _query_term_groups(q)
+    if not term_groups:
         return True
 
     fields = [
@@ -2453,11 +2486,17 @@ def matches_search(photo: Dict[str, Any], q: str) -> bool:
         str(photo.get("lens_model") or "").lower(),
         str(photo.get("gps_name") or "").lower(),
         " ".join((photo.get("ai_tags") or [])).lower(),
+        str(photo.get("people_names") or "").lower(),
         str(photo.get("captured_at") or "").lower(),
         str(photo.get("metadata_json") or "").lower(),
     ]
     blob = " ".join(fields)
-    return all(any(term_part in blob for term_part in {t}) or (t in blob) for t in terms)
+    blob_folded = _fold_danish(blob)
+
+    for group in term_groups:
+        if not any(((term in blob) or (_fold_danish(term) in blob_folded)) for term in group):
+            return False
+    return True
 
 
 def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dict[str, Any]]:
@@ -2494,7 +2533,23 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
         params.append(folder)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    sql = f"SELECT * FROM photos {where_sql} ORDER BY {order_by}"
+    sql = f"""
+        SELECT
+            photos.*,
+            COALESCE((
+                SELECT GROUP_CONCAT(name, ' ')
+                FROM (
+                    SELECT DISTINCT p2.name AS name
+                    FROM faces f2
+                    INNER JOIN people p2 ON p2.id = f2.person_id
+                    WHERE f2.photo_id = photos.id
+                      AND COALESCE(p2.hidden, 0) = 0
+                )
+            ), '') AS people_names
+        FROM photos
+        {where_sql}
+        ORDER BY {order_by}
+    """
 
     with closing(get_conn()) as conn:
         rows = conn.execute(sql, params).fetchall()

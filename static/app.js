@@ -159,6 +159,50 @@ let state = {
   mapperFolders: [],
 };
 
+function _normalizeMapperPath(path) {
+  const raw = String(path || '').replace(/\\/g, '/').trim();
+  if (!raw) return '';
+  return raw
+    .split('/')
+    .map(s => s.trim())
+    .filter(s => s && s !== '.' && s !== '..')
+    .join('/');
+}
+
+function _readRouteStateFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const viewRaw = String(url.searchParams.get('view') || '').trim().toLowerCase();
+    const view = Object.prototype.hasOwnProperty.call(NAV_LABELS, viewRaw) ? viewRaw : null;
+    const mapperPath = _normalizeMapperPath(url.searchParams.get('mappe') || url.searchParams.get('folder') || '');
+    return { view, mapperPath };
+  } catch {
+    return { view: null, mapperPath: '' };
+  }
+}
+
+function _syncRouteStateToUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (state.view && state.view !== 'timeline') {
+      url.searchParams.set('view', state.view);
+    } else {
+      url.searchParams.delete('view');
+    }
+    if (state.view === 'mapper' && state.mapperPath) {
+      url.searchParams.set('mappe', state.mapperPath);
+    } else {
+      url.searchParams.delete('mappe');
+      url.searchParams.delete('folder');
+    }
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (next !== cur) {
+      window.history.replaceState({ view: state.view, mappe: state.mapperPath || '' }, '', next);
+    }
+  } catch {}
+}
+
 // mark initial view for CSS targeting
 document.body.classList.add("view-timeline");
 
@@ -435,7 +479,7 @@ function renderGrid() {
   // Restore gallery grid layout for non-timeline views
   els.grid.classList.add('gallery-grid');
   els.grid.classList.remove('timeline-wrap');
-  if (!state.items.length) {
+  if (!state.items.length && state.view !== "mapper") {
     const msg = state.view === "personer"
       ? "Ingen personer endnu. Det bliver fyldt når face-service/ansigtsgenkendelse aktiveres."
       : "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.";
@@ -482,6 +526,12 @@ function renderGrid() {
     }
 
     const sorted = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'da-DK'));
+    if (!sorted.length) {
+      hideEmpty();
+      renderStats();
+      setDetail(null);
+      return;
+    }
     for (const folderPath of sorted) {
       const arr = groupMap.get(folderPath) || [];
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
@@ -1006,10 +1056,12 @@ async function loadMapperTools(preferred = null) {
     if (!res.ok || !data || !data.ok) return;
     const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperFolders = folders;
-    const wanted = (preferred !== null) ? String(preferred || '') : String(state.mapperPath || data.subdir || '');
+    const wantedRaw = (preferred !== null) ? String(preferred || '') : String(state.mapperPath || data.subdir || '');
+    const wanted = _normalizeMapperPath(wantedRaw);
     state.mapperPath = wanted;
     state.folder = wanted || null;
     renderMapperContext(state.mapperPath);
+    if (state.view === 'mapper') _syncRouteStateToUrl();
   } catch {}
 }
 
@@ -1034,13 +1086,13 @@ async function createMapperFolder() {
       return;
     }
     els.mapperFolderNewInput.value = '';
-    const newSel = data.created || data.subdir || '';
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
-    state.mapperPath = newSel;
-    state.folder = newSel || null;
-    renderMapperContext(state.mapperPath);
+    state.mapperPath = parent;
+    state.folder = parent || null;
+    renderMapperContext(parent);
     await loadPhotos();
-    showStatus('Mappe oprettet i uploads.', 'ok');
+    const createdPath = String(data.created || path || '');
+    showStatus(`Mappe oprettet: ${createdPath}`, 'ok');
   } catch {
     showStatus('Fejl ved oprettelse af mappe.', 'err');
   } finally {
@@ -1545,26 +1597,31 @@ async function toggleFavorite() {
   setDetail(selected);
 }
 
-function setView(view) {
-  state.view = view;
-  state.folder = (view === 'mapper' ? (state.mapperPath || null) : null);
+async function setView(view, opts = {}) {
+  const { syncUrl = true } = opts || {};
+  const nextView = Object.prototype.hasOwnProperty.call(NAV_LABELS, view) ? view : 'timeline';
+  state.view = nextView;
+  if (nextView !== 'mapper') state.mapperPath = _normalizeMapperPath(state.mapperPath);
+  state.folder = (nextView === 'mapper' ? (_normalizeMapperPath(state.mapperPath) || null) : null);
   state.selectedId = null;
   document.querySelectorAll(".nav-item").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.view === view);
+    btn.classList.toggle("active", btn.dataset.view === nextView);
   });
   // Toggle body class to drive CSS for Settings view
-  document.body.classList.toggle("view-settings", view === "settings");
-  document.body.classList.toggle("view-timeline", view === "timeline");
-  document.body.classList.toggle("view-mapper", view === "mapper");
-  if (view === "settings") {
+  document.body.classList.toggle("view-settings", nextView === "settings");
+  document.body.classList.toggle("view-timeline", nextView === "timeline");
+  document.body.classList.toggle("view-mapper", nextView === "mapper");
+  if (syncUrl) _syncRouteStateToUrl();
+
+  if (nextView === "settings") {
     // show logs panel, do not load photos
     renderGrid();
-  } else if (view === 'personer') {
+  } else if (nextView === 'personer') {
     state.personView = { mode: 'list', personId: null, personName: null };
-    loadPeople();
+    await loadPeople();
   } else {
-    if (view === 'mapper') loadMapperTools();
-    loadPhotos();
+    if (nextView === 'mapper') await loadMapperTools();
+    await loadPhotos();
   }
 }
 
@@ -2143,7 +2200,16 @@ els.drawerBackdrop && els.drawerBackdrop.addEventListener("click", closeDrawer);
 window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 
 // Initial load
-loadPhotos().then(() => {
+const _initialRoute = _readRouteStateFromUrl();
+if (_initialRoute.view) {
+  state.view = _initialRoute.view;
+}
+if (state.view === 'mapper') {
+  state.mapperPath = _initialRoute.mapperPath || '';
+  state.folder = state.mapperPath || null;
+}
+
+setView(state.view, { syncUrl: false }).then(() => {
   showStatus("Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.", "ok");
   // Start with a quick status check in case scan was running
   fetch("/api/scan/status").then(r => r.json()).then(d => {
