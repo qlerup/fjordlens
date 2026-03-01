@@ -3256,11 +3256,23 @@ def api_settings_upload_folder():
         return jsonify({"ok": False, "error": "Ugyldigt upload-destination-valg"}), 400
 
     try:
-        new_subdir = _normalize_upload_subdir(str(body.get("path") or ""))
+        parent_subdir = _normalize_upload_subdir(str(body.get("parent") or ""))
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig overmappe"}), 400
+
+    try:
+        new_subdir_input = _normalize_upload_subdir(str(body.get("path") or ""))
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldigt mappenavn"}), 400
-    if not new_subdir:
+    if not new_subdir_input:
         return jsonify({"ok": False, "error": "Angiv en mappe"}), 400
+
+    # Create path relative to selected parent folder when parent is provided
+    new_subdir = f"{parent_subdir}/{new_subdir_input}" if parent_subdir else new_subdir_input
+    try:
+        new_subdir = _normalize_upload_subdir(new_subdir)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
 
     target_root, _ = _upload_target_for_destination(destination)
     try:

@@ -764,14 +764,16 @@ function setUploadDestinationHint(dest, photoDir, uploadDir, subdir = '') {
   }
 }
 
-function renderUploadSubdirs(folders, selectedSubdir) {
+function renderUploadSubdirs(folders, selectedSubdir, destination = 'uploads', photoDir = '', uploadDir = '') {
   if (!els.uploadSubdirSelect) return;
   const list = Array.isArray(folders) ? [...folders] : [];
   if (!list.includes('')) list.unshift('');
   const unique = Array.from(new Set(list));
+  const rootSource = (destination === 'library') ? photoDir : uploadDir;
+  const rootName = (String(rootSource || '').split(/[\\/]/).filter(Boolean).pop() || (destination === 'library' ? 'photos' : 'uploads'));
   els.uploadSubdirSelect.innerHTML = unique
     .map(path => {
-      const label = path ? path : '(rodmappe)';
+      const label = path ? path : `${rootName} (rodmappe)`;
       return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
     })
     .join('');
@@ -807,7 +809,7 @@ async function loadUploadDestination(previewDestination = null, keepDestinationS
     if (!keepDestinationSelection) {
       els.uploadDestSelect.value = savedDest;
     }
-    renderUploadSubdirs(data.folders || [], data.subdir || '');
+    renderUploadSubdirs(data.folders || [], data.subdir || '', dest, data.photo_dir || '', data.upload_dir || '');
     setUploadDestinationHint(dest, data.photo_dir, data.upload_dir, data.subdir || '');
   } catch {
     if (els.uploadDestHint) els.uploadDestHint.textContent = 'Kunne ikke hente kopi-placering for drag & drop.';
@@ -830,7 +832,7 @@ async function saveUploadDestination() {
       showStatus((data && data.error) || 'Kunne ikke gemme kopi-placering for drag & drop', 'err');
       return;
     }
-    renderUploadSubdirs(data.folders || [], data.subdir || '');
+    renderUploadSubdirs(data.folders || [], data.subdir || '', data.destination || destination, data.photo_dir || '', data.upload_dir || '');
     setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || '');
     showStatus('Kopi-placering for drag & drop gemt.', 'ok');
   } catch {
@@ -843,6 +845,7 @@ async function saveUploadDestination() {
 async function createUploadFolder() {
   if (!els.uploadDestSelect || !els.uploadFolderNewInput) return;
   const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
+  const parent = els.uploadSubdirSelect ? (els.uploadSubdirSelect.value || '') : '';
   const path = (els.uploadFolderNewInput.value || '').trim();
   if (!path) {
     showStatus('Skriv mappenavn først.', 'err');
@@ -853,7 +856,7 @@ async function createUploadFolder() {
     const res = await fetch('/api/settings/upload-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination, path }),
+      body: JSON.stringify({ destination, parent, path }),
     });
     const data = await res.json();
     if (!res.ok || !data || !data.ok) {
@@ -861,7 +864,7 @@ async function createUploadFolder() {
       return;
     }
     if (els.uploadFolderNewInput) els.uploadFolderNewInput.value = '';
-    renderUploadSubdirs(data.folders || [], data.created || data.subdir || '');
+    renderUploadSubdirs(data.folders || [], data.created || data.subdir || '', data.destination || destination, data.photo_dir || '', data.upload_dir || '');
     setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || data.created || '');
     showStatus('Mappe oprettet. Husk at gemme placering.', 'ok');
   } catch {
