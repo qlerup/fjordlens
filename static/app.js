@@ -1354,21 +1354,72 @@ async function deleteSelectedMapperFolders() {
 }
 
 window.addEventListener('dragover', (e) => {
+let _dragDepth = 0;
+
+function _showGlobalDropOverlay() {
+  if (!els.uploadOverlay) return;
+  const canUploadHere = (state.view === 'mapper' && !state.mapperEditMode);
+  const targetLabel = state.mapperPath ? `uploads/${state.mapperPath}` : 'uploads (rodmappe)';
+  const titleEl = document.querySelector('#uploadOverlay .upload-title');
+  if (titleEl) {
+    titleEl.textContent = canUploadHere
+      ? 'Slip filer for at uploade'
+      : 'Gå til Mapper for at uploade';
+  }
+  if (els.uploadProgressText) {
+    els.uploadProgressText.textContent = canUploadHere
+      ? `Upload destination: ${targetLabel}`
+      : 'Upload er kun aktiv i Mapper-sektionen';
+  }
+  if (els.uploadProgressBar) {
+    els.uploadProgressBar.style.width = canUploadHere ? '100%' : '0%';
+  }
+  els.uploadOverlay.classList.toggle('upload-ready', canUploadHere);
+  els.uploadOverlay.classList.toggle('upload-blocked', !canUploadHere);
+  els.uploadOverlay.classList.remove('hidden');
+  els.uploadOverlay.classList.add('active');
+}
+
+function _hideGlobalDropOverlay() {
+  if (!els.uploadOverlay) return;
+  els.uploadOverlay.classList.remove('active', 'upload-ready', 'upload-blocked');
+  els.uploadOverlay.classList.add('hidden');
+}
+
+window.addEventListener('dragenter', (e) => {
+  if (!(e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files'))) return;
+  _dragDepth += 1;
+  _showGlobalDropOverlay();
+});
+
+window.addEventListener('dragover', (e) => {
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
+    _showGlobalDropOverlay();
   }
 });
-window.addEventListener('drop', (e) => {
-  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+
+window.addEventListener('dragleave', () => {
+  _dragDepth = Math.max(0, _dragDepth - 1);
+  if (_dragDepth === 0) _hideGlobalDropOverlay();
+});
+
+window.addEventListener('drop', async (e) => {
+  _dragDepth = 0;
+  const hasFiles = !!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length);
+  if (hasFiles) {
     e.preventDefault();
-    if (state.view !== 'mapper') {
+    const droppedInsideMapperZone = !!(els.mapperDropZone && e.target && els.mapperDropZone.contains(e.target));
+    if (state.view !== 'mapper' || state.mapperEditMode) {
       showStatus('Upload er kun aktiv i Mapper-sektionen.', 'err');
+    } else if (!droppedInsideMapperZone) {
+      const targetSubdir = String(state.mapperPath || '');
+      await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
+      await loadMapperTools(targetSubdir);
+      await loadPhotos();
     }
   }
-  if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
-});
-window.addEventListener('dragleave', (e) => {
-  if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
+  _hideGlobalDropOverlay();
 });
 
 function buildPlacesGeoJSON(items) {
