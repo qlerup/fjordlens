@@ -1,6 +1,7 @@
 import io
 import os
 from typing import List
+from fastapi import HTTPException
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,12 +38,19 @@ tokenizer = open_clip.get_tokenizer(MODEL_NAME)
 model.eval()
 
 # Load InsightFace for face detection/recognition (CPU by default)
-face_app = insightface.app.FaceAnalysis(name='buffalo_l')
+face_app = None
+face_detection_available = False
+face_detection_error = None
 try:
-    face_app.prepare(ctx_id=-1, det_size=(640, 640))
-except Exception:
-    # Fallback without det_size if necessary
-    face_app.prepare(ctx_id=-1)
+    face_app = insightface.app.FaceAnalysis(name='buffalo_l')
+    try:
+        face_app.prepare(ctx_id=-1, det_size=(640, 640))
+    except Exception:
+        # Fallback without det_size if necessary
+        face_app.prepare(ctx_id=-1)
+    face_detection_available = True
+except Exception as exc:
+    face_detection_error = str(exc)
 
 
 def _to_list(t: torch.Tensor) -> List[float]:
@@ -62,7 +70,14 @@ class EmbedOut(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "device": DEVICE, "model": MODEL_NAME, "pretrained": MODEL_PRETRAINED}
+    return {
+        "ok": True,
+        "device": DEVICE,
+        "model": MODEL_NAME,
+        "pretrained": MODEL_PRETRAINED,
+        "face_detection_available": face_detection_available,
+        "face_detection_error": face_detection_error,
+    }
 
 
 @app.post("/embed/text", response_model=EmbedOut)
@@ -85,6 +100,9 @@ def embed_image(file: UploadFile = File(...)):
 
 @app.post("/faces/detect")
 def detect_faces(file: UploadFile = File(...)):
+    if not face_detection_available or face_app is None:
+        raise HTTPException(status_code=503, detail="Face detection model unavailable")
+
     data = file.file.read()
     img = Image.open(io.BytesIO(data)).convert("RGB")
     # InsightFace expects numpy array in RGB (H,W,C)

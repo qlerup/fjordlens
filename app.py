@@ -52,6 +52,11 @@ UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
 UPLOAD_DEST_CHOICES = {UPLOAD_DEST_UPLOADS, UPLOAD_DEST_LIBRARY}
+LANG_DA = "da"
+LANG_EN = "en"
+LANG_CHOICES = {LANG_DA, LANG_EN}
+DEFAULT_UI_LANGUAGE = LANG_DA
+DEFAULT_SEARCH_LANGUAGE = LANG_DA
 UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
     UPLOAD_DEST_UPLOADS: "",
     UPLOAD_DEST_LIBRARY: "Photos",
@@ -612,13 +617,23 @@ def _trust_cookie_valid_for(user_id: int) -> bool:
 
 
 class User(UserMixin):
-    def __init__(self, id: int, username: str, role: Optional[str] = None, is_admin_fallback: Optional[bool] = None):
+    def __init__(
+        self,
+        id: int,
+        username: str,
+        role: Optional[str] = None,
+        is_admin_fallback: Optional[bool] = None,
+        ui_language: Optional[str] = None,
+        search_language: Optional[str] = None,
+    ):
         self.id = str(id)
         self.username = username
         role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
         if role_norm not in {"admin", "manager", "user"}:
             role_norm = "user"
         self.role = role_norm
+        self.ui_language = _normalize_language(ui_language, DEFAULT_UI_LANGUAGE)
+        self.search_language = _normalize_language(search_language, DEFAULT_SEARCH_LANGUAGE)
 
     @property
     def is_admin(self) -> bool:
@@ -645,12 +660,20 @@ def _row_to_user(row: sqlite3.Row) -> Optional[User]:
         role = row["role"] if "role" in row.keys() else None
     except Exception:
         role = None
+    try:
+        ui_language = row["ui_language"] if "ui_language" in row.keys() else None
+    except Exception:
+        ui_language = None
+    try:
+        search_language = row["search_language"] if "search_language" in row.keys() else None
+    except Exception:
+        search_language = None
     is_admin_fallback = False
     try:
         is_admin_fallback = bool(row["is_admin"]) if "is_admin" in row.keys() else False
     except Exception:
         is_admin_fallback = False
-    return User(int(row["id"]), row["username"], role, is_admin_fallback)
+    return User(int(row["id"]), row["username"], role, is_admin_fallback, ui_language, search_language)
 
 
 @login_manager.user_loader
@@ -658,7 +681,7 @@ def load_user(user_id: str) -> Optional[User]:
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, is_admin, role FROM users WHERE id = ?",
+                "SELECT id, username, is_admin, role, ui_language, search_language FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         return _row_to_user(row)
@@ -770,6 +793,8 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 1,
                 role TEXT,
+                ui_language TEXT DEFAULT 'da',
+                search_language TEXT DEFAULT 'da',
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
                 totp_setup_done INTEGER DEFAULT 0,
@@ -815,8 +840,18 @@ def init_db() -> None:
         except Exception:
             pass
         try:
+            conn.execute("ALTER TABLE users ADD COLUMN ui_language TEXT DEFAULT 'da'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN search_language TEXT DEFAULT 'da'")
+        except Exception:
+            pass
+        try:
             conn.execute("UPDATE users SET role='admin' WHERE (role IS NULL OR role='') AND is_admin=1")
             conn.execute("UPDATE users SET role='user' WHERE (role IS NULL OR role='') AND is_admin=0")
+            conn.execute("UPDATE users SET ui_language='da' WHERE ui_language IS NULL OR TRIM(ui_language)='' OR LOWER(ui_language) NOT IN ('da','en')")
+            conn.execute("UPDATE users SET search_language='da' WHERE search_language IS NULL OR TRIM(search_language)='' OR LOWER(search_language) NOT IN ('da','en')")
             conn.commit()
         except Exception:
             pass
@@ -883,6 +918,27 @@ def _forbid_user_role_for_maintenance() -> Optional[Tuple[dict, int]]:
     if role == "user":
         return ({"ok": False, "error": "Forbidden"}, 403)
     return None
+
+
+def _normalize_language(value: Optional[str], default: str = DEFAULT_UI_LANGUAGE) -> str:
+    lang = str(value or "").strip().lower()
+    if lang in LANG_CHOICES:
+        return lang
+    return default
+
+
+def _current_user_pref_languages() -> tuple[str, str]:
+    ui_lang = _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE)
+    search_lang = _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE)
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT ui_language, search_language FROM users WHERE id=?", (current_user.id,)).fetchone()
+        if row:
+            ui_lang = _normalize_language(row["ui_language"], ui_lang)
+            search_lang = _normalize_language(row["search_language"], search_lang)
+    except Exception:
+        pass
+    return (ui_lang, search_lang)
 
 
 # --- App settings helpers ---
@@ -2461,6 +2517,11 @@ QUERY_STOPWORDS_DA = {
     "en", "et", "den", "det", "de", "er", "at", "om",
 }
 
+QUERY_STOPWORDS_EN = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "for", "with", "by",
+    "is", "are", "was", "were", "be", "being", "been", "that", "this", "these", "those",
+}
+
 
 DANISH_SYNONYM_GROUPS = [
     {"strand", "beach", "hav", "kyst"},
@@ -2496,12 +2557,14 @@ for _group in DANISH_SYNONYM_GROUPS:
         SYNONYM_LOOKUP[_term] = expanded
 
 
-def _query_term_groups(q: str) -> list[set[str]]:
+def _query_term_groups(q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -> list[set[str]]:
     q = (q or "").strip().lower()
     if not q:
         return []
+    lang = _normalize_language(search_language, DEFAULT_SEARCH_LANGUAGE)
+    stopwords = QUERY_STOPWORDS_DA if lang == LANG_DA else QUERY_STOPWORDS_EN
     raw_words = [w for w in re.findall(r"[0-9a-zA-ZæøåÆØÅ]+", q) if w]
-    words = [w.lower() for w in raw_words if w.lower() not in QUERY_STOPWORDS_DA]
+    words = [w.lower() for w in raw_words if w.lower() not in stopwords]
     groups: list[set[str]] = []
     for w in words:
         key = _fold_danish(w)
@@ -2513,8 +2576,8 @@ def _query_term_groups(q: str) -> list[set[str]]:
     return groups
 
 
-def matches_search(photo: Dict[str, Any], q: str) -> bool:
-    term_groups = _query_term_groups(q)
+def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -> bool:
+    term_groups = _query_term_groups(q, search_language)
     if not term_groups:
         return True
 
@@ -2727,10 +2790,29 @@ def api_duplicates():
 @app.route("/")
 def index():
     try:
-        role = getattr(current_user, "role", None)
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                (current_user.id,),
+            ).fetchone()
+        role = row["role"] if row and row["role"] else getattr(current_user, "role", None)
+        profile = {
+            "id": int(row["id"]) if row else int(current_user.id),
+            "username": (row["username"] if row else getattr(current_user, "username", "")),
+            "role": (role or "user"),
+            "ui_language": _normalize_language((row["ui_language"] if row else None), DEFAULT_UI_LANGUAGE),
+            "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
+        }
     except Exception:
         role = None
-    return render_template("index.html", user_role=(role or "user"))
+        profile = {
+            "id": int(getattr(current_user, "id", 0) or 0),
+            "username": getattr(current_user, "username", ""),
+            "role": (getattr(current_user, "role", None) or "user"),
+            "ui_language": _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE),
+            "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
+        }
+    return render_template("index.html", user_role=(role or "user"), user_profile=profile)
 
 
 @app.route("/api/health")
@@ -3108,10 +3190,13 @@ def api_photos():
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
     folder = request.args.get("folder")
+    requested_lang = request.args.get("search_lang")
+    _, user_lang = _current_user_pref_languages()
+    search_language = _normalize_language(requested_lang, user_lang)
 
     items = query_photos(view, sort, folder=folder)
     if q:
-        items = [p for p in items if matches_search(p, q)]
+        items = [p for p in items if matches_search(p, q, search_language=search_language)]
 
     return jsonify({
         "items": items,
@@ -3120,6 +3205,7 @@ def api_photos():
         "view": view,
         "sort": sort,
         "folder": folder,
+        "search_lang": search_language,
     })
 
 
@@ -3856,7 +3942,7 @@ def api_admin_users():
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     if request.method == "GET":
         with closing(get_conn()) as conn:
-            rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, created_at FROM users ORDER BY id").fetchall()
+            rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, ui_language, search_language, created_at FROM users ORDER BY id").fetchall()
         items = []
         for r in rows:
             items.append({
@@ -3865,6 +3951,8 @@ def api_admin_users():
                 "role": (r["role"] or ("admin" if int(r["is_admin"] or 0) else "user")),
                 "is_admin": bool(r["is_admin"] or 0),
                 "totp_enabled": bool(r["totp_enabled"] or 0),
+                "ui_language": _normalize_language(r["ui_language"], DEFAULT_UI_LANGUAGE),
+                "search_language": _normalize_language(r["search_language"], DEFAULT_SEARCH_LANGUAGE),
                 "created_at": r["created_at"],
             })
         return jsonify({"ok": True, "items": items})
@@ -3873,6 +3961,8 @@ def api_admin_users():
     u = (data.get("username") or "").strip()
     p = data.get("password") or ""
     role = (data.get("role") or "user").strip().lower()
+    ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
+    search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
     if role not in {"admin", "manager", "user"}:
         role = "user"
     if not u or not p:
@@ -3880,8 +3970,8 @@ def api_admin_users():
     try:
         with closing(get_conn()) as conn:
             conn.execute(
-                "INSERT INTO users(username, password_hash, is_admin, role, created_at) VALUES (?,?,?,?,?)",
-                (u, generate_password_hash(p), 1 if role == "admin" else 0, role, now_iso()),
+                "INSERT INTO users(username, password_hash, is_admin, role, ui_language, search_language, created_at) VALUES (?,?,?,?,?,?,?)",
+                (u, generate_password_hash(p), 1 if role == "admin" else 0, role, ui_language, search_language, now_iso()),
             )
             conn.commit()
         return jsonify({"ok": True})
@@ -3889,11 +3979,71 @@ def api_admin_users():
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
-@app.route("/api/admin/users/<int:uid>", methods=["DELETE"])
+@app.route("/api/admin/users/<int:uid>", methods=["DELETE", "PUT"])
 @login_required
 def api_admin_users_delete(uid: int):
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
+    if request.method == "PUT":
+        data = request.get_json(silent=True) or {}
+        new_username = (data.get("username") or "").strip()
+        new_password = data.get("password") or ""
+        new_role_raw = data.get("role")
+        new_role = None
+        if new_role_raw is not None:
+            new_role = str(new_role_raw).strip().lower()
+            if new_role not in {"admin", "manager", "user"}:
+                return jsonify({"ok": False, "error": "invalid_role"}), 400
+        ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
+        search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+        if not new_username:
+            return jsonify({"ok": False, "error": "username_required"}), 400
+        try:
+            with closing(get_conn()) as conn:
+                row = conn.execute("SELECT id, role FROM users WHERE id=?", (uid,)).fetchone()
+                if not row:
+                    return jsonify({"ok": False, "error": "not_found"}), 404
+
+                cur_role = (row["role"] or "user").lower()
+                target_role = new_role or cur_role
+
+                if cur_role == "admin" and target_role != "admin":
+                    c = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND id<>?", (uid,)).fetchone()
+                    if not c or int(c["c"]) <= 0:
+                        return jsonify({"ok": False, "error": "last_admin"}), 400
+
+                if new_password:
+                    conn.execute(
+                        "UPDATE users SET username=?, password_hash=?, role=?, is_admin=?, ui_language=?, search_language=? WHERE id=?",
+                        (
+                            new_username,
+                            generate_password_hash(new_password),
+                            target_role,
+                            1 if target_role == "admin" else 0,
+                            ui_language,
+                            search_language,
+                            uid,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE users SET username=?, role=?, is_admin=?, ui_language=?, search_language=? WHERE id=?",
+                        (
+                            new_username,
+                            target_role,
+                            1 if target_role == "admin" else 0,
+                            ui_language,
+                            search_language,
+                            uid,
+                        ),
+                    )
+                conn.commit()
+            return jsonify({"ok": True})
+        except sqlite3.IntegrityError:
+            return jsonify({"ok": False, "error": "username_exists"}), 409
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
     if str(uid) == str(current_user.id):
         return jsonify({"ok": False, "error": "cannot_delete_self"}), 400
     try:
@@ -3909,6 +4059,90 @@ def api_admin_users_delete(uid: int):
             conn.execute("DELETE FROM users WHERE id=?", (uid,))
             conn.commit()
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/me", methods=["GET"])
+@login_required
+def api_me():
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                (current_user.id,),
+            ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        return jsonify(
+            {
+                "ok": True,
+                "item": {
+                    "id": int(row["id"]),
+                    "username": row["username"],
+                    "role": (row["role"] or "user"),
+                    "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
+                    "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
+                },
+            }
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/me/profile", methods=["POST"])
+@login_required
+def api_me_profile():
+    data = request.get_json(silent=True) or {}
+    new_username = (data.get("username") or "").strip()
+    new_password = data.get("password") or ""
+    ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
+    search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+
+    if not new_username:
+        return jsonify({"ok": False, "error": "username_required"}), 400
+
+    try:
+        with closing(get_conn()) as conn:
+            if new_password:
+                conn.execute(
+                    "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=? WHERE id=?",
+                    (
+                        new_username,
+                        generate_password_hash(new_password),
+                        ui_language,
+                        search_language,
+                        current_user.id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET username=?, ui_language=?, search_language=? WHERE id=?",
+                    (new_username, ui_language, search_language, current_user.id),
+                )
+            conn.commit()
+
+        try:
+            current_user.username = new_username
+            current_user.ui_language = ui_language
+            current_user.search_language = search_language
+        except Exception:
+            pass
+
+        return jsonify(
+            {
+                "ok": True,
+                "item": {
+                    "id": int(current_user.id),
+                    "username": new_username,
+                    "role": getattr(current_user, "role", "user"),
+                    "ui_language": ui_language,
+                    "search_language": search_language,
+                },
+            }
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "username_exists"}), 409
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

@@ -50,6 +50,7 @@
 
 
       <div class="sidebar-footer">
+        <a href="#" id="profileLink" class="mini-link">Profil</a>
         <a href="/api/health" target="_blank" class="mini-link">API health</a>
         <a href="/api/filters" target="_blank" class="mini-link">Filtre</a>
         <!-- Flyttet ind under Indstillinger som faner -->
@@ -141,6 +142,7 @@
           <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
           <button class="tab-btn" data-tab="twofa">Min 2FA</button>
+          <button class="tab-btn" data-tab="profile">Profil</button>
           <button class="tab-btn" data-tab="other">Andet</button>
         </nav>
 
@@ -216,6 +218,14 @@
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Min 2FA</div>
             <div id="twofaPanelInner">Indlæser…</div>
+          </div>
+        </div>
+
+        <!-- Profil -->
+        <div class="tab-panel hidden" data-tabpanel="profile">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">Profil</div>
+            <div id="profilePanelInner">Indlæser…</div>
           </div>
         </div>
       </section>
@@ -349,6 +359,7 @@
   <script>
     (function(){
       const ROLE = {{ (user_role or 'user')|tojson }};
+      window.APP_PROFILE = {{ (user_profile or {})|tojson }};
       // Hide Settings tabs based on role
       function hideTab(tab){
         const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);

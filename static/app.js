@@ -91,6 +91,7 @@ const els = {
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
+  profileLink: document.getElementById("profileLink"),
   // date edit controls
   editDateBtn: document.getElementById('editDateBtn'),
   dateEditWrap: document.getElementById('dateEditWrap'),
@@ -139,15 +140,99 @@ try {
   }
 } catch {}
 
-const NAV_LABELS = {
-  timeline: ["Tidlinje", "Dato-grupperet oversigt (år/måned)"],
-  favorites: ["Favoritter", "Markerede billeder"],
-  steder: ["Steder", "Billeder med GPS/placeringsdata"],
-  kameraer: ["Kameraer", "Filtreret på billeder med kameradata"],
-  mapper: ["Mapper", "Grupperet efter kilde-mappe"],
-  personer: ["Personer", "Klar til ansigtsgenkendelse (kommer med ONNX face-service)"],
-  settings: ["Indstillinger", "Vedligeholdelse, scan og administration"],
+const APP_PROFILE = (window.APP_PROFILE && typeof window.APP_PROFILE === 'object') ? window.APP_PROFILE : {};
+const UI_LANGUAGES = new Set(['da', 'en']);
+
+const I18N = {
+  da: {
+    nav_timeline: '📅 Tidlinje',
+    nav_favorites: '⭐ Favoritter',
+    nav_places: '📍 Steder',
+    nav_cameras: '📸 Kameraer',
+    nav_folders: '🗂️ Mapper',
+    nav_people: '🙂 Personer',
+    nav_settings: '⚙️ Indstillinger',
+    profile_link: 'Profil',
+    logout_link: 'Log ud',
+    search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
+    tab_maint: 'Vedligeholdelse',
+    tab_logs: 'Logs',
+    tab_users: 'Brugere',
+    tab_twofa: 'Min 2FA',
+    tab_profile: 'Profil',
+    tab_other: 'Andet',
+    view_timeline_title: 'Tidlinje',
+    view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
+    view_favorites_title: 'Favoritter',
+    view_favorites_sub: 'Markerede billeder',
+    view_steder_title: 'Steder',
+    view_steder_sub: 'Billeder med GPS/placeringsdata',
+    view_kameraer_title: 'Kameraer',
+    view_kameraer_sub: 'Filtreret på billeder med kameradata',
+    view_mapper_title: 'Mapper',
+    view_mapper_sub: 'Grupperet efter kilde-mappe',
+    view_personer_title: 'Personer',
+    view_personer_sub: 'Klar til ansigtsgenkendelse (kommer med ONNX face-service)',
+    view_settings_title: 'Indstillinger',
+    view_settings_sub: 'Vedligeholdelse, scan og administration',
+  },
+  en: {
+    nav_timeline: '📅 Timeline',
+    nav_favorites: '⭐ Favorites',
+    nav_places: '📍 Places',
+    nav_cameras: '📸 Cameras',
+    nav_folders: '🗂️ Folders',
+    nav_people: '🙂 People',
+    nav_settings: '⚙️ Settings',
+    profile_link: 'Profile',
+    logout_link: 'Log out',
+    search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
+    tab_maint: 'Maintenance',
+    tab_logs: 'Logs',
+    tab_users: 'Users',
+    tab_twofa: 'My 2FA',
+    tab_profile: 'Profile',
+    tab_other: 'Other',
+    view_timeline_title: 'Timeline',
+    view_timeline_sub: 'Date grouped overview (year/month)',
+    view_favorites_title: 'Favorites',
+    view_favorites_sub: 'Starred photos',
+    view_steder_title: 'Places',
+    view_steder_sub: 'Photos with location metadata',
+    view_kameraer_title: 'Cameras',
+    view_kameraer_sub: 'Filtered by available camera metadata',
+    view_mapper_title: 'Folders',
+    view_mapper_sub: 'Grouped by source folder',
+    view_personer_title: 'People',
+    view_personer_sub: 'Face-recognition ready (ONNX face service)',
+    view_settings_title: 'Settings',
+    view_settings_sub: 'Maintenance, scan and administration',
+  },
 };
+
+const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'personer', 'settings']);
+
+function resolveUiLanguage(lang) {
+  return UI_LANGUAGES.has(lang) ? lang : 'da';
+}
+
+function tr(key) {
+  const lang = resolveUiLanguage(state.uiLanguage || 'da');
+  const dict = I18N[lang] || I18N.da;
+  return (dict[key] || I18N.da[key] || key);
+}
+
+function navLabels() {
+  return {
+    timeline: [tr('view_timeline_title'), tr('view_timeline_sub')],
+    favorites: [tr('view_favorites_title'), tr('view_favorites_sub')],
+    steder: [tr('view_steder_title'), tr('view_steder_sub')],
+    kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
+    mapper: [tr('view_mapper_title'), tr('view_mapper_sub')],
+    personer: [tr('view_personer_title'), tr('view_personer_sub')],
+    settings: [tr('view_settings_title'), tr('view_settings_sub')],
+  };
+}
 
 let state = {
   items: [],
@@ -171,6 +256,13 @@ let state = {
   mapperSelectedFolders: new Set(),
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
+  currentUser: {
+    id: APP_PROFILE.id || null,
+    username: APP_PROFILE.username || '',
+    role: APP_PROFILE.role || 'user',
+  },
+  uiLanguage: resolveUiLanguage(APP_PROFILE.ui_language || 'da'),
+  searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
 };
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
@@ -335,7 +427,7 @@ function _readRouteStateFromUrl() {
   try {
     const url = new URL(window.location.href);
     const viewRaw = String(url.searchParams.get('view') || '').trim().toLowerCase();
-    const view = Object.prototype.hasOwnProperty.call(NAV_LABELS, viewRaw) ? viewRaw : null;
+    const view = APP_VIEW_KEYS.has(viewRaw) ? viewRaw : null;
     const mapperPath = _normalizeMapperPath(url.searchParams.get('mappe') || url.searchParams.get('folder') || '');
     return { view, mapperPath };
   } catch {
@@ -413,7 +505,8 @@ function escapeHtml(s) {
 function fmtDate(s) {
   if (!s) return "-";
   try {
-    return new Date(s).toLocaleString("da-DK");
+    const locale = (state.uiLanguage === 'en') ? 'en-GB' : 'da-DK';
+    return new Date(s).toLocaleString(locale);
   } catch {
     return s;
   }
@@ -987,13 +1080,15 @@ async function loadPhotos() {
     view: state.view,
     sort: state.sort,
     folder: state.folder || "",
+    search_lang: state.searchLanguage || 'da',
   });
 
   const res = await fetch(`/api/photos?${qs.toString()}`);
   const data = await res.json();
   state.items = data.items || [];
 
-  const [title, subtitle] = NAV_LABELS[state.view] || ["FjordLens", ""];
+  const labels = navLabels();
+  const [title, subtitle] = labels[state.view] || ["FjordLens", ""];
   els.viewTitle.textContent = title;
   els.viewSubtitle.textContent = subtitle;
 
@@ -1008,7 +1103,8 @@ async function loadPeople() {
     state.people = data.items || [];
   } catch { state.people = []; }
   // Update headings for People view
-  const [title, subtitle] = NAV_LABELS['personer'] || ["Personer", ""];
+  const labels = navLabels();
+  const [title, subtitle] = labels['personer'] || ["Personer", ""];
   if (els.viewTitle) els.viewTitle.textContent = title;
   if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
   renderGrid();
@@ -1901,7 +1997,7 @@ async function toggleFavorite() {
 
 async function setView(view, opts = {}) {
   const { syncUrl = true } = opts || {};
-  const nextView = Object.prototype.hasOwnProperty.call(NAV_LABELS, view) ? view : 'timeline';
+  const nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
   state.view = nextView;
   if (nextView !== 'mapper') state.mapperPath = _normalizeMapperPath(state.mapperPath);
   state.folder = (nextView === 'mapper' ? (_normalizeMapperPath(state.mapperPath) || null) : null);
@@ -1929,6 +2025,52 @@ async function setView(view, opts = {}) {
     if (nextView === 'mapper') await loadMapperTools();
     await loadPhotos();
   }
+}
+
+function applyUiLanguage() {
+  try { document.documentElement.lang = state.uiLanguage || 'da'; } catch {}
+  if (els.search) els.search.placeholder = tr('search_placeholder');
+
+  const navMap = {
+    timeline: tr('nav_timeline'),
+    favorites: tr('nav_favorites'),
+    steder: tr('nav_places'),
+    kameraer: tr('nav_cameras'),
+    mapper: tr('nav_folders'),
+    personer: tr('nav_people'),
+    settings: tr('nav_settings'),
+  };
+  Object.entries(navMap).forEach(([view, text]) => {
+    const el = document.querySelector(`.nav-item[data-view="${view}"]`);
+    if (el) el.textContent = text;
+  });
+
+  if (els.profileLink) els.profileLink.textContent = tr('profile_link');
+  const logoutLink = document.querySelector('.sidebar-footer a[href="/logout"]');
+  if (logoutLink) logoutLink.textContent = tr('logout_link');
+
+  const tabText = {
+    maint: tr('tab_maint'),
+    logs: tr('tab_logs'),
+    users: tr('tab_users'),
+    twofa: tr('tab_twofa'),
+    profile: tr('tab_profile'),
+    other: tr('tab_other'),
+  };
+  Object.entries(tabText).forEach(([tab, text]) => {
+    const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
+    if (btn) btn.textContent = text;
+  });
+
+  const labels = navLabels();
+  const [title, subtitle] = labels[state.view] || ['FjordLens', ''];
+  if (els.viewTitle) els.viewTitle.textContent = title;
+  if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
+}
+
+function activateSettingsTab(tab) {
+  const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
+  if (btn) btn.click();
 }
 
 // Events
@@ -2327,6 +2469,15 @@ document.querySelectorAll(".nav-item").forEach(btn => {
   });
 });
 
+if (els.profileLink) {
+  els.profileLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    await setView('settings');
+    activateSettingsTab('profile');
+    document.body.classList.remove('drawer-open');
+  });
+}
+
 // Settings tabs switching
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -2341,6 +2492,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
     if (tab === 'twofa') renderTwofaPanel();
+    if (tab === 'profile') renderProfilePanel();
     if (tab === 'maint') loadUploadDestination();
   });
 });
@@ -2524,6 +2676,8 @@ if (state.view === 'mapper') {
   state.folder = state.mapperPath || null;
 }
 
+applyUiLanguage();
+
 setView(state.view, { syncUrl: false }).then(() => {
   showStatus("Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.", "ok");
   // Start with a quick status check in case scan was running
@@ -2563,13 +2717,18 @@ async function renderUsersPanel(){
       wrap.innerHTML = `<div class="empty">Kan ikke hente brugere. ${js && js.error ? js.error : ''}</div>`;
       return;
     }
-    const rows = (js.items||[]).map(u => `
+    const items = js.items || [];
+    const rows = items.map(u => `
       <tr>
         <td class="muted">#${u.id}</td>
         <td><strong>${u.username}</strong></td>
         <td>${u.role}</td>
+        <td>${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
         <td>${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
-        <td style="text-align:right"><button data-del="${u.id}" class="btn danger small">Slet</button></td>
+        <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
+          <button data-edit="${u.id}" class="btn small">Rediger</button>
+          <button data-del="${u.id}" class="btn danger small">Slet</button>
+        </td>
       </tr>`).join('');
     wrap.innerHTML = `
       <div class="panel" style="margin-bottom:12px;">
@@ -2580,8 +2739,8 @@ async function renderUsersPanel(){
       </div>
       <div class="data-table" style="margin-bottom:12px;">
         <table>
-          <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>2FA</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan=5 class="muted">Ingen brugere</td></tr>'}</tbody>
+          <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>Sprog (UI/Søgning)</th><th>2FA</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan=6 class="muted">Ingen brugere</td></tr>'}</tbody>
         </table>
       </div>
       <!-- Create user modal -->
@@ -2600,6 +2759,18 @@ async function renderUsersPanel(){
               <option value="admin">Admin</option>
             </select>
           </div>
+          <div class="form-row"><label for="nu_ui_language">UI-sprog</label>
+            <select id="nu_ui_language" class="select">
+              <option value="da">Dansk</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div class="form-row"><label for="nu_search_language">Søgesprog</label>
+            <select id="nu_search_language" class="select">
+              <option value="da">Dansk</option>
+              <option value="en">English</option>
+            </select>
+          </div>
           <label style="display:flex;align-items:center;gap:8px;margin:6px 0 2px;">
             <input type="checkbox" id="nu_2fa" />
             <span>Aktivér 2FA fra start</span>
@@ -2610,7 +2781,45 @@ async function renderUsersPanel(){
           </div>
         </div>
       </div>
+
+      <!-- Edit user modal -->
+      <div id="eu_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
+        <div style="width:520px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h3 style="margin:0;">Rediger bruger</h3>
+            <button id="eu_close" class="btn">Luk</button>
+          </div>
+          <div class="form-row"><label for="eu_username">Brugernavn</label><input id="eu_username" placeholder="Brugernavn"></div>
+          <div class="form-row"><label for="eu_password">Nyt password (valgfrit)</label><input id="eu_password" placeholder="Tom = uændret" type="password"></div>
+          <div class="form-row"><label for="eu_role">Rolle</label>
+            <select id="eu_role" class="select">
+              <option value="user">Bruger</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="form-row"><label for="eu_ui_language">UI-sprog</label>
+            <select id="eu_ui_language" class="select">
+              <option value="da">Dansk</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div class="form-row"><label for="eu_search_language">Søgesprog</label>
+            <select id="eu_search_language" class="select">
+              <option value="da">Dansk</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div class="actions" style="justify-content:flex-end;">
+            <button id="eu_cancel" class="btn">Annuller</button>
+            <button id="eu_save" class="btn primary">Gem</button>
+          </div>
+        </div>
+      </div>
     `;
+
+    const byId = new Map(items.map(u => [String(u.id), u]));
+
     // bind delete
     wrap.querySelectorAll('button[data-del]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
@@ -2623,6 +2832,66 @@ async function renderUsersPanel(){
         renderUsersPanel();
       });
     });
+
+    // edit modal wiring
+    const editModal = document.getElementById('eu_modal');
+    const editCloseBtn = document.getElementById('eu_close');
+    const editCancelBtn = document.getElementById('eu_cancel');
+    let editingUserId = null;
+
+    function closeEdit(){
+      if (!editModal) return;
+      editModal.classList.add('hidden');
+      editingUserId = null;
+      const ep = document.getElementById('eu_password');
+      if (ep) ep.value = '';
+    }
+
+    wrap.querySelectorAll('button[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = String(btn.getAttribute('data-edit') || '');
+        const user = byId.get(id);
+        if (!user) return;
+        editingUserId = user.id;
+        const eu = document.getElementById('eu_username');
+        const ep = document.getElementById('eu_password');
+        const er = document.getElementById('eu_role');
+        const eul = document.getElementById('eu_ui_language');
+        const esl = document.getElementById('eu_search_language');
+        if (eu) eu.value = user.username || '';
+        if (ep) ep.value = '';
+        if (er) er.value = user.role || 'user';
+        if (eul) eul.value = user.ui_language || 'da';
+        if (esl) esl.value = user.search_language || 'da';
+        if (editModal) editModal.classList.remove('hidden');
+      });
+    });
+
+    editCloseBtn && editCloseBtn.addEventListener('click', closeEdit);
+    editCancelBtn && editCancelBtn.addEventListener('click', closeEdit);
+    editModal && editModal.addEventListener('click', (e)=>{ if(e.target === editModal) closeEdit(); });
+
+    const editSaveBtn = document.getElementById('eu_save');
+    if (editSaveBtn) {
+      editSaveBtn.addEventListener('click', async () => {
+        if (!editingUserId) return;
+        const username = (document.getElementById('eu_username').value || '').trim();
+        const password = document.getElementById('eu_password').value || '';
+        const role = document.getElementById('eu_role').value || 'user';
+        const ui_language = document.getElementById('eu_ui_language').value || 'da';
+        const search_language = document.getElementById('eu_search_language').value || 'da';
+        if (!username) { showStatus('Brugernavn må ikke være tomt.', 'err'); return; }
+        const payload = { username, role, ui_language, search_language };
+        if (password) payload.password = password;
+        const rr = await fetch('/api/admin/users/' + editingUserId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        const jj = await rr.json();
+        if (!rr.ok || !jj.ok) { showStatus('Kunne ikke gemme bruger: ' + ((jj && jj.error) || ''), 'err'); return; }
+        showStatus('Bruger opdateret', 'ok');
+        closeEdit();
+        renderUsersPanel();
+      });
+    }
+
     // modal wiring
     const modal = document.getElementById('nu_modal');
     const openBtn = document.getElementById('nu_open');
@@ -2634,10 +2903,14 @@ async function renderUsersPanel(){
       const p = document.getElementById('nu_password');
       const r = document.getElementById('nu_role');
       const f = document.getElementById('nu_2fa');
+      const ul = document.getElementById('nu_ui_language');
+      const sl = document.getElementById('nu_search_language');
       if (u) u.value = '';
       if (p) p.value = '';
       if (r) r.value = 'user';
       if (f) f.checked = false;
+      if (ul) ul.value = 'da';
+      if (sl) sl.value = 'da';
     }
     function close(){ if(modal) { modal.classList.add('hidden'); clear(); } }
     openBtn && openBtn.addEventListener('click', open);
@@ -2652,9 +2925,11 @@ async function renderUsersPanel(){
         const username = (document.getElementById('nu_username').value || '').trim();
         const password = document.getElementById('nu_password').value || '';
         const role = document.getElementById('nu_role').value || 'user';
+        const ui_language = document.getElementById('nu_ui_language').value || 'da';
+        const search_language = document.getElementById('nu_search_language').value || 'da';
         const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
         if (!username || !password){ showStatus('Udfyld brugernavn og adgangskode.', 'err'); return; }
-        const payload = { username, password, role, enforce_2fa };
+        const payload = { username, password, role, enforce_2fa, ui_language, search_language };
         const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         const jj = await rr.json();
         if (!rr.ok || !jj.ok){ showStatus('Kunne ikke oprette: ' + (jj && jj.error || ''), 'err'); return; }
@@ -2714,6 +2989,89 @@ async function renderTwofaPanel(){
     const regenBtn = document.getElementById('tf_regen');
     regenBtn && regenBtn.addEventListener('click', ()=>post('regen'));
   }catch(e){ wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`; }
+}
+
+async function renderProfilePanel() {
+  const wrap = document.getElementById('profilePanelInner');
+  if (!wrap) return;
+  wrap.textContent = 'Indlæser…';
+  try {
+    const r = await fetch('/api/me');
+    const js = await r.json();
+    if (!r.ok || !js.ok || !js.item) {
+      wrap.innerHTML = `<div class="empty">Kan ikke hente profil. ${js && js.error ? js.error : ''}</div>`;
+      return;
+    }
+    const me = js.item;
+    state.currentUser = { id: me.id, username: me.username, role: me.role || 'user' };
+    wrap.innerHTML = `
+      <div class="panel" style="max-width:700px;">
+        <div class="form-row"><label for="pf_username">Brugernavn</label><input id="pf_username" value="${escapeHtml(me.username || '')}" /></div>
+        <div class="form-row"><label for="pf_password">Nyt password (valgfrit)</label><input id="pf_password" type="password" placeholder="Tom = uændret" /></div>
+        <div class="form-row"><label for="pf_password2">Gentag nyt password</label><input id="pf_password2" type="password" placeholder="Gentag password" /></div>
+        <div class="form-row"><label for="pf_ui_language">UI-sprog</label>
+          <select id="pf_ui_language" class="select">
+            <option value="da">Dansk</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="form-row"><label for="pf_search_language">Søgesprog</label>
+          <select id="pf_search_language" class="select">
+            <option value="da">Dansk</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="actions" style="justify-content:flex-end;">
+          <button id="pf_save" class="btn primary">Gem profil</button>
+        </div>
+      </div>
+    `;
+
+    const uiSelect = document.getElementById('pf_ui_language');
+    const searchSelect = document.getElementById('pf_search_language');
+    if (uiSelect) uiSelect.value = me.ui_language || state.uiLanguage || 'da';
+    if (searchSelect) searchSelect.value = me.search_language || state.searchLanguage || 'da';
+
+    const saveBtn = document.getElementById('pf_save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const username = (document.getElementById('pf_username').value || '').trim();
+        const password = document.getElementById('pf_password').value || '';
+        const password2 = document.getElementById('pf_password2').value || '';
+        const ui_language = document.getElementById('pf_ui_language').value || 'da';
+        const search_language = document.getElementById('pf_search_language').value || 'da';
+        if (!username) { showStatus('Brugernavn må ikke være tomt.', 'err'); return; }
+        if (password && password !== password2) { showStatus('Password matcher ikke.', 'err'); return; }
+
+        const payload = { username, ui_language, search_language };
+        if (password) payload.password = password;
+
+        const rr = await fetch('/api/me/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const jj = await rr.json();
+        if (!rr.ok || !jj.ok) {
+          showStatus('Kunne ikke gemme profil: ' + ((jj && jj.error) || ''), 'err');
+          return;
+        }
+
+        state.currentUser.username = username;
+        state.uiLanguage = resolveUiLanguage(ui_language);
+        state.searchLanguage = resolveUiLanguage(search_language);
+        applyUiLanguage();
+        await loadPhotos();
+        showStatus('Profil opdateret', 'ok');
+        const p1 = document.getElementById('pf_password');
+        const p2 = document.getElementById('pf_password2');
+        if (p1) p1.value = '';
+        if (p2) p2.value = '';
+      });
+    }
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`;
+  }
 }
 
 // Duplicates UI
