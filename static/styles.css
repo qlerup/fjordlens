@@ -257,6 +257,34 @@ body.drawer-open .drawer-backdrop { display: block; }
 .status.err { border-color: rgba(255, 107, 107, 0.45); color: #ffe4e4; }
 .hidden { display: none !important; }
 
+.mapper-tools {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.mapper-tools-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.mapper-dropzone {
+  margin-top: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--muted);
+  text-align: center;
+  background: rgba(255,255,255,0.01);
+}
+.mapper-dropzone.dragover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(91,140,255,0.09);
+}
+
 .empty {
   margin-top: 10px;
   border: 1px dashed var(--border);
@@ -652,14 +680,19 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 
 /* Hide non-relevant chrome when viewing Settings */
+body.view-settings .topbar,
 body.view-settings .content-header,
 body.view-settings #statusBar,
 body.view-settings #emptyState,
 body.view-settings .gallery-grid { display: none !important; }
 
-/* In Settings, keep the topbar (for burger), but hide search/sort */
-body.view-settings .topbar .search-wrap,
-body.view-settings .topbar .select { display: none !important; }
+/* On mobile, keep topbar for burger menu, but hide search/sort controls */
+@media (max-width: 760px) {
+  body.view-settings .topbar { display: flex !important; }
+  body.view-settings .topbar .search-wrap,
+  body.view-settings .topbar .select,
+  body.view-settings .topbar #aiToggle { display: none !important; }
+}
 
 /* Hide status bar on all non-library views */
 body:not(.view-timeline) #statusBar { display: none !important; }

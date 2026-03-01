@@ -17,6 +17,11 @@ const els = {
   uploadSubdirSelect: document.getElementById("uploadSubdirSelect"),
   uploadFolderNewInput: document.getElementById("uploadFolderNewInput"),
   uploadFolderCreateBtn: document.getElementById("uploadFolderCreateBtn"),
+  mapperTools: document.getElementById("mapperTools"),
+  mapperFolderSelect: document.getElementById("mapperFolderSelect"),
+  mapperFolderNewInput: document.getElementById("mapperFolderNewInput"),
+  mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
+  mapperDropZone: document.getElementById("mapperDropZone"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -310,6 +315,7 @@ function cardHTML(item) {
 function renderGrid() {
   // Toggle fixed-width columns for folder view
   if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
+  if (els.mapperTools) els.mapperTools.classList.add("hidden");
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
   if (els.logsPanel) els.logsPanel.classList.add("hidden");
@@ -420,6 +426,9 @@ function renderGrid() {
 
   // Default views (mapper, etc.)
   els.grid.innerHTML = "";
+  if (state.view === "mapper" && els.mapperTools) {
+    els.mapperTools.classList.remove("hidden");
+  }
   // Restore gallery grid layout for non-timeline views
   els.grid.classList.add('gallery-grid');
   els.grid.classList.remove('timeline-wrap');
@@ -874,13 +883,17 @@ async function createUploadFolder() {
   }
 }
 
-async function uploadFiles(fileList) {
+async function uploadFiles(fileList, options = {}) {
   const files = Array.from(fileList || []).filter(f => !!f && f.name);
   if (!files.length) return;
   const fd = new FormData();
   const meta = [];
   for (const f of files) { fd.append('files', f, f.name); meta.push({ name: f.name, lastModified: f.lastModified }); }
   fd.append('meta', JSON.stringify(meta));
+  const destination = (options && options.destination) ? String(options.destination) : '';
+  const subdir = (options && Object.prototype.hasOwnProperty.call(options, 'subdir')) ? String(options.subdir || '') : null;
+  if (destination) fd.append('destination', destination);
+  if (subdir !== null) fd.append('subdir', subdir);
   const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
   // Show overlay
   if (els.uploadOverlay) { els.uploadOverlay.classList.remove('hidden'); els.uploadOverlay.classList.add('active'); }
@@ -918,6 +931,9 @@ async function uploadFiles(fileList) {
       xhr.send(fd);
     });
     await loadPhotos();
+    if (state.view === 'mapper') {
+      loadMapperTools();
+    }
   } catch (e) {
     console.error(e);
   } finally {
@@ -925,7 +941,79 @@ async function uploadFiles(fileList) {
   }
 }
 
+function renderMapperFolderOptions(folders, selectedSubdir, uploadDir = '') {
+  if (!els.mapperFolderSelect) return;
+  const list = Array.isArray(folders) ? [...folders] : [];
+  if (!list.includes('')) list.unshift('');
+  const unique = Array.from(new Set(list));
+  const rootName = (String(uploadDir || '').split(/[\\/]/).filter(Boolean).pop() || 'uploads');
+  els.mapperFolderSelect.innerHTML = unique
+    .map(path => {
+      const label = path ? path : `${rootName} (rodmappe)`;
+      return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const chosen = selectedSubdir || '';
+  if (!unique.includes(chosen)) {
+    const opt = document.createElement('option');
+    opt.value = chosen;
+    opt.textContent = chosen || `${rootName} (rodmappe)`;
+    els.mapperFolderSelect.appendChild(opt);
+  }
+  els.mapperFolderSelect.value = chosen;
+}
+
+async function loadMapperTools(preferred = null) {
+  if (!els.mapperFolderSelect) return;
+  try {
+    const { res, data } = await fetchUploadDestinationConfig('uploads');
+    if (!res.ok || !data || !data.ok) return;
+    const selected = (preferred !== null) ? String(preferred || '') : String(data.subdir || '');
+    renderMapperFolderOptions(data.folders || [], selected, data.upload_dir || '');
+    if (els.mapperDropZone) {
+      const label = selected || 'rodmappe';
+      els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
+    }
+  } catch {}
+}
+
+async function createMapperFolder() {
+  if (!els.mapperFolderNewInput) return;
+  const parent = els.mapperFolderSelect ? (els.mapperFolderSelect.value || '') : '';
+  const path = (els.mapperFolderNewInput.value || '').trim();
+  if (!path) {
+    showStatus('Skriv mappenavn først.', 'err');
+    return;
+  }
+  try {
+    if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = true;
+    const res = await fetch('/api/settings/upload-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination: 'uploads', parent, path }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || 'Kunne ikke oprette mappe', 'err');
+      return;
+    }
+    els.mapperFolderNewInput.value = '';
+    const newSel = data.created || data.subdir || '';
+    renderMapperFolderOptions(data.folders || [], newSel, data.upload_dir || '');
+    if (els.mapperDropZone) {
+      const label = newSel || 'rodmappe';
+      els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
+    }
+    showStatus('Mappe oprettet i uploads.', 'ok');
+  } catch {
+    showStatus('Fejl ved oprettelse af mappe.', 'err');
+  } finally {
+    if (els.mapperFolderCreateBtn) els.mapperFolderCreateBtn.disabled = false;
+  }
+}
+
 window.addEventListener('dragover', (e) => {
+  if (state.view === 'mapper') return;
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
     if (els.uploadOverlay) { els.uploadOverlay.classList.remove('hidden'); els.uploadOverlay.classList.add('active'); }
@@ -934,6 +1022,7 @@ window.addEventListener('dragover', (e) => {
   }
 });
 window.addEventListener('drop', (e) => {
+  if (state.view === 'mapper') return;
   if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
     e.preventDefault();
     uploadFiles(e.dataTransfer.files);
@@ -944,6 +1033,7 @@ window.addEventListener('drop', (e) => {
   }
 });
 window.addEventListener('dragleave', (e) => {
+  if (state.view === 'mapper') return;
   // Hide when leaving window
   if (e.screenX === 0 && e.screenY === 0) {
     if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
@@ -1429,6 +1519,7 @@ function setView(view) {
   // Toggle body class to drive CSS for Settings view
   document.body.classList.toggle("view-settings", view === "settings");
   document.body.classList.toggle("view-timeline", view === "timeline");
+  document.body.classList.toggle("view-mapper", view === "mapper");
   if (view === "settings") {
     // show logs panel, do not load photos
     renderGrid();
@@ -1436,6 +1527,7 @@ function setView(view) {
     state.personView = { mode: 'list', personId: null, personName: null };
     loadPeople();
   } else {
+    if (view === 'mapper') loadMapperTools();
     loadPhotos();
   }
 }
@@ -1853,6 +1945,36 @@ els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
   const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
   loadUploadDestination(destination, true);
 });
+
+els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
+els.mapperFolderSelect && els.mapperFolderSelect.addEventListener('change', () => {
+  const selected = els.mapperFolderSelect.value || '';
+  if (els.mapperDropZone) {
+    const label = selected || 'rodmappe';
+    els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
+  }
+});
+if (els.mapperDropZone) {
+  els.mapperDropZone.addEventListener('dragover', (e) => {
+    if (state.view !== 'mapper') return;
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      els.mapperDropZone.classList.add('dragover');
+    }
+  });
+  els.mapperDropZone.addEventListener('dragleave', () => {
+    els.mapperDropZone.classList.remove('dragover');
+  });
+  els.mapperDropZone.addEventListener('drop', async (e) => {
+    els.mapperDropZone.classList.remove('dragover');
+    if (state.view !== 'mapper') return;
+    if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
+    e.preventDefault();
+    const targetSubdir = els.mapperFolderSelect ? (els.mapperFolderSelect.value || '') : '';
+    await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
+    await loadMapperTools(targetSubdir);
+  });
+}
 
 // viewer events
 els.viewerClose && els.viewerClose.addEventListener("click", closeViewer);

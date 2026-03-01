@@ -3306,7 +3306,20 @@ def api_upload():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     ensure_dirs()
     destination = get_upload_destination()
+    destination_override = str(request.form.get("destination") or "").strip().lower()
+    if destination_override:
+        if destination_override not in UPLOAD_DEST_CHOICES:
+            return jsonify({"ok": False, "error": "Ugyldig upload-destination"}), 400
+        destination = destination_override
+
     subdir = get_upload_subdir(destination)
+    subdir_override_raw = request.form.get("subdir")
+    if subdir_override_raw is not None:
+        try:
+            subdir = _normalize_upload_subdir(str(subdir_override_raw or ""))
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig upload-undermappe"}), 400
+
     target_root, rel_prefix = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
