@@ -18,7 +18,8 @@ const els = {
   uploadFolderNewInput: document.getElementById("uploadFolderNewInput"),
   uploadFolderCreateBtn: document.getElementById("uploadFolderCreateBtn"),
   mapperTools: document.getElementById("mapperTools"),
-  mapperFolderSelect: document.getElementById("mapperFolderSelect"),
+  mapperCurrentPath: document.getElementById("mapperCurrentPath"),
+  mapperUpBtn: document.getElementById("mapperUpBtn"),
   mapperFolderNewInput: document.getElementById("mapperFolderNewInput"),
   mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
   mapperDropZone: document.getElementById("mapperDropZone"),
@@ -154,6 +155,8 @@ let state = {
   people: [],
   personView: { mode: 'list', personId: null, personName: null },
   showHiddenPeople: false,
+  mapperPath: "",
+  mapperFolders: [],
 };
 
 // mark initial view for CSS targeting
@@ -445,14 +448,52 @@ function renderGrid() {
 
   const items = state.items.slice();
   if (state.view === "mapper") {
-    const groups = new Map();
+    const current = String(state.mapperPath || "");
+    const groupMap = new Map();
+    const includeFolder = (folderPath) => {
+      if (!groupMap.has(folderPath)) groupMap.set(folderPath, []);
+    };
+    const immediateChild = (folderPath, parentPath) => {
+      const f = String(folderPath || '');
+      const p = String(parentPath || '');
+      if (!f) return null;
+      if (!p) {
+        const seg = f.split('/').filter(Boolean)[0] || null;
+        return seg || null;
+      }
+      if (f === p || !f.startsWith(p + '/')) return null;
+      const rest = f.slice(p.length + 1);
+      const seg = rest.split('/').filter(Boolean)[0] || null;
+      return seg ? `${p}/${seg}` : null;
+    };
+
     for (const it of items) {
-      const folder = (it.rel_path && it.rel_path.includes("/")) ? it.rel_path.split("/").slice(0, -1).join("/") : "(root)";
-      if (!groups.has(folder)) groups.set(folder, []);
-      groups.get(folder).push(it);
+      const rel = String(it.rel_path || '');
+      const folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
+      const child = immediateChild(folder, current);
+      if (!child) continue;
+      includeFolder(child);
+      groupMap.get(child).push(it);
     }
-    for (const [folder, arr] of groups) {
-      appendFolderCard(folder, arr);
+
+    for (const f of (state.mapperFolders || [])) {
+      const child = immediateChild(String(f || ''), current);
+      if (child) includeFolder(child);
+    }
+
+    const sorted = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'da-DK'));
+    for (const folderPath of sorted) {
+      const arr = groupMap.get(folderPath) || [];
+      const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
+      appendFolderCard(folderPath, arr, {
+        title,
+        onOpen: () => {
+          state.mapperPath = folderPath;
+          state.folder = folderPath;
+          loadMapperTools(folderPath);
+          loadPhotos();
+        },
+      });
     }
   } else {
     items.forEach(item => appendCard(item));
@@ -516,21 +557,26 @@ function appendCardTo(item, container) {
 
 function appendCard(item){ return appendCardTo(item, els.grid); }
 
-function appendFolderCard(folder, arr) {
+function appendFolderCard(folder, arr, opts = {}) {
   const previews = arr.slice(0, 4);
   const card = document.createElement("article");
   card.className = "photo-card folder-card";
   const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
+  const title = opts.title || folder;
   card.innerHTML = `
     <div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div></div>
     <div class="card-body">
-      <h4 class="card-title">${folder}</h4>
+      <h4 class="card-title">${title}</h4>
       <div class="card-meta">
         <span>${arr.length} elementer</span>
         <span>Mapper</span>
       </div>
     </div>`;
   card.addEventListener("click", () => {
+    if (typeof opts.onOpen === 'function') {
+      opts.onOpen();
+      return;
+    }
     state.view = "timeline";
     state.folder = folder === "(root)" ? "" : folder;
     document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
@@ -941,45 +987,35 @@ async function uploadFiles(fileList, options = {}) {
   }
 }
 
-function renderMapperFolderOptions(folders, selectedSubdir, uploadDir = '') {
-  if (!els.mapperFolderSelect) return;
-  const list = Array.isArray(folders) ? [...folders] : [];
-  if (!list.includes('')) list.unshift('');
-  const unique = Array.from(new Set(list));
-  const rootName = (String(uploadDir || '').split(/[\\/]/).filter(Boolean).pop() || 'uploads');
-  els.mapperFolderSelect.innerHTML = unique
-    .map(path => {
-      const label = path ? path : `${rootName} (rodmappe)`;
-      return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
-    })
-    .join('');
-  const chosen = selectedSubdir || '';
-  if (!unique.includes(chosen)) {
-    const opt = document.createElement('option');
-    opt.value = chosen;
-    opt.textContent = chosen || `${rootName} (rodmappe)`;
-    els.mapperFolderSelect.appendChild(opt);
+function renderMapperContext(path = '') {
+  const p = String(path || '');
+  if (els.mapperCurrentPath) {
+    els.mapperCurrentPath.textContent = `Aktuel mappe: ${p ? `uploads/${p}` : 'uploads (rodmappe)'}`;
   }
-  els.mapperFolderSelect.value = chosen;
+  if (els.mapperDropZone) {
+    els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${p || 'uploads (rodmappe)'}`;
+  }
+  if (els.mapperUpBtn) {
+    els.mapperUpBtn.disabled = !p;
+  }
 }
 
 async function loadMapperTools(preferred = null) {
-  if (!els.mapperFolderSelect) return;
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
     if (!res.ok || !data || !data.ok) return;
-    const selected = (preferred !== null) ? String(preferred || '') : String(data.subdir || '');
-    renderMapperFolderOptions(data.folders || [], selected, data.upload_dir || '');
-    if (els.mapperDropZone) {
-      const label = selected || 'rodmappe';
-      els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
-    }
+    const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
+    state.mapperFolders = folders;
+    const wanted = (preferred !== null) ? String(preferred || '') : String(state.mapperPath || data.subdir || '');
+    state.mapperPath = wanted;
+    state.folder = wanted || null;
+    renderMapperContext(state.mapperPath);
   } catch {}
 }
 
 async function createMapperFolder() {
   if (!els.mapperFolderNewInput) return;
-  const parent = els.mapperFolderSelect ? (els.mapperFolderSelect.value || '') : '';
+  const parent = String(state.mapperPath || '');
   const path = (els.mapperFolderNewInput.value || '').trim();
   if (!path) {
     showStatus('Skriv mappenavn først.', 'err');
@@ -999,11 +1035,11 @@ async function createMapperFolder() {
     }
     els.mapperFolderNewInput.value = '';
     const newSel = data.created || data.subdir || '';
-    renderMapperFolderOptions(data.folders || [], newSel, data.upload_dir || '');
-    if (els.mapperDropZone) {
-      const label = newSel || 'rodmappe';
-      els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
-    }
+    state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
+    state.mapperPath = newSel;
+    state.folder = newSel || null;
+    renderMapperContext(state.mapperPath);
+    await loadPhotos();
     showStatus('Mappe oprettet i uploads.', 'ok');
   } catch {
     showStatus('Fejl ved oprettelse af mappe.', 'err');
@@ -1511,7 +1547,7 @@ async function toggleFavorite() {
 
 function setView(view) {
   state.view = view;
-  state.folder = null;
+  state.folder = (view === 'mapper' ? (state.mapperPath || null) : null);
   state.selectedId = null;
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
@@ -1947,12 +1983,17 @@ els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
 });
 
 els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
-els.mapperFolderSelect && els.mapperFolderSelect.addEventListener('change', () => {
-  const selected = els.mapperFolderSelect.value || '';
-  if (els.mapperDropZone) {
-    const label = selected || 'rodmappe';
-    els.mapperDropZone.textContent = `Slip filer her for at uploade til: ${label}`;
-  }
+els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
+  const cur = String(state.mapperPath || '');
+  if (!cur) return;
+  const parts = cur.split('/').filter(Boolean);
+  parts.pop();
+  const parent = parts.join('/');
+  state.mapperPath = parent;
+  state.folder = parent || null;
+  renderMapperContext(parent);
+  await loadMapperTools(parent);
+  await loadPhotos();
 });
 if (els.mapperDropZone) {
   els.mapperDropZone.addEventListener('dragover', (e) => {
@@ -1970,9 +2011,10 @@ if (els.mapperDropZone) {
     if (state.view !== 'mapper') return;
     if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
     e.preventDefault();
-    const targetSubdir = els.mapperFolderSelect ? (els.mapperFolderSelect.value || '') : '';
+    const targetSubdir = String(state.mapperPath || '');
     await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
     await loadMapperTools(targetSubdir);
+    await loadPhotos();
   });
 }
 

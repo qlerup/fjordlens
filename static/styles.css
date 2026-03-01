@@ -270,6 +270,12 @@ body.drawer-open .drawer-backdrop { display: block; }
   flex-wrap: wrap;
   align-items: center;
 }
+.mapper-tools-row #mapperCurrentPath {
+  min-width: 220px;
+}
+.mapper-tools-row #mapperUpBtn {
+  padding: 8px 12px;
+}
 .mapper-dropzone {
   margin-top: 8px;
   border: 1px dashed var(--border);
