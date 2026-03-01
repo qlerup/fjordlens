@@ -2012,30 +2012,39 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
 
 # --- Face indexing API ---
 _faces_running = threading.Event()
+faces_counts: Dict[str, int] = {"processed": 0, "total": 0}
+last_faces_result: Optional[Dict[str, Any]] = None
 
 
 def _index_faces_worker(all_photos: bool = False):
+    global faces_counts, last_faces_result
     try:
         with closing(get_conn()) as conn:
             if all_photos:
                 rows = conn.execute("SELECT rel_path FROM photos").fetchall()
             else:
                 rows = conn.execute("SELECT rel_path FROM photos WHERE people_count=0").fetchall()
+        total = len(rows)
+        faces_counts = {"processed": 0, "total": total}
         for row in rows:
             if not _faces_running.is_set():
                 break
             rel = row["rel_path"]
             log_event("faces_index", rel_path=rel)
             index_faces_for_photo(rel)
+            faces_counts["processed"] += 1
+        last_faces_result = {"ok": True, **faces_counts}
     finally:
         _faces_running.clear()
 
 
 @app.route("/api/faces/index", methods=["POST"])
 def api_faces_index():
+    global faces_counts
     if _faces_running.is_set():
         return jsonify({"ok": False, "error": "Faces indexing already running"}), 409
     _faces_running.set()
+    faces_counts = {"processed": 0, "total": 0}
     all_photos = (request.args.get("all") in {"1", "true", "True"})
     threading.Thread(target=_index_faces_worker, args=(all_photos,), daemon=True).start()
     return jsonify({"ok": True, "running": True})
@@ -2043,7 +2052,10 @@ def api_faces_index():
 
 @app.route("/api/faces/status")
 def api_faces_status():
-    return jsonify({"ok": True, "running": _faces_running.is_set()})
+    resp: Dict[str, Any] = {"ok": True, "running": _faces_running.is_set(), **faces_counts}
+    if not _faces_running.is_set() and last_faces_result:
+        resp["last"] = last_faces_result
+    return jsonify(resp)
 
 
 def upsert_photo(meta: Dict[str, Any]) -> None:

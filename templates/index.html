@@ -162,13 +162,25 @@
         <!-- AI -->
         <div class="tab-panel hidden" data-tabpanel="ai">
           <div class="sidebar-card" style="margin-bottom:12px;">
-            <div class="sidebar-card-title">AI</div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-              <button id="aiIngestBtn" class="btn">Byg AI‑embeddings</button>
-              <button id="aiStopBtn" class="btn danger">Stop AI</button>
-              <button id="facesIndexBtn" class="btn">Indekser ansigter</button>
-              <span id="facesStatus" class="mini-label">Ansigter: —</span>
-              <span id="aiStatus" class="mini-label">AI: —</span>
+            <div id="aiPanelTitle" class="sidebar-card-title">AI</div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div style="border:1px solid var(--border); border-radius:10px; padding:10px;">
+                <div id="aiEmbedTitle" class="mini-label" style="font-weight:700; margin-bottom:6px;">AI-embeddings</div>
+                <p id="aiEmbedDesc" class="hint" style="margin:0 0 8px 0;">Starter/stopper embedding-job for billeder uden embedding.</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+                  <button id="aiIngestBtn" class="btn">Start AI</button>
+                </div>
+                <div id="aiStatus" class="mini-label">AI: —</div>
+              </div>
+
+              <div style="border:1px solid var(--border); border-radius:10px; padding:10px;">
+                <div id="aiFacesTitle" class="mini-label" style="font-weight:700; margin-bottom:6px;">Ansigtsindeksering</div>
+                <p id="aiFacesDesc" class="hint" style="margin:0 0 8px 0;">Scanner billeder for ansigter og opdaterer persondata.</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+                  <button id="facesIndexBtn" class="btn">Indekser ansigter</button>
+                </div>
+                <div id="facesStatus" class="mini-label">Ansigter: —</div>
+              </div>
             </div>
           </div>
         </div>

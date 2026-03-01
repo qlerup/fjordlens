@@ -7,7 +7,11 @@ const els = {
   rethumbBtn: document.getElementById("rethumbBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
   aiIngestBtn: document.getElementById("aiIngestBtn"),
-  aiStopBtn: document.getElementById("aiStopBtn"),
+  aiPanelTitle: document.getElementById("aiPanelTitle"),
+  aiEmbedTitle: document.getElementById("aiEmbedTitle"),
+  aiEmbedDesc: document.getElementById("aiEmbedDesc"),
+  aiFacesTitle: document.getElementById("aiFacesTitle"),
+  aiFacesDesc: document.getElementById("aiFacesDesc"),
   aiStatus: document.getElementById("aiStatus"),
   facesIndexBtn: document.getElementById("facesIndexBtn"),
   facesStatus: document.getElementById("facesStatus"),
@@ -195,16 +199,22 @@ const I18N = {
     settings_title: 'Indstillinger',
     settings_sub: 'Vedligeholdelse, scan og logs',
     maint_title: 'Vedligeholdelse',
+    ai_panel_title: 'AI',
+    ai_embed_title: 'AI-embeddings',
+    ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
+    ai_faces_title: 'Ansigtsindeksering',
+    ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     btn_scan_library: 'Scan bibliotek',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Genbyg thumbnails',
     btn_reset_index: 'Nulstil indeks',
-    btn_build_embeddings: 'Byg AI-embeddings',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
     btn_index_faces: 'Indekser ansigter',
     status_faces_prefix: 'Ansigter',
     status_ai_prefix: 'AI',
+    status_embedded_label: 'embedded',
+    status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
     status_running: 'kører',
     status_dash: '—',
@@ -291,16 +301,22 @@ const I18N = {
     settings_title: 'Settings',
     settings_sub: 'Maintenance, scan and logs',
     maint_title: 'Maintenance',
+    ai_panel_title: 'AI',
+    ai_embed_title: 'AI embeddings',
+    ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
+    ai_faces_title: 'Face indexing',
+    ai_faces_desc: 'Scans photos for faces and updates people data.',
     btn_scan_library: 'Scan library',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Rebuild thumbnails',
     btn_reset_index: 'Reset index',
-    btn_build_embeddings: 'Build AI embeddings',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
     btn_index_faces: 'Index faces',
     status_faces_prefix: 'Faces',
     status_ai_prefix: 'AI',
+    status_embedded_label: 'embedded',
+    status_processed_label: 'processed',
     status_stopped: 'stopped',
     status_running: 'running',
     status_dash: '—',
@@ -351,10 +367,10 @@ function tr(key) {
 }
 
 function updateAiToggleButton() {
-  if (!els.aiStopBtn) return;
+  if (!els.aiIngestBtn) return;
   const running = !!state.aiRunning;
-  els.aiStopBtn.textContent = running ? tr('btn_stop_ai') : tr('btn_start_ai');
-  els.aiStopBtn.classList.toggle('danger', running);
+  els.aiIngestBtn.textContent = running ? tr('btn_stop_ai') : tr('btn_start_ai');
+  els.aiIngestBtn.classList.toggle('danger', running);
 }
 
 function navLabels() {
@@ -2116,12 +2132,16 @@ function applyUiLanguage() {
 
   const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
   if (maintTitle) maintTitle.textContent = tr('maint_title');
+  if (els.aiPanelTitle) els.aiPanelTitle.textContent = tr('ai_panel_title');
+  if (els.aiEmbedTitle) els.aiEmbedTitle.textContent = tr('ai_embed_title');
+  if (els.aiEmbedDesc) els.aiEmbedDesc.textContent = tr('ai_embed_desc');
+  if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
+  if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
 
   if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
-  if (els.aiIngestBtn) els.aiIngestBtn.textContent = tr('btn_build_embeddings');
   updateAiToggleButton();
   if (els.facesIndexBtn) els.facesIndexBtn.textContent = tr('btn_index_faces');
 
@@ -2225,9 +2245,7 @@ async function stopAiIngest() {
   }
 }
 
-els.aiIngestBtn && els.aiIngestBtn.addEventListener("click", startAiIngest);
-
-els.aiStopBtn && els.aiStopBtn.addEventListener('click', async () => {
+els.aiIngestBtn && els.aiIngestBtn.addEventListener('click', async () => {
   if (state.aiRunning) {
     await stopAiIngest();
     return;
@@ -2242,7 +2260,10 @@ async function pollFacesStatus() {
     const s = await r.json();
     if (els.facesStatus) {
       const run = s && s.running ? tr('status_running') : tr('status_stopped');
-      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run}`;
+      const source = (!s.running && s.last) ? s.last : s;
+      const processed = Number(source && source.processed) || 0;
+      const total = Number(source && source.total) || 0;
+      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} · ${tr('status_processed_label')} ${processed}/${total}`;
     }
     if (s && s.running) {
       setTimeout(pollFacesStatus, 1500);
@@ -2291,7 +2312,11 @@ async function pollAiStatus() {
       if (!s || !s.ok) { els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`; }
       else {
         const run = s.running ? tr('status_running') : tr('status_stopped');
-        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · embedded ${s.embedded||0}/${s.total||0} · ${tr('status_errors_label')} ${s.failed||0}`;
+        const source = (!s.running && s.last) ? s.last : s;
+        const embedded = Number(source && source.embedded) || 0;
+        const total = Number(source && source.total) || 0;
+        const failed = Number(source && source.failed) || 0;
+        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · ${tr('status_embedded_label')} ${embedded}/${total} · ${tr('status_errors_label')} ${failed}`;
       }
     }
   } catch {
