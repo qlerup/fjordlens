@@ -803,6 +803,15 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS user_folder_access (
+                user_id INTEGER NOT NULL,
+                folder_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(user_id, folder_path),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_folder_access_user ON user_folder_access(user_id);
             """
         )
         conn.commit()
@@ -879,6 +888,185 @@ def init_db() -> None:
             conn.commit()
         except Exception:
             pass
+
+
+def _normalize_folder_acl_path(value: Optional[str]) -> str:
+    raw = str(value or "").replace("\\", "/").strip()
+    while "//" in raw:
+        raw = raw.replace("//", "/")
+    raw = raw.lstrip("/").rstrip("/")
+    if raw in {"", "."}:
+        return ""
+    parts = [p.strip() for p in raw.split("/") if p.strip()]
+    if any(p == ".." for p in parts):
+        raise ValueError("invalid_folder")
+    return "/".join(parts)
+
+
+def _normalize_rel_path_for_acl(value: Optional[str]) -> str:
+    rel = str(value or "").replace("\\", "/")
+    while "//" in rel:
+        rel = rel.replace("//", "/")
+    return rel.lstrip("/")
+
+
+def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT rel_path FROM photos").fetchall()
+    folders: set[str] = set()
+
+    # Include real upload folders from disk so admins can assign access
+    # even before images are indexed in those folders.
+    try:
+        upload_dirs = _list_upload_subdirs(UPLOAD_DIR, limit=2000)
+        for sub in upload_dirs:
+            clean = _normalize_folder_acl_path(sub)
+            if clean:
+                folders.add(f"uploads/{clean}")
+    except Exception:
+        pass
+
+    for r in rows:
+        rel = _normalize_rel_path_for_acl(r["rel_path"])
+        if not rel:
+            continue
+        parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        if not parent:
+            continue
+        parts = [p for p in parent.split("/") if p]
+        acc = ""
+        for part in parts:
+            acc = f"{acc}/{part}" if acc else part
+            folders.add(acc)
+    return sorted(folders, key=lambda x: x.lower())
+
+
+def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: list[str]) -> list[str]:
+    cleaned = []
+    for path in folders:
+        try:
+            p = _normalize_folder_acl_path(path)
+        except Exception:
+            continue
+        if p:
+            cleaned.append(p)
+    cleaned = sorted(set(cleaned), key=lambda x: (-x.count("/"), x.lower()))
+    reduced: list[str] = []
+    for path in cleaned:
+        # Keep the deepest selections only.
+        # If a deeper descendant is selected, parent is ignored to allow narrowing access.
+        if any((child == path) or child.startswith(path + "/") for child in reduced):
+            continue
+        reduced.append(path)
+    reduced = sorted(reduced, key=lambda x: x.lower())
+
+    conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (user_id,))
+    if reduced:
+        now = now_iso()
+        conn.executemany(
+            "INSERT INTO user_folder_access(user_id, folder_path, created_at) VALUES(?,?,?)",
+            [(user_id, p, now) for p in reduced],
+        )
+    return reduced
+
+
+def _get_user_allowed_folders(conn: sqlite3.Connection, user_id: int) -> list[str]:
+    rows = conn.execute(
+        "SELECT folder_path FROM user_folder_access WHERE user_id=? ORDER BY folder_path COLLATE NOCASE",
+        (user_id,),
+    ).fetchall()
+    out: list[str] = []
+    for r in rows:
+        try:
+            p = _normalize_folder_acl_path(r["folder_path"])
+        except Exception:
+            continue
+        if p:
+            out.append(p)
+    return out
+
+
+def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Optional[list[str]]:
+    try:
+        if getattr(current_user, "is_admin", False):
+            return None
+        uid = int(getattr(current_user, "id", 0) or 0)
+        if uid <= 0:
+            return None
+    except Exception:
+        return None
+
+    def _load(c: sqlite3.Connection) -> list[str]:
+        return _get_user_allowed_folders(c, uid)
+
+    if conn is not None:
+        rows = _load(conn)
+    else:
+        with closing(get_conn()) as conn2:
+            rows = _load(conn2)
+    if not rows:
+        return None
+    return rows
+
+
+def _is_rel_path_allowed_for_current_user(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> bool:
+    rel = _normalize_rel_path_for_acl(rel_path)
+    if not rel:
+        return False
+    prefixes = _current_user_acl_prefixes(conn)
+    if prefixes is None:
+        return True
+    for p in prefixes:
+        if rel == p or rel.startswith(p + "/"):
+            return True
+    return False
+
+
+def _filter_public_items_by_current_user_acl(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    if not items:
+        return items
+    prefixes = _current_user_acl_prefixes()
+    if prefixes is None:
+        return items
+    out: list[Dict[str, Any]] = []
+    for item in items:
+        rel = _normalize_rel_path_for_acl(item.get("rel_path"))
+        if not rel:
+            continue
+        if any(rel == p or rel.startswith(p + "/") for p in prefixes):
+            out.append(item)
+    return out
+
+
+def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlite3.Connection] = None) -> list[str]:
+    prefixes = _current_user_acl_prefixes(conn)
+    if prefixes is None:
+        return folders
+    out: list[str] = []
+    for raw in folders:
+        try:
+            folder = _normalize_folder_acl_path(raw)
+        except Exception:
+            continue
+        if not folder:
+            out.append("")
+            continue
+        if any(
+            folder == p
+            or folder.startswith(p + "/")
+            or p.startswith(folder + "/")
+            for p in prefixes
+        ):
+            out.append(folder)
+    if "" not in out:
+        out.insert(0, "")
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for f in out:
+        if f in seen:
+            continue
+        seen.add(f)
+        deduped.append(f)
+    return deduped
 
 
 @app.before_request
@@ -1102,6 +1290,7 @@ def _upload_settings_payload(destination: str) -> dict:
     target_root, _ = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     folders = _list_upload_subdirs(target_root)
+    folders = _filter_folders_by_current_user_acl(folders)
     if destination == UPLOAD_DEST_UPLOADS and "uploads" in folders:
         folders = [f for f in folders if f != "uploads"]
     if subdir and subdir not in folders:
@@ -2333,51 +2522,99 @@ def api_people_list():
     """List people with face counts and a sample thumbnail."""
     include_hidden = request.args.get("include_hidden") in {"1", "true", "True"}
     with closing(get_conn()) as conn:
+        acl_prefixes = _current_user_acl_prefixes(conn)
         where = "" if include_hidden else "WHERE COALESCE(p.hidden,0)=0"
-        q = f"""
-            SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden, COUNT(f.id) AS face_count,
-                   MAX(f.id) as any_face_id,
-                   MAX(f.photo_id) as any_photo_id
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden
             FROM people p
-            LEFT JOIN faces f ON f.person_id = p.id
             {where}
-            GROUP BY p.id, p.name, hidden
             ORDER BY p.name COLLATE NOCASE ASC
-        """
-        rows = conn.execute(q).fetchall()
+            """
+        ).fetchall()
         people = []
         for r in rows:
             pid = int(r["id"])
             name = r["name"]
-            cnt = int(r["face_count"] or 0)
             hidden = bool(int(r["hidden"] or 0))
-            thumb_url = None
-            # Prefer a face-based thumbnail for the person
-            face_row = conn.execute("SELECT id FROM faces WHERE person_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
-            if face_row:
-                thumb_url = f"/api/face-thumb/{int(face_row['id'])}"
-            elif r["any_photo_id"]:
-                prow = conn.execute("SELECT thumb_name FROM photos WHERE id=?", (int(r["any_photo_id"]),)).fetchone()
-                if prow and prow["thumb_name"]:
-                    thumb_url = f"/api/thumbs/{prow['thumb_name']}"
-            people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url, "hidden": hidden})
-        # Add a synthetic 'Ukendte' group for faces without a person_id
-        unk = conn.execute(
-            "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
-        ).fetchone()
-        if unk and int(unk["c"] or 0) > 0:
-            # Prefer a face-based thumbnail for unknown group
+
+            if acl_prefixes is None:
+                cnt_row = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE person_id=?", (pid,)).fetchone()
+                cnt = int(cnt_row["c"] or 0) if cnt_row else 0
+                face_row = conn.execute("SELECT id FROM faces WHERE person_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+            else:
+                clauses = []
+                params: list[Any] = [pid]
+                for pref in acl_prefixes:
+                    clauses.append("(ph.rel_path=? OR ph.rel_path LIKE ?)")
+                    params.extend([pref, pref + "/%"])
+                where_acl = " OR ".join(clauses) if clauses else "0=1"
+                cnt_row = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS c
+                    FROM faces f
+                    INNER JOIN photos ph ON ph.id = f.photo_id
+                    WHERE f.person_id=? AND ({where_acl})
+                    """,
+                    params,
+                ).fetchone()
+                cnt = int(cnt_row["c"] or 0) if cnt_row else 0
+                face_row = conn.execute(
+                    f"""
+                    SELECT f.id
+                    FROM faces f
+                    INNER JOIN photos ph ON ph.id = f.photo_id
+                    WHERE f.person_id=? AND ({where_acl})
+                    ORDER BY f.id DESC
+                    LIMIT 1
+                    """,
+                    params,
+                ).fetchone()
+
+            thumb_url = f"/api/face-thumb/{int(face_row['id'])}" if face_row else None
+            if cnt > 0:
+                people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url, "hidden": hidden})
+
+        if acl_prefixes is None:
+            unk = conn.execute(
+                "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
+            ).fetchone()
+            unk_count = int(unk["c"] or 0) if unk else 0
             frow = conn.execute(
                 "SELECT id FROM faces WHERE person_id IS NULL ORDER BY id DESC LIMIT 1"
             ).fetchone()
-            if frow:
-                thumb_url = f"/api/face-thumb/{int(frow['id'])}"
-            else:
-                prow = conn.execute(
-                    "SELECT p.thumb_name FROM photos p INNER JOIN faces f ON f.photo_id = p.id WHERE f.person_id IS NULL ORDER BY f.id DESC LIMIT 1"
-                ).fetchone()
-                thumb_url = f"/api/thumbs/{prow['thumb_name']}" if prow and prow["thumb_name"] else None
-            people.insert(0, {"id": "unknown", "name": "Ukendte", "count": int(unk["c"] or 0), "thumb_url": thumb_url})
+        else:
+            clauses = []
+            params2: list[Any] = []
+            for pref in acl_prefixes:
+                clauses.append("(ph.rel_path=? OR ph.rel_path LIKE ?)")
+                params2.extend([pref, pref + "/%"])
+            where_acl = " OR ".join(clauses) if clauses else "0=1"
+            unk = conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT f.photo_id) AS c
+                FROM faces f
+                INNER JOIN photos ph ON ph.id = f.photo_id
+                WHERE f.person_id IS NULL AND ({where_acl})
+                """,
+                params2,
+            ).fetchone()
+            unk_count = int(unk["c"] or 0) if unk else 0
+            frow = conn.execute(
+                f"""
+                SELECT f.id
+                FROM faces f
+                INNER JOIN photos ph ON ph.id = f.photo_id
+                WHERE f.person_id IS NULL AND ({where_acl})
+                ORDER BY f.id DESC
+                LIMIT 1
+                """,
+                params2,
+            ).fetchone()
+
+        if unk_count > 0:
+            thumb_url = f"/api/face-thumb/{int(frow['id'])}" if frow else None
+            people.insert(0, {"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
     return jsonify({"ok": True, "items": people})
 
 
@@ -2414,7 +2651,8 @@ def api_people_photos(pid: int):
             (pid,),
         ).fetchall()
         for r in rows:
-            items.append(row_to_public(r))
+            if _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
+                items.append(row_to_public(r))
     return jsonify({"ok": True, "items": items})
 
 
@@ -2434,6 +2672,8 @@ def api_people_unknown_photos_faces():
         # Group faces per photo
         by_photo: Dict[int, Dict[str, Any]] = {}
         for r in rows:
+            if not _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
+                continue
             pid_ = int(r["id"])  # photo id
             if pid_ not in by_photo:
                 by_photo[pid_] = row_to_public(r)
@@ -2464,6 +2704,8 @@ def api_face_thumb(face_id: int):
         if not r:
             return ("Not found", 404)
         src_rel = r["rel_path"]
+        if not _is_rel_path_allowed_for_current_user(src_rel):
+            return ("Forbidden", 403)
         src_path = (UPLOAD_DIR / src_rel.split("/",1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
         safe_rel = src_rel
         view_path = ensure_viewable_copy(src_path, safe_rel)
@@ -2513,7 +2755,8 @@ def api_people_unknown_photos():
             """
         ).fetchall()
         for r in rows:
-            items.append(row_to_public(r))
+            if _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
+                items.append(row_to_public(r))
     return jsonify({"ok": True, "items": items})
 
 
@@ -3139,6 +3382,7 @@ def api_ai_search():
             continue
     scored.sort(key=lambda x: x[0], reverse=True)
     items = [row_to_public(r) for (s, r) in scored[:limit] if s > -0.5]
+    items = _filter_public_items_by_current_user_acl(items)
     return jsonify({"items": items, "count": len(items), "q": q})
 
 
@@ -3148,6 +3392,8 @@ def api_similar(photo_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "not_found"}), 404
     emb = None
     try:
@@ -3175,6 +3421,7 @@ def api_similar(photo_id: int):
             continue
     scored.sort(key=lambda x: x[0], reverse=True)
     items = [row_to_public(r) for (s, r) in scored[:limit] if s > -0.5]
+    items = _filter_public_items_by_current_user_acl(items)
     return jsonify({"items": items, "count": len(items)})
 
 
@@ -3183,6 +3430,8 @@ def api_ai_tags(photo_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT id, rel_path, embedding_json, ai_tags FROM photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "not_found"}), 404
     try:
         emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -3268,6 +3517,7 @@ def api_photos():
     items = query_photos(view, sort, folder=folder)
     if q:
         items = [p for p in items if matches_search(p, q, search_language=search_language)]
+    items = _filter_public_items_by_current_user_acl(items)
 
     return jsonify({
         "items": items,
@@ -3285,6 +3535,8 @@ def api_photo_detail(photo_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
     if not row:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "Not found"}), 404
     return jsonify({"ok": True, "item": row_to_public(row)})
 
@@ -3385,12 +3637,28 @@ def api_toggle_favorite(photo_id: int):
 @app.route("/api/filters")
 def api_filters():
     with closing(get_conn()) as conn:
-        total = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
-        favorites = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE favorite = 1").fetchone()["c"]
-        places = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE gps_lat IS NOT NULL OR gps_name IS NOT NULL").fetchone()["c"]
-        cameras = [r["camera_model"] for r in conn.execute(
-            "SELECT DISTINCT camera_model FROM photos WHERE camera_model IS NOT NULL AND camera_model != '' ORDER BY camera_model"
-        ).fetchall()]
+        acl_prefixes = _current_user_acl_prefixes(conn)
+        if acl_prefixes is None:
+            total = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
+            favorites = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE favorite = 1").fetchone()["c"]
+            places = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE gps_lat IS NOT NULL OR gps_name IS NOT NULL").fetchone()["c"]
+            cameras = [r["camera_model"] for r in conn.execute(
+                "SELECT DISTINCT camera_model FROM photos WHERE camera_model IS NOT NULL AND camera_model != '' ORDER BY camera_model"
+            ).fetchall()]
+        else:
+            conds = []
+            params: list[Any] = []
+            for pref in acl_prefixes:
+                conds.append("(rel_path=? OR rel_path LIKE ?)")
+                params.extend([pref, pref + "/%"])
+            acl_where = " OR ".join(conds) if conds else "0=1"
+            total = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE ({acl_where})", params).fetchone()["c"]
+            favorites = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE favorite = 1 AND ({acl_where})", params).fetchone()["c"]
+            places = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE (gps_lat IS NOT NULL OR gps_name IS NOT NULL) AND ({acl_where})", params).fetchone()["c"]
+            cameras = [r["camera_model"] for r in conn.execute(
+                f"SELECT DISTINCT camera_model FROM photos WHERE camera_model IS NOT NULL AND camera_model != '' AND ({acl_where}) ORDER BY camera_model",
+                params,
+            ).fetchall()]
     return jsonify({
         "total": total,
         "favorites": favorites,
@@ -3403,6 +3671,10 @@ def api_filters():
 
 @app.route("/api/thumbs/<path:thumb_name>")
 def api_thumbs(thumb_name: str):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT rel_path FROM photos WHERE thumb_name=? LIMIT 1", (thumb_name,)).fetchone()
+    if row and not _is_rel_path_allowed_for_current_user(row["rel_path"]):
+        return ("Forbidden", 403)
     return send_from_directory(THUMB_DIR, thumb_name)
 
 
@@ -3411,6 +3683,8 @@ def api_original(rel_path: str):
     # Serve original file safely from PHOTO_DIR
     # Prevent path escape
     safe_rel = rel_path.replace("..", "").lstrip("/")
+    if not _is_rel_path_allowed_for_current_user(safe_rel):
+        return ("Forbidden", 403)
     # If uploaded file (prefixed with 'uploads/'), serve from UPLOAD_DIR
     if safe_rel.startswith("uploads/"):
         up_rel = safe_rel[len("uploads/"):]
@@ -3423,6 +3697,8 @@ def api_original(rel_path: str):
 def api_viewable(rel_path: str):
     # Return a browser/AI-friendly version; convert HEIC→JPEG into CONVERT_DIR when needed
     safe_rel = rel_path.replace("..", "").lstrip("/")
+    if not _is_rel_path_allowed_for_current_user(safe_rel):
+        return ("Forbidden", 403)
     if safe_rel.startswith("uploads/"):
         src = UPLOAD_DIR / safe_rel[len("uploads/"):]
     else:
@@ -4022,8 +4298,21 @@ def api_admin_users():
     if request.method == "GET":
         with closing(get_conn()) as conn:
             rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, ui_language, search_language, created_at FROM users ORDER BY id").fetchall()
+            all_folders = _list_all_photo_folders(conn)
+            acl_rows = conn.execute("SELECT user_id, folder_path FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
+        by_user_acl: dict[int, list[str]] = {}
+        for ar in acl_rows:
+            try:
+                uid = int(ar["user_id"])
+                folder_path = _normalize_folder_acl_path(ar["folder_path"])
+            except Exception:
+                continue
+            if not folder_path:
+                continue
+            by_user_acl.setdefault(uid, []).append(folder_path)
         items = []
         for r in rows:
+            allowed_folders = by_user_acl.get(int(r["id"]), [])
             items.append({
                 "id": int(r["id"]),
                 "username": r["username"],
@@ -4032,9 +4321,10 @@ def api_admin_users():
                 "totp_enabled": bool(r["totp_enabled"] or 0),
                 "ui_language": _normalize_language(r["ui_language"], DEFAULT_UI_LANGUAGE),
                 "search_language": _normalize_language(r["search_language"], DEFAULT_SEARCH_LANGUAGE),
+                "allowed_folders": allowed_folders,
                 "created_at": r["created_at"],
             })
-        return jsonify({"ok": True, "items": items})
+        return jsonify({"ok": True, "items": items, "available_folders": all_folders})
     # POST create user
     data = request.get_json(silent=True) or {}
     u = (data.get("username") or "").strip()
@@ -4042,16 +4332,20 @@ def api_admin_users():
     role = (data.get("role") or "user").strip().lower()
     ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
     search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+    raw_allowed = data.get("allowed_folders")
+    allowed_folders = raw_allowed if isinstance(raw_allowed, list) else []
     if role not in {"admin", "manager", "user"}:
         role = "user"
     if not u or not p:
         return jsonify({"ok": False, "error": "username_password_required"}), 400
     try:
         with closing(get_conn()) as conn:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO users(username, password_hash, is_admin, role, ui_language, search_language, created_at) VALUES (?,?,?,?,?,?,?)",
                 (u, generate_password_hash(p), 1 if role == "admin" else 0, role, ui_language, search_language, now_iso()),
             )
+            uid = int(cur.lastrowid)
+            _set_user_allowed_folders(conn, uid, allowed_folders)
             conn.commit()
         return jsonify({"ok": True})
     except Exception as e:
@@ -4075,6 +4369,8 @@ def api_admin_users_delete(uid: int):
                 return jsonify({"ok": False, "error": "invalid_role"}), 400
         ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
         search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+        raw_allowed = data.get("allowed_folders")
+        allowed_folders = raw_allowed if isinstance(raw_allowed, list) else None
         if not new_username:
             return jsonify({"ok": False, "error": "username_required"}), 400
         try:
@@ -4116,6 +4412,8 @@ def api_admin_users_delete(uid: int):
                             uid,
                         ),
                     )
+                if allowed_folders is not None:
+                    _set_user_allowed_folders(conn, uid, allowed_folders)
                 conn.commit()
             return jsonify({"ok": True})
         except sqlite3.IntegrityError:
@@ -4135,9 +4433,31 @@ def api_admin_users_delete(uid: int):
                 c = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND id<>?", (uid,)).fetchone()
                 if not c or int(c["c"]) <= 0:
                     return jsonify({"ok": False, "error": "last_admin"}), 400
+            conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (uid,))
             conn.execute("DELETE FROM users WHERE id=?", (uid,))
             conn.commit()
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/users/<int:uid>/folders", methods=["PUT"])
+@login_required
+def api_admin_user_folders(uid: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    raw_allowed = data.get("allowed_folders")
+    if not isinstance(raw_allowed, list):
+        return jsonify({"ok": False, "error": "invalid_allowed_folders"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
+            if not row:
+                return jsonify({"ok": False, "error": "not_found"}), 404
+            reduced = _set_user_allowed_folders(conn, uid, raw_allowed)
+            conn.commit()
+        return jsonify({"ok": True, "allowed_folders": reduced})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

@@ -266,6 +266,53 @@ const I18N = {
     ai_scope_all: 'Alle eksisterende',
     ai_scope_new: 'Kun nye uploads fremover',
     ai_scope_cancel: 'Annuller',
+    users_loading: 'Indlæser…',
+    users_load_error: 'Kan ikke hente brugere.',
+    users_panel_title: 'Brugere',
+    users_add_user: 'Tilføj bruger',
+    users_no_users: 'Ingen brugere',
+    users_col_id: 'ID',
+    users_col_username: 'Brugernavn',
+    users_col_role: 'Rolle',
+    users_col_language: 'Sprog (UI/Søgning)',
+    users_col_2fa: '2FA',
+    users_btn_folders: 'Mapper',
+    users_btn_edit: 'Rediger',
+    users_btn_delete: 'Slet',
+    users_create_title: 'Tilføj bruger',
+    users_edit_title: 'Rediger bruger',
+    users_folders_title: 'Mappeadgang',
+    users_folders_hint: 'Vælg mapper brugeren må se. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti.',
+    users_save_access: 'Gem adgang',
+    users_label_username: 'Brugernavn',
+    users_label_password: 'Adgangskode',
+    users_label_new_password_optional: 'Nyt password (valgfrit)',
+    users_label_role: 'Rolle',
+    users_label_ui_language: 'UI-sprog',
+    users_label_search_language: 'Søgesprog',
+    users_role_user: 'Bruger',
+    users_role_manager: 'Manager',
+    users_role_admin: 'Admin',
+    users_enable_2fa_start: 'Aktivér 2FA fra start',
+    users_close: 'Luk',
+    users_cancel: 'Annuller',
+    users_create: 'Opret',
+    users_save: 'Gem',
+    users_acl_none_found: 'Ingen mapper fundet endnu.',
+    users_acl_all_folders: 'Alle mapper (ingen begrænsning)',
+    users_acl_selected_suffix: 'valgte mapper',
+    users_acl_user_prefix: 'Bruger',
+    users_status_acl_save_failed: 'Kunne ikke gemme mappeadgang:',
+    users_status_acl_saved: 'Mappeadgang gemt',
+    users_confirm_delete: 'Slet bruger',
+    users_status_delete_failed: 'Kunne ikke slette:',
+    users_status_deleted: 'Bruger slettet',
+    users_status_username_required: 'Brugernavn må ikke være tomt.',
+    users_status_update_failed: 'Kunne ikke gemme bruger:',
+    users_status_updated: 'Bruger opdateret',
+    users_status_username_password_required: 'Udfyld brugernavn og adgangskode.',
+    users_status_create_failed: 'Kunne ikke oprette:',
+    users_status_created: 'Bruger oprettet',
   },
   en: {
     nav_timeline: '📅 Timeline',
@@ -376,6 +423,53 @@ const I18N = {
     ai_scope_all: 'All existing',
     ai_scope_new: 'Only new uploads from now on',
     ai_scope_cancel: 'Cancel',
+    users_loading: 'Loading…',
+    users_load_error: 'Could not load users.',
+    users_panel_title: 'Users',
+    users_add_user: 'Add user',
+    users_no_users: 'No users',
+    users_col_id: 'ID',
+    users_col_username: 'Username',
+    users_col_role: 'Role',
+    users_col_language: 'Language (UI/Search)',
+    users_col_2fa: '2FA',
+    users_btn_folders: 'Folders',
+    users_btn_edit: 'Edit',
+    users_btn_delete: 'Delete',
+    users_create_title: 'Add user',
+    users_edit_title: 'Edit user',
+    users_folders_title: 'Folder access',
+    users_folders_hint: 'Select folders the user can access. If you select a subfolder, parent folders are shown only as path containers.',
+    users_save_access: 'Save access',
+    users_label_username: 'Username',
+    users_label_password: 'Password',
+    users_label_new_password_optional: 'New password (optional)',
+    users_label_role: 'Role',
+    users_label_ui_language: 'UI language',
+    users_label_search_language: 'Search language',
+    users_role_user: 'User',
+    users_role_manager: 'Manager',
+    users_role_admin: 'Admin',
+    users_enable_2fa_start: 'Enable 2FA on creation',
+    users_close: 'Close',
+    users_cancel: 'Cancel',
+    users_create: 'Create',
+    users_save: 'Save',
+    users_acl_none_found: 'No folders found yet.',
+    users_acl_all_folders: 'All folders (no restriction)',
+    users_acl_selected_suffix: 'selected folders',
+    users_acl_user_prefix: 'User',
+    users_status_acl_save_failed: 'Could not save folder access:',
+    users_status_acl_saved: 'Folder access saved',
+    users_confirm_delete: 'Delete user',
+    users_status_delete_failed: 'Could not delete:',
+    users_status_deleted: 'User deleted',
+    users_status_username_required: 'Username cannot be empty.',
+    users_status_update_failed: 'Could not save user:',
+    users_status_updated: 'User updated',
+    users_status_username_password_required: 'Fill in username and password.',
+    users_status_create_failed: 'Could not create:',
+    users_status_created: 'User created',
   },
 };
 
@@ -816,13 +910,18 @@ function renderGrid() {
   if (els.mapperTools) els.mapperTools.classList.add("hidden");
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
-  if (els.logsPanel) els.logsPanel.classList.add("hidden");
   if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
   // Handle Settings view
   if (state.view === "settings") {
     els.grid.innerHTML = "";
     if (els.settingsPanel) els.settingsPanel.classList.remove("hidden");
-    if (els.logsPanel) els.logsPanel.classList.remove("hidden");
+    const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');
+    const activeTab = activeBtn ? activeBtn.getAttribute('data-tab') : null;
+    if (activeTab) {
+      document.querySelectorAll('#settingsPanel .tab-panel').forEach(p => {
+        p.classList.toggle('hidden', p.dataset.tabpanel !== activeTab);
+      });
+    }
     return;
   }
   // Handle Places (Steder) view: show map with clusters
@@ -3040,6 +3139,7 @@ async function renderUsersPanel(){
       return;
     }
     const items = js.items || [];
+    const availableFolders = Array.isArray(js.available_folders) ? js.available_folders : [];
     const rows = items.map(u => `
       <tr>
         <td class="muted">#${u.id}</td>
@@ -3048,6 +3148,7 @@ async function renderUsersPanel(){
         <td>${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
         <td>${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
         <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
+          <button data-acl="${u.id}" class="btn small">Mapper</button>
           <button data-edit="${u.id}" class="btn small">Rediger</button>
           <button data-del="${u.id}" class="btn danger small">Slet</button>
         </td>
@@ -3138,9 +3239,108 @@ async function renderUsersPanel(){
           </div>
         </div>
       </div>
+
+      <!-- Folder access modal -->
+      <div id="ua_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+        <div style="width:700px;max-width:95vw;max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
+            <h3 style="margin:0;">Mappeadgang</h3>
+            <button id="ua_close" class="btn">Luk</button>
+          </div>
+          <div id="ua_user" class="mini-label" style="margin-bottom:8px;"></div>
+          <div id="ua_hint" class="mini-label" style="margin-bottom:8px;">Vælg mapper brugeren må se. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti.</div>
+          <div id="ua_folder_access" style="max-height:55vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
+          <div class="actions" style="justify-content:flex-end;margin-top:10px;">
+            <button id="ua_cancel" class="btn">Annuller</button>
+            <button id="ua_save" class="btn primary">Gem adgang</button>
+          </div>
+        </div>
+      </div>
     `;
 
     const byId = new Map(items.map(u => [String(u.id), u]));
+
+    const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
+      const root = document.getElementById(containerId);
+      if (!root) return;
+      if (Array.isArray(allFolders) && allFolders.length) {
+        root.innerHTML = allFolders.map((folder) => {
+          const depth = String(folder || '').split('/').filter(Boolean).length;
+          const pad = Math.max(0, (depth - 1) * 14);
+          const label = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
+          return `
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;padding-left:${pad}px;">
+              <input type="checkbox" data-folder="${escapeHtml(folder)}" />
+              <span>${escapeHtml(label)}</span>
+            </label>
+          `;
+        }).join('');
+      } else if (!root.children.length) {
+        root.innerHTML = '<div class="mini-label muted">Ingen mapper fundet endnu.</div>';
+      }
+      const selected = new Set((selectedFolders || []).map(v => String(v || '')));
+      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
+        const key = String(el.getAttribute('data-folder') || '');
+        el.checked = selected.has(key);
+      });
+    };
+
+    const getFolderSelection = (containerId) => {
+      const root = document.getElementById(containerId);
+      if (!root) return [];
+      return Array.from(root.querySelectorAll('input[type="checkbox"][data-folder]:checked'))
+        .map((el) => String(el.getAttribute('data-folder') || ''))
+        .filter(Boolean);
+    };
+
+    const aclModal = document.getElementById('ua_modal');
+    const aclCloseBtn = document.getElementById('ua_close');
+    const aclCancelBtn = document.getElementById('ua_cancel');
+    const aclSaveBtn = document.getElementById('ua_save');
+    const aclUserLabel = document.getElementById('ua_user');
+    let aclEditingUserId = null;
+
+    function closeAclModal() {
+      if (!aclModal) return;
+      aclModal.classList.add('hidden');
+      aclEditingUserId = null;
+    }
+
+    wrap.querySelectorAll('button[data-acl]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = String(btn.getAttribute('data-acl') || '');
+        const user = byId.get(id);
+        if (!user) return;
+        aclEditingUserId = user.id;
+        if (aclUserLabel) {
+          const count = Array.isArray(user.allowed_folders) ? user.allowed_folders.length : 0;
+          aclUserLabel.textContent = `Bruger: ${user.username} (#${user.id}) — ${count ? `${count} valgte mapper` : 'Alle mapper (ingen begrænsning)'}`;
+        }
+        setFolderSelection('ua_folder_access', user.allowed_folders || [], availableFolders);
+        if (aclModal) aclModal.classList.remove('hidden');
+      });
+    });
+
+    aclCloseBtn && aclCloseBtn.addEventListener('click', closeAclModal);
+    aclCancelBtn && aclCancelBtn.addEventListener('click', closeAclModal);
+    aclModal && aclModal.addEventListener('click', (e)=>{ if(e.target === aclModal) closeAclModal(); });
+    aclSaveBtn && aclSaveBtn.addEventListener('click', async () => {
+      if (!aclEditingUserId) return;
+      const allowed_folders = getFolderSelection('ua_folder_access');
+      const rr = await fetch('/api/admin/users/' + aclEditingUserId + '/folders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowed_folders }),
+      });
+      const jj = await rr.json();
+      if (!rr.ok || !jj.ok) {
+        showStatus('Kunne ikke gemme mappeadgang: ' + ((jj && jj.error) || ''), 'err');
+        return;
+      }
+      showStatus('Mappeadgang gemt', 'ok');
+      closeAclModal();
+      renderUsersPanel();
+    });
 
     // bind delete
     wrap.querySelectorAll('button[data-del]').forEach(btn=>{
