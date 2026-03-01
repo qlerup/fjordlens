@@ -311,6 +311,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   grid-template-columns: repeat(auto-fill, 220px);
 }
 .photo-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
@@ -332,6 +333,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   background: #1b1f29;
   aspect-ratio: 1 / 1; /* more square thumbs */
   display: block;
+  position: relative;
 }
 .card-thumb img {
   width: 100%;
@@ -362,6 +364,28 @@ body.drawer-open .drawer-backdrop { display: block; }
   color: #d7e0f1;
   font-size: 0.8rem;
 }
+.video-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 17, 21, 0.72);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+.video-badge-icon {
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid var(--text);
+  margin-left: 2px;
+}
 .card-body { padding: 10px; }
 .card-title {
   margin: 0 0 5px;
@@ -380,13 +404,6 @@ body.drawer-open .drawer-backdrop { display: block; }
 .pills {
   margin-top: 8px;
   display: flex;
-
-/* Colored log lines */
-.raw-meta .log-line { display: block; white-space: pre-wrap; }
-.raw-meta .log-ok { color: #2ecc71; }
-.raw-meta .log-warn { color: #f1c40f; }
-.raw-meta .log-err { color: #e74c3c; }
-.raw-meta .log-info { color: var(--muted); }
   gap: 5px;
   flex-wrap: wrap;
 }
@@ -440,12 +457,22 @@ body.drawer-open .drawer-backdrop { display: block; }
 .switch:checked::after { left: 21px; }
 
 /* Viewer slide-out info */
-.viewer-info { position: absolute; top: 0; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(0); transition: transform .44s cubic-bezier(.22,1,.36,1); box-shadow: -6px 0 18px rgba(0,0,0,0.35); z-index: 1; will-change: transform; pointer-events: none; }
+.viewer-info { position: absolute; top: 0; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(0); transition: transform .44s cubic-bezier(.22,1,.36,1); box-shadow: -6px 0 18px rgba(0,0,0,0.35); z-index: 1; will-change: transform; pointer-events: none; border-top-left-radius: 0; border-bottom-left-radius: 0; border-top-right-radius: 12px; border-bottom-right-radius: 12px; overflow: hidden; }
 .viewer-info.open { transform: translateX(100%); pointer-events: auto; }
 .viewer-info.hidden { display: none; }
 .viewer-info-inner { padding: 14px; height: 100%; overflow: auto; }
 .viewer-info-inner h3 { margin: 0 0 10px; font-size: 1.05rem; }
 .vi-actions { margin-top: 12px; display:flex; gap:8px; }
+
+/* Inside the slide-out viewer panel, override sticky/full-height rules
+   from .detail-panel so the panel matches the media's height (top/bottom
+   are anchored dynamically from JS). */
+.viewer-info .detail-panel {
+  position: static;
+  top: auto;
+  height: 100%;
+  overflow: auto;
+}
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
@@ -558,6 +585,13 @@ body.drawer-open .drawer-backdrop { display: block; }
   white-space: pre-wrap;
 }
 
+/* Colored log lines (UI logs) */
+.raw-meta .log-line { display: block; white-space: pre-wrap; }
+.raw-meta .log-ok { color: #34d399; }
+.raw-meta .log-warn { color: #fbbf24; }
+.raw-meta .log-err { color: #f87171; }
+.raw-meta .log-info { color: var(--muted); }
+
 /* Inline date editor popover (keeps row size unchanged) */
 .date-popover { position: absolute; right: 8px; top: calc(100% + 6px); background: var(--panel); border:1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.45); padding:10px; border-radius:10px; z-index: 10000; }
 .date-popover.floating { position: fixed; right: auto; top: auto; }
@@ -645,10 +679,10 @@ body:not(.view-timeline) #statusBar { display: none !important; }
 .timeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 
 /* Upload overlay */
-.upload-overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(15,17,21,0.55); z-index: 10001; pointer-events: none; }
+.upload-overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(15,17,21,0.75); z-index: 10001; pointer-events: none; }
 .upload-overlay.active { display: grid; pointer-events: auto; }
-.upload-box { width: min(560px, 92vw); border: 2px dashed rgba(91,140,255,0.6); background: rgba(23,26,33,0.9); border-radius: 14px; padding: 18px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }
-.upload-title { font-weight: 700; font-size: 1.1rem; text-align: center; margin-bottom: 12px; }
+.upload-box { width: min(560px, 92vw); border: 2px dashed rgba(91,140,255,0.8); background: rgba(23,26,33,0.95); border-radius: 14px; padding: 18px; box-shadow: 0 12px 36px rgba(0,0,0,0.5); }
+.upload-title { font-weight: 800; font-size: 1.35rem; text-align: center; margin-bottom: 12px; letter-spacing: 0.3px; }
 .upload-progress { height: 10px; background: #131722; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
 .upload-progress .bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .12s linear; }
 .upload-text { text-align: center; color: var(--muted); margin-top: 8px; font-size: 0.9rem; }

@@ -144,6 +144,21 @@
               <span id="facesStatus" class="mini-label" style="align-self:center;">Ansigter: —</span>
               <span id="aiStatus" class="mini-label" style="align-self:center;">AI: —</span>
             </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+              <label class="mini-label" for="uploadDestSelect">Drag &amp; drop kopiér til</label>
+              <select id="uploadDestSelect" class="select" style="min-width:220px;">
+                <option value="uploads">Uploads-mappen</option>
+                <option value="library">Fotobiblioteket</option>
+              </select>
+              <button id="uploadDestSaveBtn" class="btn">Gem placering</button>
+              <span id="uploadDestHint" class="mini-label">Scan kopierer ikke filer.</span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
+              <label class="mini-label" for="uploadSubdirSelect">Undermappe</label>
+              <select id="uploadSubdirSelect" class="select" style="min-width:260px;"></select>
+              <input id="uploadFolderNewInput" type="text" placeholder="Ny mappe (fx 2026/rejse)" style="min-width:240px;" />
+              <button id="uploadFolderCreateBtn" class="btn">Opret mappe</button>
+            </div>
           </div>
         </div>
 
@@ -274,14 +289,32 @@
     <!-- Slide-out info panel inside viewer -->
     <aside id="viewerInfo" class="viewer-info hidden">
       <div class="detail-panel viewer-info-inner">
-        <h3 id="viTitle" style="margin:0 0 8px;">—</h3>
-        <div class="detail-row"><span>Dato</span><strong id="viDate">—</strong></div>
-        <div class="detail-row"><span>Størrelse</span><strong id="viSize">—</strong></div>
-        <div class="detail-row"><span>Dimensioner</span><strong id="viDims">—</strong></div>
-        <div class="detail-row"><span>Enhed</span><strong id="viDevice">—</strong></div>
-        <div class="detail-row"><span>Linse</span><strong id="viLens">—</strong></div>
-        <div class="detail-row"><span>GPS</span><strong id="viGps">—</strong></div>
-        <div class="detail-row"><span>AI tags</span><strong id="viTags">—</strong></div>
+        <h3 id="viTitle" style="margin:0 0 6px;">—</h3>
+        <div class="vi-actions" style="margin:6px 0 10px;display:flex;gap:8px;align-items:center;">
+          <button id="viFavoriteBtn" class="icon-btn" title="Favorit">☆</button>
+          <button id="viSimilarBtn" class="btn" title="Find lignende">Lignende</button>
+        </div>
+        <div class="detail-list">
+          <div class="detail-row"><span>Dato</span>
+            <div class="detail-val">
+              <strong id="viDate">—</strong>
+              <button id="viEditDateBtn" class="icon-btn tiny" title="Rediger dato">✎</button>
+            </div>
+          </div>
+          <div class="detail-row"><span>Størrelse</span><strong id="viSize">—</strong></div>
+          <div class="detail-row"><span>Dimensioner</span><strong id="viDims">—</strong></div>
+          <div class="detail-row"><span>Enhed</span><strong id="viDevice">—</strong></div>
+          <div class="detail-row"><span>Linse</span><strong id="viLens">—</strong></div>
+          <div class="detail-row"><span>GPS</span>
+            <div class="detail-val">
+              <strong id="viGps">—</strong>
+              <button id="viEditGpsBtn" class="icon-btn tiny" title="Rediger GPS">✎</button>
+            </div>
+          </div>
+          <div class="detail-row"><span>Land</span><strong id="viCountry">—</strong></div>
+          <div class="detail-row"><span>By</span><strong id="viCity">—</strong></div>
+          <div class="detail-row"><span>AI tags</span><strong id="viTags">—</strong></div>
+        </div>
         <div class="vi-actions" style="margin-top:10px;display:flex;gap:8px;">
           <a id="viDownload" class="btn" href="#" target="_blank" rel="noopener">Download</a>
         </div>
@@ -293,7 +326,7 @@
   <!-- Drag & Drop Upload Overlay -->
   <div id="uploadOverlay" class="upload-overlay hidden">
     <div class="upload-box">
-      <div class="upload-title">Slip filer her for at uploade</div>
+      <div class="upload-title">Træk filer herind for at uploade</div>
       <div class="upload-progress"><div id="uploadProgressBar" class="bar"></div></div>
       <div id="uploadProgressText" class="upload-text"></div>
     </div>

@@ -11,6 +11,12 @@ const els = {
   aiStatus: document.getElementById("aiStatus"),
   facesIndexBtn: document.getElementById("facesIndexBtn"),
   facesStatus: document.getElementById("facesStatus"),
+  uploadDestSelect: document.getElementById("uploadDestSelect"),
+  uploadDestSaveBtn: document.getElementById("uploadDestSaveBtn"),
+  uploadDestHint: document.getElementById("uploadDestHint"),
+  uploadSubdirSelect: document.getElementById("uploadSubdirSelect"),
+  uploadFolderNewInput: document.getElementById("uploadFolderNewInput"),
+  uploadFolderCreateBtn: document.getElementById("uploadFolderCreateBtn"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -293,9 +299,12 @@ function cardHTML(item) {
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
     : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : 'Ingen thumbnail'}</div>`;
+  const videoOverlay = item.is_video
+    ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
+    : "";
 
   // Gridkort uden extra tekst/metadata – kun selve billedet
-  return `${thumb}`;
+  return `${thumb}${videoOverlay}`;
 }
 
 function renderGrid() {
@@ -532,7 +541,7 @@ function appendPersonCard(p) {
       <div class="card-meta"><span>${p.count||0} billede(r)</span></div>
       <div class="pills">${p.hidden ? '<span class="pill">Skjult</span>' : ''}</div>
       <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
-        <button class="btn tiny" data-act="rename">Omdøb</button>
+        <button class="btn tiny" data-act="rename">Navngiv</button>
         ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${p.hidden?'Vis':'Skjul'}</button>`}
       </div>
     </div>
@@ -628,7 +637,13 @@ function openViewer(index) {
     q('viLens').textContent = lens;
     q('viGps').textContent = gps;
     q('viTags').textContent = tags;
+    try {
+      const geo = (it.metadata_json && it.metadata_json.geo) ? it.metadata_json.geo : {};
+      q('viCountry').textContent = geo.country || '-';
+      q('viCity').textContent = geo.city || '-';
+    } catch {}
     const viDL = q('viDownload'); if (viDL) viDL.href = dl;
+    try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
   } catch {}
 
   // Position the info panel so it appears to slide out from "under" the media
@@ -639,11 +654,13 @@ function openViewer(index) {
       const r = mediaEl.getBoundingClientRect();
       // Hide panel "under" image: set its left so it sits fully beneath media
       const w = vi.offsetWidth || 360;
-      vi.style.left = `${Math.round(r.right - w)}px`;
+      const underOffset = 8; // tuck a bit under the image
+      vi.style.left = `${Math.round(r.right - w - underOffset)}px`;
       vi.style.right = 'auto';
-      // Size/position vertically to be slightly smaller than image (50px padding on top/bottom)
-      const top = Math.max(0, Math.round(r.top + 50));
-      const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+      // Size/position vertically to be slightly smaller than image (16px padding on top/bottom)
+      const vPad = 16;
+      const top = Math.max(0, Math.round(r.top + vPad));
+      const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
       vi.style.top = `${top}px`;
       vi.style.bottom = `${bottomGap}px`;
       vi.style.height = '';
@@ -736,6 +753,124 @@ async function loadPersonPhotos(pid, name) {
 }
 
 // --- Drag & Drop Upload ---
+function setUploadDestinationHint(dest, photoDir, uploadDir, subdir = '') {
+  if (!els.uploadDestHint) return;
+  const base = (dest === 'library') ? (photoDir || 'ukendt sti') : (uploadDir || 'ukendt sti');
+  const fullPath = subdir ? `${base}/${subdir}` : base;
+  if (dest === 'library') {
+    els.uploadDestHint.textContent = `Drag & drop kopieres til fotobiblioteket (${fullPath}). Scan kopierer ikke filer.`;
+  } else {
+    els.uploadDestHint.textContent = `Drag & drop kopieres til uploads-mappen (${fullPath}). Scan kopierer ikke filer.`;
+  }
+}
+
+function renderUploadSubdirs(folders, selectedSubdir) {
+  if (!els.uploadSubdirSelect) return;
+  const list = Array.isArray(folders) ? [...folders] : [];
+  if (!list.includes('')) list.unshift('');
+  const unique = Array.from(new Set(list));
+  els.uploadSubdirSelect.innerHTML = unique
+    .map(path => {
+      const label = path ? path : '(rodmappe)';
+      return `<option value="${escapeHtml(path)}">${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const subdir = selectedSubdir || '';
+  if (!unique.includes(subdir)) {
+    const opt = document.createElement('option');
+    opt.value = subdir;
+    opt.textContent = subdir || '(rodmappe)';
+    els.uploadSubdirSelect.appendChild(opt);
+  }
+  els.uploadSubdirSelect.value = subdir;
+}
+
+async function fetchUploadDestinationConfig(destination = null) {
+  let url = '/api/settings/upload-destination';
+  if (destination) url += `?destination=${encodeURIComponent(destination)}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return { res, data };
+}
+
+async function loadUploadDestination(previewDestination = null, keepDestinationSelection = false) {
+  if (!els.uploadDestSelect) return;
+  try {
+    const { res, data } = await fetchUploadDestinationConfig(previewDestination);
+    if (!res.ok || !data || !data.ok) {
+      if (els.uploadDestHint) els.uploadDestHint.textContent = 'Kunne ikke hente kopi-placering for drag & drop.';
+      return;
+    }
+    const savedDest = (data.saved_destination === 'library') ? 'library' : 'uploads';
+    const loadedDest = (data.destination === 'library') ? 'library' : 'uploads';
+    const dest = loadedDest || savedDest;
+    if (!keepDestinationSelection) {
+      els.uploadDestSelect.value = savedDest;
+    }
+    renderUploadSubdirs(data.folders || [], data.subdir || '');
+    setUploadDestinationHint(dest, data.photo_dir, data.upload_dir, data.subdir || '');
+  } catch {
+    if (els.uploadDestHint) els.uploadDestHint.textContent = 'Kunne ikke hente kopi-placering for drag & drop.';
+  }
+}
+
+async function saveUploadDestination() {
+  if (!els.uploadDestSelect) return;
+  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
+  const subdir = els.uploadSubdirSelect ? (els.uploadSubdirSelect.value || '') : '';
+  try {
+    if (els.uploadDestSaveBtn) els.uploadDestSaveBtn.disabled = true;
+    const res = await fetch('/api/settings/upload-destination', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination, subdir }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || 'Kunne ikke gemme kopi-placering for drag & drop', 'err');
+      return;
+    }
+    renderUploadSubdirs(data.folders || [], data.subdir || '');
+    setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || '');
+    showStatus('Kopi-placering for drag & drop gemt.', 'ok');
+  } catch {
+    showStatus('Fejl ved gem af kopi-placering for drag & drop.', 'err');
+  } finally {
+    if (els.uploadDestSaveBtn) els.uploadDestSaveBtn.disabled = false;
+  }
+}
+
+async function createUploadFolder() {
+  if (!els.uploadDestSelect || !els.uploadFolderNewInput) return;
+  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
+  const path = (els.uploadFolderNewInput.value || '').trim();
+  if (!path) {
+    showStatus('Skriv mappenavn først.', 'err');
+    return;
+  }
+  try {
+    if (els.uploadFolderCreateBtn) els.uploadFolderCreateBtn.disabled = true;
+    const res = await fetch('/api/settings/upload-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination, path }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || 'Kunne ikke oprette mappe', 'err');
+      return;
+    }
+    if (els.uploadFolderNewInput) els.uploadFolderNewInput.value = '';
+    renderUploadSubdirs(data.folders || [], data.created || data.subdir || '');
+    setUploadDestinationHint(data.destination, data.photo_dir, data.upload_dir, data.subdir || data.created || '');
+    showStatus('Mappe oprettet. Husk at gemme placering.', 'ok');
+  } catch {
+    showStatus('Fejl ved oprettelse af mappe.', 'err');
+  } finally {
+    if (els.uploadFolderCreateBtn) els.uploadFolderCreateBtn.disabled = false;
+  }
+}
+
 async function uploadFiles(fileList) {
   const files = Array.from(fileList || []).filter(f => !!f && f.name);
   if (!files.length) return;
@@ -745,7 +880,7 @@ async function uploadFiles(fileList) {
   fd.append('meta', JSON.stringify(meta));
   const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
   // Show overlay
-  if (els.uploadOverlay) els.uploadOverlay.classList.add('active');
+  if (els.uploadOverlay) { els.uploadOverlay.classList.remove('hidden'); els.uploadOverlay.classList.add('active'); }
   if (els.uploadProgressBar) els.uploadProgressBar.style.width = '0%';
   if (els.uploadProgressText) els.uploadProgressText.textContent = `${files.length} fil(er)`;
   try {
@@ -783,14 +918,14 @@ async function uploadFiles(fileList) {
   } catch (e) {
     console.error(e);
   } finally {
-    if (els.uploadOverlay) els.uploadOverlay.classList.remove('active');
+    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
   }
 }
 
 window.addEventListener('dragover', (e) => {
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
-    if (els.uploadOverlay) els.uploadOverlay.classList.add('active');
+    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('hidden'); els.uploadOverlay.classList.add('active'); }
     if (els.uploadProgressBar) els.uploadProgressBar.style.width = '0%';
     if (els.uploadProgressText) els.uploadProgressText.textContent = 'Slip filer for at uploade';
   }
@@ -802,13 +937,13 @@ window.addEventListener('drop', (e) => {
   }
   // If nothing to upload, hide overlay
   if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) {
-    if (els.uploadOverlay) els.uploadOverlay.classList.remove('active');
+    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
   }
 });
 window.addEventListener('dragleave', (e) => {
   // Hide when leaving window
   if (e.screenX === 0 && e.screenY === 0) {
-    if (els.uploadOverlay) els.uploadOverlay.classList.add('hidden');
+    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
   }
 });
 
@@ -1401,6 +1536,7 @@ async function pollAiStatus() {
 
 // Start med at vise status hvis noget kører allerede
 pollAiStatus();
+loadUploadDestination();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
@@ -1704,7 +1840,15 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
     if (tab === 'twofa') renderTwofaPanel();
+    if (tab === 'maint') loadUploadDestination();
   });
+});
+
+els.uploadDestSaveBtn && els.uploadDestSaveBtn.addEventListener('click', saveUploadDestination);
+els.uploadFolderCreateBtn && els.uploadFolderCreateBtn.addEventListener('click', createUploadFolder);
+els.uploadDestSelect && els.uploadDestSelect.addEventListener('change', () => {
+  const destination = (els.uploadDestSelect.value === 'library') ? 'library' : 'uploads';
+  loadUploadDestination(destination, true);
 });
 
 // viewer events
@@ -1741,10 +1885,12 @@ if (viBtn && viPanel) {
         const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
         const r = mediaEl.getBoundingClientRect();
         const w = viPanel.offsetWidth || 360;
-        viPanel.style.left = `${Math.round(r.right - w)}px`;
+        const underOffset = 8;
+        viPanel.style.left = `${Math.round(r.right - w - underOffset)}px`;
         viPanel.style.right = 'auto';
-        const top = Math.max(0, Math.round(r.top + 50));
-        const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+        const vPad = 16;
+        const top = Math.max(0, Math.round(r.top + vPad));
+        const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
         viPanel.style.top = `${top}px`;
         viPanel.style.bottom = `${bottomGap}px`;
         viPanel.style.height = '';
@@ -1771,15 +1917,54 @@ window.addEventListener('resize', ()=>{
     const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
     const r = mediaEl.getBoundingClientRect();
     const w = vi.offsetWidth || 360;
-    vi.style.left = `${Math.round(r.right - w)}px`;
+    const underOffset = 8;
+    vi.style.left = `${Math.round(r.right - w - underOffset)}px`;
     vi.style.right = 'auto';
-    const top = Math.max(0, Math.round(r.top + 50));
-    const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - 50)));
+    const vPad = 16;
+    const top = Math.max(0, Math.round(r.top + vPad));
+    const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
     vi.style.top = `${top}px`;
     vi.style.bottom = `${bottomGap}px`;
     vi.style.height = '';
   } catch {}
 });
+
+// Proxy edit buttons inside viewer to open the main editors
+const viEditDateBtn = document.getElementById('viEditDateBtn');
+if (viEditDateBtn) {
+  viEditDateBtn.addEventListener('click', ()=>{ try { closeViewer(); } catch{}; try { els.editDateBtn && els.editDateBtn.click(); } catch{} });
+}
+const viEditGpsBtn = document.getElementById('viEditGpsBtn');
+if (viEditGpsBtn) {
+  viEditGpsBtn.addEventListener('click', ()=>{ try { closeViewer(); } catch{}; try { els.editGpsBtn && els.editGpsBtn.click(); } catch{} });
+}
+
+// Viewer actions: favorite + similar
+const viFavoriteBtn = document.getElementById('viFavoriteBtn');
+if (viFavoriteBtn) {
+  viFavoriteBtn.addEventListener('click', async ()=>{
+    await toggleFavorite();
+    try { const selected = state.items.find(i=>i.id===state.selectedId); viFavoriteBtn.textContent = selected && selected.favorite ? '★' : '☆'; } catch {}
+  });
+}
+
+async function openSimilarForSelected(){
+  if (!state.selectedId) return;
+  try {
+    const res = await fetch(`/api/photos/${state.selectedId}/similar?limit=60`);
+    const data = await res.json();
+    if (!res.ok) { showStatus(data && data.error ? data.error : 'Kunne ikke hente lignende', 'err'); return; }
+    state.view = 'timeline';
+    state.items = Array.isArray(data.items) ? data.items : [];
+    state.selectedId = null;
+    if (els.viewTitle) els.viewTitle.textContent = 'Lignende billeder';
+    if (els.viewSubtitle) els.viewSubtitle.textContent = 'Fundet via billed‑embedding';
+    closeViewer();
+    renderGrid();
+  } catch { showStatus('Fejl ved hentning af lignende', 'err'); }
+}
+const viSimilarBtn = document.getElementById('viSimilarBtn');
+if (viSimilarBtn) viSimilarBtn.addEventListener('click', openSimilarForSelected);
 
 // Mobile drawer toggle
 function openDrawer(){ document.body.classList.add("drawer-open"); }

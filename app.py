@@ -1,4 +1,6 @@
 import hashlib
+import subprocess
+import tempfile
 import re
 import hmac
 import io
@@ -45,7 +47,15 @@ DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
+UPLOAD_DEST_UPLOADS = "uploads"
+UPLOAD_DEST_LIBRARY = "library"
+UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
+UPLOAD_DEST_CHOICES = {UPLOAD_DEST_UPLOADS, UPLOAD_DEST_LIBRARY}
 FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
+VIDEO_FACE_SAMPLE_INTERVAL_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_INTERVAL_SEC", "3.0"))
+VIDEO_FACE_SAMPLE_MAX_FRAMES = int(os.environ.get("VIDEO_FACE_SAMPLE_MAX_FRAMES", "24"))
+VIDEO_FACE_SAMPLE_START_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_START_SEC", "0.5"))
+VIDEO_FACE_DEDUPE_THRESHOLD = float(os.environ.get("VIDEO_FACE_DEDUPE_THRESHOLD", "0.92"))
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -62,6 +72,39 @@ GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
+
+# --- Console color support (for Windows terminals and Docker logs) ---
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[92m"
+ANSI_YELLOW = "\033[93m"
+ANSI_RED = "\033[91m"
+ANSI_DIM = "\033[90m"
+
+def _enable_windows_ansi() -> None:
+    try:
+        if os.name == "nt":
+            import ctypes  # type: ignore
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            h = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+                kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    except Exception:
+        # Best-effort only; ignore if not a real console
+        pass
+
+_enable_windows_ansi()
+
+def _classify_log_level(event: str, data: Dict[str, Any]) -> str:
+    ev = (event or "").lower()
+    if data.get("error") or ev == "error" or ev.endswith("_error") or ev.endswith("_fail") or ev == "ai_http_error":
+        return "err"
+    if ev in {"skip_unchanged", "no_new", "missing"} or ev.endswith("_check") or ("retry" in ev) or ("skip" in ev):
+        return "warn"
+    if ev.endswith("_done") or ev.endswith("_saved") or ev.endswith("_ok") or ev in {"indexed", "faces_detect", "faces_index_done", "face_saved", "upload_indexed", "rethumb_ok"}:
+        return "ok"
+    return "info"
 
 
 def _get_secret_key() -> bytes:
@@ -102,7 +145,39 @@ LOG_SEQ: int = 0
 def log_event(event: str, **data: Any) -> None:
     global LOG_SEQ
     LOG_SEQ += 1
-    LOG_BUFFER.append({"id": LOG_SEQ, "t": now_iso(), "event": event, **data})
+    t = now_iso()
+    LOG_BUFFER.append({"id": LOG_SEQ, "t": t, "event": event, **data})
+    # Console output with colors and proper newlines
+    try:
+        lvl = _classify_log_level(event, data)
+        color = ANSI_DIM
+        if lvl == "ok":
+            color = ANSI_GREEN
+        elif lvl == "warn":
+            color = ANSI_YELLOW
+        elif lvl == "err":
+            color = ANSI_RED
+        # Compact key=value payload
+        parts = []
+        for k, v in data.items():
+            if v is None:
+                continue
+            try:
+                if isinstance(v, (dict, list)):
+                    sv = json.dumps(v, ensure_ascii=False)
+                else:
+                    sv = str(v)
+            except Exception:
+                sv = str(v)
+            # keep lines readable
+            if len(sv) > 300:
+                sv = sv[:297] + "..."
+            parts.append(f"{k}={sv}")
+        extra = (" " + " ".join(parts)) if parts else ""
+        print(f"{color}[{t}] {event}{extra}{ANSI_RESET}")
+    except Exception:
+        # Never let console formatting break logging
+        pass
 
 
 # --- AI helpers (CLIP service) ---
@@ -172,6 +247,141 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
     return None
 
 
+def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional[list[Dict[str, Any]]]:
+    """Send image bytes to AI service for face detection/embeddings."""
+    try:
+        files = {"file": (filename, data, "application/octet-stream")}
+        r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        if r.ok:
+            js = r.json() or {}
+            if js.get("ok") and isinstance(js.get("faces"), list):
+                return js.get("faces")
+        else:
+            log_event("ai_http_error", file=filename, error=f"status:{r.status_code}")
+    except Exception as e:
+        log_event("error", file=filename, error=f"ai_faces_bytes: {e}")
+    return None
+
+
+def _video_duration_seconds(path: Path) -> Optional[float]:
+    """Get video duration in seconds using ffprobe."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ]
+        r = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        val = float((r.stdout or "").strip())
+        return val if val > 0 else None
+    except Exception:
+        return None
+
+
+def _video_face_sample_timestamps(path: Path, rel_path: str) -> tuple[Optional[float], list[float]]:
+    """Build sampling timestamps for video face detection."""
+    duration = _video_duration_seconds(path)
+    start = max(0.0, VIDEO_FACE_SAMPLE_START_SEC)
+    interval = max(0.5, VIDEO_FACE_SAMPLE_INTERVAL_SEC)
+    max_frames = max(1, VIDEO_FACE_SAMPLE_MAX_FRAMES)
+
+    if not duration:
+        ts = [start]
+        log_event("faces_video_sampling", rel_path=rel_path, duration=None, samples=ts)
+        return None, ts
+
+    ts: list[float] = []
+    t = start
+    while t < duration and len(ts) < max_frames:
+        ts.append(round(t, 3))
+        t += interval
+
+    if not ts:
+        fallback = max(0.0, min(start, duration * 0.5))
+        ts = [round(fallback, 3)]
+
+    tail = max(0.0, duration - 0.2)
+    if len(ts) < max_frames and tail > ts[-1] + (interval * 0.5):
+        ts.append(round(tail, 3))
+
+    log_event("faces_video_sampling", rel_path=rel_path, duration=round(duration, 2), sample_count=len(ts), samples=ts)
+    return duration, ts
+
+
+def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Optional[bytes]:
+    """Extract one JPEG frame from video at a timestamp."""
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out_path = Path(td) / "face_frame.jpg"
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{at_sec:.3f}", "-i", str(path),
+                "-frames:v", "1",
+                "-q:v", "3",
+                str(out_path),
+            ]
+            subprocess.run(cmd, check=True)
+            if out_path.exists():
+                return out_path.read_bytes()
+    except Exception as e:
+        log_event("faces_video_frame_fail", rel_path=rel_path, at_sec=round(at_sec, 2), error=str(e))
+    return None
+
+
+def _dedupe_faces_by_embedding(faces: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Remove repeated detections of the same person across nearby video frames."""
+    if not faces:
+        return []
+    thr = max(0.0, min(1.0, VIDEO_FACE_DEDUPE_THRESHOLD))
+    ranked = sorted(faces, key=lambda f: float(f.get("confidence") or 0.0), reverse=True)
+    kept: list[Dict[str, Any]] = []
+    kept_embs: list[list[float]] = []
+    for fc in ranked:
+        emb = fc.get("embedding") or []
+        if not emb:
+            kept.append(fc)
+            continue
+        duplicate = False
+        for ref in kept_embs:
+            if _cosine(emb, ref) >= thr:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        kept.append(fc)
+        kept_embs.append(emb)
+    return kept
+
+
+def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any]]:
+    """Detect faces from sampled video frames and return deduplicated detections."""
+    _, timestamps = _video_face_sample_timestamps(path, rel_path)
+    all_faces: list[Dict[str, Any]] = []
+    frames_ok = 0
+    for sec in timestamps:
+        frame_bytes = _extract_video_frame_bytes(path, rel_path, sec)
+        if not frame_bytes:
+            continue
+        frames_ok += 1
+        faces = _ai_detect_faces_bytes(frame_bytes, filename=f"{path.stem}_t{sec:.2f}.jpg") or []
+        log_event("faces_video_frame_detect", rel_path=rel_path, at_sec=round(sec, 2), count=len(faces))
+        for fc in faces:
+            if isinstance(fc, dict):
+                fc["frame_sec"] = sec
+                all_faces.append(fc)
+    unique_faces = _dedupe_faces_by_embedding(all_faces)
+    log_event(
+        "faces_video_detect_done",
+        rel_path=rel_path,
+        sampled_frames=len(timestamps),
+        decoded_frames=frames_ok,
+        faces_total=len(all_faces),
+        faces_unique=len(unique_faces),
+    )
+    return unique_faces
+
+
 def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tuple[int, bool, float]:
     """Return (person_id, created_new, score). Find best match by cosine; create 'Ukendt-#' if below threshold."""
     best_pid: Optional[int] = None
@@ -210,7 +420,7 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
 
 
 def index_faces_for_photo(rel_path: str) -> None:
-    """Detect faces for a photo and store into DB; updates people_count."""
+    """Detect faces for a photo/video and store into DB; updates people_count."""
     try:
         # Resolve disk path
         if rel_path.startswith("uploads/"):
@@ -220,8 +430,13 @@ def index_faces_for_photo(rel_path: str) -> None:
         if not disk_path.exists():
             return
         log_event("faces_index_start", rel_path=rel_path)
-        faces = _ai_detect_faces_path(disk_path) or []
-        log_event("faces_detect", rel_path=rel_path, count=len(faces))
+        is_video = disk_path.suffix.lower() in VIDEO_EXTS
+        if is_video:
+            faces = _ai_detect_faces_video_path(disk_path, rel_path)
+            log_event("faces_detect", rel_path=rel_path, media="video", count=len(faces))
+        else:
+            faces = _ai_detect_faces_path(disk_path) or []
+            log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces))
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
             if not row:
@@ -272,7 +487,15 @@ def index_faces_for_photo(rel_path: str) -> None:
                         ),
                     )
                     count += 1
-                    log_event("face_saved", rel_path=rel_path, photo_id=photo_id, person_id=pid, bbox=[bx,by,bw,bh], score=score)
+                    log_event(
+                        "face_saved",
+                        rel_path=rel_path,
+                        photo_id=photo_id,
+                        person_id=pid,
+                        bbox=[bx, by, bw, bh],
+                        score=score,
+                        frame_sec=fc.get("frame_sec"),
+                    )
                 except Exception as e:
                     log_event("error", rel_path=rel_path, error=f"face_insert: {e}")
             try:
@@ -601,6 +824,12 @@ def init_db() -> None:
             row2 = conn.execute("SELECT value FROM settings WHERE key='ai_auto_ingest'").fetchone()
             if not row2:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_auto_ingest", "1" if AI_ENV_AUTO_INGEST_DEFAULT else "0"))
+            row3 = conn.execute("SELECT value FROM settings WHERE key='upload_destination'").fetchone()
+            if not row3:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_destination", UPLOAD_DEST_DEFAULT))
+            row4 = conn.execute("SELECT value FROM settings WHERE key='upload_subdir'").fetchone()
+            if not row4:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_subdir", ""))
             conn.commit()
         except Exception:
             pass
@@ -609,7 +838,7 @@ def init_db() -> None:
 @app.before_request
 def enforce_login_for_app():
     # Allow static files and login endpoints without auth
-    open_endpoints = {"login", "verify_2fa", "static", "setup"}
+    open_endpoints = {"login", "verify_2fa", "static", "setup", "api_health"}
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
     # Bootstrap: if no users exist, redirect to setup
@@ -685,6 +914,93 @@ def ai_feature_enabled() -> bool:
 
 def ai_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_auto_ingest", AI_ENV_AUTO_INGEST_DEFAULT)
+
+
+def get_upload_destination() -> str:
+    v = (_get_setting("upload_destination", UPLOAD_DEST_DEFAULT) or "").strip().lower()
+    if v not in UPLOAD_DEST_CHOICES:
+        return UPLOAD_DEST_DEFAULT
+    return v
+
+
+def _normalize_upload_subdir(raw: Optional[str]) -> str:
+    value = (raw or "").strip().replace("\\", "/")
+    value = value.strip("/")
+    if not value:
+        return ""
+    safe_parts: list[str] = []
+    for part in value.split("/"):
+        p = part.strip()
+        if not p or p in {".", ".."}:
+            raise ValueError("Ugyldig mappe")
+        safe = secure_filename(p)
+        if not safe:
+            raise ValueError("Ugyldig mappe")
+        safe_parts.append(safe)
+    return "/".join(safe_parts)
+
+
+def get_upload_subdir() -> str:
+    try:
+        return _normalize_upload_subdir(_get_setting("upload_subdir", ""))
+    except Exception:
+        return ""
+
+
+def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
+    out: list[str] = [""]
+    try:
+        base = base_dir.resolve()
+    except Exception:
+        return out
+    if not base.exists() or not base.is_dir():
+        return out
+    try:
+        for root, dirs, _files in os.walk(base):
+            dirs[:] = sorted([d for d in dirs if not d.startswith(".")])
+            for d in dirs:
+                p = Path(root) / d
+                try:
+                    rel = str(p.relative_to(base)).replace("\\", "/")
+                except Exception:
+                    continue
+                if rel and rel not in out:
+                    out.append(rel)
+                    if len(out) >= limit:
+                        return out
+    except Exception:
+        return out
+    return out
+
+
+def _upload_settings_payload(destination: str) -> dict:
+    saved_destination = get_upload_destination()
+    subdir = get_upload_subdir()
+    target_root, _ = _upload_target_for_destination(destination)
+    folders = _list_upload_subdirs(target_root)
+    if subdir and subdir not in folders:
+        folders.append(subdir)
+        folders = sorted(folders, key=lambda x: (x != "", x.lower()))
+    return {
+        "ok": True,
+        "destination": destination,
+        "saved_destination": saved_destination,
+        "subdir": subdir,
+        "folders": folders,
+        "photo_dir": str(PHOTO_DIR),
+        "upload_dir": str(UPLOAD_DIR),
+        "note": "Scan bruger filer direkte fra biblioteket og kopierer ikke.",
+        "options": [
+            {"value": UPLOAD_DEST_UPLOADS, "label": "Kopiér til uploads-mappen"},
+            {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
+        ],
+    }
+
+
+def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
+    if destination == UPLOAD_DEST_LIBRARY:
+        return PHOTO_DIR, ""
+    return UPLOAD_DIR, "uploads/"
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -1087,6 +1403,31 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     return thumb_name
 
 
+def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: int) -> Optional[str]:
+    """Extract a representative frame via ffmpeg and save as JPEG thumbnail.
+    Returns the thumbnail file name or None on failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out_path = Path(td) / "frame.jpg"
+            # Grab a frame at 0.5s; fall back to first frame if video is shorter
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.5", "-i", str(path),
+                "-frames:v", "1",
+                str(out_path),
+            ]
+            subprocess.run(cmd, check=True)
+            with Image.open(out_path) as img:
+                return make_thumb(img, rel_path, file_mtime, file_size)
+    except Exception as e:
+        try:
+            log_event("error", rel_path=rel_path, error=f"video_thumb: {e}")
+        except Exception:
+            pass
+        return None
+
+
 def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
     """Return a path that browsers and AI can read.
     For HEIC/HEIF originals (which browsers can't display and some libs can't stream),
@@ -1126,45 +1467,58 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         "modified_fs": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
     }
 
-    # For video files, we don't attempt EXIF; capture minimal metadata
-    if metadata["ext"] in VIDEO_EXTS:
-        metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
-        # Keep width/height unknown; no EXIF; no phash
-        return metadata
-
+    # Prepare common fields used by the DB layer; always provide placeholders
     exif_map: Dict[str, Any] = {}
     thumb_name = None
-    checksum = None
     phash = None
-
-    try:
-        with Image.open(path) as img:
-            try:
-                img = ImageOps.exif_transpose(img)
-            except Exception:
-                pass
-            metadata["width"], metadata["height"] = img.size
-            exif_map = parse_exif(img)
-            metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
-            metadata["camera_make"] = exif_map.get("Make")
-            metadata["camera_model"] = exif_map.get("Model")
-            metadata["lens_model"] = exif_map.get("LensModel")
-            metadata["iso"] = exif_map.get("ISOSpeedRatings") or exif_map.get("PhotographicSensitivity")
-            metadata["focal_length"] = _rational_to_float(exif_map.get("FocalLength"))
-            metadata["f_number"] = _rational_to_float(exif_map.get("FNumber"))
-            metadata["exposure_time"] = str(exif_map.get("ExposureTime")) if exif_map.get("ExposureTime") is not None else None
-            metadata["gps_lat"] = exif_map.get("_gps_lat")
-            metadata["gps_lon"] = exif_map.get("_gps_lon")
-            metadata["gps_name"] = None  # placeholder for future reverse geocoding
-            thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
-            try:
-                phash = average_hash(img)
-            except Exception:
-                phash = None
-    except Exception as e:
-        # Unsupported or damaged image: still index file-level info
+    # Ensure all DB-bound fields exist (videos may not populate them)
+    for k in (
+        "width", "height", "camera_make", "camera_model", "lens_model",
+        "iso", "focal_length", "f_number", "exposure_time",
+        "gps_lat", "gps_lon", "gps_name",
+    ):
+        metadata[k] = None
+    # Determine if file is a video (no EXIF parsing via Pillow)
+    is_video = metadata["ext"] in VIDEO_EXTS
+    if is_video:
+        # Minimal fields for videos
         metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
-        metadata["thumb_error"] = str(e)
+        # Attempt to make a thumbnail from first frame
+        if generate_thumb:
+            tn = _make_video_thumb(path, rel_path, stat.st_mtime, stat.st_size)
+            if tn:
+                thumb_name = tn
+    
+    if not is_video:
+        # Images: read via Pillow to populate EXIF-derived fields
+        try:
+            with Image.open(path) as img:
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
+                metadata["width"], metadata["height"] = img.size
+                exif_map = parse_exif(img)
+                metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
+                metadata["camera_make"] = exif_map.get("Make")
+                metadata["camera_model"] = exif_map.get("Model")
+                metadata["lens_model"] = exif_map.get("LensModel")
+                metadata["iso"] = exif_map.get("ISOSpeedRatings") or exif_map.get("PhotographicSensitivity")
+                metadata["focal_length"] = _rational_to_float(exif_map.get("FocalLength"))
+                metadata["f_number"] = _rational_to_float(exif_map.get("FNumber"))
+                metadata["exposure_time"] = str(exif_map.get("ExposureTime")) if exif_map.get("ExposureTime") is not None else None
+                metadata["gps_lat"] = exif_map.get("_gps_lat")
+                metadata["gps_lon"] = exif_map.get("_gps_lon")
+                metadata["gps_name"] = None  # placeholder for future reverse geocoding
+                thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
+                try:
+                    phash = average_hash(img)
+                except Exception:
+                    phash = None
+        except Exception as e:
+            # Unsupported or damaged image: still index file-level info
+            metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
+            metadata["thumb_error"] = str(e)
 
     # Fallbacks to enrich missing EXIF (camera, lens, GPS, date)
     try:
@@ -2806,6 +3160,75 @@ def api_logs():
     return jsonify({"items": items[:200], "next": next_id})
 
 
+@app.route("/api/settings/upload-destination", methods=["GET", "POST"])
+def api_settings_upload_destination():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        destination_raw = body.get("destination")
+        destination = get_upload_destination() if destination_raw is None else str(destination_raw).strip().lower()
+        if destination not in UPLOAD_DEST_CHOICES:
+            return jsonify({"ok": False, "error": "Ugyldigt upload-destination-valg"}), 400
+        if "subdir" in body:
+            try:
+                subdir = _normalize_upload_subdir(str(body.get("subdir") or ""))
+            except Exception:
+                return jsonify({"ok": False, "error": "Ugyldig undermappe"}), 400
+            _set_setting("upload_subdir", subdir)
+        _set_setting("upload_destination", destination)
+        return jsonify(_upload_settings_payload(destination))
+
+    requested = str(request.args.get("destination") or "").strip().lower()
+    current = requested if requested in UPLOAD_DEST_CHOICES else get_upload_destination()
+    return jsonify(_upload_settings_payload(current))
+
+
+@app.route("/api/settings/upload-folder", methods=["POST"])
+def api_settings_upload_folder():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    body = request.get_json(silent=True) or {}
+    destination_raw = body.get("destination")
+    destination = get_upload_destination() if destination_raw is None else str(destination_raw).strip().lower()
+    if destination not in UPLOAD_DEST_CHOICES:
+        return jsonify({"ok": False, "error": "Ugyldigt upload-destination-valg"}), 400
+
+    try:
+        new_subdir = _normalize_upload_subdir(str(body.get("path") or ""))
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldigt mappenavn"}), 400
+    if not new_subdir:
+        return jsonify({"ok": False, "error": "Angiv en mappe"}), 400
+
+    target_root, _ = _upload_target_for_destination(destination)
+    try:
+        target_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    try:
+        base = target_root.resolve()
+        target = (target_root / new_subdir).resolve()
+        target.relative_to(base)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kunne ikke oprette mappe: {e}"}), 400
+
+    _set_setting("upload_subdir", new_subdir)
+    payload = _upload_settings_payload(destination)
+    payload["created"] = new_subdir
+    return jsonify(payload)
+
+
 # --- Upload endpoint (drag & drop) ---
 @app.route("/api/upload", methods=["POST"])
 @login_required
@@ -2813,9 +3236,17 @@ def api_upload():
     if not current_user.is_authenticated:
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     ensure_dirs()
+    destination = get_upload_destination()
+    subdir = get_upload_subdir()
+    target_root, rel_prefix = _upload_target_for_destination(destination)
+    target_dir = (target_root / subdir) if subdir else target_root
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kan ikke oprette upload-destination: {e}"}), 500
     files = request.files.getlist("files") or []
     try:
-        log_event("upload_start", count=len(files))
+        log_event("upload_start", count=len(files), destination=destination, subdir=subdir)
     except Exception:
         pass
     if not files:
@@ -2846,12 +3277,12 @@ def api_upload():
                 except Exception: pass
                 continue
             # Ensure unique filename
-            target = UPLOAD_DIR / name
+            target = target_dir / name
             stem = Path(name).stem
             suffix = Path(name).suffix
             i = 1
             while target.exists():
-                target = UPLOAD_DIR / f"{stem}_{i}{suffix}"
+                target = target_dir / f"{stem}_{i}{suffix}"
                 i += 1
             f.save(str(target))
             try: log_event("upload_saved", filename=name, path=str(target))
@@ -2864,7 +3295,8 @@ def api_upload():
                     os.utime(target, (ts, ts))
             except Exception:
                 pass
-            rel = f"uploads/{target.name}"
+            rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
+            rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
             try:
                 meta = extract_metadata(target, rel)
                 upsert_photo(meta)

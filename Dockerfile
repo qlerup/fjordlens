@@ -7,7 +7,7 @@ WORKDIR /app
 
 
 # Installer curl
-RUN apt-get update && apt-get install -y curl \
+RUN apt-get update && apt-get install -y curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
