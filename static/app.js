@@ -2256,6 +2256,24 @@ function appendLogLine(text, level = 'info') {
   makeLineEl(els.mainLogsBox);
 }
 
+function fmtLogTime(ts) {
+  const raw = (ts == null) ? '' : String(ts).trim();
+  if (!raw) return '-';
+  try {
+    const d = new Date(raw);
+    if (!Number.isFinite(d.getTime())) return raw;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${dd}-${mm}-${yyyy} ${hh}:${mi}:${ss}`;
+  } catch {
+    return raw;
+  }
+}
+
 async function pollLogs() {
   if (!state.logsRunning) return;
   try {
@@ -2273,7 +2291,7 @@ async function pollLogs() {
         if (typeof it.missing !== "undefined") extra += ` missing=${it.missing}`;
         if (it.error) extra += ` :: ${it.error}`;
         const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
-        const msg = `[${it.t}] ${label}${extra}`;
+        const msg = `[${fmtLogTime(it.t)}] ${label}${extra}`;
         const lvl = classifySeverity(it.event);
         appendLogLine(msg, lvl);
         state.logsAfter = it.id;

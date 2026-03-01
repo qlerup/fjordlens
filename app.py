@@ -52,7 +52,7 @@ UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
 UPLOAD_DEST_CHOICES = {UPLOAD_DEST_UPLOADS, UPLOAD_DEST_LIBRARY}
 UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
-    UPLOAD_DEST_UPLOADS: "uploads",
+    UPLOAD_DEST_UPLOADS: "",
     UPLOAD_DEST_LIBRARY: "Photos",
 }
 FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
@@ -962,7 +962,15 @@ def get_upload_subdir(destination: Optional[str] = None) -> str:
         by_dest = _get_setting(_upload_subdir_setting_key(dest), "")
         legacy = _get_setting("upload_subdir", "")
         raw = by_dest if (by_dest or "").strip() else legacy
-        return _normalize_upload_subdir(raw)
+        subdir = _normalize_upload_subdir(raw)
+        # Migration: old default for uploads created nested /data/uploads/uploads.
+        if dest == UPLOAD_DEST_UPLOADS and subdir.lower() == "uploads":
+            try:
+                _set_upload_subdir(dest, "")
+            except Exception:
+                pass
+            return ""
+        return subdir
     except Exception:
         return ""
 
@@ -1025,6 +1033,8 @@ def _upload_settings_payload(destination: str) -> dict:
     target_root, _ = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     folders = _list_upload_subdirs(target_root)
+    if destination == UPLOAD_DEST_UPLOADS and "uploads" in folders:
+        folders = [f for f in folders if f != "uploads"]
     if subdir and subdir not in folders:
         folders.append(subdir)
         folders = sorted(folders, key=lambda x: (x != "", x.lower()))
