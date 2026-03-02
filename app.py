@@ -818,9 +818,11 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token_hash TEXT UNIQUE NOT NULL,
+                token_plain TEXT,
                 folder_path TEXT NOT NULL,
                 can_upload INTEGER DEFAULT 0,
                 can_delete INTEGER DEFAULT 0,
+                link_use_duckdns INTEGER DEFAULT 0,
                 password_hash TEXT,
                 expires_at TEXT,
                 revoked INTEGER DEFAULT 0,
@@ -874,6 +876,14 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE share_links ADD COLUMN password_hash TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE share_links ADD COLUMN token_plain TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE share_links ADD COLUMN link_use_duckdns INTEGER DEFAULT 0")
         except Exception:
             pass
         try:
@@ -1537,6 +1547,18 @@ def _build_share_link(token: str, use_duckdns: bool) -> Tuple[Optional[str], Opt
             return None, "DuckDNS-base URL mangler. Sæt SHARE_DUCKDNS_BASE_URL i miljøvariabler."
         return f"{base}{share_path}", None
     return url_for("shared_folder_view", token=token, _external=True), None
+
+
+def _share_link_for_admin_row(row: sqlite3.Row) -> Optional[str]:
+    token_plain = str(row["token_plain"] or "").strip()
+    if not token_plain:
+        return None
+    use_duckdns = bool(int(row["link_use_duckdns"] or 0))
+    link, err = _build_share_link(token_plain, use_duckdns)
+    if link and not err:
+        return link
+    fallback, _ = _build_share_link(token_plain, False)
+    return fallback
 
 
 def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row, photo_id: int) -> Optional[sqlite3.Row]:
@@ -3396,14 +3418,16 @@ def api_create_share():
     with closing(get_conn()) as conn:
         conn.execute(
             """
-            INSERT INTO share_links(token_hash, folder_path, can_upload, can_delete, password_hash, expires_at, revoked, created_by_user_id, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO share_links(token_hash, token_plain, folder_path, can_upload, can_delete, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 token_hash,
+                token,
                 folder_path,
                 int(can_upload),
                 int(can_delete),
+                1 if use_duckdns else 0,
                 password_hash,
                 expires_at,
                 0,
@@ -4941,7 +4965,8 @@ def api_admin_shares_list():
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-            SELECT s.id, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
+             SELECT s.id, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
+                 s.token_plain, s.link_use_duckdns,
                    s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
                    u.username AS created_by_username
             FROM share_links s
@@ -4966,6 +4991,8 @@ def api_admin_shares_list():
         elif can_upload:
             permission = "upload"
 
+        link = _share_link_for_admin_row(r)
+
         items.append(
             {
                 "id": int(r["id"]),
@@ -4982,6 +5009,8 @@ def api_admin_shares_list():
                 "active": active,
                 "created_by_user_id": int(r["created_by_user_id"] or 0),
                 "created_by_username": (r["created_by_username"] or ""),
+                "link": link,
+                "link_available": bool(link),
             }
         )
 

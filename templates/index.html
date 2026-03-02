@@ -153,6 +153,7 @@
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
           <button class="tab-btn" data-tab="ai">AI</button>
           <button class="tab-btn" data-tab="dns">DNS</button>
+          <button class="tab-btn" data-tab="shared">Delte</button>
           <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
           <button class="tab-btn" data-tab="other">Andet</button>
@@ -219,10 +220,15 @@
             </div>
             <div id="dnsStatus" class="status hidden" style="margin-top:10px;"></div>
           </div>
+        </div>
+
+        <!-- Delte links -->
+        <div class="tab-panel hidden" data-tabpanel="shared">
           <div class="sidebar-card" style="margin-bottom:12px;">
-            <div id="dnsSharesTitle" class="sidebar-card-title">Aktive delinger</div>
-            <p id="dnsSharesDesc" class="hint" style="margin:0 0 10px 0;">Se aktive share-links, tilbagekald dem eller forlæng udløb.</p>
-            <div id="dnsSharesList" class="mini-label">Indlæser…</div>
+            <div id="sharedLinksTitle" class="sidebar-card-title">Aktive delinger</div>
+            <p id="sharedLinksDesc" class="hint" style="margin:0 0 10px 0;">Se aktive share-links, kopiér linket igen, tilbagekald eller forlæng udløb.</p>
+            <div id="sharedLinksStatus" class="status hidden" style="margin:0 0 10px 0;"></div>
+            <div id="sharedLinksList" class="mini-label">Indlæser…</div>
           </div>
         </div>
 
@@ -524,9 +530,11 @@
         hideTab('maint');
         hideTab('logs');
         hideTab('dns');
+        hideTab('shared');
       } else if(ROLE === 'manager'){
         hideTab('users');
         hideTab('dns');
+        hideTab('shared');
       }
       // Ensure one visible tab is active
       const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');

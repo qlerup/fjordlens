@@ -86,9 +86,10 @@ const els = {
   dnsDuckdnsBaseUrlInput: document.getElementById("dnsDuckdnsBaseUrlInput"),
   dnsSaveBtn: document.getElementById("dnsSaveBtn"),
   dnsStatus: document.getElementById("dnsStatus"),
-  dnsSharesTitle: document.getElementById("dnsSharesTitle"),
-  dnsSharesDesc: document.getElementById("dnsSharesDesc"),
-  dnsSharesList: document.getElementById("dnsSharesList"),
+  sharedLinksTitle: document.getElementById("sharedLinksTitle"),
+  sharedLinksDesc: document.getElementById("sharedLinksDesc"),
+  sharedLinksStatus: document.getElementById("sharedLinksStatus"),
+  sharedLinksList: document.getElementById("sharedLinksList"),
   placesMapWrap: document.getElementById("placesMapWrap"),
   placesMapEl: document.getElementById("placesMap"),
   // duplicates
@@ -220,6 +221,7 @@ const I18N = {
     tab_maint: 'Vedligeholdelse',
     tab_ai: 'AI',
     tab_dns: 'DNS',
+    tab_shared: 'Delte',
     tab_logs: 'Logs',
     tab_users: 'Brugere',
     tab_twofa: 'Min 2FA',
@@ -273,7 +275,7 @@ const I18N = {
     dns_load_failed: 'Kunne ikke hente DNS-indstillinger.',
     dns_save_failed: 'Kunne ikke gemme DNS-indstillinger.',
     dns_shares_title: 'Aktive delinger',
-    dns_shares_desc: 'Se aktive share-links, tilbagekald dem eller forlæng udløb.',
+    dns_shares_desc: 'Se aktive share-links, kopiér linket igen, tilbagekald dem eller forlæng udløb.',
     dns_shares_loading: 'Indlæser delinger…',
     dns_shares_empty: 'Ingen aktive delinger.',
     dns_shares_load_failed: 'Kunne ikke hente delinger.',
@@ -281,10 +283,15 @@ const I18N = {
     dns_shares_col_access: 'Adgang',
     dns_shares_col_expires: 'Udløber',
     dns_shares_col_last_used: 'Sidst brugt',
+    dns_shares_col_link: 'Link',
     dns_shares_col_actions: 'Handlinger',
     dns_shares_never: 'Aldrig',
     dns_shares_revoke: 'Tilbagekald',
     dns_shares_extend: 'Forlæng',
+    dns_shares_copy: 'Kopiér',
+    dns_shares_copy_ok: 'Share-link kopieret.',
+    dns_shares_copy_failed: 'Kunne ikke kopiere share-link.',
+    dns_shares_link_unavailable: 'Link ikke tilgængeligt (opret nyt for gammel deling).',
     dns_shares_revoke_confirm: 'Tilbagekald dette share-link?',
     dns_shares_revoke_ok: 'Share-link tilbagekaldt.',
     dns_shares_revoke_failed: 'Kunne ikke tilbagekalde share-link.',
@@ -450,6 +457,7 @@ const I18N = {
     tab_maint: 'Maintenance',
     tab_ai: 'AI',
     tab_dns: 'DNS',
+    tab_shared: 'Shared',
     tab_logs: 'Logs',
     tab_users: 'Users',
     tab_twofa: 'My 2FA',
@@ -503,7 +511,7 @@ const I18N = {
     dns_load_failed: 'Could not load DNS settings.',
     dns_save_failed: 'Could not save DNS settings.',
     dns_shares_title: 'Active shares',
-    dns_shares_desc: 'View active share links, revoke them, or extend expiry.',
+    dns_shares_desc: 'View active share links, copy links again, revoke them, or extend expiry.',
     dns_shares_loading: 'Loading shares…',
     dns_shares_empty: 'No active shares.',
     dns_shares_load_failed: 'Could not load shares.',
@@ -511,10 +519,15 @@ const I18N = {
     dns_shares_col_access: 'Access',
     dns_shares_col_expires: 'Expires',
     dns_shares_col_last_used: 'Last used',
+    dns_shares_col_link: 'Link',
     dns_shares_col_actions: 'Actions',
     dns_shares_never: 'Never',
     dns_shares_revoke: 'Revoke',
     dns_shares_extend: 'Extend',
+    dns_shares_copy: 'Copy',
+    dns_shares_copy_ok: 'Share link copied.',
+    dns_shares_copy_failed: 'Could not copy share link.',
+    dns_shares_link_unavailable: 'Link unavailable (recreate share for older entry).',
     dns_shares_revoke_confirm: 'Revoke this share link?',
     dns_shares_revoke_ok: 'Share link revoked.',
     dns_shares_revoke_failed: 'Could not revoke share link.',
@@ -746,7 +759,7 @@ let state = {
   aiScopePendingFeature: null,
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
-  dnsShares: [],
+  sharedLinks: [],
 };
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
@@ -1740,6 +1753,21 @@ function showDnsStatus(message, kind = 'ok') {
   els.dnsStatus.classList.toggle('err', kind !== 'ok');
 }
 
+function showSharedStatus(message, kind = 'ok') {
+  if (!els.sharedLinksStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.sharedLinksStatus.classList.add('hidden');
+    els.sharedLinksStatus.textContent = '';
+    els.sharedLinksStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.sharedLinksStatus.textContent = msg;
+  els.sharedLinksStatus.classList.remove('hidden');
+  els.sharedLinksStatus.classList.toggle('ok', kind === 'ok');
+  els.sharedLinksStatus.classList.toggle('err', kind !== 'ok');
+}
+
 function _fmtDnsShareTime(isoValue) {
   const raw = String(isoValue || '').trim();
   if (!raw) return tr('dns_shares_never');
@@ -1752,11 +1780,34 @@ function _fmtDnsShareTime(isoValue) {
   }
 }
 
+async function _copySharedLink(link) {
+  const value = String(link || '').trim();
+  if (!value) {
+    showSharedStatus(tr('dns_shares_link_unavailable'), 'err');
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const temp = document.createElement('textarea');
+      temp.value = value;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+    }
+    showSharedStatus(tr('dns_shares_copy_ok'), 'ok');
+  } catch {
+    showSharedStatus(tr('dns_shares_copy_failed'), 'err');
+  }
+}
+
 function renderDnsSharesList() {
-  if (!els.dnsSharesList) return;
-  const items = Array.isArray(state.dnsShares) ? state.dnsShares : [];
+  if (!els.sharedLinksList) return;
+  const items = Array.isArray(state.sharedLinks) ? state.sharedLinks : [];
   if (!items.length) {
-    els.dnsSharesList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_empty'))}</div>`;
+    els.sharedLinksList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_empty'))}</div>`;
     return;
   }
   const rows = items.map((item) => {
@@ -1765,13 +1816,19 @@ function renderDnsSharesList() {
       ? tr('mapper_share_perm_manage')
       : (permission === 'upload' ? tr('mapper_share_perm_upload') : tr('mapper_share_perm_view'));
     const folder = `uploads/${String(item.folder_path || '')}`;
+    const link = String(item.link || '');
+    const linkCell = link
+      ? `<div class="mini-label" style="max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(link)}">${escapeHtml(link)}</div>`
+      : `<span class="mini-label">${escapeHtml(tr('dns_shares_link_unavailable'))}</span>`;
     return `
       <tr>
         <td>${escapeHtml(folder)}</td>
         <td>${escapeHtml(permissionLabel)}</td>
         <td>${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
         <td>${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
+        <td>${linkCell}</td>
         <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
+          <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
           <button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>
           <button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_revoke'))}</button>
         </td>
@@ -1779,7 +1836,7 @@ function renderDnsSharesList() {
     `;
   }).join('');
 
-  els.dnsSharesList.innerHTML = `
+  els.sharedLinksList.innerHTML = `
     <div class="data-table">
       <table>
         <thead>
@@ -1788,6 +1845,7 @@ function renderDnsSharesList() {
             <th>${escapeHtml(tr('dns_shares_col_access'))}</th>
             <th>${escapeHtml(tr('dns_shares_col_expires'))}</th>
             <th>${escapeHtml(tr('dns_shares_col_last_used'))}</th>
+            <th>${escapeHtml(tr('dns_shares_col_link'))}</th>
             <th style="text-align:right;">${escapeHtml(tr('dns_shares_col_actions'))}</th>
           </tr>
         </thead>
@@ -1798,21 +1856,22 @@ function renderDnsSharesList() {
 }
 
 async function loadDnsShares() {
-  if (!els.dnsSharesList) return;
-  els.dnsSharesList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_loading'))}</div>`;
+  if (!els.sharedLinksList) return;
+  showSharedStatus('');
+  els.sharedLinksList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_loading'))}</div>`;
   try {
     const res = await fetch('/api/admin/shares');
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
-      state.dnsShares = [];
-      els.dnsSharesList.innerHTML = `<div class="mini-label">${escapeHtml((data && data.error) || tr('dns_shares_load_failed'))}</div>`;
+      state.sharedLinks = [];
+      els.sharedLinksList.innerHTML = `<div class="mini-label">${escapeHtml((data && data.error) || tr('dns_shares_load_failed'))}</div>`;
       return;
     }
-    state.dnsShares = Array.isArray(data.items) ? data.items : [];
+    state.sharedLinks = Array.isArray(data.items) ? data.items : [];
     renderDnsSharesList();
   } catch {
-    state.dnsShares = [];
-    els.dnsSharesList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_load_failed'))}</div>`;
+    state.sharedLinks = [];
+    els.sharedLinksList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_load_failed'))}</div>`;
   }
 }
 
@@ -1826,13 +1885,13 @@ async function revokeDnsShare(shareId) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
-      showDnsStatus((data && data.error) || tr('dns_shares_revoke_failed'), 'err');
+      showSharedStatus((data && data.error) || tr('dns_shares_revoke_failed'), 'err');
       return;
     }
-    showDnsStatus(tr('dns_shares_revoke_ok'), 'ok');
+    showSharedStatus(tr('dns_shares_revoke_ok'), 'ok');
     await loadDnsShares();
   } catch {
-    showDnsStatus(tr('dns_shares_revoke_failed'), 'err');
+    showSharedStatus(tr('dns_shares_revoke_failed'), 'err');
   }
 }
 
@@ -1842,7 +1901,7 @@ async function extendDnsShare(shareId) {
   if (raw === null) return;
   const days = Number(raw);
   if (!Number.isFinite(days) || days < 1) {
-    showDnsStatus(tr('dns_shares_extend_failed'), 'err');
+    showSharedStatus(tr('dns_shares_extend_failed'), 'err');
     return;
   }
   try {
@@ -1853,13 +1912,13 @@ async function extendDnsShare(shareId) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
-      showDnsStatus((data && data.error) || tr('dns_shares_extend_failed'), 'err');
+      showSharedStatus((data && data.error) || tr('dns_shares_extend_failed'), 'err');
       return;
     }
-    showDnsStatus(tr('dns_shares_extend_ok'), 'ok');
+    showSharedStatus(tr('dns_shares_extend_ok'), 'ok');
     await loadDnsShares();
   } catch {
-    showDnsStatus(tr('dns_shares_extend_failed'), 'err');
+    showSharedStatus(tr('dns_shares_extend_failed'), 'err');
   }
 }
 
@@ -2662,6 +2721,7 @@ function applyUiLanguage() {
     maint: tr('tab_maint'),
     ai: tr('tab_ai'),
     dns: tr('tab_dns'),
+    shared: tr('tab_shared'),
     logs: tr('tab_logs'),
     users: tr('tab_users'),
     profile: tr('tab_profile'),
@@ -2689,9 +2749,9 @@ function applyUiLanguage() {
   if (els.dnsDuckdnsBaseUrlLabel) els.dnsDuckdnsBaseUrlLabel.textContent = tr('dns_duckdns_base_url');
   if (els.dnsDuckdnsBaseUrlInput) els.dnsDuckdnsBaseUrlInput.placeholder = tr('dns_duckdns_placeholder');
   if (els.dnsSaveBtn) els.dnsSaveBtn.textContent = tr('dns_save');
-  if (els.dnsSharesTitle) els.dnsSharesTitle.textContent = tr('dns_shares_title');
-  if (els.dnsSharesDesc) els.dnsSharesDesc.textContent = tr('dns_shares_desc');
-  if (els.dnsSharesList && Array.isArray(state.dnsShares) && state.dnsShares.length) renderDnsSharesList();
+  if (els.sharedLinksTitle) els.sharedLinksTitle.textContent = tr('dns_shares_title');
+  if (els.sharedLinksDesc) els.sharedLinksDesc.textContent = tr('dns_shares_desc');
+  if (els.sharedLinksList && Array.isArray(state.sharedLinks) && state.sharedLinks.length) renderDnsSharesList();
 
   if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
@@ -3769,6 +3829,8 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'users') renderUsersPanel();
     if (tab === 'dns') {
       loadDnsSettings();
+    }
+    if (tab === 'shared') {
       loadDnsShares();
     }
   });
@@ -3779,10 +3841,16 @@ if (els.dnsSaveBtn) {
     await saveDnsSettings();
   });
 }
-if (els.dnsSharesList) {
-  els.dnsSharesList.addEventListener('click', async (e) => {
+if (els.sharedLinksList) {
+  els.sharedLinksList.addEventListener('click', async (e) => {
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
+    const copyId = Number(target.getAttribute('data-share-copy') || 0) || 0;
+    if (copyId > 0) {
+      const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === copyId) : null;
+      await _copySharedLink(item && item.link ? String(item.link) : '');
+      return;
+    }
     const revokeId = Number(target.getAttribute('data-share-revoke') || 0) || 0;
     if (revokeId > 0) {
       await revokeDnsShare(revokeId);
