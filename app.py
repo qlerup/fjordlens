@@ -36,7 +36,7 @@ try:
     register_heif_opener()
 except Exception:
     pass
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
 APP_PORT = 8080
@@ -47,6 +47,7 @@ CONVERT_DIR = DATA_DIR / "converted"
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
+SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
@@ -1511,6 +1512,31 @@ def _share_is_authorized(share_row: sqlite3.Row) -> bool:
     if not _share_is_password_protected(share_row):
         return True
     return bool(session.get(_share_session_key(share_row)))
+
+
+def _normalize_share_base_url(raw: str) -> Optional[str]:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    if "://" not in value:
+        value = f"https://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+
+def _build_share_link(token: str, use_duckdns: bool) -> Tuple[Optional[str], Optional[str]]:
+    share_path = url_for("shared_folder_view", token=token, _external=False)
+    if use_duckdns:
+        configured = _get_setting("share_duckdns_base_url", SHARE_DUCKDNS_BASE_URL) or SHARE_DUCKDNS_BASE_URL
+        base = _normalize_share_base_url(configured)
+        if not base:
+            return None, "DuckDNS-base URL mangler. Sæt SHARE_DUCKDNS_BASE_URL i miljøvariabler."
+        return f"{base}{share_path}", None
+    return url_for("shared_folder_view", token=token, _external=True), None
 
 
 def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row, photo_id: int) -> Optional[sqlite3.Row]:
@@ -3356,6 +3382,7 @@ def api_create_share():
     expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
 
     password_enabled = bool(body.get("password_enabled"))
+    use_duckdns = bool(body.get("use_duckdns"))
     password_raw = str(body.get("password") or "")
     password_hash = None
     if password_enabled:
@@ -3386,7 +3413,9 @@ def api_create_share():
         )
         conn.commit()
 
-    link = url_for("shared_folder_view", token=token, _external=True)
+    link, link_error = _build_share_link(token, use_duckdns)
+    if link_error or not link:
+        return jsonify({"ok": False, "error": link_error or "Kunne ikke oprette share-link"}), 400
     return jsonify(
         {
             "ok": True,
@@ -4402,6 +4431,35 @@ def api_settings_upload_folder_delete():
     payload["removed_faces"] = removed.get("faces", 0)
     payload["removed_thumbs"] = removed.get("thumbs", 0)
     return jsonify(payload)
+
+
+@app.route("/api/settings/dns", methods=["GET", "POST"])
+def api_settings_dns():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        raw = str(body.get("duckdns_base_url") or "").strip()
+        if raw:
+            normalized = _normalize_share_base_url(raw)
+            if not normalized:
+                return jsonify({"ok": False, "error": "Ugyldig URL. Brug fx https://mitnavn.duckdns.org"}), 400
+            _set_setting("share_duckdns_base_url", normalized)
+        else:
+            _set_setting("share_duckdns_base_url", "")
+
+    saved = str(_get_setting("share_duckdns_base_url", "") or "").strip()
+    env_default = str(SHARE_DUCKDNS_BASE_URL or "").strip()
+    effective = saved or env_default
+    return jsonify(
+        {
+            "ok": True,
+            "duckdns_base_url": saved,
+            "effective_duckdns_base_url": effective,
+            "using_env_default": bool(env_default and not saved),
+        }
+    )
 
 
 # --- Upload endpoint (drag & drop) ---

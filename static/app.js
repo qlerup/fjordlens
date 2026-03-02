@@ -80,6 +80,12 @@ const els = {
   mainLogsClear: document.getElementById("mainLogsClear"),
   logsPanel: document.getElementById("logsPanel"),
   settingsPanel: document.getElementById("settingsPanel"),
+  dnsPanelTitle: document.getElementById("dnsPanelTitle"),
+  dnsPanelDesc: document.getElementById("dnsPanelDesc"),
+  dnsDuckdnsBaseUrlLabel: document.getElementById("dnsDuckdnsBaseUrlLabel"),
+  dnsDuckdnsBaseUrlInput: document.getElementById("dnsDuckdnsBaseUrlInput"),
+  dnsSaveBtn: document.getElementById("dnsSaveBtn"),
+  dnsStatus: document.getElementById("dnsStatus"),
   placesMapWrap: document.getElementById("placesMapWrap"),
   placesMapEl: document.getElementById("placesMap"),
   // duplicates
@@ -123,6 +129,8 @@ const els = {
   mapperShareExpireUnit: document.getElementById("mapperShareExpireUnit"),
   mapperSharePermissionLabel: document.getElementById("mapperSharePermissionLabel"),
   mapperSharePermission: document.getElementById("mapperSharePermission"),
+  mapperShareDuckdnsToggle: document.getElementById("mapperShareDuckdnsToggle"),
+  mapperShareDuckdnsToggleText: document.getElementById("mapperShareDuckdnsToggleText"),
   mapperSharePasswordToggle: document.getElementById("mapperSharePasswordToggle"),
   mapperSharePasswordToggleText: document.getElementById("mapperSharePasswordToggleText"),
   mapperSharePasswordWrap: document.getElementById("mapperSharePasswordWrap"),
@@ -208,6 +216,7 @@ const I18N = {
     search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
     tab_maint: 'Vedligeholdelse',
     tab_ai: 'AI',
+    tab_dns: 'DNS',
     tab_logs: 'Logs',
     tab_users: 'Brugere',
     tab_twofa: 'Min 2FA',
@@ -252,6 +261,14 @@ const I18N = {
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
+    dns_title: 'DNS',
+    dns_desc: 'Opsæt DuckDNS-base URL til delte links.',
+    dns_duckdns_base_url: 'DuckDNS base URL',
+    dns_duckdns_placeholder: 'https://mitnavn.duckdns.org',
+    dns_save: 'Gem DNS',
+    dns_saved: 'DNS-indstillinger gemt.',
+    dns_load_failed: 'Kunne ikke hente DNS-indstillinger.',
+    dns_save_failed: 'Kunne ikke gemme DNS-indstillinger.',
     btn_scan_library: 'Scan bibliotek',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Genbyg thumbnails',
@@ -311,6 +328,7 @@ const I18N = {
     mapper_share_perm_view: 'Se',
     mapper_share_perm_upload: 'Se og uploade',
     mapper_share_perm_manage: 'Se, uploade og slette',
+    mapper_share_duckdns_toggle: 'Brug DuckDNS-link',
     mapper_share_password_toggle: 'Kodebeskyt link',
     mapper_share_password_label: 'Adgangskode',
     mapper_share_password_placeholder: 'Mindst 4 tegn',
@@ -408,6 +426,7 @@ const I18N = {
     search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
     tab_maint: 'Maintenance',
     tab_ai: 'AI',
+    tab_dns: 'DNS',
     tab_logs: 'Logs',
     tab_users: 'Users',
     tab_twofa: 'My 2FA',
@@ -452,6 +471,14 @@ const I18N = {
     ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
+    dns_title: 'DNS',
+    dns_desc: 'Configure the DuckDNS base URL used for shared links.',
+    dns_duckdns_base_url: 'DuckDNS base URL',
+    dns_duckdns_placeholder: 'https://myname.duckdns.org',
+    dns_save: 'Save DNS',
+    dns_saved: 'DNS settings saved.',
+    dns_load_failed: 'Could not load DNS settings.',
+    dns_save_failed: 'Could not save DNS settings.',
     btn_scan_library: 'Scan library',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Rebuild thumbnails',
@@ -511,6 +538,7 @@ const I18N = {
     mapper_share_perm_view: 'View',
     mapper_share_perm_upload: 'View and upload',
     mapper_share_perm_manage: 'View, upload and delete',
+    mapper_share_duckdns_toggle: 'Use DuckDNS link',
     mapper_share_password_toggle: 'Protect link with password',
     mapper_share_password_label: 'Password',
     mapper_share_password_placeholder: 'At least 4 characters',
@@ -1651,6 +1679,72 @@ function renderMapperContext(path = '') {
   renderMapperTree();
 }
 
+function showDnsStatus(message, kind = 'ok') {
+  if (!els.dnsStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.dnsStatus.classList.add('hidden');
+    els.dnsStatus.textContent = '';
+    els.dnsStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.dnsStatus.textContent = msg;
+  els.dnsStatus.classList.remove('hidden');
+  els.dnsStatus.classList.toggle('ok', kind === 'ok');
+  els.dnsStatus.classList.toggle('err', kind !== 'ok');
+}
+
+async function loadDnsSettings() {
+  if (!els.dnsDuckdnsBaseUrlInput) return;
+  showDnsStatus('');
+  try {
+    const res = await fetch('/api/settings/dns');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showDnsStatus((data && data.error) || tr('dns_load_failed'), 'err');
+      return;
+    }
+    els.dnsDuckdnsBaseUrlInput.value = String(data.duckdns_base_url || '');
+  } catch {
+    showDnsStatus(tr('dns_load_failed'), 'err');
+  }
+}
+
+async function saveDnsSettings() {
+  if (!els.dnsDuckdnsBaseUrlInput) return;
+  const saveBtn = els.dnsSaveBtn;
+  const original = saveBtn ? saveBtn.textContent : tr('dns_save');
+  showDnsStatus('');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+    }
+    const res = await fetch('/api/settings/dns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        duckdns_base_url: String((els.dnsDuckdnsBaseUrlInput.value || '')).trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showDnsStatus((data && data.error) || tr('dns_save_failed'), 'err');
+      return;
+    }
+    els.dnsDuckdnsBaseUrlInput.value = String(data.duckdns_base_url || '');
+    showDnsStatus(tr('dns_saved'), 'ok');
+  } catch {
+    showDnsStatus(tr('dns_save_failed'), 'err');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('loading');
+      saveBtn.textContent = original || tr('dns_save');
+    }
+  }
+}
+
 async function loadMapperTools(preferred = null) {
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
@@ -2398,6 +2492,7 @@ function applyUiLanguage() {
   const tabText = {
     maint: tr('tab_maint'),
     ai: tr('tab_ai'),
+    dns: tr('tab_dns'),
     logs: tr('tab_logs'),
     users: tr('tab_users'),
     profile: tr('tab_profile'),
@@ -2420,6 +2515,11 @@ function applyUiLanguage() {
   if (els.aiEmbedDesc) els.aiEmbedDesc.textContent = tr('ai_embed_desc');
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
+  if (els.dnsPanelTitle) els.dnsPanelTitle.textContent = tr('dns_title');
+  if (els.dnsPanelDesc) els.dnsPanelDesc.textContent = tr('dns_desc');
+  if (els.dnsDuckdnsBaseUrlLabel) els.dnsDuckdnsBaseUrlLabel.textContent = tr('dns_duckdns_base_url');
+  if (els.dnsDuckdnsBaseUrlInput) els.dnsDuckdnsBaseUrlInput.placeholder = tr('dns_duckdns_placeholder');
+  if (els.dnsSaveBtn) els.dnsSaveBtn.textContent = tr('dns_save');
 
   if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
@@ -2460,6 +2560,7 @@ function applyUiLanguage() {
   if (els.mapperShareExpireLabel) els.mapperShareExpireLabel.textContent = tr('mapper_share_expire_label');
   if (els.mapperShareExpireUnitLabel) els.mapperShareExpireUnitLabel.textContent = tr('mapper_share_expire_unit_label');
   if (els.mapperSharePermissionLabel) els.mapperSharePermissionLabel.textContent = tr('mapper_share_permission_label');
+  if (els.mapperShareDuckdnsToggleText) els.mapperShareDuckdnsToggleText.textContent = tr('mapper_share_duckdns_toggle');
   if (els.mapperSharePasswordToggleText) els.mapperSharePasswordToggleText.textContent = tr('mapper_share_password_toggle');
   if (els.mapperSharePasswordLabel) els.mapperSharePasswordLabel.textContent = tr('mapper_share_password_label');
   if (els.mapperSharePasswordInput) els.mapperSharePasswordInput.placeholder = tr('mapper_share_password_placeholder');
@@ -2577,6 +2678,7 @@ function openMapperShareModal() {
   if (els.mapperShareExpireValue) els.mapperShareExpireValue.value = '7';
   if (els.mapperShareExpireUnit) els.mapperShareExpireUnit.value = 'days';
   if (els.mapperSharePermission) els.mapperSharePermission.value = 'view';
+  if (els.mapperShareDuckdnsToggle) els.mapperShareDuckdnsToggle.checked = false;
   if (els.mapperSharePasswordToggle) els.mapperSharePasswordToggle.checked = false;
   _syncMapperSharePasswordVisibility();
   if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
@@ -2606,6 +2708,7 @@ async function createMapperShareLink() {
   }
   const confirmBtn = els.mapperShareModalConfirm;
   const original = confirmBtn ? confirmBtn.textContent : tr('mapper_share_generate');
+  const useDuckdns = !!(els.mapperShareDuckdnsToggle && els.mapperShareDuckdnsToggle.checked);
   const passwordEnabled = !!(els.mapperSharePasswordToggle && els.mapperSharePasswordToggle.checked);
   const password = String((els.mapperSharePasswordInput && els.mapperSharePasswordInput.value) || '');
   if (passwordEnabled && password.length < 4) {
@@ -2629,6 +2732,7 @@ async function createMapperShareLink() {
         permission,
         expires_value: expiresValue,
         expires_unit: expiresUnit,
+        use_duckdns: useDuckdns,
         password_enabled: passwordEnabled,
         password,
       }),
@@ -3468,8 +3572,15 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     });
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
+    if (tab === 'dns') loadDnsSettings();
   });
 });
+
+if (els.dnsSaveBtn) {
+  els.dnsSaveBtn.addEventListener('click', async () => {
+    await saveDnsSettings();
+  });
+}
 
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {

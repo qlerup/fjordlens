@@ -160,6 +160,7 @@ Folder selection/delete behavior:
 Folder sharing behavior:
 - In `Folders`, select one folder and choose `Share` from `⋮` menu
 - Configure expiry and permission level in modal
+- Optional: enable `Use DuckDNS link` per link (requires `SHARE_DUCKDNS_BASE_URL`, e.g. `https://myname.duckdns.org`)
 - Optional: enable password protection per link
 - Generated links open a dedicated share page without normal app login
 - Password-protected links prompt for password before access

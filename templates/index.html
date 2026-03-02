@@ -152,6 +152,7 @@
         <nav class="tabs">
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
           <button class="tab-btn" data-tab="ai">AI</button>
+          <button class="tab-btn" data-tab="dns">DNS</button>
           <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
           <button class="tab-btn" data-tab="other">Andet</button>
@@ -201,6 +202,22 @@
                 <div id="facesStatus" class="mini-label">Ansigter: —</div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- DNS -->
+        <div class="tab-panel hidden" data-tabpanel="dns">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div id="dnsPanelTitle" class="sidebar-card-title">DNS</div>
+            <p id="dnsPanelDesc" class="hint" style="margin:0 0 10px 0;">Opsæt DuckDNS-base URL til delte links (f.eks. https://mitnavn.duckdns.org).</p>
+            <div class="form-row" style="margin-bottom:10px;">
+              <label id="dnsDuckdnsBaseUrlLabel" for="dnsDuckdnsBaseUrlInput">DuckDNS base URL</label>
+              <input id="dnsDuckdnsBaseUrlInput" class="mapper-input" type="text" style="min-width:0;width:100%;" placeholder="https://mitnavn.duckdns.org" />
+            </div>
+            <div class="actions" style="justify-content:flex-end;gap:8px;">
+              <button id="dnsSaveBtn" class="btn primary">Gem DNS</button>
+            </div>
+            <div id="dnsStatus" class="status hidden" style="margin-top:10px;"></div>
           </div>
         </div>
 
@@ -421,6 +438,10 @@
           <option value="manage">Se, uploade og slette</option>
         </select>
       </div>
+      <label class="toolbar" for="mapperShareDuckdnsToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
+        <input id="mapperShareDuckdnsToggle" type="checkbox" />
+        <span id="mapperShareDuckdnsToggleText" class="mini-label">Brug DuckDNS-link</span>
+      </label>
       <label class="toolbar" for="mapperSharePasswordToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
         <input id="mapperSharePasswordToggle" type="checkbox" />
         <span id="mapperSharePasswordToggleText" class="mini-label">Kodebeskyt link</span>
@@ -497,8 +518,10 @@
         hideTab('other');
         hideTab('maint');
         hideTab('logs');
+        hideTab('dns');
       } else if(ROLE === 'manager'){
         hideTab('users');
+        hideTab('dns');
       }
       // Ensure one visible tab is active
       const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');
