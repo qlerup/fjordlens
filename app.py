@@ -887,6 +887,42 @@ def init_db() -> None:
         except Exception:
             pass
         try:
+            share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]  # type: ignore[index]
+            has_token_plain = "token_plain" in share_cols
+            has_token_hash = "token_hash" in share_cols
+            has_legacy_token = "token" in share_cols
+            if has_token_plain and has_legacy_token:
+                conn.execute(
+                    """
+                    UPDATE share_links
+                    SET token_plain = token
+                    WHERE (token_plain IS NULL OR TRIM(token_plain)='')
+                      AND token IS NOT NULL
+                      AND TRIM(token)<>''
+                    """
+                )
+            if has_token_hash and has_legacy_token:
+                legacy_rows = conn.execute(
+                    """
+                    SELECT id, token FROM share_links
+                    WHERE (token_hash IS NULL OR TRIM(token_hash)='')
+                      AND token IS NOT NULL
+                      AND TRIM(token)<>''
+                    """
+                ).fetchall()
+                for lr in legacy_rows:
+                    token_raw = str(lr["token"] or "").strip()
+                    token_hash = _share_token_digest(token_raw)
+                    if not token_hash:
+                        continue
+                    try:
+                        conn.execute("UPDATE share_links SET token_hash=? WHERE id=?", (token_hash, int(lr["id"])))
+                    except Exception:
+                        continue
+            conn.commit()
+        except Exception:
+            pass
+        try:
             conn.execute("UPDATE users SET role='admin' WHERE (role IS NULL OR role='') AND is_admin=1")
             conn.execute("UPDATE users SET role='user' WHERE (role IS NULL OR role='') AND is_admin=0")
             conn.execute("UPDATE users SET ui_language='da' WHERE ui_language IS NULL OR TRIM(ui_language)='' OR LOWER(ui_language) NOT IN ('da','en')")
