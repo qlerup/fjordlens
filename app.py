@@ -5291,6 +5291,23 @@ def api_admin_shares_activate(share_id: int):
     return jsonify({"ok": True, "expires_at": expires_at})
 
 
+@app.route("/api/admin/shares/<int:share_id>", methods=["DELETE"])
+@login_required
+def api_admin_shares_delete(share_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id FROM share_links WHERE id=?", (int(share_id),)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
+        conn.execute("DELETE FROM share_link_folders WHERE share_id=?", (int(share_id),))
+        conn.execute("DELETE FROM share_links WHERE id=?", (int(share_id),))
+        conn.commit()
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/users/<int:uid>", methods=["DELETE", "PUT"])
 @login_required
 def api_admin_users_delete(uid: int):

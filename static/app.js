@@ -304,6 +304,10 @@ const I18N = {
     dns_shares_activate_prompt: 'Aktivér link i antal dage:',
     dns_shares_activate_ok: 'Share-link aktiveret.',
     dns_shares_activate_failed: 'Kunne ikke aktivere share-link.',
+    dns_shares_delete: 'Slet',
+    dns_shares_delete_confirm: 'Slet dette share-link permanent?',
+    dns_shares_delete_ok: 'Share-link slettet.',
+    dns_shares_delete_failed: 'Kunne ikke slette share-link.',
     dns_shares_extend_prompt: 'Forlæng med antal dage:',
     dns_shares_extend_ok: 'Share-link forlænget.',
     dns_shares_extend_failed: 'Kunne ikke forlænge share-link.',
@@ -549,6 +553,10 @@ const I18N = {
     dns_shares_activate_prompt: 'Activate link for number of days:',
     dns_shares_activate_ok: 'Share link activated.',
     dns_shares_activate_failed: 'Could not activate share link.',
+    dns_shares_delete: 'Delete',
+    dns_shares_delete_confirm: 'Delete this share link permanently?',
+    dns_shares_delete_ok: 'Share link deleted.',
+    dns_shares_delete_failed: 'Could not delete share link.',
     dns_shares_extend_prompt: 'Extend by number of days:',
     dns_shares_extend_ok: 'Share link extended.',
     dns_shares_extend_failed: 'Could not extend share link.',
@@ -1855,6 +1863,7 @@ function renderDnsSharesList() {
     const actionBtn = isActive
       ? `<button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_deactivate'))}</button>`
       : `<button class="btn small" data-share-activate="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_activate'))}</button>`;
+    const deleteBtn = `<button class="btn danger small" data-share-delete="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_delete'))}</button>`;
     const extendBtn = isActive
       ? `<button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
       : '';
@@ -1869,6 +1878,7 @@ function renderDnsSharesList() {
           <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
           ${extendBtn}
           ${actionBtn}
+          ${deleteBtn}
         </td>
       </tr>
     `;
@@ -1957,6 +1967,26 @@ async function activateDnsShare(shareId) {
     await loadDnsShares();
   } catch {
     showSharedStatus(tr('dns_shares_activate_failed'), 'err');
+  }
+}
+
+async function deleteDnsShare(shareId) {
+  if (!shareId) return;
+  if (!window.confirm(tr('dns_shares_delete_confirm'))) return;
+  try {
+    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showSharedStatus((data && data.error) || tr('dns_shares_delete_failed'), 'err');
+      return;
+    }
+    showSharedStatus(tr('dns_shares_delete_ok'), 'ok');
+    await loadDnsShares();
+  } catch {
+    showSharedStatus(tr('dns_shares_delete_failed'), 'err');
   }
 }
 
@@ -3950,6 +3980,11 @@ if (els.sharedLinksList) {
     const extendId = Number(target.getAttribute('data-share-extend') || 0) || 0;
     if (extendId > 0) {
       await extendDnsShare(extendId);
+      return;
+    }
+    const deleteId = Number(target.getAttribute('data-share-delete') || 0) || 0;
+    if (deleteId > 0) {
+      await deleteDnsShare(deleteId);
     }
   });
 }
