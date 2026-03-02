@@ -20,6 +20,19 @@ const state = {
   selected: new Set(),
 };
 
+function isMobileShareView() {
+  try {
+    return window.matchMedia('(max-width: 760px)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function openSharedItem(item) {
+  const url = item && (item.original_url || item.download_url);
+  if (url) window.open(url, '_blank', 'noopener');
+}
+
 function t(key) {
   const da = {
     title: 'Delt mappe',
@@ -82,6 +95,7 @@ function updateDeleteButton() {
 
 function renderGrid() {
   if (!els.grid) return;
+  const mobile = isMobileShareView();
   els.grid.innerHTML = '';
   state.items.forEach((item) => {
     const card = document.createElement('article');
@@ -89,29 +103,33 @@ function renderGrid() {
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
-    card.innerHTML = `
-      ${thumb}
-      <div class="card-body">
-        <h4 class="card-title">${(item.filename || '').replace(/</g, '&lt;')}</h4>
-        <div class="card-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    const actions = mobile
+      ? `<div class="card-meta" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;">
+          <button class="btn small" data-open="1">${t('open')}</button>
+        </div>`
+      : `<div class="card-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <button class="btn small" data-open="1">${t('open')}</button>
           <label class="mini-label" style="display:flex;align-items:center;gap:6px;">
             <input type="checkbox" data-check="1" ${state.selected.has(item.id) ? 'checked' : ''} />
             <span>${t('selected')}</span>
           </label>
-        </div>
+        </div>`;
+    card.innerHTML = `
+      ${thumb}
+      <div class="card-body">
+        <h4 class="card-title">${(item.filename || '').replace(/</g, '&lt;')}</h4>
+        ${actions}
       </div>`;
 
     const openBtn = card.querySelector('[data-open="1"]');
-    const check = card.querySelector('[data-check="1"]');
     if (openBtn) {
       openBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const url = item.original_url || item.download_url;
-        if (url) window.open(url, '_blank', 'noopener');
+        openSharedItem(item);
       });
     }
-    if (check) {
+    const check = card.querySelector('[data-check="1"]');
+    if (check && !mobile) {
       check.addEventListener('change', () => {
         if (check.checked) state.selected.add(item.id);
         else state.selected.delete(item.id);
@@ -119,6 +137,10 @@ function renderGrid() {
       });
     }
     card.addEventListener('click', () => {
+      if (mobile) {
+        openSharedItem(item);
+        return;
+      }
       if (state.selected.has(item.id)) state.selected.delete(item.id);
       else state.selected.add(item.id);
       renderGrid();
@@ -150,7 +172,7 @@ async function loadInfo() {
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';
-  if (els.deleteBtn) els.deleteBtn.style.display = data.can_delete ? '' : 'none';
+  if (els.deleteBtn) els.deleteBtn.style.display = (data.can_delete && !isMobileShareView()) ? '' : 'none';
   return true;
 }
 
@@ -248,5 +270,12 @@ if (els.authPassword) {
 }
 if (els.uploadBtn) els.uploadBtn.addEventListener('click', runUpload);
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
+
+window.addEventListener('resize', () => {
+  if (state.info && els.deleteBtn) {
+    els.deleteBtn.style.display = (state.info.can_delete && !isMobileShareView()) ? '' : 'none';
+  }
+  renderGrid();
+});
 
 boot();

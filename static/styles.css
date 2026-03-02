@@ -1041,6 +1041,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   .select { width: 100%; }
   #scanBtn { width: 100%; }
   .content-header { flex-direction: column; }
+  #shareGrid.gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
 
 /* Hide non-relevant chrome when viewing Settings */
