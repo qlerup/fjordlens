@@ -55,6 +55,11 @@ Open:
 - Folder upload workflow is now centered in the `Folders` view.
 - Profile editing is available from footer `Profile` link (modal).
 - Admin user management supports editing username/password/role/languages.
+- `Folders` header now uses a compact top-right actions menu (`⋮`).
+- Folder creation now opens a dedicated modal (`Create folder` / `Cancel`).
+- Folder selection flow now starts with `Select` (`Vælg`) and changes contextually to `Delete selected` when folders are selected.
+- Timeline/topbar controls were aligned to the right and visually matched to the compact `Folders` control sizing.
+- New mapper flow labels and status messages are localized for both Danish and English.
 
 ## Where to Find What (UI Map)
 
@@ -140,9 +145,14 @@ Preferences persist per user and are applied on refresh/login.
 Folder workflows now happen in `Folders` view:
 
 - Navigate folder tree
-- Create subfolders
+- Create subfolders via top-right `⋮` menu -> `Create folder` (modal)
 - Drag & drop files into the folder dropzone
 - Upload target follows current folder context
+
+Folder selection/delete behavior:
+- Open `⋮` and choose `Select` (`Vælg`) to enter selection mode
+- Select one or more folders in the grid
+- The same menu action changes to `Delete selected` and triggers folder deletion
 
 This replaced the old maintenance upload destination controls.
 

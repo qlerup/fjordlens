@@ -259,12 +259,22 @@ const I18N = {
     mapper_edit: '⋮',
     mapper_edit_title: 'Flere indstillinger',
     mapper_done_title: 'Luk flere indstillinger',
-    mapper_menu_edit: 'Rediger mapper',
+    mapper_menu_edit: 'Vælg',
     mapper_menu_done: 'Luk redigering',
     mapper_menu_create: 'Opret mappe',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
     mapper_delete_selected: 'Slet valgte',
+    mapper_create_name_required: 'Skriv mappenavn først.',
+    mapper_create_failed: 'Kunne ikke oprette mappe',
+    mapper_create_error: 'Fejl ved oprettelse af mappe.',
+    mapper_created_status: 'Mappe oprettet',
+    mapper_select_delete_none: 'Vælg mindst én mappe at slette.',
+    mapper_delete_confirm: 'Slet {count} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.',
+    mapper_delete_pending: 'Sletter...',
+    mapper_delete_failed: 'Kunne ikke slette mapper',
+    mapper_delete_error: 'Fejl ved sletning af mapper.',
+    mapper_delete_success: 'Slettet {count} mappe(r) og {removed} indekserede filer.',
     profile_title: 'Profil',
     profile_close: 'Luk',
     profile_username: 'Brugernavn',
@@ -426,12 +436,22 @@ const I18N = {
     mapper_edit: '⋮',
     mapper_edit_title: 'More options',
     mapper_done_title: 'Close more options',
-    mapper_menu_edit: 'Edit folders',
+    mapper_menu_edit: 'Select',
     mapper_menu_done: 'Close editing',
     mapper_menu_create: 'Create folder',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
     mapper_delete_selected: 'Delete selected',
+    mapper_create_name_required: 'Enter a folder name first.',
+    mapper_create_failed: 'Could not create folder',
+    mapper_create_error: 'Error while creating folder.',
+    mapper_created_status: 'Folder created',
+    mapper_select_delete_none: 'Select at least one folder to delete.',
+    mapper_delete_confirm: 'Delete {count} folder(s) including all content? This cannot be undone.',
+    mapper_delete_pending: 'Deleting...',
+    mapper_delete_failed: 'Could not delete folders',
+    mapper_delete_error: 'Error while deleting folders.',
+    mapper_delete_success: 'Deleted {count} folder(s) and {removed} indexed files.',
     profile_title: 'Profile',
     profile_close: 'Close',
     profile_username: 'Username',
@@ -1520,6 +1540,7 @@ async function uploadFiles(fileList, options = {}) {
 
 function renderMapperContext(path = '') {
   const p = String(path || '');
+  const selectedCount = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
   if (els.mapperCurrentPath) {
     els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p ? `uploads/${p}` : tr('mapper_root_folder')}`;
   }
@@ -1538,7 +1559,9 @@ function renderMapperContext(path = '') {
     els.mapperEditBtn.setAttribute('aria-label', mapperEditTitle);
   }
   if (els.mapperHeaderEditAction) {
-    els.mapperHeaderEditAction.textContent = state.mapperEditMode ? tr('mapper_menu_done') : tr('mapper_menu_edit');
+    els.mapperHeaderEditAction.textContent = state.mapperEditMode
+      ? (selectedCount > 0 ? `${tr('mapper_delete_selected')} (${selectedCount})` : tr('mapper_menu_done'))
+      : tr('mapper_menu_edit');
   }
   if (els.mapperHeaderCreateAction) {
     els.mapperHeaderCreateAction.textContent = tr('mapper_menu_create');
@@ -1546,10 +1569,9 @@ function renderMapperContext(path = '') {
     els.mapperHeaderCreateAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_create');
   }
   if (els.mapperDeleteBtn) {
-    const count = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
-    els.mapperDeleteBtn.classList.toggle('hidden', !state.mapperEditMode);
-    els.mapperDeleteBtn.disabled = count === 0;
-    els.mapperDeleteBtn.textContent = count > 0 ? `${tr('mapper_delete_selected')} (${count})` : tr('mapper_delete_selected');
+    els.mapperDeleteBtn.classList.add('hidden');
+    els.mapperDeleteBtn.disabled = true;
+    els.mapperDeleteBtn.textContent = tr('mapper_delete_selected');
   }
   renderMapperTree();
 }
@@ -1580,7 +1602,7 @@ async function createMapperFolder() {
   const parent = String(state.mapperPath || '');
   const path = (els.mapperCreateModalInput.value || '').trim();
   if (!path) {
-    showStatus('Skriv mappenavn først.', 'err');
+    showStatus(tr('mapper_create_name_required'), 'err');
     try { els.mapperCreateModalInput.focus(); } catch {}
     return;
   }
@@ -1599,7 +1621,7 @@ async function createMapperFolder() {
     });
     const data = await res.json();
     if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || 'Kunne ikke oprette mappe', 'err');
+      showStatus((data && data.error) || tr('mapper_create_failed'), 'err');
       return;
     }
     els.mapperCreateModalInput.value = '';
@@ -1610,9 +1632,9 @@ async function createMapperFolder() {
     await loadPhotos();
     closeMapperCreateModal(false);
     const createdPath = String(data.created || path || '');
-    showStatus(`Mappe oprettet: ${createdPath}`, 'ok');
+    showStatus(`${tr('mapper_created_status')}: ${createdPath}`, 'ok');
   } catch {
-    showStatus('Fejl ved oprettelse af mappe.', 'err');
+    showStatus(tr('mapper_create_error'), 'err');
   } finally {
     if (createBtn) {
       createBtn.classList.remove('loading');
@@ -1642,10 +1664,11 @@ function toggleMapperFolderSelection(folderPath) {
 async function deleteSelectedMapperFolders() {
   const selected = Array.from(state.mapperSelectedFolders || []);
   if (!selected.length) {
-    showStatus('Vælg mindst én mappe at slette.', 'err');
+    showStatus(tr('mapper_select_delete_none'), 'err');
     return;
   }
-  const ok = confirm(`Slet ${selected.length} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.`);
+  const confirmMsg = tr('mapper_delete_confirm').replace('{count}', String(selected.length));
+  const ok = confirm(confirmMsg);
   if (!ok) return;
   const deleteBtn = els.mapperDeleteBtn;
   const originalLabel = deleteBtn ? deleteBtn.textContent : 'Slet valgte';
@@ -1653,7 +1676,7 @@ async function deleteSelectedMapperFolders() {
     if (deleteBtn) {
       deleteBtn.disabled = true;
       deleteBtn.classList.add('loading');
-      deleteBtn.textContent = 'Sletter...';
+      deleteBtn.textContent = tr('mapper_delete_pending');
     }
     const res = await fetch('/api/settings/upload-folder-delete', {
       method: 'POST',
@@ -1662,7 +1685,7 @@ async function deleteSelectedMapperFolders() {
     });
     const data = await res.json();
     if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || 'Kunne ikke slette mapper', 'err');
+      showStatus((data && data.error) || tr('mapper_delete_failed'), 'err');
       return;
     }
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
@@ -1672,9 +1695,12 @@ async function deleteSelectedMapperFolders() {
     await loadPhotos();
     const deletedCount = Array.isArray(data.deleted) ? data.deleted.length : 0;
     const removedPhotos = Number(data.removed_photos || 0);
-    showStatus(`Slettet ${deletedCount} mappe(r) og ${removedPhotos} indekserede filer.`, 'ok');
+    const successMsg = tr('mapper_delete_success')
+      .replace('{count}', String(deletedCount))
+      .replace('{removed}', String(removedPhotos));
+    showStatus(successMsg, 'ok');
   } catch {
-    showStatus('Fejl ved sletning af mapper.', 'err');
+    showStatus(tr('mapper_delete_error'), 'err');
   } finally {
     if (deleteBtn) {
       deleteBtn.classList.remove('loading');
@@ -2570,8 +2596,19 @@ if (els.mapperEditBtn) {
   });
 }
 if (els.mapperHeaderEditAction) {
-  els.mapperHeaderEditAction.addEventListener('click', () => {
-    setMapperEditMode(!state.mapperEditMode);
+  els.mapperHeaderEditAction.addEventListener('click', async () => {
+    const selectedCount = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
+    if (!state.mapperEditMode) {
+      setMapperEditMode(true);
+      closeMapperHeaderMenu();
+      return;
+    }
+    if (selectedCount > 0) {
+      await deleteSelectedMapperFolders();
+      closeMapperHeaderMenu();
+      return;
+    }
+    setMapperEditMode(false);
     closeMapperHeaderMenu();
   });
 }

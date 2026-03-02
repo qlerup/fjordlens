@@ -260,6 +260,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   display: flex;
   gap: 10px;
   align-items: center;
+  justify-content: flex-end;
   margin-bottom: 14px;
   border: 1px solid var(--border);
   background: var(--panel);
@@ -271,15 +272,27 @@ body.drawer-open .drawer-backdrop { display: block; }
 .search-shell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1;
+  gap: 0;
+  flex: 0 1 360px;
   min-width: 42px;
   max-width: 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 0;
+  justify-content: center;
   overflow: hidden;
-  transition: max-width .24s ease;
+  transition: max-width .24s ease, padding .24s ease, border-color .2s ease, box-shadow .2s ease;
 }
 .search-shell.expanded {
-  max-width: 100%;
+  max-width: 360px;
+  padding: 0 8px 0 4px;
+  justify-content: flex-start;
+}
+.search-shell:focus-within,
+.search-shell.expanded {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91,140,255,0.12);
 }
 .mapper-header-actions {
   display: none;
@@ -383,19 +396,27 @@ body.drawer-open .drawer-backdrop { display: block; }
   outline: none;
 }
 .search-toggle-btn {
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border: none;
+  background: transparent;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 42px;
+  flex: 0 0 34px;
+  box-shadow: none;
+}
+.search-toggle-btn:hover {
+  filter: none;
+  background: transparent;
 }
 .search-wrap {
   flex: 1;
   min-width: 0;
   opacity: 0;
-  transform: translateX(-6px);
+  transform: translateX(-4px);
   transition: opacity .2s ease, transform .2s ease;
 }
 .search-shell.expanded .search-wrap {
@@ -416,10 +437,22 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 .search-wrap input::placeholder { color: #a7b1c6; }
 .input-number::placeholder { color: #a7b1c6; }
+.search-shell .search-wrap input {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 10px 6px 10px 2px;
+}
+.search-shell .search-wrap input:focus {
+  border: none;
+  outline: none;
+}
 .select {
   width: 170px;
+  height: 34px;
+  padding: 6px 10px;
 }
-.search-wrap input:focus, .select:focus, .search-shell.expanded .search-toggle-btn {
+.select:focus {
   border-color: var(--accent);
 }
 .btn {
