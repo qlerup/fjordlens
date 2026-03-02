@@ -4462,6 +4462,26 @@ def api_settings_dns():
     )
 
 
+@app.route("/api/settings/dns/effective", methods=["GET"])
+def api_settings_dns_effective():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    saved = str(_get_setting("share_duckdns_base_url", "") or "").strip()
+    env_default = str(SHARE_DUCKDNS_BASE_URL or "").strip()
+    effective = saved or env_default
+    normalized = _normalize_share_base_url(effective)
+    return jsonify(
+        {
+            "ok": True,
+            "effective_duckdns_base_url": normalized or "",
+            "duckdns_configured": bool(normalized),
+            "using_env_default": bool(env_default and not saved and normalized),
+        }
+    )
+
+
 # --- Upload endpoint (drag & drop) ---
 @app.route("/api/upload", methods=["POST"])
 @login_required
@@ -4909,6 +4929,112 @@ def api_admin_users():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/shares", methods=["GET"])
+@login_required
+def api_admin_shares_list():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    include_inactive = request.args.get("include_inactive") in {"1", "true", "True"}
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
+                   s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
+                   u.username AS created_by_username
+            FROM share_links s
+            LEFT JOIN users u ON u.id = s.created_by_user_id
+            ORDER BY s.created_at DESC
+            """
+        ).fetchall()
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        revoked = bool(int(r["revoked"] or 0))
+        expired = _share_is_expired(r["expires_at"])
+        active = (not revoked) and (not expired)
+        if not include_inactive and not active:
+            continue
+
+        can_upload = bool(int(r["can_upload"] or 0))
+        can_delete = bool(int(r["can_delete"] or 0))
+        permission = "view"
+        if can_upload and can_delete:
+            permission = "manage"
+        elif can_upload:
+            permission = "upload"
+
+        items.append(
+            {
+                "id": int(r["id"]),
+                "folder_path": str(r["folder_path"] or ""),
+                "permission": permission,
+                "can_upload": can_upload,
+                "can_delete": can_delete,
+                "password_enabled": bool(str(r["password_hash"] or "").strip()),
+                "expires_at": r["expires_at"],
+                "created_at": r["created_at"],
+                "last_used_at": r["last_used_at"],
+                "revoked": revoked,
+                "expired": expired,
+                "active": active,
+                "created_by_user_id": int(r["created_by_user_id"] or 0),
+                "created_by_username": (r["created_by_username"] or ""),
+            }
+        )
+
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/admin/shares/<int:share_id>/revoke", methods=["POST"])
+@login_required
+def api_admin_shares_revoke(share_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, revoked FROM share_links WHERE id=?", (int(share_id),)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
+        if int(row["revoked"] or 0) == 1:
+            return jsonify({"ok": True, "already_revoked": True})
+        conn.execute("UPDATE share_links SET revoked=1 WHERE id=?", (int(share_id),))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/shares/<int:share_id>/extend", methods=["POST"])
+@login_required
+def api_admin_shares_extend(share_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        expires_value = int(body.get("expires_value") or 7)
+    except Exception:
+        expires_value = 7
+    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
+    if expires_value < 1:
+        expires_value = 1
+    if expires_unit not in {"hours", "days"}:
+        expires_unit = "days"
+    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
+    expires_hours = max(1, min(expires_hours, 24 * 365))
+    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, revoked FROM share_links WHERE id=?", (int(share_id),)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
+        if int(row["revoked"] or 0) == 1:
+            return jsonify({"ok": False, "error": "Share-link er tilbagekaldt"}), 400
+        conn.execute("UPDATE share_links SET expires_at=? WHERE id=?", (expires_at, int(share_id)))
+        conn.commit()
+
+    return jsonify({"ok": True, "expires_at": expires_at})
 
 
 @app.route("/api/admin/users/<int:uid>", methods=["DELETE", "PUT"])
