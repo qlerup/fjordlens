@@ -3260,8 +3260,10 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
 
     # Optional folder filter: all files under folder (prefix match)
     if folder:
-        where.append("(rel_path LIKE ? || '/%')")
-        params.append(folder)
+        folder_norm = _normalize_upload_subdir(str(folder))
+        folder_with_uploads = folder_norm if folder_norm.startswith("uploads/") else f"uploads/{folder_norm}"
+        where.append("(rel_path LIKE ? || '/%' OR rel_path LIKE ? || '/%')")
+        params.extend([folder_norm, folder_with_uploads])
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
@@ -5254,6 +5256,36 @@ def api_admin_shares_extend(share_id: int):
         if int(row["revoked"] or 0) == 1:
             return jsonify({"ok": False, "error": "Share-link er tilbagekaldt"}), 400
         conn.execute("UPDATE share_links SET expires_at=? WHERE id=?", (expires_at, int(share_id)))
+        conn.commit()
+
+    return jsonify({"ok": True, "expires_at": expires_at})
+
+
+@app.route("/api/admin/shares/<int:share_id>/activate", methods=["POST"])
+@login_required
+def api_admin_shares_activate(share_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        expires_value = int(body.get("expires_value") or 7)
+    except Exception:
+        expires_value = 7
+    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
+    if expires_value < 1:
+        expires_value = 1
+    if expires_unit not in {"hours", "days"}:
+        expires_unit = "days"
+    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
+    expires_hours = max(1, min(expires_hours, 24 * 365))
+    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id FROM share_links WHERE id=?", (int(share_id),)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
+        conn.execute("UPDATE share_links SET revoked=0, expires_at=? WHERE id=?", (expires_at, int(share_id)))
         conn.commit()
 
     return jsonify({"ok": True, "expires_at": expires_at})

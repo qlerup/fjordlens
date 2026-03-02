@@ -289,6 +289,8 @@ const I18N = {
     dns_shares_col_actions: 'Handlinger',
     dns_shares_never: 'Aldrig',
     dns_shares_revoke: 'Tilbagekald',
+    dns_shares_deactivate: 'Deaktiver',
+    dns_shares_activate: 'Aktiver',
     dns_shares_extend: 'Forlæng',
     dns_shares_copy: 'Kopiér',
     dns_shares_copy_ok: 'Share-link kopieret.',
@@ -297,6 +299,11 @@ const I18N = {
     dns_shares_revoke_confirm: 'Tilbagekald dette share-link?',
     dns_shares_revoke_ok: 'Share-link tilbagekaldt.',
     dns_shares_revoke_failed: 'Kunne ikke tilbagekalde share-link.',
+    dns_shares_deactivate_confirm: 'Deaktiver dette share-link?',
+    dns_shares_deactivate_ok: 'Share-link deaktiveret.',
+    dns_shares_activate_prompt: 'Aktivér link i antal dage:',
+    dns_shares_activate_ok: 'Share-link aktiveret.',
+    dns_shares_activate_failed: 'Kunne ikke aktivere share-link.',
     dns_shares_extend_prompt: 'Forlæng med antal dage:',
     dns_shares_extend_ok: 'Share-link forlænget.',
     dns_shares_extend_failed: 'Kunne ikke forlænge share-link.',
@@ -527,6 +534,8 @@ const I18N = {
     dns_shares_col_actions: 'Actions',
     dns_shares_never: 'Never',
     dns_shares_revoke: 'Revoke',
+    dns_shares_deactivate: 'Deactivate',
+    dns_shares_activate: 'Activate',
     dns_shares_extend: 'Extend',
     dns_shares_copy: 'Copy',
     dns_shares_copy_ok: 'Share link copied.',
@@ -535,6 +544,11 @@ const I18N = {
     dns_shares_revoke_confirm: 'Revoke this share link?',
     dns_shares_revoke_ok: 'Share link revoked.',
     dns_shares_revoke_failed: 'Could not revoke share link.',
+    dns_shares_deactivate_confirm: 'Deactivate this share link?',
+    dns_shares_deactivate_ok: 'Share link deactivated.',
+    dns_shares_activate_prompt: 'Activate link for number of days:',
+    dns_shares_activate_ok: 'Share link activated.',
+    dns_shares_activate_failed: 'Could not activate share link.',
     dns_shares_extend_prompt: 'Extend by number of days:',
     dns_shares_extend_ok: 'Share link extended.',
     dns_shares_extend_failed: 'Could not extend share link.',
@@ -1265,6 +1279,7 @@ function renderGrid() {
   if (state.view === "mapper") {
     const current = String(state.mapperPath || "");
     const groupMap = new Map();
+    const directItems = [];
     const includeFolder = (folderPath) => {
       if (!groupMap.has(folderPath)) groupMap.set(folderPath, []);
     };
@@ -1287,6 +1302,9 @@ function renderGrid() {
       let folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
       if (folder === 'uploads') folder = '';
       else if (folder.startsWith('uploads/')) folder = folder.slice('uploads/'.length);
+      if (folder === current) {
+        directItems.push(it);
+      }
       const child = immediateChild(folder, current);
       if (!child) continue;
       includeFolder(child);
@@ -1299,7 +1317,7 @@ function renderGrid() {
     }
 
     const sorted = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'da-DK'));
-    if (!sorted.length) {
+    if (!sorted.length && !directItems.length) {
       hideEmpty();
       renderStats();
       setDetail(null);
@@ -1318,6 +1336,7 @@ function renderGrid() {
         },
       });
     }
+    directItems.forEach((it) => appendCard(it));
   } else {
     items.forEach(item => appendCard(item));
   }
@@ -1832,6 +1851,13 @@ function renderDnsSharesList() {
     const linkCell = link
       ? `<div class="mini-label" style="max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(link)}">${escapeHtml(link)}</div>`
       : `<span class="mini-label">${escapeHtml(tr('dns_shares_link_unavailable'))}</span>`;
+    const isActive = !!item.active;
+    const actionBtn = isActive
+      ? `<button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_deactivate'))}</button>`
+      : `<button class="btn small" data-share-activate="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_activate'))}</button>`;
+    const extendBtn = isActive
+      ? `<button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
+      : '';
     return `
       <tr>
         <td>${escapeHtml(folder)}</td>
@@ -1841,8 +1867,8 @@ function renderDnsSharesList() {
         <td>${linkCell}</td>
         <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
           <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
-          <button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>
-          <button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_revoke'))}</button>
+          ${extendBtn}
+          ${actionBtn}
         </td>
       </tr>
     `;
@@ -1872,7 +1898,7 @@ async function loadDnsShares() {
   showSharedStatus('');
   els.sharedLinksList.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_loading'))}</div>`;
   try {
-    const res = await fetch('/api/admin/shares');
+    const res = await fetch('/api/admin/shares?include_inactive=1');
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
       state.sharedLinks = [];
@@ -1889,7 +1915,7 @@ async function loadDnsShares() {
 
 async function revokeDnsShare(shareId) {
   if (!shareId) return;
-  if (!window.confirm(tr('dns_shares_revoke_confirm'))) return;
+  if (!window.confirm(tr('dns_shares_deactivate_confirm'))) return;
   try {
     const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/revoke`, {
       method: 'POST',
@@ -1900,10 +1926,37 @@ async function revokeDnsShare(shareId) {
       showSharedStatus((data && data.error) || tr('dns_shares_revoke_failed'), 'err');
       return;
     }
-    showSharedStatus(tr('dns_shares_revoke_ok'), 'ok');
+    showSharedStatus(tr('dns_shares_deactivate_ok'), 'ok');
     await loadDnsShares();
   } catch {
     showSharedStatus(tr('dns_shares_revoke_failed'), 'err');
+  }
+}
+
+async function activateDnsShare(shareId) {
+  if (!shareId) return;
+  const raw = window.prompt(tr('dns_shares_activate_prompt'), '7');
+  if (raw === null) return;
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days < 1) {
+    showSharedStatus(tr('dns_shares_activate_failed'), 'err');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expires_value: Math.floor(days), expires_unit: 'days' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showSharedStatus((data && data.error) || tr('dns_shares_activate_failed'), 'err');
+      return;
+    }
+    showSharedStatus(tr('dns_shares_activate_ok'), 'ok');
+    await loadDnsShares();
+  } catch {
+    showSharedStatus(tr('dns_shares_activate_failed'), 'err');
   }
 }
 
@@ -3887,6 +3940,11 @@ if (els.sharedLinksList) {
     const revokeId = Number(target.getAttribute('data-share-revoke') || 0) || 0;
     if (revokeId > 0) {
       await revokeDnsShare(revokeId);
+      return;
+    }
+    const activateId = Number(target.getAttribute('data-share-activate') || 0) || 0;
+    if (activateId > 0) {
+      await activateDnsShare(activateId);
       return;
     }
     const extendId = Number(target.getAttribute('data-share-extend') || 0) || 0;
