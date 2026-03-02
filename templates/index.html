@@ -110,6 +110,7 @@
           <button id="mapperEditBtn" class="btn" title="Flere indstillinger" aria-label="Flere indstillinger">⋮</button>
           <div id="mapperHeaderMenu" class="mapper-header-menu" aria-label="Mapper menu">
             <button id="mapperHeaderEditAction" class="mapper-header-menu-item" type="button">Rediger mapper</button>
+            <button id="mapperHeaderShareAction" class="mapper-header-menu-item" type="button">Del</button>
             <button id="mapperHeaderCreateAction" class="mapper-header-menu-item" type="button">Opret mappe</button>
           </div>
         </div>
@@ -386,6 +387,58 @@
       <div class="actions" style="justify-content:flex-end;gap:8px;">
         <button id="mapperCreateModalCancel" class="btn">Annuller</button>
         <button id="mapperCreateModalConfirm" class="btn primary">Opret</button>
+      </div>
+    </div>
+  </div>
+  <div id="mapperShareModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 id="mapperShareModalTitle" style="margin:0;">Del mappe</h3>
+        <button id="mapperShareModalClose" class="btn">Luk</button>
+      </div>
+      <div class="form-row">
+        <label id="mapperShareFolderLabel" for="mapperShareFolderInput">Valgt mappe</label>
+        <input id="mapperShareFolderInput" class="mapper-input" type="text" style="min-width:0;width:100%;" readonly />
+      </div>
+      <div class="toolbar" style="margin-bottom:10px;">
+        <div class="form-row" style="margin:0;flex:1;min-width:110px;">
+          <label id="mapperShareExpireLabel" for="mapperShareExpireValue">Gyldig i</label>
+          <input id="mapperShareExpireValue" class="input-number" type="number" min="1" max="365" value="7" />
+        </div>
+        <div class="form-row" style="margin:0;flex:1;min-width:130px;">
+          <label id="mapperShareExpireUnitLabel" for="mapperShareExpireUnit">Enhed</label>
+          <select id="mapperShareExpireUnit" class="select">
+            <option value="days">Dage</option>
+            <option value="hours">Timer</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label id="mapperSharePermissionLabel" for="mapperSharePermission">Adgang</label>
+        <select id="mapperSharePermission" class="select">
+          <option value="view">Se</option>
+          <option value="upload">Se og uploade</option>
+          <option value="manage">Se, uploade og slette</option>
+        </select>
+      </div>
+      <label class="toolbar" for="mapperSharePasswordToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
+        <input id="mapperSharePasswordToggle" type="checkbox" />
+        <span id="mapperSharePasswordToggleText" class="mini-label">Kodebeskyt link</span>
+      </label>
+      <div id="mapperSharePasswordWrap" class="form-row hidden">
+        <label id="mapperSharePasswordLabel" for="mapperSharePasswordInput">Adgangskode</label>
+        <input id="mapperSharePasswordInput" class="mapper-input" type="password" style="min-width:0;width:100%;" placeholder="Mindst 4 tegn" />
+      </div>
+      <div class="actions" style="justify-content:flex-end;gap:8px;margin-top:12px;">
+        <button id="mapperShareModalCancel" class="btn">Annuller</button>
+        <button id="mapperShareModalConfirm" class="btn primary">Generer link</button>
+      </div>
+      <div id="mapperShareResultWrap" class="form-row hidden" style="margin-top:12px;">
+        <label id="mapperShareResultLabel" for="mapperShareResultInput">Share-link</label>
+        <div class="toolbar" style="gap:8px;align-items:stretch;">
+          <input id="mapperShareResultInput" class="mapper-input" type="text" style="min-width:0;width:100%;" readonly />
+          <button id="mapperShareCopyBtn" class="btn" type="button">Kopiér</button>
+        </div>
       </div>
     </div>
   </div>

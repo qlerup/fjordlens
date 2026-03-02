@@ -60,6 +60,9 @@ Open:
 - Folder selection flow now starts with `Select` (`Vælg`) and changes contextually to `Delete selected` when folders are selected.
 - Timeline/topbar controls were aligned to the right and visually matched to the compact `Folders` control sizing.
 - New mapper flow labels and status messages are localized for both Danish and English.
+- Share links for folders are now supported (public link bypassing normal login).
+- Share links support scoped permissions (`view`, `view+upload`, `view+upload+delete`).
+- Share links support expiry and optional password protection (toggle on/off when generating).
 
 ## Where to Find What (UI Map)
 
@@ -153,6 +156,13 @@ Folder selection/delete behavior:
 - Open `⋮` and choose `Select` (`Vælg`) to enter selection mode
 - Select one or more folders in the grid
 - The same menu action changes to `Delete selected` and triggers folder deletion
+
+Folder sharing behavior:
+- In `Folders`, select one folder and choose `Share` from `⋮` menu
+- Configure expiry and permission level in modal
+- Optional: enable password protection per link
+- Generated links open a dedicated share page without normal app login
+- Password-protected links prompt for password before access
 
 This replaced the old maintenance upload destination controls.
 

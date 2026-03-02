@@ -28,6 +28,7 @@ const els = {
   mapperSearchInput: document.getElementById("mapperSearchInput"),
   mapperHeaderMenu: document.getElementById("mapperHeaderMenu"),
   mapperHeaderEditAction: document.getElementById("mapperHeaderEditAction"),
+  mapperHeaderShareAction: document.getElementById("mapperHeaderShareAction"),
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
@@ -109,6 +110,28 @@ const els = {
   mapperCreateModalInput: document.getElementById("mapperCreateModalInput"),
   mapperCreateModalCancel: document.getElementById("mapperCreateModalCancel"),
   mapperCreateModalConfirm: document.getElementById("mapperCreateModalConfirm"),
+  mapperShareModal: document.getElementById("mapperShareModal"),
+  mapperShareModalTitle: document.getElementById("mapperShareModalTitle"),
+  mapperShareModalClose: document.getElementById("mapperShareModalClose"),
+  mapperShareModalCancel: document.getElementById("mapperShareModalCancel"),
+  mapperShareModalConfirm: document.getElementById("mapperShareModalConfirm"),
+  mapperShareFolderLabel: document.getElementById("mapperShareFolderLabel"),
+  mapperShareFolderInput: document.getElementById("mapperShareFolderInput"),
+  mapperShareExpireLabel: document.getElementById("mapperShareExpireLabel"),
+  mapperShareExpireValue: document.getElementById("mapperShareExpireValue"),
+  mapperShareExpireUnitLabel: document.getElementById("mapperShareExpireUnitLabel"),
+  mapperShareExpireUnit: document.getElementById("mapperShareExpireUnit"),
+  mapperSharePermissionLabel: document.getElementById("mapperSharePermissionLabel"),
+  mapperSharePermission: document.getElementById("mapperSharePermission"),
+  mapperSharePasswordToggle: document.getElementById("mapperSharePasswordToggle"),
+  mapperSharePasswordToggleText: document.getElementById("mapperSharePasswordToggleText"),
+  mapperSharePasswordWrap: document.getElementById("mapperSharePasswordWrap"),
+  mapperSharePasswordLabel: document.getElementById("mapperSharePasswordLabel"),
+  mapperSharePasswordInput: document.getElementById("mapperSharePasswordInput"),
+  mapperShareResultWrap: document.getElementById("mapperShareResultWrap"),
+  mapperShareResultLabel: document.getElementById("mapperShareResultLabel"),
+  mapperShareResultInput: document.getElementById("mapperShareResultInput"),
+  mapperShareCopyBtn: document.getElementById("mapperShareCopyBtn"),
   scanModal: document.getElementById("scanModal"),
   scanModalClose: document.getElementById("scanModalClose"),
   scanModalCancel: document.getElementById("scanModalCancel"),
@@ -261,6 +284,7 @@ const I18N = {
     mapper_done_title: 'Luk flere indstillinger',
     mapper_menu_edit: 'Vælg',
     mapper_menu_done: 'Luk redigering',
+    mapper_menu_share: 'Del',
     mapper_menu_create: 'Opret mappe',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
@@ -275,6 +299,28 @@ const I18N = {
     mapper_delete_failed: 'Kunne ikke slette mapper',
     mapper_delete_error: 'Fejl ved sletning af mapper.',
     mapper_delete_success: 'Slettet {count} mappe(r) og {removed} indekserede filer.',
+    mapper_share_title: 'Del mappe',
+    mapper_share_generate: 'Generer link',
+    mapper_share_generating: 'Genererer...',
+    mapper_share_folder_label: 'Valgt mappe',
+    mapper_share_expire_label: 'Gyldig i',
+    mapper_share_expire_unit_label: 'Enhed',
+    mapper_share_expire_days: 'Dage',
+    mapper_share_expire_hours: 'Timer',
+    mapper_share_permission_label: 'Adgang',
+    mapper_share_perm_view: 'Se',
+    mapper_share_perm_upload: 'Se og uploade',
+    mapper_share_perm_manage: 'Se, uploade og slette',
+    mapper_share_password_toggle: 'Kodebeskyt link',
+    mapper_share_password_label: 'Adgangskode',
+    mapper_share_password_placeholder: 'Mindst 4 tegn',
+    mapper_share_result_label: 'Share-link',
+    mapper_share_copy: 'Kopiér',
+    mapper_share_select_one: 'Vælg præcis én mappe først.',
+    mapper_share_create_failed: 'Kunne ikke oprette share-link',
+    mapper_share_created: 'Share-link oprettet.',
+    mapper_share_copy_ok: 'Share-link kopieret.',
+    mapper_share_copy_fail: 'Kunne ikke kopiere link automatisk.',
     profile_title: 'Profil',
     profile_close: 'Luk',
     profile_username: 'Brugernavn',
@@ -438,6 +484,7 @@ const I18N = {
     mapper_done_title: 'Close more options',
     mapper_menu_edit: 'Select',
     mapper_menu_done: 'Close editing',
+    mapper_menu_share: 'Share',
     mapper_menu_create: 'Create folder',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
@@ -452,6 +499,28 @@ const I18N = {
     mapper_delete_failed: 'Could not delete folders',
     mapper_delete_error: 'Error while deleting folders.',
     mapper_delete_success: 'Deleted {count} folder(s) and {removed} indexed files.',
+    mapper_share_title: 'Share folder',
+    mapper_share_generate: 'Generate link',
+    mapper_share_generating: 'Generating...',
+    mapper_share_folder_label: 'Selected folder',
+    mapper_share_expire_label: 'Valid for',
+    mapper_share_expire_unit_label: 'Unit',
+    mapper_share_expire_days: 'Days',
+    mapper_share_expire_hours: 'Hours',
+    mapper_share_permission_label: 'Access',
+    mapper_share_perm_view: 'View',
+    mapper_share_perm_upload: 'View and upload',
+    mapper_share_perm_manage: 'View, upload and delete',
+    mapper_share_password_toggle: 'Protect link with password',
+    mapper_share_password_label: 'Password',
+    mapper_share_password_placeholder: 'At least 4 characters',
+    mapper_share_result_label: 'Share link',
+    mapper_share_copy: 'Copy',
+    mapper_share_select_one: 'Select exactly one folder first.',
+    mapper_share_create_failed: 'Could not create share link',
+    mapper_share_created: 'Share link created.',
+    mapper_share_copy_ok: 'Share link copied.',
+    mapper_share_copy_fail: 'Could not copy link automatically.',
     profile_title: 'Profile',
     profile_close: 'Close',
     profile_username: 'Username',
@@ -1563,6 +1632,12 @@ function renderMapperContext(path = '') {
       ? (selectedCount > 0 ? `${tr('mapper_delete_selected')} (${selectedCount})` : tr('mapper_menu_done'))
       : tr('mapper_menu_edit');
   }
+  if (els.mapperHeaderShareAction) {
+    els.mapperHeaderShareAction.textContent = tr('mapper_menu_share');
+    const canShare = !!state.mapperEditMode && selectedCount === 1;
+    els.mapperHeaderShareAction.disabled = !canShare;
+    els.mapperHeaderShareAction.title = canShare ? tr('mapper_menu_share') : tr('mapper_share_select_one');
+  }
   if (els.mapperHeaderCreateAction) {
     els.mapperHeaderCreateAction.textContent = tr('mapper_menu_create');
     els.mapperHeaderCreateAction.disabled = !!state.mapperEditMode;
@@ -2377,6 +2452,33 @@ function applyUiLanguage() {
   if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
   if (els.mapperCreateModalConfirm) els.mapperCreateModalConfirm.textContent = tr('upload_create_folder');
   if (els.mapperCreateModalInput) els.mapperCreateModalInput.placeholder = tr('upload_new_folder_placeholder');
+  if (els.mapperShareModalTitle) els.mapperShareModalTitle.textContent = tr('mapper_share_title');
+  if (els.mapperShareModalClose) els.mapperShareModalClose.textContent = tr('scan_modal_close');
+  if (els.mapperShareModalCancel) els.mapperShareModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.mapperShareModalConfirm) els.mapperShareModalConfirm.textContent = tr('mapper_share_generate');
+  if (els.mapperShareFolderLabel) els.mapperShareFolderLabel.textContent = tr('mapper_share_folder_label');
+  if (els.mapperShareExpireLabel) els.mapperShareExpireLabel.textContent = tr('mapper_share_expire_label');
+  if (els.mapperShareExpireUnitLabel) els.mapperShareExpireUnitLabel.textContent = tr('mapper_share_expire_unit_label');
+  if (els.mapperSharePermissionLabel) els.mapperSharePermissionLabel.textContent = tr('mapper_share_permission_label');
+  if (els.mapperSharePasswordToggleText) els.mapperSharePasswordToggleText.textContent = tr('mapper_share_password_toggle');
+  if (els.mapperSharePasswordLabel) els.mapperSharePasswordLabel.textContent = tr('mapper_share_password_label');
+  if (els.mapperSharePasswordInput) els.mapperSharePasswordInput.placeholder = tr('mapper_share_password_placeholder');
+  if (els.mapperShareResultLabel) els.mapperShareResultLabel.textContent = tr('mapper_share_result_label');
+  if (els.mapperShareCopyBtn) els.mapperShareCopyBtn.textContent = tr('mapper_share_copy');
+  if (els.mapperShareExpireUnit) {
+    const dayOpt = els.mapperShareExpireUnit.querySelector('option[value="days"]');
+    const hourOpt = els.mapperShareExpireUnit.querySelector('option[value="hours"]');
+    if (dayOpt) dayOpt.textContent = tr('mapper_share_expire_days');
+    if (hourOpt) hourOpt.textContent = tr('mapper_share_expire_hours');
+  }
+  if (els.mapperSharePermission) {
+    const viewOpt = els.mapperSharePermission.querySelector('option[value="view"]');
+    const uploadOpt = els.mapperSharePermission.querySelector('option[value="upload"]');
+    const manageOpt = els.mapperSharePermission.querySelector('option[value="manage"]');
+    if (viewOpt) viewOpt.textContent = tr('mapper_share_perm_view');
+    if (uploadOpt) uploadOpt.textContent = tr('mapper_share_perm_upload');
+    if (manageOpt) manageOpt.textContent = tr('mapper_share_perm_manage');
+  }
   if (els.aiScopeModalText) els.aiScopeModalText.textContent = tr('ai_scope_text');
   if (els.aiScopeModalCancel) els.aiScopeModalCancel.textContent = tr('ai_scope_cancel');
   if (els.aiScopeModalClose) els.aiScopeModalClose.textContent = tr('scan_modal_close');
@@ -2448,6 +2550,124 @@ function closeMapperCreateModal(clearInput = true) {
   els.mapperCreateModal.classList.add('hidden');
   if (clearInput && els.mapperCreateModalInput) {
     els.mapperCreateModalInput.value = '';
+  }
+}
+
+function _getSingleSelectedMapperFolder() {
+  const selected = Array.from(state.mapperSelectedFolders || []);
+  if (selected.length !== 1) return null;
+  return String(selected[0] || '');
+}
+
+function _syncMapperSharePasswordVisibility() {
+  const enabled = !!(els.mapperSharePasswordToggle && els.mapperSharePasswordToggle.checked);
+  if (els.mapperSharePasswordWrap) els.mapperSharePasswordWrap.classList.toggle('hidden', !enabled);
+  if (!enabled && els.mapperSharePasswordInput) els.mapperSharePasswordInput.value = '';
+}
+
+function openMapperShareModal() {
+  if (!els.mapperShareModal) return;
+  const folder = _getSingleSelectedMapperFolder();
+  if (!folder) {
+    showStatus(tr('mapper_share_select_one'), 'err');
+    return;
+  }
+  applyUiLanguage();
+  if (els.mapperShareFolderInput) els.mapperShareFolderInput.value = `uploads/${folder}`;
+  if (els.mapperShareExpireValue) els.mapperShareExpireValue.value = '7';
+  if (els.mapperShareExpireUnit) els.mapperShareExpireUnit.value = 'days';
+  if (els.mapperSharePermission) els.mapperSharePermission.value = 'view';
+  if (els.mapperSharePasswordToggle) els.mapperSharePasswordToggle.checked = false;
+  _syncMapperSharePasswordVisibility();
+  if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
+  if (els.mapperShareResultInput) els.mapperShareResultInput.value = '';
+  if (els.mapperShareModalConfirm) {
+    els.mapperShareModalConfirm.disabled = false;
+    els.mapperShareModalConfirm.classList.remove('loading');
+    els.mapperShareModalConfirm.textContent = tr('mapper_share_generate');
+  }
+  els.mapperShareModal.classList.remove('hidden');
+}
+
+function closeMapperShareModal(clearOutput = true) {
+  if (!els.mapperShareModal) return;
+  els.mapperShareModal.classList.add('hidden');
+  if (clearOutput) {
+    if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
+    if (els.mapperShareResultInput) els.mapperShareResultInput.value = '';
+  }
+}
+
+async function createMapperShareLink() {
+  const folder = _getSingleSelectedMapperFolder();
+  if (!folder) {
+    showStatus(tr('mapper_share_select_one'), 'err');
+    return;
+  }
+  const confirmBtn = els.mapperShareModalConfirm;
+  const original = confirmBtn ? confirmBtn.textContent : tr('mapper_share_generate');
+  const passwordEnabled = !!(els.mapperSharePasswordToggle && els.mapperSharePasswordToggle.checked);
+  const password = String((els.mapperSharePasswordInput && els.mapperSharePasswordInput.value) || '');
+  if (passwordEnabled && password.length < 4) {
+    showStatus(tr('mapper_share_password_placeholder'), 'err');
+    return;
+  }
+  try {
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.classList.add('loading');
+      confirmBtn.textContent = tr('mapper_share_generating');
+    }
+    const expiresValue = Number((els.mapperShareExpireValue && els.mapperShareExpireValue.value) || 7) || 7;
+    const expiresUnit = String((els.mapperShareExpireUnit && els.mapperShareExpireUnit.value) || 'days');
+    const permission = String((els.mapperSharePermission && els.mapperSharePermission.value) || 'view');
+    const res = await fetch('/api/shares', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folder_path: folder,
+        permission,
+        expires_value: expiresValue,
+        expires_unit: expiresUnit,
+        password_enabled: passwordEnabled,
+        password,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || tr('mapper_share_create_failed'), 'err');
+      return;
+    }
+    if (els.mapperShareResultInput) els.mapperShareResultInput.value = String(data.link || '');
+    if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.remove('hidden');
+    showStatus(tr('mapper_share_created'), 'ok');
+  } catch {
+    showStatus(tr('mapper_share_create_failed'), 'err');
+  } finally {
+    if (confirmBtn) {
+      confirmBtn.classList.remove('loading');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = original || tr('mapper_share_generate');
+    }
+  }
+}
+
+async function copyMapperShareLink() {
+  const link = String((els.mapperShareResultInput && els.mapperShareResultInput.value) || '').trim();
+  if (!link) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      if (els.mapperShareResultInput) {
+        els.mapperShareResultInput.focus();
+        els.mapperShareResultInput.select();
+      }
+      document.execCommand('copy');
+    }
+    showStatus(tr('mapper_share_copy_ok'), 'ok');
+  } catch {
+    showStatus(tr('mapper_share_copy_fail'), 'err');
   }
 }
 
@@ -2615,6 +2835,12 @@ if (els.mapperHeaderEditAction) {
 if (els.mapperHeaderCreateAction) {
   els.mapperHeaderCreateAction.addEventListener('click', () => {
     openMapperCreateModal();
+    closeMapperHeaderMenu();
+  });
+}
+if (els.mapperHeaderShareAction) {
+  els.mapperHeaderShareAction.addEventListener('click', () => {
+    openMapperShareModal();
     closeMapperHeaderMenu();
   });
 }
@@ -3151,6 +3377,30 @@ if (els.mapperCreateModalInput) {
 if (els.mapperCreateModal) {
   els.mapperCreateModal.addEventListener('click', (e) => {
     if (e.target === els.mapperCreateModal) closeMapperCreateModal();
+  });
+}
+if (els.mapperSharePasswordToggle) {
+  els.mapperSharePasswordToggle.addEventListener('change', _syncMapperSharePasswordVisibility);
+}
+if (els.mapperShareModalClose) {
+  els.mapperShareModalClose.addEventListener('click', () => closeMapperShareModal());
+}
+if (els.mapperShareModalCancel) {
+  els.mapperShareModalCancel.addEventListener('click', () => closeMapperShareModal());
+}
+if (els.mapperShareModalConfirm) {
+  els.mapperShareModalConfirm.addEventListener('click', async () => {
+    await createMapperShareLink();
+  });
+}
+if (els.mapperShareCopyBtn) {
+  els.mapperShareCopyBtn.addEventListener('click', async () => {
+    await copyMapperShareLink();
+  });
+}
+if (els.mapperShareModal) {
+  els.mapperShareModal.addEventListener('click', (e) => {
+    if (e.target === els.mapperShareModal) closeMapperShareModal();
   });
 }
 

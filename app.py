@@ -4,17 +4,18 @@ import subprocess
 import tempfile
 import re
 import hmac
+import secrets
 import io
 import json
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response
+from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 )
@@ -812,6 +813,23 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE INDEX IF NOT EXISTS idx_user_folder_access_user ON user_folder_access(user_id);
+
+            CREATE TABLE IF NOT EXISTS share_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT UNIQUE NOT NULL,
+                folder_path TEXT NOT NULL,
+                can_upload INTEGER DEFAULT 0,
+                can_delete INTEGER DEFAULT 0,
+                password_hash TEXT,
+                expires_at TEXT,
+                revoked INTEGER DEFAULT 0,
+                created_by_user_id INTEGER,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_share_links_folder ON share_links(folder_path);
+            CREATE INDEX IF NOT EXISTS idx_share_links_expires ON share_links(expires_at);
             """
         )
         conn.commit()
@@ -851,6 +869,10 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN search_language TEXT DEFAULT 'da'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE share_links ADD COLUMN password_hash TEXT")
         except Exception:
             pass
         try:
@@ -1074,7 +1096,22 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
 @app.before_request
 def enforce_login_for_app():
     # Allow static files and login endpoints without auth
-    open_endpoints = {"login", "verify_2fa", "static", "setup", "api_health"}
+    open_endpoints = {
+        "login",
+        "verify_2fa",
+        "static",
+        "setup",
+        "api_health",
+        "shared_folder_view",
+        "api_share_info",
+        "api_share_photos",
+        "api_share_thumb",
+        "api_share_viewable",
+        "api_share_original",
+        "api_share_auth",
+        "api_share_upload",
+        "api_share_delete",
+    }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
     # Bootstrap: if no users exist, redirect to setup
@@ -1352,6 +1389,139 @@ def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
             continue
 
     return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed}
+
+
+def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
+    ids = sorted({int(pid) for pid in (photo_ids or []) if str(pid).isdigit()})
+    if not ids:
+        return {"photos": 0, "faces": 0, "thumbs": 0, "files": 0}
+
+    with closing(get_conn()) as conn:
+        ph = ",".join(["?"] * len(ids))
+        rows = conn.execute(
+            f"SELECT id, rel_path, thumb_name FROM photos WHERE id IN ({ph})",
+            ids,
+        ).fetchall()
+        if not rows:
+            return {"photos": 0, "faces": 0, "thumbs": 0, "files": 0}
+
+        resolved_ids = [int(r["id"]) for r in rows]
+        thumbs = [str(r["thumb_name"]) for r in rows if r["thumb_name"]]
+        rel_paths = [str(r["rel_path"]) for r in rows if r["rel_path"]]
+
+        ph2 = ",".join(["?"] * len(resolved_ids))
+        faces_removed = int(
+            conn.execute(
+                f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph2})",
+                resolved_ids,
+            ).fetchone()["c"]
+            or 0
+        )
+        conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph2})", resolved_ids)
+        conn.execute(f"DELETE FROM photos WHERE id IN ({ph2})", resolved_ids)
+        conn.commit()
+
+    thumbs_removed = 0
+    for tn in thumbs:
+        try:
+            p = THUMB_DIR / tn
+            if p.exists():
+                p.unlink()
+                thumbs_removed += 1
+        except Exception:
+            continue
+
+    files_removed = 0
+    for rel in rel_paths:
+        try:
+            fp = _disk_path_from_rel_path(rel)
+            if fp.exists() and fp.is_file():
+                fp.unlink()
+                files_removed += 1
+        except Exception:
+            continue
+
+    return {
+        "photos": len(resolved_ids),
+        "faces": faces_removed,
+        "thumbs": thumbs_removed,
+        "files": files_removed,
+    }
+
+
+def _share_token_digest(token: str) -> str:
+    raw = str(token or "").strip()
+    if not raw:
+        return ""
+    key = app.secret_key
+    if isinstance(key, str):
+        key_bytes = key.encode("utf-8", errors="ignore")
+    elif isinstance(key, bytes):
+        key_bytes = key
+    else:
+        key_bytes = str(key).encode("utf-8", errors="ignore")
+    return hmac.new(key_bytes, raw.encode("utf-8", errors="ignore"), hashlib.sha256).hexdigest()
+
+
+def _share_is_expired(expires_at: Optional[str]) -> bool:
+    exp = str(expires_at or "").strip()
+    if not exp:
+        return False
+    return exp <= now_iso()
+
+
+def _share_folder_rel_prefix(folder_path: str) -> str:
+    folder = _normalize_upload_subdir(folder_path)
+    return f"uploads/{folder}" if folder else "uploads"
+
+
+def _load_share_from_token(token: str, touch: bool = False) -> Optional[sqlite3.Row]:
+    token_hash = _share_token_digest(token)
+    if not token_hash:
+        return None
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM share_links WHERE token_hash=? LIMIT 1",
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        if int(row["revoked"] or 0) == 1:
+            return None
+        if _share_is_expired(row["expires_at"]):
+            return None
+        if touch:
+            try:
+                conn.execute("UPDATE share_links SET last_used_at=? WHERE id=?", (now_iso(), int(row["id"])))
+                conn.commit()
+            except Exception:
+                pass
+    return row
+
+
+def _share_session_key(share_row: sqlite3.Row) -> str:
+    return f"share_auth_{int(share_row['id'])}"
+
+
+def _share_is_password_protected(share_row: sqlite3.Row) -> bool:
+    return bool(str(share_row["password_hash"] or "").strip())
+
+
+def _share_is_authorized(share_row: sqlite3.Row) -> bool:
+    if not _share_is_password_protected(share_row):
+        return True
+    return bool(session.get(_share_session_key(share_row)))
+
+
+def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row, photo_id: int) -> Optional[sqlite3.Row]:
+    folder_path = _normalize_upload_subdir(str(share_row["folder_path"] or ""))
+    if not folder_path:
+        return None
+    rel_prefix = _share_folder_rel_prefix(folder_path)
+    return conn.execute(
+        "SELECT * FROM photos WHERE id=? AND (rel_path=? OR rel_path LIKE ?) LIMIT 1",
+        (int(photo_id), rel_prefix, rel_prefix + "/%"),
+    ).fetchone()
 
 
 def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
@@ -2519,6 +2689,16 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     return d
 
 
+def _row_to_share_public(row: sqlite3.Row, token: str) -> Dict[str, Any]:
+    d = row_to_public(row)
+    pid = int(d.get("id") or 0)
+    if pid > 0:
+        d["thumb_url"] = url_for("api_share_thumb", token=token, photo_id=pid)
+        d["original_url"] = url_for("api_share_viewable", token=token, photo_id=pid)
+        d["download_url"] = url_for("api_share_original", token=token, photo_id=pid)
+    return d
+
+
 @app.route("/api/people")
 def api_people_list():
     """List people with face counts and a sample thumbnail."""
@@ -3096,6 +3276,325 @@ def index():
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
         }
     return render_template("index.html", user_role=(role or "user"), user_profile=profile)
+
+
+@app.route("/s/<token>")
+def shared_folder_view(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return render_template("login.html", error="Share link er ugyldigt eller udløbet."), 404
+    return render_template("shared_folder.html", share_token=token)
+
+
+@app.route("/api/share/<token>/auth", methods=["POST"])
+def api_share_auth(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    if not _share_is_password_protected(share):
+        session[_share_session_key(share)] = 1
+        return jsonify({"ok": True})
+
+    body = request.get_json(silent=True) or {}
+    password = str(body.get("password") or "")
+    if not password:
+        return jsonify({"ok": False, "error": "Mangler adgangskode"}), 400
+
+    stored = str(share["password_hash"] or "")
+    if not stored or not check_password_hash(stored, password):
+        return jsonify({"ok": False, "error": "Forkert adgangskode"}), 401
+
+    session[_share_session_key(share)] = 1
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shares", methods=["POST"])
+def api_create_share():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    body = request.get_json(silent=True) or {}
+    try:
+        folder_path = _normalize_upload_subdir(str(body.get("folder_path") or ""))
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
+    if not folder_path:
+        return jsonify({"ok": False, "error": "Vælg præcis én mappe"}), 400
+
+    try:
+        base = UPLOAD_DIR.resolve()
+        target = (UPLOAD_DIR / folder_path).resolve()
+        target.relative_to(base)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
+    if not target.exists() or not target.is_dir():
+        return jsonify({"ok": False, "error": "Mappen findes ikke"}), 404
+
+    perm = str(body.get("permission") or "view").strip().lower()
+    can_upload = 0
+    can_delete = 0
+    if perm == "upload":
+        can_upload = 1
+    elif perm in {"manage", "delete"}:
+        can_upload = 1
+        can_delete = 1
+    elif perm != "view":
+        return jsonify({"ok": False, "error": "Ugyldig rettighed"}), 400
+
+    try:
+        expires_value = int(body.get("expires_value") or 7)
+    except Exception:
+        expires_value = 7
+    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
+    if expires_value < 1:
+        expires_value = 1
+    if expires_unit not in {"hours", "days"}:
+        expires_unit = "days"
+    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
+    expires_hours = max(1, min(expires_hours, 24 * 365))
+    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+
+    password_enabled = bool(body.get("password_enabled"))
+    password_raw = str(body.get("password") or "")
+    password_hash = None
+    if password_enabled:
+        if len(password_raw) < 4:
+            return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+        password_hash = generate_password_hash(password_raw)
+
+    token = secrets.token_urlsafe(24)
+    token_hash = _share_token_digest(token)
+    created_at = now_iso()
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            INSERT INTO share_links(token_hash, folder_path, can_upload, can_delete, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                token_hash,
+                folder_path,
+                int(can_upload),
+                int(can_delete),
+                password_hash,
+                expires_at,
+                0,
+                int(getattr(current_user, "id", 0) or 0),
+                created_at,
+            ),
+        )
+        conn.commit()
+
+    link = url_for("shared_folder_view", token=token, _external=True)
+    return jsonify(
+        {
+            "ok": True,
+            "link": link,
+            "folder_path": folder_path,
+            "permission": perm,
+            "can_upload": bool(can_upload),
+            "can_delete": bool(can_delete),
+            "password_enabled": bool(password_hash),
+            "expires_at": expires_at,
+        }
+    )
+
+
+@app.route("/api/share/<token>/info")
+def api_share_info(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
+    return jsonify(
+        {
+            "ok": True,
+            "folder_path": folder_path,
+            "folder_label": f"uploads/{folder_path}" if folder_path else "uploads",
+            "can_upload": bool(int(share["can_upload"] or 0)),
+            "can_delete": bool(int(share["can_delete"] or 0)),
+            "password_enabled": _share_is_password_protected(share),
+            "expires_at": share["expires_at"],
+        }
+    )
+
+
+@app.route("/api/share/<token>/photos")
+def api_share_photos(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+
+    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
+    if not folder_path:
+        return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
+    rel_prefix = _share_folder_rel_prefix(folder_path)
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM photos
+            WHERE (rel_path = ? OR rel_path LIKE ?)
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC, id DESC
+            """,
+            (rel_prefix, rel_prefix + "/%"),
+        ).fetchall()
+
+    items = [_row_to_share_public(r, token) for r in rows]
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/share/<token>/thumb/<int:photo_id>")
+def api_share_thumb(token: str, photo_id: int):
+    share = _load_share_from_token(token)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    with closing(get_conn()) as conn:
+        row = _get_share_scoped_photo_row(conn, share, photo_id)
+    if not row or not row["thumb_name"]:
+        return ("Not found", 404)
+    return send_from_directory(THUMB_DIR, str(row["thumb_name"]))
+
+
+@app.route("/api/share/<token>/original/<int:photo_id>")
+def api_share_original(token: str, photo_id: int):
+    share = _load_share_from_token(token)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    with closing(get_conn()) as conn:
+        row = _get_share_scoped_photo_row(conn, share, photo_id)
+    if not row:
+        return ("Not found", 404)
+
+    safe_rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    if safe_rel.startswith("uploads/"):
+        return send_from_directory(str(UPLOAD_DIR), safe_rel[len("uploads/"):])
+    return ("Forbidden", 403)
+
+
+@app.route("/api/share/<token>/view/<int:photo_id>")
+def api_share_viewable(token: str, photo_id: int):
+    share = _load_share_from_token(token)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    with closing(get_conn()) as conn:
+        row = _get_share_scoped_photo_row(conn, share, photo_id)
+    if not row:
+        return ("Not found", 404)
+
+    safe_rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    if not safe_rel.startswith("uploads/"):
+        return ("Forbidden", 403)
+    src = UPLOAD_DIR / safe_rel[len("uploads/"):]
+    if not src.exists():
+        return ("Not found", 404)
+
+    view_path = ensure_viewable_copy(src, safe_rel)
+    try:
+        vp = str(view_path)
+        if vp.startswith(str(CONVERT_DIR)):
+            rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
+            return send_from_directory(CONVERT_DIR, rel_conv)
+        return send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
+    except Exception as e:
+        return (str(e), 500)
+
+
+@app.route("/api/share/<token>/upload", methods=["POST"])
+def api_share_upload(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+    if int(share["can_upload"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
+
+    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
+    if not folder_path:
+        return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
+
+    target_dir = (UPLOAD_DIR / folder_path)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kan ikke oprette upload-destination: {e}"}), 500
+
+    files = request.files.getlist("files") or []
+    if not files:
+        return jsonify({"ok": False, "error": "No files"}), 400
+
+    saved = []
+    errors: list[str] = []
+    for f in files:
+        try:
+            name = secure_filename(f.filename or "")
+            if not name:
+                continue
+            ext = Path(name).suffix.lower()
+            if ext not in SUPPORTED_EXTS:
+                errors.append(f"Unsupported: {name}")
+                continue
+
+            target = target_dir / name
+            stem = Path(name).stem
+            suffix = Path(name).suffix
+            i = 1
+            while target.exists():
+                target = target_dir / f"{stem}_{i}{suffix}"
+                i += 1
+            f.save(str(target))
+
+            rel_leaf = f"{folder_path}/{target.name}" if folder_path else target.name
+            rel = f"uploads/{rel_leaf}" if rel_leaf else "uploads"
+            try:
+                meta = extract_metadata(target, rel)
+                upsert_photo(meta)
+            except Exception as e:
+                errors.append(f"Index fail: {target.name}: {e}")
+            saved.append(target.name)
+        except Exception as e:
+            errors.append(str(e))
+
+    return jsonify({"ok": True, "saved": saved, "errors": errors})
+
+
+@app.route("/api/share/<token>/delete", methods=["POST"])
+def api_share_delete(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+    if int(share["can_delete"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Sletning ikke tilladt"}), 403
+
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("photo_ids")
+    if not isinstance(raw_ids, list):
+        return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
+    ids = [int(pid) for pid in raw_ids if str(pid).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Ingen billeder valgt"}), 400
+
+    with closing(get_conn()) as conn:
+        allowed_ids: list[int] = []
+        for pid in ids:
+            row = _get_share_scoped_photo_row(conn, share, pid)
+            if row:
+                allowed_ids.append(int(row["id"]))
+
+    if not allowed_ids:
+        return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
+
+    removed = _delete_indexed_photos_by_ids(allowed_ids)
+    return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed_ids})
 
 
 @app.route("/api/health")

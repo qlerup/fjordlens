@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FjordLens Share</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="main" style="max-width:1200px;margin:0 auto;">
+    <header class="topbar" style="justify-content:space-between;">
+      <div>
+        <h2 id="shareTitle" style="margin:0;">Delt mappe</h2>
+        <div id="shareMeta" class="mini-label">Indlæser…</div>
+      </div>
+      <div id="shareActions" class="toolbar" style="gap:8px;">
+        <label id="uploadWrap" class="btn" style="display:none;">
+          <input id="shareFileInput" type="file" multiple style="display:none;" />
+          <span id="uploadLabel">Vælg filer</span>
+        </label>
+        <button id="uploadBtn" class="btn primary" style="display:none;">Upload</button>
+        <button id="deleteBtn" class="btn danger" style="display:none;" disabled>Slet valgte</button>
+      </div>
+    </header>
+
+    <section id="shareStatus" class="status hidden"></section>
+
+    <section id="shareAuthBox" class="sidebar-card hidden" style="max-width:520px;margin:20px auto;">
+      <div class="sidebar-card-title" id="authTitle">Adgangskode kræves</div>
+      <div class="form-row">
+        <label for="authPassword" id="authLabel">Indtast adgangskode</label>
+        <input id="authPassword" class="mapper-input" type="password" placeholder="Adgangskode" />
+      </div>
+      <div class="actions" style="justify-content:flex-end;">
+        <button id="authBtn" class="btn primary">Fortsæt</button>
+      </div>
+    </section>
+
+    <section id="shareGrid" class="gallery-grid"></section>
+  </main>
+
+  <script>
+    window.SHARE_TOKEN = {{ share_token|tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='shared.js') }}"></script>
+</body>
+</html>
