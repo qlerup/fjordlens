@@ -268,7 +268,143 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 .topbar .btn.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91,140,255,0.12); }
 .menu-btn { display: none; }
-.search-wrap { flex: 1; }
+.search-shell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 42px;
+  max-width: 42px;
+  overflow: hidden;
+  transition: max-width .24s ease;
+}
+.search-shell.expanded {
+  max-width: 100%;
+}
+.mapper-header-actions {
+  display: none;
+  position: relative;
+  align-items: center;
+  gap: 8px;
+}
+.mapper-header-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 220px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translateY(-6px);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--panel);
+  transition: max-height .24s ease, opacity .2s ease, transform .24s ease, border-color .2s ease;
+  z-index: 20;
+}
+.mapper-header-menu.open {
+  max-height: 180px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  border-color: var(--border);
+}
+.mapper-header-menu-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.mapper-header-menu-item:hover {
+  background: rgba(255,255,255,0.04);
+}
+.mapper-header-menu-item:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.mapper-search-shell {
+  flex: 0 1 360px;
+  gap: 0;
+  max-width: 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 0;
+  justify-content: center;
+  transition: max-width .24s ease, padding .24s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.mapper-search-shell.expanded {
+  max-width: 360px;
+  padding: 0 8px 0 4px;
+  justify-content: flex-start;
+}
+.mapper-search-shell:focus-within,
+.mapper-search-shell.expanded {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91,140,255,0.12);
+}
+.mapper-search-shell .search-toggle-btn {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+}
+.mapper-search-shell .search-toggle-btn:hover {
+  filter: none;
+  background: transparent;
+}
+.mapper-search-shell .search-wrap {
+  opacity: 0;
+  transform: translateX(-4px);
+}
+.mapper-search-shell.expanded .search-wrap {
+  opacity: 1;
+  transform: translateX(0);
+}
+.mapper-search-shell .search-wrap input {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 10px 6px 10px 2px;
+}
+.mapper-search-shell .search-wrap input:focus {
+  border: none;
+  outline: none;
+}
+.search-toggle-btn {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 42px;
+}
+.search-wrap {
+  flex: 1;
+  min-width: 0;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.search-shell.expanded .search-wrap {
+  opacity: 1;
+  transform: translateX(0);
+}
+.search-shell:not(.expanded) .search-wrap input {
+  pointer-events: none;
+}
 .search-wrap input, .select {
   width: 100%;
   background: var(--panel);
@@ -283,7 +419,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .select {
   width: 170px;
 }
-.search-wrap input:focus, .select:focus {
+.search-wrap input:focus, .select:focus, .search-shell.expanded .search-toggle-btn {
   border-color: var(--accent);
 }
 .btn {
@@ -883,7 +1019,13 @@ body.view-settings .gallery-grid { display: none !important; }
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
+  .mapper-search-shell { display: none !important; }
+  body.view-mapper .topbar { display: flex !important; }
+  body.view-mapper .topbar .search-shell,
+  body.view-mapper .topbar .search-wrap,
+  body.view-mapper .topbar .select { display: none !important; }
   body.view-settings .topbar { display: flex !important; }
+  body.view-settings .topbar .search-shell,
   body.view-settings .topbar .search-wrap,
   body.view-settings .topbar .select,
   body.view-settings .topbar #aiToggle { display: none !important; }
@@ -891,6 +1033,13 @@ body.view-settings .gallery-grid { display: none !important; }
 
 /* Hide status bar on all non-library views */
 body:not(.view-timeline) #statusBar { display: none !important; }
+
+/* Mapper view: hide top-right stats cards for now */
+body.view-mapper .content-header .stats { display: none !important; }
+body.view-mapper .mapper-header-actions { display: flex; }
+@media (min-width: 761px) {
+  body.view-mapper .topbar { display: none !important; }
+}
 
 /* Timeline view grouping */
 .timeline-group { margin-top: 14px; }

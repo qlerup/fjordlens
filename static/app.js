@@ -1,5 +1,7 @@
 const els = {
   grid: document.getElementById("galleryGrid"),
+  searchShell: document.getElementById("searchShell"),
+  searchToggleBtn: document.getElementById("searchToggleBtn"),
   search: document.getElementById("searchInput"),
   sort: document.getElementById("sortSelect"),
   scanBtn: document.getElementById("scanBtn"),
@@ -18,10 +20,15 @@ const els = {
   facesToggleText: document.getElementById("facesToggleText"),
   facesStatus: document.getElementById("facesStatus"),
   mapperTools: document.getElementById("mapperTools"),
+  mapperHeaderActions: document.getElementById("mapperHeaderActions"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
   mapperUpBtn: document.getElementById("mapperUpBtn"),
-  mapperFolderNewInput: document.getElementById("mapperFolderNewInput"),
-  mapperFolderCreateBtn: document.getElementById("mapperFolderCreateBtn"),
+  mapperSearchShell: document.getElementById("mapperSearchShell"),
+  mapperSearchToggleBtn: document.getElementById("mapperSearchToggleBtn"),
+  mapperSearchInput: document.getElementById("mapperSearchInput"),
+  mapperHeaderMenu: document.getElementById("mapperHeaderMenu"),
+  mapperHeaderEditAction: document.getElementById("mapperHeaderEditAction"),
+  mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperNavMenu: document.getElementById("mapperNavMenu"),
@@ -94,6 +101,14 @@ const els = {
   profileLink: document.getElementById("profileLink"),
   profileModal: document.getElementById("profileModal"),
   profileModalClose: document.getElementById("profileModalClose"),
+  twofaModal: document.getElementById("twofaModal"),
+  twofaModalClose: document.getElementById("twofaModalClose"),
+  mapperCreateModal: document.getElementById("mapperCreateModal"),
+  mapperCreateModalTitle: document.getElementById("mapperCreateModalTitle"),
+  mapperCreateModalClose: document.getElementById("mapperCreateModalClose"),
+  mapperCreateModalInput: document.getElementById("mapperCreateModalInput"),
+  mapperCreateModalCancel: document.getElementById("mapperCreateModalCancel"),
+  mapperCreateModalConfirm: document.getElementById("mapperCreateModalConfirm"),
   scanModal: document.getElementById("scanModal"),
   scanModalClose: document.getElementById("scanModalClose"),
   scanModalCancel: document.getElementById("scanModalCancel"),
@@ -173,6 +188,7 @@ const I18N = {
     tab_logs: 'Logs',
     tab_users: 'Brugere',
     tab_twofa: 'Min 2FA',
+    profile_open_twofa: 'Administrer 2FA',
     tab_profile: 'Profil',
     tab_other: 'Andet',
     view_timeline_title: 'Tidlinje',
@@ -238,9 +254,16 @@ const I18N = {
     mapper_current_folder: 'Aktuel mappe',
     mapper_root_folder: 'uploads (rodmappe)',
     mapper_drop_here: 'Slip filer her for at uploade til',
-    mapper_up: 'Op',
+    mapper_up: 'Tilbage',
     mapper_done: 'Færdig',
-    mapper_edit: '!edit',
+    mapper_edit: '⋮',
+    mapper_edit_title: 'Flere indstillinger',
+    mapper_done_title: 'Luk flere indstillinger',
+    mapper_menu_edit: 'Rediger mapper',
+    mapper_menu_done: 'Luk redigering',
+    mapper_menu_create: 'Opret mappe',
+    mapper_create_modal_title: 'Opret mappe',
+    mapper_create_pending: 'Opretter...',
     mapper_delete_selected: 'Slet valgte',
     profile_title: 'Profil',
     profile_close: 'Luk',
@@ -332,6 +355,7 @@ const I18N = {
     tab_logs: 'Logs',
     tab_users: 'Users',
     tab_twofa: 'My 2FA',
+    profile_open_twofa: 'Manage 2FA',
     tab_profile: 'Profile',
     tab_other: 'Other',
     view_timeline_title: 'Timeline',
@@ -397,9 +421,16 @@ const I18N = {
     mapper_current_folder: 'Current folder',
     mapper_root_folder: 'uploads (root)',
     mapper_drop_here: 'Drop files here to upload to',
-    mapper_up: 'Up',
+    mapper_up: 'Back',
     mapper_done: 'Done',
-    mapper_edit: '!edit',
+    mapper_edit: '⋮',
+    mapper_edit_title: 'More options',
+    mapper_done_title: 'Close more options',
+    mapper_menu_edit: 'Edit folders',
+    mapper_menu_done: 'Close editing',
+    mapper_menu_create: 'Create folder',
+    mapper_create_modal_title: 'Create folder',
+    mapper_create_pending: 'Creating...',
     mapper_delete_selected: 'Delete selected',
     profile_title: 'Profile',
     profile_close: 'Close',
@@ -1501,19 +1532,24 @@ function renderMapperContext(path = '') {
     els.mapperUpBtn.disabled = !p;
   }
   if (els.mapperEditBtn) {
-    els.mapperEditBtn.textContent = state.mapperEditMode ? tr('mapper_done') : tr('mapper_edit');
+    els.mapperEditBtn.textContent = tr('mapper_edit');
+    const mapperEditTitle = tr('mapper_edit_title');
+    els.mapperEditBtn.title = mapperEditTitle;
+    els.mapperEditBtn.setAttribute('aria-label', mapperEditTitle);
+  }
+  if (els.mapperHeaderEditAction) {
+    els.mapperHeaderEditAction.textContent = state.mapperEditMode ? tr('mapper_menu_done') : tr('mapper_menu_edit');
+  }
+  if (els.mapperHeaderCreateAction) {
+    els.mapperHeaderCreateAction.textContent = tr('mapper_menu_create');
+    els.mapperHeaderCreateAction.disabled = !!state.mapperEditMode;
+    els.mapperHeaderCreateAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_create');
   }
   if (els.mapperDeleteBtn) {
     const count = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
     els.mapperDeleteBtn.classList.toggle('hidden', !state.mapperEditMode);
     els.mapperDeleteBtn.disabled = count === 0;
     els.mapperDeleteBtn.textContent = count > 0 ? `${tr('mapper_delete_selected')} (${count})` : tr('mapper_delete_selected');
-  }
-  if (els.mapperFolderNewInput) els.mapperFolderNewInput.disabled = !!state.mapperEditMode;
-  if (els.mapperFolderNewInput) els.mapperFolderNewInput.placeholder = tr('upload_new_folder_placeholder');
-  if (els.mapperFolderCreateBtn) {
-    els.mapperFolderCreateBtn.disabled = !!state.mapperEditMode;
-    els.mapperFolderCreateBtn.textContent = tr('upload_create_folder');
   }
   renderMapperTree();
 }
@@ -1540,20 +1576,21 @@ async function loadMapperTools(preferred = null) {
 }
 
 async function createMapperFolder() {
-  if (!els.mapperFolderNewInput) return;
+  if (!els.mapperCreateModalInput) return;
   const parent = String(state.mapperPath || '');
-  const path = (els.mapperFolderNewInput.value || '').trim();
+  const path = (els.mapperCreateModalInput.value || '').trim();
   if (!path) {
     showStatus('Skriv mappenavn først.', 'err');
+    try { els.mapperCreateModalInput.focus(); } catch {}
     return;
   }
-  const createBtn = els.mapperFolderCreateBtn;
-  const originalLabel = createBtn ? createBtn.textContent : 'Opret mappe';
+  const createBtn = els.mapperCreateModalConfirm;
+  const originalLabel = createBtn ? createBtn.textContent : tr('upload_create_folder');
   try {
     if (createBtn) {
       createBtn.disabled = true;
       createBtn.classList.add('loading');
-      createBtn.textContent = 'Opretter...';
+      createBtn.textContent = tr('mapper_create_pending');
     }
     const res = await fetch('/api/settings/upload-folder', {
       method: 'POST',
@@ -1565,12 +1602,13 @@ async function createMapperFolder() {
       showStatus((data && data.error) || 'Kunne ikke oprette mappe', 'err');
       return;
     }
-    els.mapperFolderNewInput.value = '';
+    els.mapperCreateModalInput.value = '';
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperPath = parent;
     state.folder = parent || null;
     renderMapperContext(parent);
     await loadPhotos();
+    closeMapperCreateModal(false);
     const createdPath = String(data.created || path || '');
     showStatus(`Mappe oprettet: ${createdPath}`, 'ok');
   } catch {
@@ -1578,8 +1616,8 @@ async function createMapperFolder() {
   } finally {
     if (createBtn) {
       createBtn.classList.remove('loading');
-      createBtn.textContent = originalLabel || 'Opret mappe';
-      createBtn.disabled = !!state.mapperEditMode;
+      createBtn.textContent = originalLabel || tr('upload_create_folder');
+      createBtn.disabled = false;
     }
   }
 }
@@ -2199,6 +2237,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
+  if (nextView !== 'mapper') closeMapperHeaderMenu();
   if (nextView !== 'mapper' && els.mapperTreeNav) {
     if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
     els.mapperTreeNav.classList.add('hidden');
@@ -2220,6 +2259,7 @@ async function setView(view, opts = {}) {
 function applyUiLanguage() {
   try { document.documentElement.lang = state.uiLanguage || 'da'; } catch {}
   if (els.search) els.search.placeholder = tr('search_placeholder');
+  if (els.mapperSearchInput) els.mapperSearchInput.placeholder = tr('search_placeholder');
 
   if (els.sort) {
     const sortTexts = {
@@ -2259,7 +2299,6 @@ function applyUiLanguage() {
     ai: tr('tab_ai'),
     logs: tr('tab_logs'),
     users: tr('tab_users'),
-    twofa: tr('tab_twofa'),
     profile: tr('tab_profile'),
     other: tr('tab_other'),
   };
@@ -2296,6 +2335,9 @@ function applyUiLanguage() {
   const profileModalTitle = document.querySelector('#profileModal h3');
   if (profileModalTitle) profileModalTitle.textContent = tr('profile_title');
   if (els.profileModalClose) els.profileModalClose.textContent = tr('profile_close');
+  const twofaModalTitle = document.getElementById('twofaModalTitle');
+  if (twofaModalTitle) twofaModalTitle.textContent = tr('tab_twofa');
+  if (els.twofaModalClose) els.twofaModalClose.textContent = tr('profile_close');
 
   const scanModalTitle = document.getElementById('scanModalTitle');
   const scanModalText = document.getElementById('scanModalText');
@@ -2304,6 +2346,11 @@ function applyUiLanguage() {
   if (els.scanModalClose) els.scanModalClose.textContent = tr('scan_modal_close');
   if (els.scanModalCancel) els.scanModalCancel.textContent = tr('scan_modal_cancel');
   if (els.scanModalStart) els.scanModalStart.textContent = tr('scan_modal_start');
+  if (els.mapperCreateModalTitle) els.mapperCreateModalTitle.textContent = tr('mapper_create_modal_title');
+  if (els.mapperCreateModalClose) els.mapperCreateModalClose.textContent = tr('scan_modal_close');
+  if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.mapperCreateModalConfirm) els.mapperCreateModalConfirm.textContent = tr('upload_create_folder');
+  if (els.mapperCreateModalInput) els.mapperCreateModalInput.placeholder = tr('upload_new_folder_placeholder');
   if (els.aiScopeModalText) els.aiScopeModalText.textContent = tr('ai_scope_text');
   if (els.aiScopeModalCancel) els.aiScopeModalCancel.textContent = tr('ai_scope_cancel');
   if (els.aiScopeModalClose) els.aiScopeModalClose.textContent = tr('scan_modal_close');
@@ -2333,6 +2380,49 @@ function openProfileModal() {
 function closeProfileModal() {
   if (!els.profileModal) return;
   els.profileModal.classList.add('hidden');
+}
+
+function openTwofaModal() {
+  if (!els.twofaModal) return;
+  els.twofaModal.classList.remove('hidden');
+}
+
+function closeTwofaModal() {
+  if (!els.twofaModal) return;
+  els.twofaModal.classList.add('hidden');
+}
+
+function openMapperCreateModal() {
+  if (!els.mapperCreateModal) return;
+  if (els.mapperCreateModalTitle) els.mapperCreateModalTitle.textContent = tr('mapper_create_modal_title');
+  if (els.mapperCreateModalClose) els.mapperCreateModalClose.textContent = tr('scan_modal_close');
+  if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.mapperCreateModalConfirm) {
+    els.mapperCreateModalConfirm.disabled = false;
+    els.mapperCreateModalConfirm.classList.remove('loading');
+    els.mapperCreateModalConfirm.textContent = tr('upload_create_folder');
+  }
+  if (els.mapperCreateModalInput) {
+    els.mapperCreateModalInput.placeholder = tr('upload_new_folder_placeholder');
+  }
+  els.mapperCreateModal.classList.remove('hidden');
+  if (els.mapperCreateModalInput) {
+    requestAnimationFrame(() => {
+      try {
+        els.mapperCreateModalInput.focus();
+        const len = String(els.mapperCreateModalInput.value || '').length;
+        els.mapperCreateModalInput.setSelectionRange(len, len);
+      } catch {}
+    });
+  }
+}
+
+function closeMapperCreateModal(clearInput = true) {
+  if (!els.mapperCreateModal) return;
+  els.mapperCreateModal.classList.add('hidden');
+  if (clearInput && els.mapperCreateModalInput) {
+    els.mapperCreateModalInput.value = '';
+  }
 }
 
 function openScanModal() {
@@ -2365,9 +2455,138 @@ function closeAiScopeModal() {
   updateFacesToggleButton();
 }
 
+function openMapperHeaderMenu() {
+  if (!els.mapperHeaderMenu) return;
+  els.mapperHeaderMenu.classList.add('open');
+}
+
+function closeMapperHeaderMenu() {
+  if (!els.mapperHeaderMenu) return;
+  els.mapperHeaderMenu.classList.remove('open');
+}
+
+function toggleMapperHeaderMenu() {
+  if (!els.mapperHeaderMenu) return;
+  if (els.mapperHeaderMenu.classList.contains('open')) closeMapperHeaderMenu();
+  else openMapperHeaderMenu();
+}
+
+function _syncSearchInputs(value, source = null) {
+  const v = String(value || '');
+  if (els.search && source !== 'top') els.search.value = v;
+  if (els.mapperSearchInput && source !== 'mapper') els.mapperSearchInput.value = v;
+}
+
+function expandSearchField(focusInput = true) {
+  if (!els.searchShell) return;
+  els.searchShell.classList.add('expanded');
+  if (focusInput && els.search) {
+    try {
+      els.search.focus();
+      const len = String(els.search.value || '').length;
+      els.search.setSelectionRange(len, len);
+    } catch {}
+  }
+}
+
+function collapseSearchField() {
+  if (!els.searchShell) return;
+  els.searchShell.classList.remove('expanded');
+}
+
 // Events
+if (els.searchToggleBtn) {
+  els.searchToggleBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const expanded = !!(els.searchShell && els.searchShell.classList.contains('expanded'));
+    if (expanded) {
+      if (els.search) els.search.focus();
+      return;
+    }
+    expandSearchField(true);
+  });
+}
+
+if (els.search) {
+  els.search.addEventListener('focus', () => expandSearchField(false));
+  els.search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      collapseSearchField();
+      try { els.search.blur(); } catch {}
+    }
+  });
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const target = e.target;
+  if (!(target instanceof Node)) return;
+  if (els.searchShell && els.searchShell.contains(target)) return;
+  if (els.mapperSearchShell && els.mapperSearchShell.contains(target)) return;
+  if (els.mapperHeaderActions && els.mapperHeaderActions.contains(target)) return;
+  collapseSearchField();
+  if (els.mapperSearchShell) els.mapperSearchShell.classList.remove('expanded');
+  closeMapperHeaderMenu();
+});
+
+if (els.mapperSearchToggleBtn) {
+  els.mapperSearchToggleBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (!els.mapperSearchShell) return;
+    const expanded = els.mapperSearchShell.classList.contains('expanded');
+    if (!expanded) {
+      els.mapperSearchShell.classList.add('expanded');
+      if (els.mapperSearchInput) {
+        try {
+          els.mapperSearchInput.focus();
+          const len = String(els.mapperSearchInput.value || '').length;
+          els.mapperSearchInput.setSelectionRange(len, len);
+        } catch {}
+      }
+      return;
+    }
+    if (els.mapperSearchInput) els.mapperSearchInput.focus();
+  });
+}
+if (els.mapperSearchInput) {
+  els.mapperSearchInput.addEventListener('focus', () => {
+    if (els.mapperSearchShell) els.mapperSearchShell.classList.add('expanded');
+  });
+  els.mapperSearchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (els.mapperSearchShell) els.mapperSearchShell.classList.remove('expanded');
+      try { els.mapperSearchInput.blur(); } catch {}
+    }
+  });
+  els.mapperSearchInput.addEventListener('input', () => {
+    state.q = els.mapperSearchInput.value.trim();
+    _syncSearchInputs(els.mapperSearchInput.value, 'mapper');
+    loadPhotos();
+  });
+}
+if (els.mapperEditBtn) {
+  els.mapperEditBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    toggleMapperHeaderMenu();
+  });
+}
+if (els.mapperHeaderEditAction) {
+  els.mapperHeaderEditAction.addEventListener('click', () => {
+    setMapperEditMode(!state.mapperEditMode);
+    closeMapperHeaderMenu();
+  });
+}
+if (els.mapperHeaderCreateAction) {
+  els.mapperHeaderCreateAction.addEventListener('click', () => {
+    openMapperCreateModal();
+    closeMapperHeaderMenu();
+  });
+}
+if (els.search) {
+  _syncSearchInputs(els.search.value || '', 'top');
+}
 els.search.addEventListener("input", () => {
   state.q = els.search.value.trim();
+  _syncSearchInputs(els.search.value, 'top');
   loadPhotos();
 });
 els.sort.addEventListener("change", () => {
@@ -2860,6 +3079,43 @@ if (els.profileModal) {
     if (e.target === els.profileModal) closeProfileModal();
   });
 }
+if (els.twofaModalClose) {
+  els.twofaModalClose.addEventListener('click', closeTwofaModal);
+}
+if (els.twofaModal) {
+  els.twofaModal.addEventListener('click', (e) => {
+    if (e.target === els.twofaModal) closeTwofaModal();
+  });
+}
+if (els.mapperCreateModalClose) {
+  els.mapperCreateModalClose.addEventListener('click', () => closeMapperCreateModal());
+}
+if (els.mapperCreateModalCancel) {
+  els.mapperCreateModalCancel.addEventListener('click', () => closeMapperCreateModal());
+}
+if (els.mapperCreateModalConfirm) {
+  els.mapperCreateModalConfirm.addEventListener('click', async () => {
+    await createMapperFolder();
+  });
+}
+if (els.mapperCreateModalInput) {
+  els.mapperCreateModalInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await createMapperFolder();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMapperCreateModal();
+    }
+  });
+}
+if (els.mapperCreateModal) {
+  els.mapperCreateModal.addEventListener('click', (e) => {
+    if (e.target === els.mapperCreateModal) closeMapperCreateModal();
+  });
+}
 
 if (els.scanModalClose) {
   els.scanModalClose.addEventListener('click', closeScanModal);
@@ -2925,12 +3181,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     });
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
-    if (tab === 'twofa') renderTwofaPanel();
   });
 });
 
-els.mapperFolderCreateBtn && els.mapperFolderCreateBtn.addEventListener('click', createMapperFolder);
-els.mapperEditBtn && els.mapperEditBtn.addEventListener('click', () => setMapperEditMode(!state.mapperEditMode));
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');
@@ -3614,6 +3867,9 @@ async function renderProfilePanel() {
             <option value="en">English</option>
           </select>
         </div>
+        <div class="actions" style="justify-content:flex-start;margin-bottom:8px;">
+          <button id="pf_open_twofa" class="btn">${tr('profile_open_twofa')}</button>
+        </div>
         <div class="actions" style="justify-content:flex-end;">
           <button id="pf_save" class="btn primary">${tr('profile_save')}</button>
         </div>
@@ -3625,6 +3881,14 @@ async function renderProfilePanel() {
     const searchSelect = document.getElementById('pf_search_language');
     if (uiSelect) uiSelect.value = me.ui_language || state.uiLanguage || 'da';
     if (searchSelect) searchSelect.value = me.search_language || state.searchLanguage || 'da';
+
+    const openTwofaBtn = document.getElementById('pf_open_twofa');
+    if (openTwofaBtn) {
+      openTwofaBtn.addEventListener('click', async () => {
+        await renderTwofaPanel();
+        openTwofaModal();
+      });
+    }
 
     const saveBtn = document.getElementById('pf_save');
     if (saveBtn) {
