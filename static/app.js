@@ -125,6 +125,8 @@ const els = {
   mapperShareModalClose: document.getElementById("mapperShareModalClose"),
   mapperShareModalCancel: document.getElementById("mapperShareModalCancel"),
   mapperShareModalConfirm: document.getElementById("mapperShareModalConfirm"),
+  mapperShareNameLabel: document.getElementById("mapperShareNameLabel"),
+  mapperShareNameInput: document.getElementById("mapperShareNameInput"),
   mapperShareFolderLabel: document.getElementById("mapperShareFolderLabel"),
   mapperShareFolderInput: document.getElementById("mapperShareFolderInput"),
   mapperShareExpireLabel: document.getElementById("mapperShareExpireLabel"),
@@ -279,7 +281,7 @@ const I18N = {
     dns_shares_loading: 'Indlæser delinger…',
     dns_shares_empty: 'Ingen aktive delinger.',
     dns_shares_load_failed: 'Kunne ikke hente delinger.',
-    dns_shares_col_folder: 'Mappe',
+    dns_shares_col_folder: 'Navn',
     dns_shares_col_access: 'Adgang',
     dns_shares_col_expires: 'Udløber',
     dns_shares_col_last_used: 'Sidst brugt',
@@ -345,10 +347,12 @@ const I18N = {
     mapper_delete_failed: 'Kunne ikke slette mapper',
     mapper_delete_error: 'Fejl ved sletning af mapper.',
     mapper_delete_success: 'Slettet {count} mappe(r) og {removed} indekserede filer.',
-    mapper_share_title: 'Del mappe',
+    mapper_share_title: 'Del mapper',
     mapper_share_generate: 'Generer link',
     mapper_share_generating: 'Genererer...',
-    mapper_share_folder_label: 'Valgt mappe',
+    mapper_share_name_label: 'Navn',
+    mapper_share_name_placeholder: 'F.eks. Familie sommer 2026',
+    mapper_share_folder_label: 'Valgte mapper',
     mapper_share_expire_label: 'Gyldig i',
     mapper_share_expire_unit_label: 'Enhed',
     mapper_share_expire_days: 'Dage',
@@ -364,7 +368,7 @@ const I18N = {
     mapper_share_password_placeholder: 'Mindst 4 tegn',
     mapper_share_result_label: 'Share-link',
     mapper_share_copy: 'Kopiér',
-    mapper_share_select_one: 'Vælg præcis én mappe først.',
+    mapper_share_select_one: 'Vælg mindst én mappe først.',
     mapper_share_create_failed: 'Kunne ikke oprette share-link',
     mapper_share_created: 'Share-link oprettet.',
     mapper_share_copy_ok: 'Share-link kopieret.',
@@ -515,7 +519,7 @@ const I18N = {
     dns_shares_loading: 'Loading shares…',
     dns_shares_empty: 'No active shares.',
     dns_shares_load_failed: 'Could not load shares.',
-    dns_shares_col_folder: 'Folder',
+    dns_shares_col_folder: 'Name',
     dns_shares_col_access: 'Access',
     dns_shares_col_expires: 'Expires',
     dns_shares_col_last_used: 'Last used',
@@ -581,10 +585,12 @@ const I18N = {
     mapper_delete_failed: 'Could not delete folders',
     mapper_delete_error: 'Error while deleting folders.',
     mapper_delete_success: 'Deleted {count} folder(s) and {removed} indexed files.',
-    mapper_share_title: 'Share folder',
+    mapper_share_title: 'Share folders',
     mapper_share_generate: 'Generate link',
     mapper_share_generating: 'Generating...',
-    mapper_share_folder_label: 'Selected folder',
+    mapper_share_name_label: 'Name',
+    mapper_share_name_placeholder: 'For example Family Summer 2026',
+    mapper_share_folder_label: 'Selected folders',
     mapper_share_expire_label: 'Valid for',
     mapper_share_expire_unit_label: 'Unit',
     mapper_share_expire_days: 'Days',
@@ -600,7 +606,7 @@ const I18N = {
     mapper_share_password_placeholder: 'At least 4 characters',
     mapper_share_result_label: 'Share link',
     mapper_share_copy: 'Copy',
-    mapper_share_select_one: 'Select exactly one folder first.',
+    mapper_share_select_one: 'Select at least one folder first.',
     mapper_share_create_failed: 'Could not create share link',
     mapper_share_created: 'Share link created.',
     mapper_share_copy_ok: 'Share link copied.',
@@ -913,11 +919,15 @@ function renderMapperTree() {
 function _normalizeMapperPath(path) {
   const raw = String(path || '').replace(/\\/g, '/').trim();
   if (!raw) return '';
-  return raw
+  const cleaned = raw
     .split('/')
     .map(s => s.trim())
     .filter(s => s && s !== '.' && s !== '..')
     .join('/');
+  if (!cleaned) return '';
+  if (cleaned === 'uploads') return '';
+  if (cleaned.startsWith('uploads/')) return cleaned.slice('uploads/'.length);
+  return cleaned;
 }
 
 function _readRouteStateFromUrl() {
@@ -1274,7 +1284,9 @@ function renderGrid() {
 
     for (const it of items) {
       const rel = String(it.rel_path || '');
-      const folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
+      let folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
+      if (folder === 'uploads') folder = '';
+      else if (folder.startsWith('uploads/')) folder = folder.slice('uploads/'.length);
       const child = immediateChild(folder, current);
       if (!child) continue;
       includeFolder(child);
@@ -1721,7 +1733,7 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperHeaderShareAction) {
     els.mapperHeaderShareAction.textContent = tr('mapper_menu_share');
-    const canShare = !!state.mapperEditMode && selectedCount === 1;
+    const canShare = !!state.mapperEditMode && selectedCount >= 1;
     els.mapperHeaderShareAction.disabled = !canShare;
     els.mapperHeaderShareAction.title = canShare ? tr('mapper_menu_share') : tr('mapper_share_select_one');
   }
@@ -1815,7 +1827,7 @@ function renderDnsSharesList() {
     const permissionLabel = permission === 'manage'
       ? tr('mapper_share_perm_manage')
       : (permission === 'upload' ? tr('mapper_share_perm_upload') : tr('mapper_share_perm_view'));
-    const folder = `uploads/${String(item.folder_path || '')}`;
+    const folder = String(item.share_name || '').trim() || `uploads/${String(item.folder_path || '')}`;
     const link = String(item.link || '');
     const linkCell = link
       ? `<div class="mini-label" style="max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(link)}">${escapeHtml(link)}</div>`
@@ -2788,6 +2800,8 @@ function applyUiLanguage() {
   if (els.mapperShareModalClose) els.mapperShareModalClose.textContent = tr('scan_modal_close');
   if (els.mapperShareModalCancel) els.mapperShareModalCancel.textContent = tr('scan_modal_cancel');
   if (els.mapperShareModalConfirm) els.mapperShareModalConfirm.textContent = tr('mapper_share_generate');
+  if (els.mapperShareNameLabel) els.mapperShareNameLabel.textContent = tr('mapper_share_name_label');
+  if (els.mapperShareNameInput) els.mapperShareNameInput.placeholder = tr('mapper_share_name_placeholder');
   if (els.mapperShareFolderLabel) els.mapperShareFolderLabel.textContent = tr('mapper_share_folder_label');
   if (els.mapperShareExpireLabel) els.mapperShareExpireLabel.textContent = tr('mapper_share_expire_label');
   if (els.mapperShareExpireUnitLabel) els.mapperShareExpireUnitLabel.textContent = tr('mapper_share_expire_unit_label');
@@ -2886,10 +2900,25 @@ function closeMapperCreateModal(clearInput = true) {
   }
 }
 
-function _getSingleSelectedMapperFolder() {
-  const selected = Array.from(state.mapperSelectedFolders || []);
-  if (selected.length !== 1) return null;
-  return String(selected[0] || '');
+function _getSelectedMapperFolders() {
+  return Array.from(state.mapperSelectedFolders || [])
+    .map((v) => String(v || '').trim())
+    .filter((v) => !!v);
+}
+
+function _defaultMapperShareName(folders) {
+  const list = Array.isArray(folders) ? folders.filter(Boolean) : [];
+  if (!list.length) return '';
+  if (list.length === 1) return `uploads/${list[0]}`;
+  return `${list.length} mapper`;
+}
+
+function _selectedMapperFoldersText(folders) {
+  const list = Array.isArray(folders) ? folders.filter(Boolean) : [];
+  if (!list.length) return '';
+  const labels = list.map((f) => `uploads/${f}`);
+  if (labels.length <= 3) return labels.join(', ');
+  return `${labels.slice(0, 3).join(', ')} (+${labels.length - 3})`;
 }
 
 function _syncMapperSharePasswordVisibility() {
@@ -2917,14 +2946,15 @@ async function refreshShareDuckdnsConfig() {
 
 async function openMapperShareModal() {
   if (!els.mapperShareModal) return;
-  const folder = _getSingleSelectedMapperFolder();
-  if (!folder) {
+  const folders = _getSelectedMapperFolders();
+  if (!folders.length) {
     showStatus(tr('mapper_share_select_one'), 'err');
     return;
   }
   await refreshShareDuckdnsConfig();
   applyUiLanguage();
-  if (els.mapperShareFolderInput) els.mapperShareFolderInput.value = `uploads/${folder}`;
+  if (els.mapperShareNameInput) els.mapperShareNameInput.value = _defaultMapperShareName(folders);
+  if (els.mapperShareFolderInput) els.mapperShareFolderInput.value = _selectedMapperFoldersText(folders);
   if (els.mapperShareExpireValue) els.mapperShareExpireValue.value = '7';
   if (els.mapperShareExpireUnit) els.mapperShareExpireUnit.value = 'days';
   if (els.mapperSharePermission) els.mapperSharePermission.value = 'view';
@@ -2956,8 +2986,8 @@ function closeMapperShareModal(clearOutput = true) {
 }
 
 async function createMapperShareLink() {
-  const folder = _getSingleSelectedMapperFolder();
-  if (!folder) {
+  const folders = _getSelectedMapperFolders();
+  if (!folders.length) {
     showStatus(tr('mapper_share_select_one'), 'err');
     return;
   }
@@ -2979,11 +3009,14 @@ async function createMapperShareLink() {
     const expiresValue = Number((els.mapperShareExpireValue && els.mapperShareExpireValue.value) || 7) || 7;
     const expiresUnit = String((els.mapperShareExpireUnit && els.mapperShareExpireUnit.value) || 'days');
     const permission = String((els.mapperSharePermission && els.mapperSharePermission.value) || 'view');
+    const shareNameRaw = String((els.mapperShareNameInput && els.mapperShareNameInput.value) || '').trim();
+    const shareName = shareNameRaw || _defaultMapperShareName(folders);
     const res = await fetch('/api/shares', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        folder_path: folder,
+        folder_paths: folders,
+        share_name: shareName,
         permission,
         expires_value: expiresValue,
         expires_unit: expiresUnit,

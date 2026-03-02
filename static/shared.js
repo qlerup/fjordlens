@@ -145,7 +145,8 @@ async function loadInfo() {
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
     const perms = data.can_delete ? 'view+upload+delete' : (data.can_upload ? 'view+upload' : 'view');
-    els.meta.textContent = `${data.folder_label} · ${perms}`;
+    const title = String(data.share_name || data.folder_label || '');
+    els.meta.textContent = `${title} · ${perms}`;
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';

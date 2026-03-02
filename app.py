@@ -819,6 +819,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token_hash TEXT UNIQUE NOT NULL,
                 token_plain TEXT,
+                share_name TEXT,
                 folder_path TEXT NOT NULL,
                 can_upload INTEGER DEFAULT 0,
                 can_delete INTEGER DEFAULT 0,
@@ -831,8 +832,16 @@ def init_db() -> None:
                 last_used_at TEXT,
                 FOREIGN KEY(created_by_user_id) REFERENCES users(id)
             );
+            CREATE TABLE IF NOT EXISTS share_link_folders (
+                share_id INTEGER NOT NULL,
+                folder_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(share_id, folder_path),
+                FOREIGN KEY(share_id) REFERENCES share_links(id)
+            );
             CREATE INDEX IF NOT EXISTS idx_share_links_folder ON share_links(folder_path);
             CREATE INDEX IF NOT EXISTS idx_share_links_expires ON share_links(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_share_link_folders_share ON share_link_folders(share_id);
             """
         )
         conn.commit()
@@ -887,6 +896,26 @@ def init_db() -> None:
         except Exception:
             pass
         try:
+            conn.execute("ALTER TABLE share_links ADD COLUMN share_name TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS share_link_folders (
+                    share_id INTEGER NOT NULL,
+                    folder_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(share_id, folder_path),
+                    FOREIGN KEY(share_id) REFERENCES share_links(id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_share_link_folders_share ON share_link_folders(share_id)")
+            conn.commit()
+        except Exception:
+            pass
+        try:
             share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]  # type: ignore[index]
             has_token_plain = "token_plain" in share_cols
             has_token_hash = "token_hash" in share_cols
@@ -919,6 +948,24 @@ def init_db() -> None:
                         conn.execute("UPDATE share_links SET token_hash=? WHERE id=?", (token_hash, int(lr["id"])))
                     except Exception:
                         continue
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO share_link_folders(share_id, folder_path, created_at)
+                SELECT id, folder_path, COALESCE(created_at, ?)
+                FROM share_links
+                WHERE folder_path IS NOT NULL AND TRIM(folder_path)<>''
+                """,
+                (now_iso(),),
+            )
+            conn.execute(
+                """
+                UPDATE share_links
+                SET share_name = ('uploads/' || folder_path)
+                WHERE (share_name IS NULL OR TRIM(share_name)='')
+                  AND folder_path IS NOT NULL
+                  AND TRIM(folder_path)<>''
+                """
+            )
             conn.commit()
         except Exception:
             pass
@@ -1522,6 +1569,41 @@ def _share_folder_rel_prefix(folder_path: str) -> str:
     return f"uploads/{folder}" if folder else "uploads"
 
 
+def _share_folder_paths(conn: sqlite3.Connection, share_row: sqlite3.Row) -> list[str]:
+    share_id = int(share_row["id"] or 0)
+    rows = conn.execute(
+        "SELECT folder_path FROM share_link_folders WHERE share_id=? ORDER BY folder_path COLLATE NOCASE",
+        (share_id,),
+    ).fetchall()
+    values: list[str] = []
+    for r in rows:
+        fp = _normalize_upload_subdir(str(r["folder_path"] or ""))
+        if fp and fp not in values:
+            values.append(fp)
+    if values:
+        return values
+    fallback = _normalize_upload_subdir(str(share_row["folder_path"] or ""))
+    return [fallback] if fallback else []
+
+
+def _share_rel_prefixes(folder_paths: list[str]) -> list[str]:
+    prefixes: list[str] = []
+    for fp in folder_paths:
+        rel_prefix = _share_folder_rel_prefix(fp)
+        if rel_prefix and rel_prefix not in prefixes:
+            prefixes.append(rel_prefix)
+    return prefixes
+
+
+def _share_scope_sql(prefixes: list[str]) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    for rel_prefix in prefixes:
+        clauses.append("(rel_path=? OR rel_path LIKE ?)")
+        params.extend([rel_prefix, rel_prefix + "/%"])
+    return " OR ".join(clauses), params
+
+
 def _load_share_from_token(token: str, touch: bool = False) -> Optional[sqlite3.Row]:
     token_hash = _share_token_digest(token)
     if not token_hash:
@@ -1598,14 +1680,13 @@ def _share_link_for_admin_row(row: sqlite3.Row) -> Optional[str]:
 
 
 def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row, photo_id: int) -> Optional[sqlite3.Row]:
-    folder_path = _normalize_upload_subdir(str(share_row["folder_path"] or ""))
-    if not folder_path:
+    folder_paths = _share_folder_paths(conn, share_row)
+    prefixes = _share_rel_prefixes(folder_paths)
+    if not prefixes:
         return None
-    rel_prefix = _share_folder_rel_prefix(folder_path)
-    return conn.execute(
-        "SELECT * FROM photos WHERE id=? AND (rel_path=? OR rel_path LIKE ?) LIMIT 1",
-        (int(photo_id), rel_prefix, rel_prefix + "/%"),
-    ).fetchone()
+    where_sql, where_params = _share_scope_sql(prefixes)
+    sql = f"SELECT * FROM photos WHERE id=? AND ({where_sql}) LIMIT 1"
+    return conn.execute(sql, (int(photo_id), *where_params)).fetchone()
 
 
 def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
@@ -3399,21 +3480,42 @@ def api_create_share():
         return jsonify(fb[0]), fb[1]
 
     body = request.get_json(silent=True) or {}
-    try:
-        folder_path = _normalize_upload_subdir(str(body.get("folder_path") or ""))
-    except Exception:
-        return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
-    if not folder_path:
-        return jsonify({"ok": False, "error": "Vælg præcis én mappe"}), 400
+    raw_folder_paths = body.get("folder_paths")
+    folder_paths_raw: list[str]
+    if isinstance(raw_folder_paths, list):
+        folder_paths_raw = [str(v or "") for v in raw_folder_paths]
+    else:
+        folder_paths_raw = [str(body.get("folder_path") or "")]
 
-    try:
-        base = UPLOAD_DIR.resolve()
-        target = (UPLOAD_DIR / folder_path).resolve()
-        target.relative_to(base)
-    except Exception:
-        return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
-    if not target.exists() or not target.is_dir():
-        return jsonify({"ok": False, "error": "Mappen findes ikke"}), 404
+    folder_paths: list[str] = []
+    for raw in folder_paths_raw:
+        try:
+            fp = _normalize_upload_subdir(raw)
+        except Exception:
+            fp = ""
+        if fp and fp not in folder_paths:
+            folder_paths.append(fp)
+    if not folder_paths:
+        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+
+    base = UPLOAD_DIR.resolve()
+    for folder_path in folder_paths:
+        try:
+            target = (UPLOAD_DIR / folder_path).resolve()
+            target.relative_to(base)
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
+        if not target.exists() or not target.is_dir():
+            return jsonify({"ok": False, "error": f"Mappen findes ikke: {folder_path}"}), 404
+
+    share_name = str(body.get("share_name") or "").strip()
+    if len(share_name) > 120:
+        share_name = share_name[:120].strip()
+    if not share_name:
+        if len(folder_paths) == 1:
+            share_name = f"uploads/{folder_paths[0]}"
+        else:
+            share_name = f"{len(folder_paths)} mapper"
 
     perm = str(body.get("permission") or "view").strip().lower()
     can_upload = 0
@@ -3451,16 +3553,18 @@ def api_create_share():
     token = secrets.token_urlsafe(24)
     token_hash = _share_token_digest(token)
     created_at = now_iso()
+    primary_folder_path = folder_paths[0]
     with closing(get_conn()) as conn:
-        conn.execute(
+        cur = conn.execute(
             """
-            INSERT INTO share_links(token_hash, token_plain, folder_path, can_upload, can_delete, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_upload, can_delete, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 token_hash,
                 token,
-                folder_path,
+                share_name,
+                primary_folder_path,
                 int(can_upload),
                 int(can_delete),
                 1 if use_duckdns else 0,
@@ -3471,6 +3575,12 @@ def api_create_share():
                 created_at,
             ),
         )
+        share_id = int(cur.lastrowid or 0)
+        for fp in folder_paths:
+            conn.execute(
+                "INSERT OR IGNORE INTO share_link_folders(share_id, folder_path, created_at) VALUES(?,?,?)",
+                (share_id, fp, created_at),
+            )
         conn.commit()
 
     link, link_error = _build_share_link(token, use_duckdns)
@@ -3480,7 +3590,9 @@ def api_create_share():
         {
             "ok": True,
             "link": link,
-            "folder_path": folder_path,
+            "share_name": share_name,
+            "folder_path": primary_folder_path,
+            "folder_paths": folder_paths,
             "permission": perm,
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
@@ -3497,12 +3609,21 @@ def api_share_info(token: str):
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
     if not _share_is_authorized(share):
         return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
-    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
+    with closing(get_conn()) as conn:
+        folder_paths = _share_folder_paths(conn, share)
+    folder_label = f"uploads/{folder_paths[0]}" if len(folder_paths) == 1 else f"{len(folder_paths)} mapper"
+    share_name = str(share["share_name"] or "").strip() if "share_name" in share.keys() else ""
+    if not share_name:
+        share_name = folder_label
     return jsonify(
         {
             "ok": True,
-            "folder_path": folder_path,
-            "folder_label": f"uploads/{folder_path}" if folder_path else "uploads",
+            "share_name": share_name,
+            "folder_path": folder_paths[0] if folder_paths else "",
+            "folder_paths": folder_paths,
+            "folder_count": len(folder_paths),
+            "folder_labels": [f"uploads/{fp}" for fp in folder_paths],
+            "folder_label": folder_label,
             "can_upload": bool(int(share["can_upload"] or 0)),
             "can_delete": bool(int(share["can_delete"] or 0)),
             "password_enabled": _share_is_password_protected(share),
@@ -3519,20 +3640,22 @@ def api_share_photos(token: str):
     if not _share_is_authorized(share):
         return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
 
-    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
-    if not folder_path:
+    with closing(get_conn()) as conn:
+        folder_paths = _share_folder_paths(conn, share)
+    prefixes = _share_rel_prefixes(folder_paths)
+    if not prefixes:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
-    rel_prefix = _share_folder_rel_prefix(folder_path)
+    where_sql, where_params = _share_scope_sql(prefixes)
 
     with closing(get_conn()) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT *
             FROM photos
-            WHERE (rel_path = ? OR rel_path LIKE ?)
+            WHERE ({where_sql})
             ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC, id DESC
             """,
-            (rel_prefix, rel_prefix + "/%"),
+            tuple(where_params),
         ).fetchall()
 
     items = [_row_to_share_public(r, token) for r in rows]
@@ -3605,7 +3728,9 @@ def api_share_upload(token: str):
     if int(share["can_upload"] or 0) != 1:
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
 
-    folder_path = _normalize_upload_subdir(str(share["folder_path"] or ""))
+    with closing(get_conn()) as conn:
+        folder_paths = _share_folder_paths(conn, share)
+    folder_path = folder_paths[0] if folder_paths else ""
     if not folder_path:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
 
@@ -5001,7 +5126,7 @@ def api_admin_shares_list():
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-             SELECT s.id, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
+             SELECT s.id, s.share_name, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
                  s.token_plain, s.link_use_duckdns,
                    s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
                    u.username AS created_by_username
@@ -5010,6 +5135,22 @@ def api_admin_shares_list():
             ORDER BY s.created_at DESC
             """
         ).fetchall()
+        folder_rows = conn.execute(
+            "SELECT share_id, folder_path FROM share_link_folders ORDER BY folder_path COLLATE NOCASE"
+        ).fetchall()
+
+    folders_by_share: dict[int, list[str]] = {}
+    for fr in folder_rows:
+        try:
+            sid = int(fr["share_id"] or 0)
+        except Exception:
+            continue
+        fp = _normalize_upload_subdir(str(fr["folder_path"] or ""))
+        if not sid or not fp:
+            continue
+        bucket = folders_by_share.setdefault(sid, [])
+        if fp not in bucket:
+            bucket.append(fp)
 
     items: list[dict[str, Any]] = []
     for r in rows:
@@ -5027,12 +5168,28 @@ def api_admin_shares_list():
         elif can_upload:
             permission = "upload"
 
+        share_id = int(r["id"])
+        folder_paths = list(folders_by_share.get(share_id, []))
+        if not folder_paths:
+            fallback = _normalize_upload_subdir(str(r["folder_path"] or ""))
+            if fallback:
+                folder_paths = [fallback]
+        share_name = str(r["share_name"] or "").strip()
+        if not share_name:
+            if len(folder_paths) == 1:
+                share_name = f"uploads/{folder_paths[0]}"
+            elif folder_paths:
+                share_name = f"{len(folder_paths)} mapper"
+
         link = _share_link_for_admin_row(r)
 
         items.append(
             {
-                "id": int(r["id"]),
+                "id": share_id,
+                "share_name": share_name,
                 "folder_path": str(r["folder_path"] or ""),
+                "folder_paths": folder_paths,
+                "folder_count": len(folder_paths),
                 "permission": permission,
                 "can_upload": can_upload,
                 "can_delete": can_delete,
