@@ -4,11 +4,11 @@ services:
     container_name: fjordlens
     ports:
       - "${APP_PORT:-9080}:8080"
-    # DS920+ profile: 2 workers x 8 threads (I/O heavy, low RAM)
+    # Keep 1 worker: background jobs use in-process state/events and are not safe across multiple workers.
     command: >
       gunicorn wsgi:application
       --worker-class gthread
-      --workers 2
+      --workers ${GUNICORN_WORKERS:-1}
       --threads 8
       --bind 0.0.0.0:8080
       --timeout 120 --graceful-timeout 30 --keep-alive 5

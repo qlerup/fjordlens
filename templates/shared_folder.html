@@ -26,7 +26,11 @@
     <section id="shareStatus" class="status hidden"></section>
 
     <section id="shareAuthBox" class="sidebar-card hidden" style="max-width:520px;margin:20px auto;">
-      <div class="sidebar-card-title" id="authTitle">Adgangskode kræves</div>
+      <div class="sidebar-card-title" id="authTitle">Adgang kræves</div>
+      <div class="form-row" id="authNameWrap">
+        <label for="authName" id="authNameLabel">Dit navn</label>
+        <input id="authName" class="mapper-input" type="text" placeholder="Skriv dit navn" />
+      </div>
       <div class="form-row">
         <label for="authPassword" id="authLabel">Indtast adgangskode</label>
         <input id="authPassword" class="mapper-input" type="password" placeholder="Adgangskode" />

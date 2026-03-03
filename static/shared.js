@@ -3,6 +3,11 @@ const els = {
   meta: document.getElementById('shareMeta'),
   status: document.getElementById('shareStatus'),
   authBox: document.getElementById('shareAuthBox'),
+  authTitle: document.getElementById('authTitle'),
+  authNameWrap: document.getElementById('authNameWrap'),
+  authNameLabel: document.getElementById('authNameLabel'),
+  authName: document.getElementById('authName'),
+  authLabel: document.getElementById('authLabel'),
   authPassword: document.getElementById('authPassword'),
   authBtn: document.getElementById('authBtn'),
   uploadWrap: document.getElementById('uploadWrap'),
@@ -18,6 +23,7 @@ const state = {
   info: null,
   items: [],
   selected: new Set(),
+  auth: { passwordRequired: false, nameRequired: false },
 };
 
 function isMobileShareView() {
@@ -37,8 +43,13 @@ function t(key) {
   const da = {
     title: 'Delt mappe',
     loading: 'Indlæser…',
-    auth_required: 'Adgangskode kræves',
-    auth_label: 'Indtast adgangskode',
+    auth_required: 'Adgang kræves',
+    auth_title: 'Adgang kræves',
+    auth_name_label: 'Dit navn',
+    auth_name_placeholder: 'Skriv dit navn',
+    auth_password_label: 'Indtast adgangskode',
+    auth_password_placeholder: 'Adgangskode',
+    auth_name_missing: 'Navn er påkrævet',
     auth_continue: 'Fortsæt',
     upload_pick: 'Vælg filer',
     upload_run: 'Upload',
@@ -55,8 +66,13 @@ function t(key) {
   const en = {
     title: 'Shared folder',
     loading: 'Loading…',
-    auth_required: 'Password required',
-    auth_label: 'Enter password',
+    auth_required: 'Access required',
+    auth_title: 'Access required',
+    auth_name_label: 'Your name',
+    auth_name_placeholder: 'Enter your name',
+    auth_password_label: 'Enter password',
+    auth_password_placeholder: 'Password',
+    auth_name_missing: 'Name is required',
     auth_continue: 'Continue',
     upload_pick: 'Choose files',
     upload_run: 'Upload',
@@ -114,10 +130,12 @@ function renderGrid() {
             <span>${t('selected')}</span>
           </label>
         </div>`;
+    const uploadedBy = String(item.uploaded_by || '').trim().replace(/</g, '&lt;');
     card.innerHTML = `
       ${thumb}
       <div class="card-body">
         <h4 class="card-title">${(item.filename || '').replace(/</g, '&lt;')}</h4>
+        ${uploadedBy ? `<div class="pills"><span class="pill">👤 ${uploadedBy}</span></div>` : ''}
         ${actions}
       </div>`;
 
@@ -151,11 +169,27 @@ function renderGrid() {
   updateDeleteButton();
 }
 
+function applyAuthRequirements(data = {}) {
+  const passwordRequired = !!data.password_required;
+  const nameRequired = !!data.name_required;
+  state.auth = { passwordRequired, nameRequired };
+  if (els.authBox) els.authBox.classList.remove('hidden');
+  if (els.authTitle) els.authTitle.textContent = t('auth_title');
+  if (els.authNameLabel) els.authNameLabel.textContent = t('auth_name_label');
+  if (els.authName) els.authName.placeholder = t('auth_name_placeholder');
+  if (els.authLabel) els.authLabel.textContent = t('auth_password_label');
+  if (els.authPassword) els.authPassword.placeholder = t('auth_password_placeholder');
+  if (els.authNameWrap) els.authNameWrap.classList.toggle('hidden', !nameRequired);
+  if (els.authPassword && els.authPassword.parentElement) {
+    els.authPassword.parentElement.classList.toggle('hidden', !passwordRequired);
+  }
+}
+
 async function loadInfo() {
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/info`);
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && data && data.password_required) {
-    if (els.authBox) els.authBox.classList.remove('hidden');
+  if (res.status === 401 && data && (data.password_required || data.name_required)) {
+    applyAuthRequirements(data);
     if (els.meta) els.meta.textContent = t('auth_required');
     return false;
   }
@@ -179,8 +213,8 @@ async function loadInfo() {
 async function loadPhotos() {
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/photos`);
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && data && data.password_required) {
-    if (els.authBox) els.authBox.classList.remove('hidden');
+  if (res.status === 401 && data && (data.password_required || data.name_required)) {
+    applyAuthRequirements(data);
     return;
   }
   if (!res.ok || !data || !data.ok) {
@@ -193,11 +227,16 @@ async function loadPhotos() {
 }
 
 async function runAuth() {
+  const visitorName = String((els.authName && els.authName.value) || '').trim();
   const password = String((els.authPassword && els.authPassword.value) || '');
+  if (state.auth.nameRequired && !visitorName) {
+    showStatus(t('auth_name_missing'), 'err');
+    return;
+  }
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/auth`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, visitor_name: visitorName }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data || !data.ok) {
@@ -249,6 +288,11 @@ async function boot() {
   hideStatus();
   if (els.title) els.title.textContent = t('title');
   if (els.meta) els.meta.textContent = t('loading');
+  if (els.authTitle) els.authTitle.textContent = t('auth_title');
+  if (els.authNameLabel) els.authNameLabel.textContent = t('auth_name_label');
+  if (els.authName) els.authName.placeholder = t('auth_name_placeholder');
+  if (els.authLabel) els.authLabel.textContent = t('auth_password_label');
+  if (els.authPassword) els.authPassword.placeholder = t('auth_password_placeholder');
   if (els.authBtn) els.authBtn.textContent = t('auth_continue');
   if (els.uploadLabel) els.uploadLabel.textContent = t('upload_pick');
   if (els.uploadBtn) els.uploadBtn.textContent = t('upload_run');
@@ -262,6 +306,14 @@ async function boot() {
 if (els.authBtn) els.authBtn.addEventListener('click', runAuth);
 if (els.authPassword) {
   els.authPassword.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      runAuth();
+    }
+  });
+}
+if (els.authName) {
+  els.authName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       runAuth();

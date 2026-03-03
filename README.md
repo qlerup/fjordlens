@@ -11,6 +11,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+Note: keep Gunicorn at 1 worker (`GUNICORN_WORKERS=1`, default in `docker-compose.yml`).
+Background jobs (scan/rescan/rethumb/AI/faces) use in-process state, so multiple workers can make jobs appear to stop (`0/0`) because status/start hit different worker processes.
+
 Open:
 - `http://localhost:9080` (or your `APP_PORT`)
 

@@ -744,6 +744,7 @@ def init_db() -> None:
                 embedding_json TEXT,
                 metadata_json TEXT,
                 exif_json TEXT,
+                uploaded_by TEXT,
                 imported_at TEXT,
                 last_scanned_at TEXT
             );
@@ -823,6 +824,7 @@ def init_db() -> None:
                 folder_path TEXT NOT NULL,
                 can_upload INTEGER DEFAULT 0,
                 can_delete INTEGER DEFAULT 0,
+                require_visitor_name INTEGER DEFAULT 0,
                 link_use_duckdns INTEGER DEFAULT 0,
                 password_hash TEXT,
                 expires_at TEXT,
@@ -897,6 +899,14 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE share_links ADD COLUMN share_name TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN uploaded_by TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE share_links ADD COLUMN require_visitor_name INTEGER DEFAULT 0")
         except Exception:
             pass
         try:
@@ -1632,14 +1642,38 @@ def _share_session_key(share_row: sqlite3.Row) -> str:
     return f"share_auth_{int(share_row['id'])}"
 
 
+def _share_name_session_key(share_row: sqlite3.Row) -> str:
+    return f"share_name_{int(share_row['id'])}"
+
+
+def _sanitize_share_visitor_name(value: Any) -> str:
+    name = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(name) > 80:
+        name = name[:80].strip()
+    return name
+
+
 def _share_is_password_protected(share_row: sqlite3.Row) -> bool:
     return bool(str(share_row["password_hash"] or "").strip())
 
 
+def _share_requires_visitor_name(share_row: sqlite3.Row) -> bool:
+    try:
+        return bool(int(share_row["require_visitor_name"] or 0))
+    except Exception:
+        return False
+
+
+def _share_get_visitor_name(share_row: sqlite3.Row) -> str:
+    return _sanitize_share_visitor_name(session.get(_share_name_session_key(share_row)) or "")
+
+
 def _share_is_authorized(share_row: sqlite3.Row) -> bool:
-    if not _share_is_password_protected(share_row):
-        return True
-    return bool(session.get(_share_session_key(share_row)))
+    if _share_is_password_protected(share_row) and not bool(session.get(_share_session_key(share_row))):
+        return False
+    if _share_requires_visitor_name(share_row) and not _share_get_visitor_name(share_row):
+        return False
+    return True
 
 
 def _normalize_share_base_url(raw: str) -> Optional[str]:
@@ -2619,7 +2653,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 captured_at, camera_make, camera_model, lens_model, iso, focal_length, f_number,
                 exposure_time, gps_lat, gps_lon, gps_name, checksum_sha256, phash, thumb_name,
                 favorite, people_count, ai_tags, embedding_json, metadata_json, exif_json,
-                imported_at, last_scanned_at
+                uploaded_by, imported_at, last_scanned_at
             ) VALUES (
                 :rel_path, :filename, :ext, :file_size, :width, :height, :created_fs, :modified_fs,
                 :captured_at, :camera_make, :camera_model, :lens_model, :iso, :focal_length, :f_number,
@@ -2628,6 +2662,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 COALESCE((SELECT people_count FROM photos WHERE rel_path=:rel_path), 0),
                 :ai_tags, COALESCE((SELECT embedding_json FROM photos WHERE rel_path=:rel_path), NULL),
                 :metadata_json, :exif_json,
+                COALESCE((SELECT uploaded_by FROM photos WHERE rel_path=:rel_path), :uploaded_by),
                 COALESCE((SELECT imported_at FROM photos WHERE rel_path=:rel_path), :imported_at),
                 :last_scanned_at
             )
@@ -2656,6 +2691,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 ai_tags=excluded.ai_tags,
                 metadata_json=excluded.metadata_json,
                 exif_json=excluded.exif_json,
+                uploaded_by=COALESCE(excluded.uploaded_by, uploaded_by),
                 last_scanned_at=excluded.last_scanned_at
             """,
             {
@@ -2663,6 +2699,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 "ai_tags": json.dumps(meta.get("ai_tags", []), ensure_ascii=False),
                 "metadata_json": json.dumps(meta.get("metadata_json", {}), ensure_ascii=False, default=str),
                 "exif_json": json.dumps(meta.get("exif_json", {}), ensure_ascii=False, default=str),
+                "uploaded_by": _sanitize_share_visitor_name(meta.get("uploaded_by") or "") or None,
                 "imported_at": now_iso(),
                 "last_scanned_at": now_iso(),
             },
@@ -3458,11 +3495,17 @@ def api_share_auth(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+    body = request.get_json(silent=True) or {}
+    visitor_name = _sanitize_share_visitor_name(body.get("visitor_name") or "")
+    if _share_requires_visitor_name(share) and not visitor_name:
+        return jsonify({"ok": False, "error": "Navn er påkrævet"}), 400
+
     if not _share_is_password_protected(share):
         session[_share_session_key(share)] = 1
-        return jsonify({"ok": True})
+        if _share_requires_visitor_name(share):
+            session[_share_name_session_key(share)] = visitor_name
+        return jsonify({"ok": True, "visitor_name": _share_get_visitor_name(share)})
 
-    body = request.get_json(silent=True) or {}
     password = str(body.get("password") or "")
     if not password:
         return jsonify({"ok": False, "error": "Mangler adgangskode"}), 400
@@ -3472,7 +3515,9 @@ def api_share_auth(token: str):
         return jsonify({"ok": False, "error": "Forkert adgangskode"}), 401
 
     session[_share_session_key(share)] = 1
-    return jsonify({"ok": True})
+    if _share_requires_visitor_name(share):
+        session[_share_name_session_key(share)] = visitor_name
+    return jsonify({"ok": True, "visitor_name": _share_get_visitor_name(share)})
 
 
 @app.route("/api/shares", methods=["POST"])
@@ -3544,6 +3589,7 @@ def api_create_share():
     expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
 
     password_enabled = bool(body.get("password_enabled"))
+    require_visitor_name = bool(body.get("require_visitor_name"))
     use_duckdns = bool(body.get("use_duckdns"))
     password_raw = str(body.get("password") or "")
     password_hash = None
@@ -3559,8 +3605,8 @@ def api_create_share():
     with closing(get_conn()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_upload, can_delete, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_upload, can_delete, require_visitor_name, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 token_hash,
@@ -3569,6 +3615,7 @@ def api_create_share():
                 primary_folder_path,
                 int(can_upload),
                 int(can_delete),
+                1 if require_visitor_name else 0,
                 1 if use_duckdns else 0,
                 password_hash,
                 expires_at,
@@ -3598,6 +3645,7 @@ def api_create_share():
             "permission": perm,
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
+            "require_visitor_name": bool(require_visitor_name),
             "password_enabled": bool(password_hash),
             "expires_at": expires_at,
         }
@@ -3610,13 +3658,19 @@ def api_share_info(token: str):
     if not share:
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
     if not _share_is_authorized(share):
-        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang kræves",
+        }), 401
     with closing(get_conn()) as conn:
         folder_paths = _share_folder_paths(conn, share)
     folder_label = f"uploads/{folder_paths[0]}" if len(folder_paths) == 1 else f"{len(folder_paths)} mapper"
     share_name = str(share["share_name"] or "").strip() if "share_name" in share.keys() else ""
     if not share_name:
         share_name = folder_label
+    visitor_name = _share_get_visitor_name(share)
     return jsonify(
         {
             "ok": True,
@@ -3628,6 +3682,8 @@ def api_share_info(token: str):
             "folder_label": folder_label,
             "can_upload": bool(int(share["can_upload"] or 0)),
             "can_delete": bool(int(share["can_delete"] or 0)),
+            "require_visitor_name": _share_requires_visitor_name(share),
+            "visitor_name": visitor_name,
             "password_enabled": _share_is_password_protected(share),
             "expires_at": share["expires_at"],
         }
@@ -3640,7 +3696,12 @@ def api_share_photos(token: str):
     if not share:
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
     if not _share_is_authorized(share):
-        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang kræves",
+        }), 401
 
     with closing(get_conn()) as conn:
         folder_paths = _share_folder_paths(conn, share)
@@ -3726,7 +3787,12 @@ def api_share_upload(token: str):
     if not share:
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
     if not _share_is_authorized(share):
-        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang kræves",
+        }), 401
     if int(share["can_upload"] or 0) != 1:
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
 
@@ -3735,6 +3801,10 @@ def api_share_upload(token: str):
     folder_path = folder_paths[0] if folder_paths else ""
     if not folder_path:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
+    uploader_name = _share_get_visitor_name(share)
+    if _share_requires_visitor_name(share) and not uploader_name:
+        return jsonify({"ok": False, "name_required": True, "error": "Navn er påkrævet"}), 401
+    uploader_label = uploader_name or "Share-bruger"
 
     target_dir = (UPLOAD_DIR / folder_path)
     try:
@@ -3771,6 +3841,7 @@ def api_share_upload(token: str):
             rel = f"uploads/{rel_leaf}" if rel_leaf else "uploads"
             try:
                 meta = extract_metadata(target, rel)
+                meta["uploaded_by"] = uploader_label
                 upsert_photo(meta)
             except Exception as e:
                 errors.append(f"Index fail: {target.name}: {e}")
@@ -3787,7 +3858,12 @@ def api_share_delete(token: str):
     if not share:
         return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
     if not _share_is_authorized(share):
-        return jsonify({"ok": False, "password_required": True, "error": "Adgangskode kræves"}), 401
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang kræves",
+        }), 401
     if int(share["can_delete"] or 0) != 1:
         return jsonify({"ok": False, "error": "Sletning ikke tilladt"}), 403
 
@@ -4753,6 +4829,7 @@ def api_upload():
             rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
             try:
                 meta = extract_metadata(target, rel)
+                meta["uploaded_by"] = str(getattr(current_user, "username", "") or "")
                 upsert_photo(meta)
                 try: log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
                 except Exception: pass

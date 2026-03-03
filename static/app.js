@@ -141,6 +141,8 @@ const els = {
   mapperShareDuckdnsToggleText: document.getElementById("mapperShareDuckdnsToggleText"),
   mapperSharePasswordToggle: document.getElementById("mapperSharePasswordToggle"),
   mapperSharePasswordToggleText: document.getElementById("mapperSharePasswordToggleText"),
+  mapperShareRequireNameToggle: document.getElementById("mapperShareRequireNameToggle"),
+  mapperShareRequireNameToggleText: document.getElementById("mapperShareRequireNameToggleText"),
   mapperSharePasswordWrap: document.getElementById("mapperSharePasswordWrap"),
   mapperSharePasswordLabel: document.getElementById("mapperSharePasswordLabel"),
   mapperSharePasswordInput: document.getElementById("mapperSharePasswordInput"),
@@ -377,6 +379,7 @@ const I18N = {
     mapper_share_duckdns_toggle: 'Brug DuckDNS-link',
     mapper_share_duckdns_not_configured: 'DuckDNS er ikke konfigureret i DNS-tabben.',
     mapper_share_password_toggle: 'Kodebeskyt link',
+    mapper_share_require_name_toggle: 'Kræv navn ved åbning',
     mapper_share_password_label: 'Adgangskode',
     mapper_share_password_placeholder: 'Mindst 4 tegn',
     mapper_share_result_label: 'Share-link',
@@ -626,6 +629,7 @@ const I18N = {
     mapper_share_duckdns_toggle: 'Use DuckDNS link',
     mapper_share_duckdns_not_configured: 'DuckDNS is not configured in the DNS tab.',
     mapper_share_password_toggle: 'Protect link with password',
+    mapper_share_require_name_toggle: 'Require visitor name',
     mapper_share_password_label: 'Password',
     mapper_share_password_placeholder: 'At least 4 characters',
     mapper_share_result_label: 'Share link',
@@ -1144,9 +1148,14 @@ function cardHTML(item) {
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
     : "";
+  const uploadedByRaw = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
+  const uploadedBy = uploadedByRaw ? escapeHtml(uploadedByRaw) : '';
+  const uploaderTag = uploadedBy
+    ? `<div class="uploader-badge" title="Uploadet af ${uploadedBy}">👤 ${uploadedBy}</div>`
+    : "";
 
   // Gridkort uden extra tekst/metadata – kun selve billedet
-  return `${thumb}${videoOverlay}`;
+  return `${thumb}${videoOverlay}${uploaderTag}`;
 }
 
 function renderGrid() {
@@ -1876,11 +1885,13 @@ function renderDnsSharesList() {
         <td>${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
         <td>${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
         <td>${linkCell}</td>
-        <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
-          <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
-          ${extendBtn}
-          ${actionBtn}
-          ${deleteBtn}
+        <td style="text-align:right;">
+          <div class="dns-share-actions">
+            <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
+            ${extendBtn}
+            ${actionBtn}
+            ${deleteBtn}
+          </div>
         </td>
       </tr>
     `;
@@ -2900,6 +2911,7 @@ function applyUiLanguage() {
   if (els.mapperSharePermissionLabel) els.mapperSharePermissionLabel.textContent = tr('mapper_share_permission_label');
   if (els.mapperShareDuckdnsToggleText) els.mapperShareDuckdnsToggleText.textContent = tr('mapper_share_duckdns_toggle');
   if (els.mapperSharePasswordToggleText) els.mapperSharePasswordToggleText.textContent = tr('mapper_share_password_toggle');
+  if (els.mapperShareRequireNameToggleText) els.mapperShareRequireNameToggleText.textContent = tr('mapper_share_require_name_toggle');
   if (els.mapperSharePasswordLabel) els.mapperSharePasswordLabel.textContent = tr('mapper_share_password_label');
   if (els.mapperSharePasswordInput) els.mapperSharePasswordInput.placeholder = tr('mapper_share_password_placeholder');
   if (els.mapperShareResultLabel) els.mapperShareResultLabel.textContent = tr('mapper_share_result_label');
@@ -3057,6 +3069,7 @@ async function openMapperShareModal() {
     els.mapperShareDuckdnsToggle.title = enabled ? '' : tr('mapper_share_duckdns_not_configured');
   }
   if (els.mapperSharePasswordToggle) els.mapperSharePasswordToggle.checked = false;
+  if (els.mapperShareRequireNameToggle) els.mapperShareRequireNameToggle.checked = false;
   _syncMapperSharePasswordVisibility();
   if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
   if (els.mapperShareResultInput) els.mapperShareResultInput.value = '';
@@ -3087,6 +3100,7 @@ async function createMapperShareLink() {
   const original = confirmBtn ? confirmBtn.textContent : tr('mapper_share_generate');
   const useDuckdns = !!(els.mapperShareDuckdnsToggle && els.mapperShareDuckdnsToggle.checked);
   const passwordEnabled = !!(els.mapperSharePasswordToggle && els.mapperSharePasswordToggle.checked);
+  const requireVisitorName = !!(els.mapperShareRequireNameToggle && els.mapperShareRequireNameToggle.checked);
   const password = String((els.mapperSharePasswordInput && els.mapperSharePasswordInput.value) || '');
   if (passwordEnabled && password.length < 4) {
     showStatus(tr('mapper_share_password_placeholder'), 'err');
@@ -3113,6 +3127,7 @@ async function createMapperShareLink() {
         expires_value: expiresValue,
         expires_unit: expiresUnit,
         use_duckdns: useDuckdns,
+        require_visitor_name: requireVisitorName,
         password_enabled: passwordEnabled,
         password,
       }),

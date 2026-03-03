@@ -822,6 +822,34 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-left: 9px solid var(--text);
   margin-left: 2px;
 }
+.uploader-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  background: rgba(15, 17, 21, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.dns-share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dns-share-actions .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .card-body { padding: 10px; }
 .card-title {
   margin: 0 0 5px;
@@ -1094,6 +1122,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     max-width: none;
     padding: 0 8px 0 4px;
     justify-content: flex-start;
+    order: 2;
   }
   .search-shell .search-wrap {
     opacity: 1;
@@ -1106,6 +1135,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     width: auto;
     min-width: 132px;
     flex: 0 0 42%;
+    order: 1;
   }
   #scanBtn { width: 100%; }
   .content-header { flex-direction: column; }
@@ -1126,6 +1156,31 @@ body.view-settings .gallery-grid { display: none !important; }
   body.view-mapper .topbar .search-shell,
   body.view-mapper .topbar .search-wrap,
   body.view-mapper .topbar .select { display: none !important; }
+  body.view-mapper .mapper-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  body.view-mapper .mapper-search-shell {
+    display: flex !important;
+    flex: 0 1 180px;
+    max-width: 180px;
+  }
+  body.view-mapper .mapper-search-shell.expanded {
+    flex: 1 1 auto;
+    max-width: 100%;
+  }
+  body.view-mapper #mapperEditBtn {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
   body.view-settings .topbar { display: flex !important; }
   body.view-settings .topbar .search-shell,
   body.view-settings .topbar .search-wrap,
