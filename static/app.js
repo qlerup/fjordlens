@@ -29,12 +29,14 @@ const els = {
   mapperHeaderMenu: document.getElementById("mapperHeaderMenu"),
   mapperHeaderEditAction: document.getElementById("mapperHeaderEditAction"),
   mapperHeaderShareAction: document.getElementById("mapperHeaderShareAction"),
+  mapperHeaderUploadAction: document.getElementById("mapperHeaderUploadAction"),
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperNavMenu: document.getElementById("mapperNavMenu"),
   mapperTreeNav: document.getElementById("mapperTreeNav"),
   mapperDropZone: document.getElementById("mapperDropZone"),
+  mapperUploadInput: document.getElementById("mapperUploadInput"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -348,6 +350,7 @@ const I18N = {
     mapper_menu_edit: 'Vælg',
     mapper_menu_done: 'Luk redigering',
     mapper_menu_share: 'Del',
+    mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Opret mappe',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
@@ -598,6 +601,7 @@ const I18N = {
     mapper_menu_edit: 'Select',
     mapper_menu_done: 'Close editing',
     mapper_menu_share: 'Share',
+    mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Create folder',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
@@ -1779,6 +1783,11 @@ function renderMapperContext(path = '') {
     els.mapperHeaderCreateAction.textContent = tr('mapper_menu_create');
     els.mapperHeaderCreateAction.disabled = !!state.mapperEditMode;
     els.mapperHeaderCreateAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_create');
+  }
+  if (els.mapperHeaderUploadAction) {
+    els.mapperHeaderUploadAction.textContent = tr('mapper_menu_upload');
+    els.mapperHeaderUploadAction.disabled = !!state.mapperEditMode;
+    els.mapperHeaderUploadAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
   }
   if (els.mapperDeleteBtn) {
     els.mapperDeleteBtn.classList.add('hidden');
@@ -3337,6 +3346,18 @@ if (els.mapperHeaderCreateAction) {
     closeMapperHeaderMenu();
   });
 }
+if (els.mapperHeaderUploadAction) {
+  els.mapperHeaderUploadAction.addEventListener('click', () => {
+    closeMapperHeaderMenu();
+    if (!els.mapperUploadInput) return;
+    els.mapperUploadInput.value = '';
+    try {
+      els.mapperUploadInput.click();
+    } catch {
+      showStatus('Kunne ikke åbne filvælger.', 'err');
+    }
+  });
+}
 if (els.mapperHeaderShareAction) {
   els.mapperHeaderShareAction.addEventListener('click', async () => {
     await openMapperShareModal();
@@ -3810,15 +3831,13 @@ if (els.gpsEarthBtn) {
 }
 
 document.querySelectorAll(".nav-item").forEach(btn => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.view === 'mapper' && state.view === 'mapper') {
-      state.mapperTreeOpen = !state.mapperTreeOpen;
-      _saveMapperTreeUiState();
-      renderMapperTree();
-      document.body.classList.remove("drawer-open");
-      return;
+  btn.addEventListener("click", async () => {
+    const targetView = btn.dataset.view;
+    if (targetView === 'mapper') {
+      state.mapperPath = '';
+      state.folder = null;
     }
-    setView(btn.dataset.view);
+    await setView(targetView);
     // Close drawer on mobile nav selection
     document.body.classList.remove("drawer-open");
   });
@@ -3849,6 +3868,10 @@ if (els.mobileNavItems && els.mobileNavItems.length) {
         return;
       }
       if (action === 'view' && btn.dataset.view) {
+        if (btn.dataset.view === 'mapper') {
+          state.mapperPath = '';
+          state.folder = null;
+        }
         await setView(btn.dataset.view);
         closeDrawer();
       }
@@ -4069,6 +4092,18 @@ if (els.mapperDropZone) {
     await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
     await loadMapperTools(targetSubdir);
     await loadPhotos();
+  });
+}
+
+if (els.mapperUploadInput) {
+  els.mapperUploadInput.addEventListener('change', async () => {
+    const files = els.mapperUploadInput && els.mapperUploadInput.files ? els.mapperUploadInput.files : null;
+    if (!files || !files.length) return;
+    const targetSubdir = String(state.mapperPath || '');
+    await uploadFiles(files, { destination: 'uploads', subdir: targetSubdir });
+    await loadMapperTools(targetSubdir);
+    await loadPhotos();
+    els.mapperUploadInput.value = '';
   });
 }
 

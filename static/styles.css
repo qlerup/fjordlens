@@ -1222,6 +1222,12 @@ body.view-mapper .mapper-header-actions { display: flex; }
   color: var(--text);
 }
 .timeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+@media (max-width: 760px) {
+  .timeline-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
 
 /* Upload overlay */
 .upload-overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(8,10,14,0.84); backdrop-filter: blur(2px); z-index: 10001; pointer-events: none; }
