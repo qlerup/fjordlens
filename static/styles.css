@@ -1153,9 +1153,44 @@ body.drawer-open .drawer-backdrop { display: block; }
   .detail-panel { display: none; }
 }
 @media (max-width: 760px) {
+  #viewer {
+    background: #000 !important;
+  }
   #viewerImg, #viewerVideo {
-    max-width: 92vw !important;
-    max-height: 84vh !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    object-fit: contain;
+    background: #000;
+  }
+  #viewerPrev, #viewerNext {
+    display: none !important;
+  }
+  #viewerClose,
+  #viewerMenuBtn {
+    top: calc(env(safe-area-inset-top) + 10px);
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.32);
+    color: #fff;
+    box-shadow: none;
+    backdrop-filter: blur(1px);
+  }
+  #viewerClose {
+    left: 10px;
+  }
+  #viewerMenuBtn {
+    right: 10px;
+  }
+  #viewerMenu {
+    top: calc(env(safe-area-inset-top) + 52px);
+    right: 10px;
   }
   .app-shell { grid-template-columns: 1fr; }
   /* Sidebar becomes slide-in drawer */

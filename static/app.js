@@ -1522,6 +1522,77 @@ function appendPersonCard(p) {
 }
 
 // Viewer controls
+let viewerTransitionRunning = false;
+let viewerPendingStep = 0;
+
+function cleanupViewerMediaAnimation() {
+  [els.viewerImg, els.viewerVideo].forEach((node) => {
+    if (!node) return;
+    node.style.transition = '';
+    node.style.transform = '';
+    node.style.opacity = '';
+    node.style.willChange = '';
+  });
+}
+
+function getActiveViewerMediaElement() {
+  if (els.viewerVideo && els.viewerVideo.style.display !== 'none') return els.viewerVideo;
+  if (els.viewerImg && els.viewerImg.style.display !== 'none') return els.viewerImg;
+  return els.viewerImg || els.viewerVideo || null;
+}
+
+function animateViewerSlideTransition(step, applyUpdate) {
+  if (!els.viewer || els.viewer.classList.contains('hidden')) {
+    applyUpdate();
+    return;
+  }
+  const fromEl = getActiveViewerMediaElement();
+  if (!fromEl) {
+    applyUpdate();
+    return;
+  }
+
+  const duration = 180;
+  const distance = Math.min(Math.round(window.innerWidth * 0.22), 160);
+  const outX = step > 0 ? -distance : distance;
+  const inStartX = step > 0 ? distance : -distance;
+
+  fromEl.style.willChange = 'transform, opacity';
+  fromEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+  fromEl.style.transform = `translateX(${outX}px)`;
+  fromEl.style.opacity = '0';
+
+  window.setTimeout(() => {
+    applyUpdate();
+    const toEl = getActiveViewerMediaElement();
+    if (!toEl) {
+      cleanupViewerMediaAnimation();
+      return;
+    }
+
+    toEl.style.willChange = 'transform, opacity';
+    toEl.style.transition = 'none';
+    toEl.style.transform = `translateX(${inStartX}px)`;
+    toEl.style.opacity = '0';
+
+    requestAnimationFrame(() => {
+      toEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+      toEl.style.transform = 'translateX(0)';
+      toEl.style.opacity = '1';
+    });
+
+    window.setTimeout(() => {
+      cleanupViewerMediaAnimation();
+      viewerTransitionRunning = false;
+      if (viewerPendingStep !== 0) {
+        const pending = viewerPendingStep;
+        viewerPendingStep = 0;
+        nextViewer(pending);
+      }
+    }, duration + 30);
+  }, duration);
+}
+
 function openViewer(index) {
   state.selectedIndex = index;
   const it = state.items[index];
@@ -1610,31 +1681,17 @@ function closeViewer() {
 }
 function nextViewer(step=1) {
   if (state.selectedIndex < 0) return;
+  if (viewerTransitionRunning) {
+    viewerPendingStep = step;
+    return;
+  }
   const n = state.items.length;
-  state.selectedIndex = (state.selectedIndex + step + n) % n;
-  const it = state.items[state.selectedIndex];
+  const targetIndex = (state.selectedIndex + step + n) % n;
+  const it = state.items[targetIndex];
   if (!it || !it.original_url) return;
-  if (it.is_video) {
-    if (els.viewerVideo) {
-      try { els.viewerVideo.pause(); } catch(_) {}
-      els.viewerVideo.style.display = 'block';
-      if (els.viewerImg) els.viewerImg.style.display = 'none';
-      els.viewerVideo.src = it.original_url;
-      try { els.viewerVideo.play().catch(()=>{}); } catch(_) {}
-    }
-  } else {
-    if (els.viewerImg) {
-      els.viewerImg.style.display = 'block';
-      // Use original_url for full-resolution viewing (server handles HEIC conversion)
-      els.viewerImg.src = it.original_url || it.thumb_url || '';
-    }
-    if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.style.display = 'none'; }
-  }
-  if (els.viewerOpenOrig) {
-    const dl = (it.download_url || it.original_url || '');
-    els.viewerOpenOrig.href = dl;
-    els.viewerOpenOrig.download = it.filename || '';
-  }
+  viewerTransitionRunning = true;
+  state.selectedIndex = targetIndex;
+  animateViewerSlideTransition(step, () => openViewer(state.selectedIndex));
 }
 
 async function loadPhotos() {
