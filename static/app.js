@@ -2792,7 +2792,7 @@ async function setView(view, opts = {}) {
     state.personView = { mode: 'list', personId: null, personName: null };
     await loadPeople();
   } else {
-    if (nextView === 'mapper') await loadMapperTools();
+    if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''));
     await loadPhotos();
   }
 }
