@@ -1139,6 +1139,17 @@ body.drawer-open .drawer-backdrop { display: block; }
   }
   #scanBtn { width: 100%; }
   .content-header { flex-direction: column; }
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .gallery-grid.folders-view {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .timeline-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
   #shareGrid.gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
 
