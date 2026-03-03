@@ -953,8 +953,51 @@ body.drawer-open .drawer-backdrop { display: block; }
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
-#viewerPrev, #viewerNext, #viewerClose, #viewerInfoBtn, #viewerOpenOrig { position: absolute; z-index: 5; }
+#viewerPrev, #viewerNext, #viewerClose, #viewerInfoBtn, #viewerOpenOrig, #viewerMenuBtn, #viewerMenu { position: absolute; z-index: 5; }
 #viewerOpenOrig { display: none !important; }
+#viewerInfoBtn { display: none !important; }
+#viewerClose,
+#viewerMenuBtn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  border-radius: 12px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+  background: rgba(17, 22, 33, 0.82);
+  border-color: rgba(255,255,255,0.16);
+  backdrop-filter: blur(2px);
+}
+#viewerClose {
+  left: 12px;
+  right: auto;
+  top: 12px;
+}
+#viewerMenuBtn {
+  right: 12px;
+  top: 12px;
+}
+#viewerMenu {
+  right: 12px;
+  top: 58px;
+  width: 140px;
+  background: rgba(18, 24, 36, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.45);
+}
+#viewerMenu.hidden {
+  display: none !important;
+}
+#viewerMenu .btn {
+  width: 100%;
+  text-align: left;
+}
 
 /* Detail panel */
 .detail-panel {
@@ -1111,8 +1154,8 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 @media (max-width: 760px) {
   #viewerImg, #viewerVideo {
-    max-width: 74vw !important;
-    max-height: 58vh !important;
+    max-width: 92vw !important;
+    max-height: 84vh !important;
   }
   .app-shell { grid-template-columns: 1fr; }
   /* Sidebar becomes slide-in drawer */

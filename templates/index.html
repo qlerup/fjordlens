@@ -367,8 +367,12 @@
     <img id="viewerImg" alt="" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;" />
     <video id="viewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
-    <button id="viewerClose" class="btn" style="position:absolute;right:12px;top:12px;">Luk</button>
-    <button id="viewerInfoBtn" class="btn" title="Vis info" style="position:absolute;right:12px;top:54px;">Info</button>
+    <button id="viewerClose" class="btn" type="button" title="Luk" aria-label="Luk" style="position:absolute;left:12px;top:12px;">←</button>
+    <button id="viewerMenuBtn" class="btn" type="button" title="Menu" aria-label="Åbn menu" style="position:absolute;right:12px;top:12px;">⋯</button>
+    <div id="viewerMenu" class="viewer-menu hidden" aria-label="Viewer menu">
+      <button id="viewerMenuInfoBtn" class="btn" type="button">Info</button>
+    </div>
+    <button id="viewerInfoBtn" class="btn hidden" title="Vis info" aria-hidden="true" tabindex="-1" style="position:absolute;right:12px;top:54px;">Info</button>
     <a id="viewerOpenOrig" class="btn" target="_blank" rel="noopener" style="position:absolute;left:12px;top:12px;">Åbn original</a>
     <!-- Slide-out info panel inside viewer -->
     <aside id="viewerInfo" class="viewer-info hidden">

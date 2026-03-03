@@ -108,6 +108,9 @@ const els = {
   viewerPrev: document.getElementById("viewerPrev"),
   viewerNext: document.getElementById("viewerNext"),
   viewerClose: document.getElementById("viewerClose"),
+  viewerMenuBtn: document.getElementById("viewerMenuBtn"),
+  viewerMenu: document.getElementById("viewerMenu"),
+  viewerMenuInfoBtn: document.getElementById("viewerMenuInfoBtn"),
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
@@ -4120,7 +4123,7 @@ if (els.viewer) {
   els.viewer.addEventListener('touchstart', (e) => {
     if (!e.touches || e.touches.length !== 1) return;
     const target = e.target;
-    if (target && (target.closest('#viewerClose, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
+    if (target && (target.closest('#viewerClose, #viewerMenuBtn, #viewerMenu, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
     const t = e.touches[0];
     viewerTouchStartX = t.clientX;
     viewerTouchStartY = t.clientY;
@@ -4170,39 +4173,75 @@ if (els.viewer) {
 // Viewer Info toggle
 const viPanel = document.getElementById('viewerInfo');
 const viBtn = document.getElementById('viewerInfoBtn');
+const viewerMenu = els.viewerMenu;
+const viewerMenuBtn = els.viewerMenuBtn;
+const viewerMenuInfoBtn = els.viewerMenuInfoBtn;
+
+function positionViewerInfoPanel() {
+  if (!viPanel) return;
+  try {
+    const it = state.items[state.selectedIndex] || {};
+    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
+    const r = mediaEl.getBoundingClientRect();
+    const w = viPanel.offsetWidth || 360;
+    const underOffset = 8;
+    viPanel.style.left = `${Math.round(r.right - w - underOffset)}px`;
+    viPanel.style.right = 'auto';
+    const vPad = 16;
+    const top = Math.max(0, Math.round(r.top + vPad));
+    const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
+    viPanel.style.top = `${top}px`;
+    viPanel.style.bottom = `${bottomGap}px`;
+    viPanel.style.height = '';
+  } catch {}
+}
+
+function toggleViewerInfoPanel(forceOpen = null) {
+  if (!viPanel) return;
+  const shouldOpen = forceOpen === null ? !viPanel.classList.contains('open') : !!forceOpen;
+  if (!shouldOpen) {
+    viPanel.classList.remove('open');
+    return;
+  }
+  viPanel.classList.remove('hidden');
+  positionViewerInfoPanel();
+  void viPanel.offsetWidth;
+  viPanel.classList.add('open');
+}
+
 if (viBtn && viPanel) {
-  viBtn.addEventListener('click', ()=>{
-    if (viPanel.classList.contains('open')) {
-      viPanel.classList.remove('open'); // slide back under image (still present but under)
-    } else {
-      // Ensure visible, start from under state, then slide out
-      viPanel.classList.remove('hidden');
-      // Recompute anchor to media edge before opening (in case window resized)
-      try {
-        const it = state.items[state.selectedIndex] || {};
-        const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-        const r = mediaEl.getBoundingClientRect();
-        const w = viPanel.offsetWidth || 360;
-        const underOffset = 8;
-        viPanel.style.left = `${Math.round(r.right - w - underOffset)}px`;
-        viPanel.style.right = 'auto';
-        const vPad = 16;
-        const top = Math.max(0, Math.round(r.top + vPad));
-        const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
-        viPanel.style.top = `${top}px`;
-        viPanel.style.bottom = `${bottomGap}px`;
-        viPanel.style.height = '';
-      } catch {}
-      // force reflow so transition starts from transform:0 (under)
-      void viPanel.offsetWidth;
-      viPanel.classList.add('open');
-    }
+  viBtn.addEventListener('click', () => toggleViewerInfoPanel());
+}
+
+if (viewerMenuBtn && viewerMenu) {
+  viewerMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    viewerMenu.classList.toggle('hidden');
+  });
+}
+
+if (viewerMenuInfoBtn) {
+  viewerMenuInfoBtn.addEventListener('click', () => {
+    if (viewerMenu) viewerMenu.classList.add('hidden');
+    toggleViewerInfoPanel();
+  });
+}
+
+if (els.viewer && viewerMenu) {
+  els.viewer.addEventListener('click', (e) => {
+    if (viewerMenu.classList.contains('hidden')) return;
+    const target = e.target;
+    if (target && (target.closest('#viewerMenu') || target.closest('#viewerMenuBtn'))) return;
+    viewerMenu.classList.add('hidden');
   });
 }
 // Hide panel on close
 const _origCloseViewer = closeViewer;
 closeViewer = function(){
-  try { if (viPanel) { viPanel.classList.remove('open'); /* keep under image, no hidden */ } } catch {}
+  try {
+    if (viPanel) { viPanel.classList.remove('open'); }
+    if (viewerMenu) { viewerMenu.classList.add('hidden'); }
+  } catch {}
   _origCloseViewer();
 }
 
