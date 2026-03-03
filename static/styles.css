@@ -409,6 +409,8 @@ body.drawer-open .drawer-backdrop { display: block; }
   width: 34px;
   height: 34px;
   min-width: 34px;
+  line-height: 1;
+  font-size: 16px;
   border: none;
   background: transparent;
   padding: 0;
@@ -443,6 +445,8 @@ body.drawer-open .drawer-backdrop { display: block; }
   width: 34px;
   height: 34px;
   min-width: 34px;
+  line-height: 1;
+  font-size: 16px;
   border: none;
   background: transparent;
   padding: 0;
@@ -517,6 +521,15 @@ body.drawer-open .drawer-backdrop { display: block; }
   background: var(--panel-2);
 }
 .btn.full { width: 100%; text-align: center; }
+
+/* Search toggle buttons should not inherit the default .btn chrome */
+.search-shell .search-toggle-btn,
+.mapper-search-shell .search-toggle-btn {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
 
 .content-header {
   display: flex;
@@ -1117,19 +1130,18 @@ body.drawer-open .drawer-backdrop { display: block; }
   .menu-btn { display: none !important; }
   .mobile-bottom-nav { display: grid; }
   .search-shell {
-    flex: 1 1 auto;
-    min-width: 0;
-    max-width: none;
-    padding: 0 8px 0 4px;
-    justify-content: flex-start;
+    flex: 0 0 42px;
+    min-width: 42px;
+    max-width: 42px;
+    padding: 0;
+    justify-content: center;
     order: 2;
   }
-  .search-shell .search-wrap {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  .search-shell .search-wrap input {
-    pointer-events: auto;
+  .search-shell.expanded {
+    flex: 1 1 auto;
+    max-width: min(62vw, 320px);
+    padding: 0 8px 0 4px;
+    justify-content: flex-start;
   }
   .select {
     width: auto;
@@ -1151,6 +1163,15 @@ body.drawer-open .drawer-backdrop { display: block; }
     gap: 10px;
   }
   #shareGrid.gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+
+  body.view-timeline .topbar {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin-bottom: 10px;
+    border-radius: 0;
+    justify-content: flex-start;
+  }
 }
 
 /* Hide non-relevant chrome when viewing Settings */
@@ -1160,13 +1181,23 @@ body.view-settings #statusBar,
 body.view-settings #emptyState,
 body.view-settings .gallery-grid { display: none !important; }
 
+body.view-timeline .topbar {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-bottom: 10px;
+  border-radius: 0;
+}
+
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
   .mapper-search-shell { display: none !important; }
-  body.view-mapper .topbar { display: flex !important; }
+  body.view-mapper .topbar { display: none !important; }
   body.view-mapper #mapperHeaderActions { display: flex !important; }
   body.view-mapper #mapperSearchShell { display: flex !important; }
   body.view-mapper #mapperEditBtn { display: inline-flex !important; }
+  body.view-mapper #mapperSearchShell { order: 1; }
+  body.view-mapper #mapperEditBtn { order: 2; }
   body.view-mapper .topbar .search-shell,
   body.view-mapper .topbar .search-wrap,
   body.view-mapper .topbar .select { display: none !important; }
@@ -1179,8 +1210,35 @@ body.view-settings .gallery-grid { display: none !important; }
   }
   body.view-mapper .mapper-search-shell {
     display: flex !important;
-    flex: 0 1 180px;
-    max-width: 180px;
+    flex: 0 0 42px;
+    min-width: 42px;
+    max-width: 42px;
+    padding: 0;
+    justify-content: center;
+    height: 42px;
+    min-height: 42px;
+  }
+  body.view-mapper .mapper-search-shell:not(.expanded) .search-wrap input {
+    pointer-events: none;
+  }
+  body.view-mapper .mapper-search-shell.expanded .search-wrap input {
+    pointer-events: auto;
+  }
+  body.view-mapper .mapper-search-shell .search-toggle-btn {
+    height: 40px;
+    min-height: 40px;
+    width: 40px;
+    min-width: 40px;
+    line-height: 1;
+    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  body.view-mapper .mapper-search-shell .search-wrap input {
+    height: 40px;
+    padding-top: 0;
+    padding-bottom: 0;
   }
   body.view-mapper .mapper-search-shell.expanded {
     flex: 1 1 auto;
@@ -1200,6 +1258,37 @@ body.view-settings .gallery-grid { display: none !important; }
   body.view-settings .topbar .search-wrap,
   body.view-settings .topbar .select,
   body.view-settings .topbar #aiToggle { display: none !important; }
+
+  body.view-timeline .topbar {
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  body.view-timeline .select {
+    height: 42px;
+    min-height: 42px;
+    padding: 0 10px;
+  }
+  body.view-timeline .search-shell {
+    height: 42px;
+    min-height: 42px;
+  }
+  body.view-timeline .search-shell .search-toggle-btn {
+    height: 40px;
+    min-height: 40px;
+    width: 40px;
+    min-width: 40px;
+    line-height: 1;
+    font-size: 16px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  body.view-timeline .search-shell .search-wrap input {
+    height: 40px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
 }
 
 /* Hide status bar on all non-library views */

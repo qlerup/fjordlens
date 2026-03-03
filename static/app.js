@@ -4284,7 +4284,12 @@ async function renderUsersPanel(){
     }
     const items = js.items || [];
     const availableFolders = Array.isArray(js.available_folders) ? js.available_folders : [];
-    const rows = items.map(u => `
+    const rows = items.map(u => {
+      const role = String(u.role || '').toLowerCase();
+      const aclButton = role === 'admin'
+        ? ''
+        : `<button data-acl="${u.id}" class="btn small">Mapper</button>`;
+      return `
       <tr>
         <td class="muted">#${u.id}</td>
         <td><strong>${u.username}</strong></td>
@@ -4292,11 +4297,12 @@ async function renderUsersPanel(){
         <td>${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
         <td>${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
         <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
-          <button data-acl="${u.id}" class="btn small">Mapper</button>
+          ${aclButton}
           <button data-edit="${u.id}" class="btn small">Rediger</button>
           <button data-del="${u.id}" class="btn danger small">Slet</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
     wrap.innerHTML = `
       <div class="panel" style="margin-bottom:12px;">
         <div class="toolbar">
