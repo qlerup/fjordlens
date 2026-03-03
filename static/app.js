@@ -4111,6 +4111,48 @@ if (els.mapperUploadInput) {
 els.viewerClose && els.viewerClose.addEventListener("click", closeViewer);
 els.viewerPrev && els.viewerPrev.addEventListener("click", () => nextViewer(-1));
 els.viewerNext && els.viewerNext.addEventListener("click", () => nextViewer(1));
+
+let viewerTouchStartX = null;
+let viewerTouchStartY = null;
+let viewerTouchStartTime = 0;
+
+if (els.viewer) {
+  els.viewer.addEventListener('touchstart', (e) => {
+    if (!e.touches || e.touches.length !== 1) return;
+    const target = e.target;
+    if (target && (target.closest('#viewerClose, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
+    const t = e.touches[0];
+    viewerTouchStartX = t.clientX;
+    viewerTouchStartY = t.clientY;
+    viewerTouchStartTime = Date.now();
+  }, { passive: true });
+
+  els.viewer.addEventListener('touchend', (e) => {
+    if (viewerTouchStartX === null || viewerTouchStartY === null) return;
+    if (!els.viewer || els.viewer.classList.contains('hidden')) {
+      viewerTouchStartX = null;
+      viewerTouchStartY = null;
+      viewerTouchStartTime = 0;
+      return;
+    }
+    const changed = e.changedTouches && e.changedTouches[0];
+    if (!changed) return;
+    const dx = changed.clientX - viewerTouchStartX;
+    const dy = changed.clientY - viewerTouchStartY;
+    const dt = Date.now() - viewerTouchStartTime;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    const isHorizontalSwipe = absX >= 48 && absX > absY * 1.2 && dt <= 700;
+    if (isHorizontalSwipe) {
+      if (dx < 0) nextViewer(1);
+      else nextViewer(-1);
+    }
+    viewerTouchStartX = null;
+    viewerTouchStartY = null;
+    viewerTouchStartTime = 0;
+  }, { passive: true });
+}
+
 window.addEventListener("keydown", (e) => {
   if (!els.viewer || els.viewer.classList.contains("hidden")) return;
   if (e.key === "Escape") closeViewer();
