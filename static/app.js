@@ -109,6 +109,8 @@ const els = {
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
+  mobileBottomNav: document.getElementById("mobileBottomNav"),
+  mobileNavItems: document.querySelectorAll(".mobile-nav-item"),
   profileLink: document.getElementById("profileLink"),
   profileModal: document.getElementById("profileModal"),
   profileModalClose: document.getElementById("profileModalClose"),
@@ -2751,6 +2753,7 @@ async function setView(view, opts = {}) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === nextView);
   });
+  updateMobileBottomNavActive(nextView);
   // Toggle body class to drive CSS for Settings view
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
@@ -2772,6 +2775,12 @@ async function setView(view, opts = {}) {
     if (nextView === 'mapper') await loadMapperTools();
     await loadPhotos();
   }
+}
+
+function updateMobileBottomNavActive(view) {
+  document.querySelectorAll('.mobile-nav-item[data-view]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === view);
+  });
 }
 
 function applyUiLanguage() {
@@ -3806,6 +3815,29 @@ if (els.profileLink) {
     await renderProfilePanel();
     openProfileModal();
     document.body.classList.remove('drawer-open');
+  });
+}
+
+if (els.mobileNavItems && els.mobileNavItems.length) {
+  els.mobileNavItems.forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.mobileAction;
+      if (action === 'navigate') {
+        if (document.body.classList.contains('drawer-open')) closeDrawer();
+        else openDrawer();
+        return;
+      }
+      if (action === 'profile') {
+        await renderProfilePanel();
+        openProfileModal();
+        closeDrawer();
+        return;
+      }
+      if (action === 'view' && btn.dataset.view) {
+        await setView(btn.dataset.view);
+        closeDrawer();
+      }
+    });
   });
 }
 
