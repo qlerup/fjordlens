@@ -945,6 +945,7 @@ body.drawer-open .drawer-backdrop { display: block; }
    from .detail-panel so the panel matches the media's height (top/bottom
    are anchored dynamically from JS). */
 .viewer-info .detail-panel {
+  display: block;
   position: static;
   top: auto;
   height: 100%;
