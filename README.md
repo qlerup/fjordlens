@@ -233,6 +233,8 @@ Key environment variables (see `.env.example`):
 - `LOG_LEVEL`: App log level
 - `AI_DEBUG_PORT`: Optional host exposure for AI service
 - `AI_URL`: Internal backend -> AI service URL (compose default uses service name)
+- `AI_INGEST_THROTTLE_SEC`: Pause between each embedding item (default `0.04`) to reduce UI impact during background ingest
+- `FACES_INDEX_THROTTLE_SEC`: Pause between each face-index item (default `0.06`) to reduce UI impact during face indexing
 
 ### Geocoding / behavior flags
 

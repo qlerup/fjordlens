@@ -18,6 +18,8 @@ services:
       PHOTO_DIR: /photos
       DATA_DIR: /data
       AI_URL: http://fjordlens-ai:8000
+      AI_INGEST_THROTTLE_SEC: ${AI_INGEST_THROTTLE_SEC:-0.04}
+      FACES_INDEX_THROTTLE_SEC: ${FACES_INDEX_THROTTLE_SEC:-0.06}
       TZ: ${TZ:-Europe/Copenhagen}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     healthcheck:

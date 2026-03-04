@@ -30,6 +30,7 @@ import pycountry
 import pyotp
 import qrcode
 import base64
+import queue
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener, HeifFile  # type: ignore
@@ -69,6 +70,8 @@ VIDEO_FACE_SAMPLE_INTERVAL_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_INTERVA
 VIDEO_FACE_SAMPLE_MAX_FRAMES = int(os.environ.get("VIDEO_FACE_SAMPLE_MAX_FRAMES", "24"))
 VIDEO_FACE_SAMPLE_START_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_START_SEC", "0.5"))
 VIDEO_FACE_DEDUPE_THRESHOLD = float(os.environ.get("VIDEO_FACE_DEDUPE_THRESHOLD", "0.92"))
+AI_INGEST_THROTTLE_SEC = max(0.0, float(os.environ.get("AI_INGEST_THROTTLE_SEC", "0.04")))
+FACES_INDEX_THROTTLE_SEC = max(0.0, float(os.environ.get("FACES_INDEX_THROTTLE_SEC", "0.06")))
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -999,6 +1002,12 @@ def init_db() -> None:
             row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
             if not row2b:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
+            row2c = conn.execute("SELECT value FROM settings WHERE key='ai_ingest_throttle_sec'").fetchone()
+            if not row2c:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_ingest_throttle_sec", str(AI_INGEST_THROTTLE_SEC)))
+            row2d = conn.execute("SELECT value FROM settings WHERE key='faces_index_throttle_sec'").fetchone()
+            if not row2d:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_index_throttle_sec", str(FACES_INDEX_THROTTLE_SEC)))
             row3 = conn.execute("SELECT value FROM settings WHERE key='upload_destination'").fetchone()
             if not row3:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_destination", UPLOAD_DEST_DEFAULT))
@@ -1306,6 +1315,22 @@ def _get_setting_bool(key: str, default: bool = False) -> bool:
     return str(v).strip() not in {"0", "false", "False", "no", "off", ""}
 
 
+def _parse_throttle_value(value: Any, default: float) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        v = float(default)
+    if v < 0:
+        v = 0.0
+    if v > 2.0:
+        v = 2.0
+    return round(v, 3)
+
+
+def _get_setting_throttle(key: str, default: float) -> float:
+    return _parse_throttle_value(_get_setting(key, str(default)), default)
+
+
 def ai_feature_enabled() -> bool:
     return _get_setting_bool("ai_enabled", AI_ENV_ENABLED_DEFAULT)
 
@@ -1316,6 +1341,14 @@ def ai_auto_ingest_enabled() -> bool:
 
 def faces_auto_index_enabled() -> bool:
     return _get_setting_bool("faces_auto_index", FACES_ENV_AUTO_INDEX_DEFAULT)
+
+
+def ai_ingest_throttle_enabled_sec() -> float:
+    return _get_setting_throttle("ai_ingest_throttle_sec", AI_INGEST_THROTTLE_SEC)
+
+
+def faces_index_throttle_enabled_sec() -> float:
+    return _get_setting_throttle("faces_index_throttle_sec", FACES_INDEX_THROTTLE_SEC)
 
 
 def _disk_path_from_rel_path(rel_path: str) -> Path:
@@ -2605,6 +2638,9 @@ def _index_faces_worker(all_photos: bool = False):
             log_event("faces_index", rel_path=rel)
             index_faces_for_photo(rel)
             faces_counts["processed"] += 1
+            face_delay = faces_index_throttle_enabled_sec()
+            if face_delay > 0:
+                time.sleep(face_delay)
         last_faces_result = {"ok": True, **faces_counts}
     finally:
         _faces_running.clear()
@@ -3078,11 +3114,11 @@ def api_people_unknown_photos_faces():
 
 @app.route("/api/face-thumb/<int:face_id>")
 def api_face_thumb(face_id: int):
-    # Generate or serve a cropped face thumbnail for a given face id
+    # Serve cached face thumbnail; if missing/stale, queue background generation and return fallback quickly.
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -3090,39 +3126,139 @@ def api_face_thumb(face_id: int):
         src_rel = r["rel_path"]
         if not _is_rel_path_allowed_for_current_user(src_rel):
             return ("Forbidden", 403)
-        src_path = (UPLOAD_DIR / src_rel.split("/",1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
-        safe_rel = src_rel
-        view_path = ensure_viewable_copy(src_path, safe_rel)
-        # Prepare output path
+
         out_name = f"face_{face_id}.jpg"
         out_path = THUMB_DIR / out_name
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        # Build/crop if missing or stale
+
+        src_path = (UPLOAD_DIR / src_rel.split("/", 1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
+        view_path = ensure_viewable_copy(src_path, src_rel)
+        source_mtime = 0.0
         try:
-            if (not out_path.exists()) or (view_path.stat().st_mtime > out_path.stat().st_mtime):
-                with Image.open(view_path) as im:
-                    try:
-                        im = ImageOps.exif_transpose(im)
-                    except Exception:
-                        pass
-                    x = max(0, int(r["bbox_x"] or 0))
-                    y = max(0, int(r["bbox_y"] or 0))
-                    w = max(1, int(r["bbox_w"] or 1))
-                    h = max(1, int(r["bbox_h"] or 1))
-                    # Add a bit of padding around face
-                    pad = int(max(w, h) * 0.25)
-                    cx1 = max(0, x - pad)
-                    cy1 = max(0, y - pad)
-                    cx2 = min(im.width, x + w + pad)
-                    cy2 = min(im.height, y + h + pad)
-                    crop = im.crop((cx1, cy1, cx2, cy2)).convert("RGB")
-                    crop.thumbnail((300, 300))
-                    crop.save(out_path, format="JPEG", quality=90, optimize=True)
-        except Exception as e:
-            log_event("error", rel_path=src_rel, error=f"face_thumb: {e}")
-        return send_from_directory(str(THUMB_DIR), out_name)
+            source_mtime = float(view_path.stat().st_mtime)
+        except Exception:
+            source_mtime = 0.0
+
+        is_ready = False
+        try:
+            is_ready = out_path.exists() and (out_path.stat().st_mtime >= source_mtime)
+        except Exception:
+            is_ready = False
+
+        if is_ready:
+            resp = send_from_directory(str(THUMB_DIR), out_name)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+
+        _enqueue_face_thumb_generation(face_id)
+
+        fallback_name = str(r["thumb_name"] or "").strip()
+        if fallback_name and (THUMB_DIR / fallback_name).exists():
+            resp = send_from_directory(str(THUMB_DIR), fallback_name)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+
+        # Last resort: build synchronously if no fallback thumb exists.
+        _build_face_thumb(face_id)
+        if out_path.exists():
+            resp = send_from_directory(str(THUMB_DIR), out_name)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        return ("Not found", 404)
     except Exception as e:
         return (str(e), 500)
+
+
+_face_thumb_queue: "queue.Queue[int]" = queue.Queue()
+_face_thumb_worker_started = False
+_face_thumb_lock = threading.Lock()
+_face_thumb_queued: set[int] = set()
+
+
+def _build_face_thumb(face_id: int) -> bool:
+    try:
+        with closing(get_conn()) as conn:
+            r = conn.execute(
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                (face_id,),
+            ).fetchone()
+        if not r:
+            return False
+        src_rel = r["rel_path"]
+        src_path = (UPLOAD_DIR / src_rel.split("/", 1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
+        view_path = ensure_viewable_copy(src_path, src_rel)
+
+        out_name = f"face_{face_id}.jpg"
+        out_path = THUMB_DIR / out_name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        needs_build = True
+        try:
+            needs_build = (not out_path.exists()) or (view_path.stat().st_mtime > out_path.stat().st_mtime)
+        except Exception:
+            needs_build = True
+
+        if not needs_build:
+            return True
+
+        with Image.open(view_path) as im:
+            try:
+                im = ImageOps.exif_transpose(im)
+            except Exception:
+                pass
+            x = max(0, int(r["bbox_x"] or 0))
+            y = max(0, int(r["bbox_y"] or 0))
+            w = max(1, int(r["bbox_w"] or 1))
+            h = max(1, int(r["bbox_h"] or 1))
+            pad = int(max(w, h) * 0.25)
+            cx1 = max(0, x - pad)
+            cy1 = max(0, y - pad)
+            cx2 = min(im.width, x + w + pad)
+            cy2 = min(im.height, y + h + pad)
+            crop = im.crop((cx1, cy1, cx2, cy2)).convert("RGB")
+            crop.thumbnail((300, 300))
+            crop.save(out_path, format="JPEG", quality=90, optimize=True)
+        return True
+    except Exception as e:
+        try:
+            log_event("error", error=f"face_thumb_bg: {e}", face_id=face_id)
+        except Exception:
+            pass
+        return False
+
+
+def _face_thumb_worker_loop() -> None:
+    while True:
+        try:
+            face_id = int(_face_thumb_queue.get())
+        except Exception:
+            continue
+        try:
+            _build_face_thumb(face_id)
+        finally:
+            with _face_thumb_lock:
+                _face_thumb_queued.discard(face_id)
+            _face_thumb_queue.task_done()
+
+
+def _ensure_face_thumb_worker() -> None:
+    global _face_thumb_worker_started
+    if _face_thumb_worker_started:
+        return
+    with _face_thumb_lock:
+        if _face_thumb_worker_started:
+            return
+        threading.Thread(target=_face_thumb_worker_loop, daemon=True).start()
+        _face_thumb_worker_started = True
+
+
+def _enqueue_face_thumb_generation(face_id: int) -> None:
+    _ensure_face_thumb_worker()
+    with _face_thumb_lock:
+        if face_id in _face_thumb_queued:
+            return
+        _face_thumb_queued.add(face_id)
+    _face_thumb_queue.put(face_id)
 
 
 @app.route("/api/people/unknown/photos")
@@ -4097,6 +4233,9 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
         except Exception:
             ai_counts["failed"] += 1
             log_event("ai_embed_fail", rel_path=rel)
+        ai_delay = ai_ingest_throttle_enabled_sec()
+        if ai_delay > 0:
+            time.sleep(ai_delay)
     ai_running = False
     last_ai_result = {"ok": True, **ai_counts}
     log_event("ai_embed_done", **ai_counts)
@@ -4741,6 +4880,29 @@ def api_settings_dns_effective():
             "effective_duckdns_base_url": normalized or "",
             "duckdns_configured": bool(normalized),
             "using_env_default": bool(env_default and not saved and normalized),
+        }
+    )
+
+
+@app.route("/api/settings/ai-performance", methods=["GET", "POST"])
+def api_settings_ai_performance():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        ai_throttle = _parse_throttle_value(body.get("ai_ingest_throttle_sec"), AI_INGEST_THROTTLE_SEC)
+        faces_throttle = _parse_throttle_value(body.get("faces_index_throttle_sec"), FACES_INDEX_THROTTLE_SEC)
+        _set_setting("ai_ingest_throttle_sec", str(ai_throttle))
+        _set_setting("faces_index_throttle_sec", str(faces_throttle))
+
+    return jsonify(
+        {
+            "ok": True,
+            "ai_ingest_throttle_sec": ai_ingest_throttle_enabled_sec(),
+            "faces_index_throttle_sec": faces_index_throttle_enabled_sec(),
+            "runtime_applies_without_restart": True,
         }
     )
 

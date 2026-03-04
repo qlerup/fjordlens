@@ -19,6 +19,13 @@ const els = {
   facesToggle: document.getElementById("facesToggle"),
   facesToggleText: document.getElementById("facesToggleText"),
   facesStatus: document.getElementById("facesStatus"),
+  aiIngestThrottleInput: document.getElementById("aiIngestThrottleInput"),
+  facesThrottleInput: document.getElementById("facesThrottleInput"),
+  aiPerfPresetLow: document.getElementById("aiPerfPresetLow"),
+  aiPerfPresetNormal: document.getElementById("aiPerfPresetNormal"),
+  aiPerfPresetFast: document.getElementById("aiPerfPresetFast"),
+  aiPerfSaveBtn: document.getElementById("aiPerfSaveBtn"),
+  aiPerfStatus: document.getElementById("aiPerfStatus"),
   mapperTools: document.getElementById("mapperTools"),
   mapperHeaderActions: document.getElementById("mapperHeaderActions"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
@@ -2311,6 +2318,89 @@ async function saveDnsSettings() {
   }
 }
 
+function showAiPerfStatus(message, kind = 'ok') {
+  if (!els.aiPerfStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.aiPerfStatus.classList.add('hidden');
+    els.aiPerfStatus.textContent = '';
+    els.aiPerfStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.aiPerfStatus.textContent = msg;
+  els.aiPerfStatus.classList.remove('hidden');
+  els.aiPerfStatus.classList.toggle('ok', kind === 'ok');
+  els.aiPerfStatus.classList.toggle('err', kind !== 'ok');
+}
+
+async function loadAiPerformanceSettings() {
+  if (!els.aiIngestThrottleInput || !els.facesThrottleInput) return;
+  showAiPerfStatus('');
+  try {
+    const res = await fetch('/api/settings/ai-performance');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showAiPerfStatus((data && data.error) || 'Kunne ikke hente AI-ydelse.', 'err');
+      return;
+    }
+    els.aiIngestThrottleInput.value = String(data.ai_ingest_throttle_sec ?? '0.04');
+    els.facesThrottleInput.value = String(data.faces_index_throttle_sec ?? '0.06');
+  } catch {
+    showAiPerfStatus('Kunne ikke hente AI-ydelse.', 'err');
+  }
+}
+
+async function saveAiPerformanceSettings() {
+  if (!els.aiIngestThrottleInput || !els.facesThrottleInput) return;
+  const saveBtn = els.aiPerfSaveBtn;
+  const original = saveBtn ? saveBtn.textContent : 'Gem ydelse';
+  showAiPerfStatus('');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+    }
+    const aiValue = Number(els.aiIngestThrottleInput.value);
+    const facesValue = Number(els.facesThrottleInput.value);
+    const res = await fetch('/api/settings/ai-performance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ai_ingest_throttle_sec: Number.isFinite(aiValue) ? aiValue : 0,
+        faces_index_throttle_sec: Number.isFinite(facesValue) ? facesValue : 0,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showAiPerfStatus((data && data.error) || 'Kunne ikke gemme AI-ydelse.', 'err');
+      return;
+    }
+    els.aiIngestThrottleInput.value = String(data.ai_ingest_throttle_sec ?? els.aiIngestThrottleInput.value);
+    els.facesThrottleInput.value = String(data.faces_index_throttle_sec ?? els.facesThrottleInput.value);
+    showAiPerfStatus('AI-ydelse gemt (gælder med det samme).', 'ok');
+  } catch {
+    showAiPerfStatus('Kunne ikke gemme AI-ydelse.', 'err');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('loading');
+      saveBtn.textContent = original || 'Gem ydelse';
+    }
+  }
+}
+
+function applyAiPerfPreset(kind) {
+  if (!els.aiIngestThrottleInput || !els.facesThrottleInput) return;
+  const presets = {
+    low: { ai: 0.12, faces: 0.16 },
+    normal: { ai: 0.04, faces: 0.06 },
+    fast: { ai: 0.00, faces: 0.00 },
+  };
+  const p = presets[kind] || presets.normal;
+  els.aiIngestThrottleInput.value = p.ai.toFixed(2);
+  els.facesThrottleInput.value = p.faces.toFixed(2);
+}
+
 async function loadMapperTools(preferred = null) {
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
@@ -3725,6 +3815,8 @@ async function startFacesIndex(scope = 'all') {
     updateFacesToggleButton();
     if (scope === 'new') {
       showStatus('Ansigtsindeksering aktiveret for nye uploads fremover.', 'ok');
+    } else {
+      showStatus('Ansigtsindeksering kører i baggrunden.', 'ok');
     }
     pollFacesStatus();
   } catch (e) {
@@ -4259,6 +4351,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     });
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
+    if (tab === 'ai') {
+      loadAiPerformanceSettings();
+    }
     if (tab === 'dns') {
       loadDnsSettings();
     }
@@ -4271,6 +4366,29 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
 if (els.dnsSaveBtn) {
   els.dnsSaveBtn.addEventListener('click', async () => {
     await saveDnsSettings();
+  });
+}
+if (els.aiPerfSaveBtn) {
+  els.aiPerfSaveBtn.addEventListener('click', async () => {
+    await saveAiPerformanceSettings();
+  });
+}
+if (els.aiPerfPresetLow) {
+  els.aiPerfPresetLow.addEventListener('click', async () => {
+    applyAiPerfPreset('low');
+    await saveAiPerformanceSettings();
+  });
+}
+if (els.aiPerfPresetNormal) {
+  els.aiPerfPresetNormal.addEventListener('click', async () => {
+    applyAiPerfPreset('normal');
+    await saveAiPerformanceSettings();
+  });
+}
+if (els.aiPerfPresetFast) {
+  els.aiPerfPresetFast.addEventListener('click', async () => {
+    applyAiPerfPreset('fast');
+    await saveAiPerformanceSettings();
   });
 }
 if (els.sharedLinksList) {
