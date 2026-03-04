@@ -1504,6 +1504,78 @@ body.view-mapper .mapper-header-actions { display: flex; }
 .upload-overlay.upload-blocked .upload-box { border-color: rgba(255,107,107,0.85); }
 .upload-overlay.upload-blocked .upload-progress .bar { background: linear-gradient(90deg, #ff6b6b, #ff9a9a); }
 
+.upload-monitor {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: min(360px, calc(100vw - 28px));
+  border: 1px solid var(--border);
+  background: rgba(23,26,33,0.96);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 10002;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.45);
+  backdrop-filter: blur(2px);
+}
+.upload-monitor.hidden { display: none !important; }
+.upload-monitor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.upload-monitor-summary {
+  margin-top: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.upload-monitor-current {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-monitor-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 152px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+}
+.upload-monitor-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 5px 7px;
+}
+.upload-monitor-item-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-monitor-item-status.ok { color: #86efac; }
+.upload-monitor-item-status.err { color: #fca5a5; }
+
+@media (max-width: 760px) {
+  .upload-monitor {
+    right: 8px;
+    left: 8px;
+    width: auto;
+    bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+}
+
 /* Settings local header (visible only inside settings panel) */
 .settings-header { margin: 4px 0 12px; }
 .settings-header h1 { margin: 0; font-size: 1.35rem; }

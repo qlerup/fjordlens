@@ -550,6 +550,16 @@
       <div id="uploadProgressText" class="upload-text"></div>
     </div>
   </div>
+  <section id="uploadMonitor" class="upload-monitor hidden" aria-live="polite">
+    <header class="upload-monitor-head">
+      <strong>Upload</strong>
+      <button id="uploadMonitorToggle" class="btn small" type="button">Skjul</button>
+    </header>
+    <div class="upload-progress"><div id="uploadMonitorBar" class="bar"></div></div>
+    <div id="uploadMonitorSummary" class="upload-monitor-summary">Klar</div>
+    <div id="uploadMonitorCurrent" class="upload-monitor-current">Ingen aktiv upload</div>
+    <ul id="uploadMonitorList" class="upload-monitor-list"></ul>
+  </section>
   <script>
     (function(){
       const ROLE = window.APP_ROLE || 'user';
