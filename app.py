@@ -3291,9 +3291,27 @@ def api_people_rename(pid: int):
         return jsonify({"ok": False, "error": "Missing name"}), 400
     try:
         with closing(get_conn()) as conn:
+            src = conn.execute("SELECT id, name FROM people WHERE id=?", (pid,)).fetchone()
+            if not src:
+                return jsonify({"ok": False, "error": "Person not found"}), 404
+
+            existing = conn.execute("SELECT id, name FROM people WHERE LOWER(name)=LOWER(?)", (new_name,)).fetchone()
+            if existing and int(existing["id"]) != int(pid):
+                target_id = int(existing["id"])
+                conn.execute("UPDATE faces SET person_id=? WHERE person_id=?", (target_id, pid))
+                conn.execute("DELETE FROM people WHERE id=?", (pid,))
+                conn.commit()
+                return jsonify({
+                    "ok": True,
+                    "merged": True,
+                    "from_id": pid,
+                    "to_id": target_id,
+                    "name": str(existing["name"] or new_name),
+                })
+
             conn.execute("UPDATE people SET name=? WHERE id=?", (new_name, pid))
             conn.commit()
-        return jsonify({"ok": True, "id": pid, "name": new_name})
+        return jsonify({"ok": True, "id": pid, "name": new_name, "merged": False})
     except sqlite3.IntegrityError:
         return jsonify({"ok": False, "error": "Name already exists"}), 409
     except Exception as e:

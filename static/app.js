@@ -1487,6 +1487,125 @@ function appendFolderCard(folder, arr, opts = {}) {
   els.grid.appendChild(card);
 }
 
+let personRenameMenuEl = null;
+
+function closePersonRenameMenu() {
+  if (personRenameMenuEl && personRenameMenuEl.parentElement) {
+    personRenameMenuEl.parentElement.removeChild(personRenameMenuEl);
+  }
+  personRenameMenuEl = null;
+}
+
+async function renameOrMergePerson(pid, name) {
+  const nv = String(name || '').trim();
+  if (!nv) return;
+  try {
+    const r = await fetch(`/api/people/${pid}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nv }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      showStatus(d.error || 'Kunne ikke gemme navn', 'err');
+      return;
+    }
+    if (d.merged) showStatus(`Person merged til '${d.name || nv}'`, 'ok');
+    else showStatus('Navn opdateret', 'ok');
+    closePersonRenameMenu();
+    loadPeople();
+  } catch {
+    showStatus('Fejl ved navngivning/merge', 'err');
+  }
+}
+
+function openPersonRenameMenu(anchorBtn, person) {
+  closePersonRenameMenu();
+  if (!anchorBtn || !person || person.id === 'unknown') {
+    if (person && person.id === 'unknown') showStatus('Ukendte kan ikke omdøbes', 'err');
+    return;
+  }
+
+  const menu = document.createElement('div');
+  menu.className = 'person-rename-menu';
+  menu.innerHTML = `
+    <div class="person-rename-head">Navngiv / merge person</div>
+    <div class="person-rename-create-row">
+      <input type="text" class="person-rename-input" placeholder="Opret ny person" value="" />
+      <button type="button" class="btn tiny primary" data-act="create">Gem</button>
+    </div>
+    <div class="person-rename-divider"></div>
+    <div class="person-rename-list"></div>
+  `;
+
+  const listEl = menu.querySelector('.person-rename-list');
+  const existing = (Array.isArray(state.people) ? state.people : [])
+    .filter((it) => it && it.id !== 'unknown' && Number(it.id) !== Number(person.id) && String(it.name || '').trim())
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
+
+  if (!existing.length) {
+    listEl.innerHTML = '<div class="person-rename-empty">Ingen eksisterende navne endnu</div>';
+  } else {
+    existing.forEach((it) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'person-rename-option';
+      btn.textContent = String(it.name || 'Ukendt');
+      btn.addEventListener('click', async () => {
+        await renameOrMergePerson(person.id, String(it.name || ''));
+      });
+      listEl.appendChild(btn);
+    });
+  }
+
+  const input = menu.querySelector('.person-rename-input');
+  const createBtn = menu.querySelector('[data-act="create"]');
+  const createNow = async () => {
+    const val = String(input && input.value ? input.value : '').trim();
+    if (!val) {
+      input && input.focus();
+      return;
+    }
+    await renameOrMergePerson(person.id, val);
+  };
+  createBtn && createBtn.addEventListener('click', createNow);
+  input && input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await createNow();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closePersonRenameMenu();
+    }
+  });
+
+  document.body.appendChild(menu);
+  const rect = anchorBtn.getBoundingClientRect();
+  const top = Math.min(window.innerHeight - 12, rect.bottom + 6 + window.scrollY);
+  const left = Math.min(window.innerWidth - 12, rect.left + window.scrollX);
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
+  personRenameMenuEl = menu;
+  if (input) {
+    try { input.focus(); } catch {}
+  }
+
+  window.setTimeout(() => {
+    const onDocClick = (ev) => {
+      const target = ev.target;
+      if (!personRenameMenuEl) {
+        document.removeEventListener('click', onDocClick, true);
+        return;
+      }
+      if (target && (personRenameMenuEl.contains(target) || anchorBtn.contains(target))) return;
+      closePersonRenameMenu();
+      document.removeEventListener('click', onDocClick, true);
+    };
+    document.addEventListener('click', onDocClick, true);
+  }, 0);
+}
+
 function appendPersonCard(p) {
   const card = document.createElement('article');
   card.className = 'photo-card';
@@ -1512,17 +1631,10 @@ function appendPersonCard(p) {
     if (p.id === 'unknown') loadPersonPhotos('unknown', 'Ukendte');
     else loadPersonPhotos(p.id, p.name);
   });
-  card.querySelector('[data-act="rename"]').addEventListener('click', async ()=>{
-    const nv = prompt('Nyt navn for person:', p.name || '');
-    if (!nv) return;
-    if (p.id === 'unknown') { showStatus('Ukendte kan ikke omdøbes', 'err'); return; }
-    try {
-      const r = await fetch(`/api/people/${p.id}/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: nv })});
-      const d = await r.json();
-      if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke omdøbe', 'err'); return; }
-      showStatus('Navn opdateret', 'ok');
-      loadPeople();
-    } catch { showStatus('Fejl ved omdøbning', 'err'); }
+  card.querySelector('[data-act="rename"]').addEventListener('click', async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    openPersonRenameMenu(e.currentTarget, p);
   });
   const hideBtn = card.querySelector('[data-act="hide"]');
   if (hideBtn) {
@@ -1749,6 +1861,7 @@ async function loadPhotos() {
 }
 
 async function loadPeople() {
+  closePersonRenameMenu();
   try {
     const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
     const res = await fetch(url);
@@ -1794,6 +1907,19 @@ const uploadUiState = {
   collapsed: false,
 };
 
+let uploadOverlayHideTimer = null;
+
+function hideUploadOverlay() {
+  ensureUploadOverlayRefs();
+  if (!els.uploadOverlay) return;
+  els.uploadOverlay.classList.remove('active', 'upload-ready', 'upload-blocked');
+  els.uploadOverlay.classList.add('hidden');
+}
+
+function isUploadRunning() {
+  return uploadUiState.totalFiles > 0 && uploadUiState.processedFiles < uploadUiState.totalFiles;
+}
+
 function resetUploadUiState() {
   uploadUiState.totalFiles = 0;
   uploadUiState.totalBytes = 0;
@@ -1816,7 +1942,7 @@ function renderUploadMonitor() {
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
   if (els.uploadMonitorSummary) {
     const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : '';
-    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)}${failedTxt}`;
+    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
   }
   if (els.uploadMonitorCurrent) {
     if (uploadUiState.currentFileName) {
@@ -1834,12 +1960,11 @@ function renderUploadMonitor() {
 
 function showUploadMonitor() {
   ensureUploadMonitorRefs();
-  if (!els.uploadMonitor) return;
-  els.uploadMonitor.classList.remove('hidden');
-  if (els.uploadMonitorToggle) {
-    els.uploadMonitorToggle.textContent = uploadUiState.collapsed ? 'Vis' : 'Skjul';
-  }
+  if (els.uploadMonitor) els.uploadMonitor.classList.remove('hidden');
   const collapsed = !!uploadUiState.collapsed;
+  if (els.uploadMonitorToggle) {
+    els.uploadMonitorToggle.textContent = collapsed ? 'Vis detaljer' : 'Minimer';
+  }
   if (els.uploadMonitorCurrent) els.uploadMonitorCurrent.style.display = collapsed ? 'none' : '';
   if (els.uploadMonitorList) els.uploadMonitorList.style.display = collapsed ? 'none' : '';
 }
@@ -1913,6 +2038,7 @@ async function uploadFiles(fileList, options = {}) {
   resetUploadUiState();
   uploadUiState.totalFiles = files.length;
   uploadUiState.totalBytes = totalSize;
+  uploadUiState.collapsed = false;
   if (els.uploadMonitorList) els.uploadMonitorList.innerHTML = '';
 
   if (els.uploadOverlay) {
@@ -1920,6 +2046,14 @@ async function uploadFiles(fileList, options = {}) {
     if (titleEl) titleEl.textContent = 'Starter upload…';
     els.uploadOverlay.classList.remove('hidden');
     els.uploadOverlay.classList.add('active', 'upload-ready');
+    if (uploadOverlayHideTimer) {
+      window.clearTimeout(uploadOverlayHideTimer);
+      uploadOverlayHideTimer = null;
+    }
+    uploadOverlayHideTimer = window.setTimeout(() => {
+      hideUploadOverlay();
+      uploadOverlayHideTimer = null;
+    }, 900);
   }
   if (els.uploadProgressBar) els.uploadProgressBar.style.width = '100%';
   if (els.uploadProgressText) els.uploadProgressText.textContent = `${files.length} filer · ${fmtBytes(totalSize)}`;
@@ -1972,7 +2106,12 @@ async function uploadFiles(fileList, options = {}) {
     console.error(e);
     showStatus('Upload fejlede', 'err');
   } finally {
-    if (els.uploadOverlay) { els.uploadOverlay.classList.remove('active'); els.uploadOverlay.classList.add('hidden'); }
+    if (uploadOverlayHideTimer) {
+      window.clearTimeout(uploadOverlayHideTimer);
+      uploadOverlayHideTimer = null;
+    }
+    hideUploadOverlay();
+    showUploadMonitor();
   }
 }
 
