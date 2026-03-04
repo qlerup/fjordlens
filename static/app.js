@@ -4486,6 +4486,12 @@ function toggleViewerInfoPanel(forceOpen = null) {
   const shouldOpen = forceOpen === null ? !viPanel.classList.contains('open') : !!forceOpen;
   if (!shouldOpen) {
     viPanel.classList.remove('open');
+    if (isMobileViewerLayout()) {
+      viPanel.classList.add('hidden');
+      viPanel.style.transition = '';
+      viPanel.style.transform = '';
+      return;
+    }
     viewerInfoHideTimer = window.setTimeout(() => {
       viPanel.classList.add('hidden');
       viewerInfoHideTimer = null;
@@ -4707,7 +4713,6 @@ if (state.view === 'mapper') {
 applyUiLanguage();
 
 setView(state.view, { syncUrl: false }).then(() => {
-  showStatus(tr('status_ready_scan'), "ok");
   // Start with a quick status check in case scan was running
   fetch("/api/scan/status").then(r => r.json()).then(d => {
     if (d && d.running) {
