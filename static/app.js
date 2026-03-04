@@ -1378,6 +1378,9 @@ function appendCardTo(item, container) {
   const card = document.createElement("article");
   card.className = "photo-card" + (state.selectedId === item.id ? " active" : "");
   card.innerHTML = cardHTML(item);
+  card.querySelectorAll('img').forEach((img) => {
+    img.setAttribute('draggable', 'false');
+  });
   // If viewing 'Ukendte' person folder, overlay detected face boxes on the thumbnail
   try {
     if (state.personView && state.personView.personId === 'unknown' && item && Array.isArray(item.faces) && item.faces.length) {
@@ -1442,6 +1445,9 @@ function appendFolderCard(folder, arr, opts = {}) {
         <span>Mapper</span>
       </div>
     </div>`;
+  card.querySelectorAll('img').forEach((img) => {
+    img.setAttribute('draggable', 'false');
+  });
   card.addEventListener("click", () => {
     if (state.mapperEditMode) {
       toggleMapperFolderSelection(folder);
@@ -1475,6 +1481,9 @@ function appendPersonCard(p) {
       </div>
     </div>
   `;
+  card.querySelectorAll('img').forEach((el) => {
+    el.setAttribute('draggable', 'false');
+  });
   // Klik på hele kortet åbner personens billeder (undtagen når man klikker på en knap)
   card.addEventListener('click', (e)=>{
     if (e.target && e.target.closest('[data-act]')) return;
@@ -1600,6 +1609,7 @@ function openViewer(index) {
   if (!els.viewer) return;
   // Toggle media elements
   if (els.viewerImg) {
+    els.viewerImg.setAttribute('draggable', 'false');
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
       // Always use the server-provided original_url (it serves a viewable copy for HEIC/HEIF)
@@ -1608,6 +1618,7 @@ function openViewer(index) {
     if (it.is_video) els.viewerImg.removeAttribute('src');
   }
   if (els.viewerVideo) {
+    els.viewerVideo.setAttribute('draggable', 'false');
     els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch(_) {}
     if (it.is_video) {
@@ -2285,6 +2296,23 @@ async function deleteSelectedMapperFolders() {
 }
 
 let _dragDepth = 0;
+let _internalImageDrag = false;
+
+document.addEventListener('dragstart', (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (!target.closest('.photo-card') && !target.closest('#viewer')) return;
+  _internalImageDrag = true;
+  if (target instanceof HTMLImageElement) {
+    e.preventDefault();
+  }
+});
+
+document.addEventListener('dragend', () => {
+  _internalImageDrag = false;
+  _dragDepth = 0;
+  _hideGlobalDropOverlay();
+});
 
 function _showGlobalDropOverlay() {
   ensureUploadOverlayRefs();
@@ -2319,12 +2347,14 @@ function _hideGlobalDropOverlay() {
 }
 
 window.addEventListener('dragenter', (e) => {
+  if (_internalImageDrag) return;
   if (!(e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files'))) return;
   _dragDepth += 1;
   _showGlobalDropOverlay();
 });
 
 window.addEventListener('dragover', (e) => {
+  if (_internalImageDrag) return;
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
     e.preventDefault();
     _showGlobalDropOverlay();
@@ -2338,6 +2368,11 @@ window.addEventListener('dragleave', () => {
 
 window.addEventListener('drop', async (e) => {
   _dragDepth = 0;
+  if (_internalImageDrag) {
+    _internalImageDrag = false;
+    _hideGlobalDropOverlay();
+    return;
+  }
   const hasFiles = !!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length);
   if (hasFiles) {
     e.preventDefault();
@@ -2351,6 +2386,7 @@ window.addEventListener('drop', async (e) => {
       await loadPhotos();
     }
   }
+  _internalImageDrag = false;
   _hideGlobalDropOverlay();
 });
 
