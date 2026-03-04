@@ -4425,10 +4425,26 @@ const viBtn = document.getElementById('viewerInfoBtn');
 const viewerMenu = els.viewerMenu;
 const viewerMenuBtn = els.viewerMenuBtn;
 const viewerMenuInfoBtn = els.viewerMenuInfoBtn;
+const viewerInfoGrab = document.getElementById('viewerInfoGrab');
 let viewerInfoHideTimer = null;
+let viewerInfoDragActive = false;
+let viewerInfoDragStartY = 0;
+let viewerInfoDragDeltaY = 0;
+let viewerInfoDragStartTime = 0;
 
 function isMobileViewerLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
+}
+
+function isViewerInfoPanelOpen() {
+  return !!viPanel && viPanel.classList.contains('open') && !viPanel.classList.contains('hidden');
+}
+
+function resetViewerInfoDragState() {
+  viewerInfoDragActive = false;
+  viewerInfoDragStartY = 0;
+  viewerInfoDragDeltaY = 0;
+  viewerInfoDragStartTime = 0;
 }
 
 function positionViewerInfoPanel() {
@@ -4464,6 +4480,9 @@ function toggleViewerInfoPanel(forceOpen = null) {
     window.clearTimeout(viewerInfoHideTimer);
     viewerInfoHideTimer = null;
   }
+  resetViewerInfoDragState();
+  viPanel.style.transition = '';
+  viPanel.style.transform = '';
   const shouldOpen = forceOpen === null ? !viPanel.classList.contains('open') : !!forceOpen;
   if (!shouldOpen) {
     viPanel.classList.remove('open');
@@ -4497,6 +4516,80 @@ if (viewerMenuInfoBtn) {
   });
 }
 
+if (viPanel) {
+  viPanel.addEventListener('touchstart', (e) => {
+    if (!isMobileViewerLayout() || !isViewerInfoPanelOpen()) return;
+    if (!e.touches || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const target = e.target;
+    const fromGrab = !!(target && target.closest && target.closest('#viewerInfoGrab'));
+    const panelTop = viPanel.getBoundingClientRect().top;
+    const touchNearTop = (touch.clientY - panelTop) <= 72;
+    const panelAtTop = (viPanel.scrollTop || 0) <= 0;
+    if (!fromGrab && !(touchNearTop && panelAtTop)) return;
+
+    viewerInfoDragActive = true;
+    viewerInfoDragStartY = touch.clientY;
+    viewerInfoDragDeltaY = 0;
+    viewerInfoDragStartTime = Date.now();
+    viPanel.style.transition = 'none';
+  }, { passive: true });
+
+  viPanel.addEventListener('touchmove', (e) => {
+    if (!viewerInfoDragActive || !isMobileViewerLayout()) return;
+    const touch = e.touches && e.touches[0];
+    if (!touch) return;
+    const delta = Math.max(0, touch.clientY - viewerInfoDragStartY);
+    viewerInfoDragDeltaY = delta;
+    viPanel.style.transform = `translateY(${Math.round(delta)}px)`;
+    if (delta > 0) e.preventDefault();
+  }, { passive: false });
+
+  viPanel.addEventListener('touchend', () => {
+    if (!viewerInfoDragActive || !isMobileViewerLayout()) {
+      resetViewerInfoDragState();
+      return;
+    }
+    const dt = Math.max(1, Date.now() - viewerInfoDragStartTime);
+    const velocity = viewerInfoDragDeltaY / dt;
+    const minSwipeDown = Math.max(90, Math.round((window.innerHeight || 640) * 0.12));
+    const shouldClose = viewerInfoDragDeltaY >= minSwipeDown || velocity > 0.42;
+    if (shouldClose) {
+      viPanel.style.transition = '';
+      viPanel.style.transform = '';
+      resetViewerInfoDragState();
+      toggleViewerInfoPanel(false);
+      return;
+    }
+    viPanel.style.transition = 'transform .2s ease';
+    viPanel.style.transform = 'translateY(0)';
+    window.setTimeout(() => {
+      if (isViewerInfoPanelOpen()) {
+        viPanel.style.transition = '';
+        viPanel.style.transform = '';
+      }
+    }, 210);
+    resetViewerInfoDragState();
+  }, { passive: true });
+
+  viPanel.addEventListener('touchcancel', () => {
+    if (!viewerInfoDragActive) return;
+    viPanel.style.transition = '';
+    viPanel.style.transform = '';
+    resetViewerInfoDragState();
+  }, { passive: true });
+}
+
+if (els.viewer && viPanel) {
+  els.viewer.addEventListener('click', (e) => {
+    if (!isMobileViewerLayout() || !isViewerInfoPanelOpen()) return;
+    const target = e.target;
+    if (target === els.viewerImg || target === els.viewerVideo) {
+      toggleViewerInfoPanel(false);
+    }
+  });
+}
+
 if (els.viewer && viewerMenu) {
   els.viewer.addEventListener('click', (e) => {
     if (viewerMenu.classList.contains('hidden')) return;
@@ -4521,6 +4614,9 @@ closeViewer = function(){
       viPanel.style.top = '';
       viPanel.style.bottom = '';
       viPanel.style.height = '';
+      viPanel.style.transition = '';
+      viPanel.style.transform = '';
+      resetViewerInfoDragState();
     }
     if (viewerMenu) { viewerMenu.classList.add('hidden'); }
     cleanupViewerMediaAnimation();
