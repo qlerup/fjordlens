@@ -806,6 +806,107 @@ def _get_upload_postprocess_state(uploaded_by: str) -> Dict[str, Any]:
         return dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
 
 
+def _request_client_ip() -> str:
+    try:
+        cf = str(request.headers.get("CF-Connecting-IP") or "").strip()
+        if cf:
+            return cf
+        xff = str(request.headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            return xff.split(",", 1)[0].strip()
+    except Exception:
+        pass
+    try:
+        return str(request.remote_addr or "").strip()
+    except Exception:
+        return ""
+
+
+def _request_client_country() -> Optional[str]:
+    code = str(request.headers.get("CF-IPCountry") or "").strip().upper()
+    if not code or code in {"XX", "T1"}:
+        return None
+    try:
+        obj = pycountry.countries.get(alpha_2=code)
+        return str(getattr(obj, "name", None) or code)
+    except Exception:
+        return code
+
+
+def _describe_device(user_agent: str) -> str:
+    ua = str(user_agent or "").strip()
+    if not ua:
+        return "Unknown"
+    s = ua.lower()
+    if "iphone" in s:
+        platform = "iPhone"
+    elif "ipad" in s:
+        platform = "iPad"
+    elif "android" in s:
+        platform = "Android"
+    elif "windows" in s:
+        platform = "Windows"
+    elif "mac os" in s or "macintosh" in s:
+        platform = "macOS"
+    elif "linux" in s:
+        platform = "Linux"
+    else:
+        platform = "Unknown OS"
+
+    if "edg/" in s:
+        browser = "Edge"
+    elif "chrome/" in s and "edg/" not in s:
+        browser = "Chrome"
+    elif "firefox/" in s:
+        browser = "Firefox"
+    elif "safari/" in s and "chrome/" not in s:
+        browser = "Safari"
+    else:
+        browser = "Unknown browser"
+
+    return f"{browser} on {platform}"
+
+
+def _log_login_attempt(
+    username_input: str,
+    user_id: Optional[int],
+    username_resolved: Optional[str],
+    success: bool,
+    event_type: str,
+    reason: str,
+) -> None:
+    try:
+        ip = _request_client_ip()[:80]
+        ua = str(request.headers.get("User-Agent") or "").strip()[:500]
+        device = _describe_device(ua)[:120]
+        country = _request_client_country()
+        with closing(get_conn()) as conn:
+            conn.execute(
+                """
+                INSERT INTO login_audit(
+                    at, username_input, user_id, username, success,
+                    event_type, reason, ip, country, device, user_agent
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    now_iso(),
+                    str(username_input or "")[:120],
+                    int(user_id) if user_id is not None else None,
+                    str(username_resolved or "")[:120] or None,
+                    1 if success else 0,
+                    str(event_type or "")[:50],
+                    str(reason or "")[:120],
+                    ip or None,
+                    (str(country)[:120] if country else None),
+                    device,
+                    ua or None,
+                ),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def _pop_uploaded_rels(uploaded_by: str) -> list[str]:
     user = str(uploaded_by or "").strip() or "__unknown__"
     with UPLOAD_PENDING_LOCK:
@@ -1253,6 +1354,25 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS login_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at TEXT NOT NULL,
+                username_input TEXT,
+                user_id INTEGER,
+                username TEXT,
+                success INTEGER NOT NULL DEFAULT 0,
+                event_type TEXT,
+                reason TEXT,
+                ip TEXT,
+                country TEXT,
+                device TEXT,
+                user_agent TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_audit_at ON login_audit(at);
+            CREATE INDEX IF NOT EXISTS idx_login_audit_user_id ON login_audit(user_id);
+            CREATE INDEX IF NOT EXISTS idx_login_audit_success ON login_audit(success);
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -1358,6 +1478,18 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE share_links ADD COLUMN require_visitor_name INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE login_audit ADD COLUMN country TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE login_audit ADD COLUMN device TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE login_audit ADD COLUMN user_agent TEXT")
         except Exception:
             pass
         try:
@@ -5793,22 +5925,27 @@ def login():
                 setup_done = int(row["totp_setup_done"] or 0) if ("totp_setup_done" in keys) else 0
                 totp_secret = row["totp_secret"] if ("totp_secret" in keys) else None
                 if not totp_secret or setup_done == 0:
+                    _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_setup_required")
                     user = _row_to_user(row)
                     login_user(user)
                     return redirect(url_for("setup_2fa"))
                 # Otherwise require 2FA unless trusted cookie is valid
                 if _trust_cookie_valid_for(int(row["id"])):
+                    _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "trusted_device")
                     user = _row_to_user(row)
                     login_user(user)
                     next_url = request.args.get("next") or url_for("index")
                     return redirect(next_url)
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
+                _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_required")
                 return redirect(url_for("verify_2fa", next=request.args.get("next")))
+            _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "password_ok")
             user = _row_to_user(row)
             login_user(user)
             next_url = request.args.get("next") or url_for("index")
             return redirect(next_url)
+        _log_login_attempt(username, None, None, False, "login_failed", "invalid_credentials")
         return render_template("login.html", error=_ui_text("login_invalid_credentials"))
     created = True if (request.args.get("created") in ("1", "true", "True")) else False
     return render_template("login.html", created=created)
@@ -5835,6 +5972,7 @@ def verify_2fa():
             return redirect(url_for("login"))
         totp = pyotp.TOTP(row["totp_secret"]) 
         if totp.verify(code, valid_window=1):
+            _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), True, "login_2fa", "2fa_ok")
             user = _row_to_user(row)
             resp = redirect(request.args.get("next") or url_for("index"))
             login_user(user)
@@ -5850,6 +5988,7 @@ def verify_2fa():
                 if token:
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
+        _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), False, "login_2fa", "invalid_code")
         return render_template("2fa_verify.html", error=_ui_text("invalid_code"))
     # GET
     return render_template("2fa_verify.html")
@@ -6039,6 +6178,14 @@ def api_admin_users():
             rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, ui_language, search_language, created_at FROM users ORDER BY id").fetchall()
             all_folders = _list_all_photo_folders(conn)
             acl_rows = conn.execute("SELECT user_id, folder_path FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
+            audit_rows = conn.execute(
+                """
+                SELECT id, at, username_input, user_id, username, success, event_type, reason, ip, country, device
+                FROM login_audit
+                ORDER BY id DESC
+                LIMIT 300
+                """
+            ).fetchall()
         by_user_acl: dict[int, list[str]] = {}
         for ar in acl_rows:
             try:
@@ -6063,7 +6210,24 @@ def api_admin_users():
                 "allowed_folders": allowed_folders,
                 "created_at": r["created_at"],
             })
-        return jsonify({"ok": True, "items": items, "available_folders": all_folders})
+        login_audit = []
+        for ar in audit_rows:
+            login_audit.append(
+                {
+                    "id": int(ar["id"] or 0),
+                    "at": ar["at"],
+                    "username_input": str(ar["username_input"] or ""),
+                    "user_id": int(ar["user_id"]) if ar["user_id"] is not None else None,
+                    "username": str(ar["username"] or ""),
+                    "success": bool(int(ar["success"] or 0)),
+                    "event_type": str(ar["event_type"] or ""),
+                    "reason": str(ar["reason"] or ""),
+                    "ip": str(ar["ip"] or ""),
+                    "country": str(ar["country"] or ""),
+                    "device": str(ar["device"] or ""),
+                }
+            )
+        return jsonify({"ok": True, "items": items, "available_folders": all_folders, "login_audit": login_audit})
     # POST create user
     data = request.get_json(silent=True) or {}
     u = (data.get("username") or "").strip()

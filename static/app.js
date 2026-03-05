@@ -511,6 +511,18 @@ const I18N = {
     users_status_username_password_required: 'Udfyld brugernavn og adgangskode.',
     users_status_create_failed: 'Kunne ikke oprette:',
     users_status_created: 'Bruger oprettet',
+    users_login_log_title: 'Login-log',
+    users_login_log_empty: 'Ingen login-forsøg endnu.',
+    users_login_col_time: 'Tidspunkt',
+    users_login_col_user: 'Bruger',
+    users_login_col_status: 'Status',
+    users_login_col_reason: 'Hændelse',
+    users_login_col_ip: 'IP',
+    users_login_col_country: 'Land',
+    users_login_col_device: 'Enhed',
+    users_login_status_ok: 'OK',
+    users_login_status_fail: 'Fejl',
+    users_login_unknown: 'Ukendt',
     users_select_all: 'Markér alle',
     users_clear_all: 'Fjern alle markeringer',
     mapper_tree_expand: 'Fold mappe ud',
@@ -854,6 +866,18 @@ const I18N = {
     users_status_username_password_required: 'Fill in username and password.',
     users_status_create_failed: 'Could not create:',
     users_status_created: 'User created',
+    users_login_log_title: 'Login log',
+    users_login_log_empty: 'No login attempts yet.',
+    users_login_col_time: 'Time',
+    users_login_col_user: 'User',
+    users_login_col_status: 'Status',
+    users_login_col_reason: 'Event',
+    users_login_col_ip: 'IP',
+    users_login_col_country: 'Country',
+    users_login_col_device: 'Device',
+    users_login_status_ok: 'OK',
+    users_login_status_fail: 'Failed',
+    users_login_unknown: 'Unknown',
     users_select_all: 'Select all',
     users_clear_all: 'Clear all selections',
     mapper_tree_expand: 'Expand folder',
@@ -5639,6 +5663,7 @@ async function renderUsersPanel(){
       return;
     }
     const items = js.items || [];
+    const loginAudit = Array.isArray(js.login_audit) ? js.login_audit : [];
     const availableFolders = Array.isArray(js.available_folders) ? js.available_folders : [];
     const rows = items.map(u => {
       const role = String(u.role || '').toLowerCase();
@@ -5659,17 +5684,42 @@ async function renderUsersPanel(){
         </td>
       </tr>`;
     }).join('');
+    const auditRows = loginAudit.map((entry) => {
+      const status = entry && entry.success ? tr('users_login_status_ok') : tr('users_login_status_fail');
+      const statusClass = entry && entry.success ? 'ok' : 'err';
+      const userTxt = (entry && entry.username) || (entry && entry.username_input) || tr('users_login_unknown');
+      const reasonTxt = (entry && entry.reason) || (entry && entry.event_type) || '—';
+      return `
+      <tr>
+        <td>${escapeHtml(fmtDate(entry && entry.at))}</td>
+        <td>${escapeHtml(userTxt)}</td>
+        <td><span class="upload-monitor-item-status ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${escapeHtml(reasonTxt)}</td>
+        <td>${escapeHtml((entry && entry.ip) || '—')}</td>
+        <td>${escapeHtml((entry && entry.country) || '—')}</td>
+        <td>${escapeHtml((entry && entry.device) || '—')}</td>
+      </tr>`;
+    }).join('');
     wrap.innerHTML = `
       <div class="panel" style="margin-bottom:12px;">
         <div class="toolbar">
-          <strong>Brugere</strong>
-          <button id="nu_open" class="btn primary" style="margin-left:auto;">Tilføj bruger</button>
+          <strong>${escapeHtml(tr('users_panel_title'))}</strong>
+          <button id="nu_open" class="btn primary" style="margin-left:auto;">${escapeHtml(tr('users_add_user'))}</button>
         </div>
       </div>
       <div class="data-table" style="margin-bottom:12px;">
         <table>
-          <thead><tr><th>ID</th><th>Brugernavn</th><th>Rolle</th><th>Sprog (UI/Søgning)</th><th>2FA</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan=6 class="muted">Ingen brugere</td></tr>'}</tbody>
+          <thead><tr><th>${escapeHtml(tr('users_col_id'))}</th><th>${escapeHtml(tr('users_col_username'))}</th><th>${escapeHtml(tr('users_col_role'))}</th><th>${escapeHtml(tr('users_col_language'))}</th><th>${escapeHtml(tr('users_col_2fa'))}</th><th></th></tr></thead>
+          <tbody>${rows || `<tr><td colspan=6 class="muted">${escapeHtml(tr('users_no_users'))}</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="panel" style="margin-bottom:8px;">
+        <div class="toolbar"><strong>${escapeHtml(tr('users_login_log_title'))}</strong></div>
+      </div>
+      <div class="data-table" style="margin-bottom:12px;">
+        <table>
+          <thead><tr><th>${escapeHtml(tr('users_login_col_time'))}</th><th>${escapeHtml(tr('users_login_col_user'))}</th><th>${escapeHtml(tr('users_login_col_status'))}</th><th>${escapeHtml(tr('users_login_col_reason'))}</th><th>${escapeHtml(tr('users_login_col_ip'))}</th><th>${escapeHtml(tr('users_login_col_country'))}</th><th>${escapeHtml(tr('users_login_col_device'))}</th></tr></thead>
+          <tbody>${auditRows || `<tr><td colspan=7 class="muted">${escapeHtml(tr('users_login_log_empty'))}</td></tr>`}</tbody>
         </table>
       </div>
       <!-- Create user modal -->
