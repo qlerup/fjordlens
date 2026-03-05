@@ -1533,6 +1533,7 @@ body.view-mapper .mapper-header-actions { display: flex; }
 .upload-monitor-actions .btn.small[disabled] {
   opacity: 0.6;
   cursor: not-allowed;
+  pointer-events: none;
 }
 .upload-monitor.collapsed .upload-monitor-current,
 .upload-monitor.collapsed .upload-monitor-list {
@@ -1561,15 +1562,19 @@ body.view-mapper .mapper-header-actions { display: flex; }
   gap: 4px;
 }
 .upload-monitor-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
   font-size: 0.78rem;
   border: 1px solid var(--border);
   background: var(--panel-2);
   border-radius: 8px;
   padding: 5px 7px;
+}
+.upload-monitor-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .upload-monitor-item-name {
   min-width: 0;
@@ -1577,8 +1582,23 @@ body.view-mapper .mapper-header-actions { display: flex; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.upload-monitor-item-progress {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #131722;
+  overflow: hidden;
+}
+.upload-monitor-item-progress-bar {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width .12s linear;
+}
 .upload-monitor-item-status.ok { color: #86efac; }
 .upload-monitor-item-status.err { color: #fca5a5; }
+.upload-monitor-item-status.work { color: #93c5fd; }
 
 @media (max-width: 760px) {
   .upload-monitor {

@@ -231,6 +231,7 @@ function bindUploadMonitorDomEvents() {
 
     const stopBtn = event && event.target && event.target.closest ? event.target.closest('#uploadMonitorStop') : null;
     if (stopBtn) {
+      if (stopBtn.disabled) return;
       requestStopUpload();
     }
   });
@@ -2141,6 +2142,7 @@ let uploadOverlayHideTimer = null;
 let activeTusUpload = null;
 let uploadStopRequested = false;
 let uploadWasStopped = false;
+const uploadMonitorItemsByKey = new Map();
 
 function hideUploadOverlay() {
   ensureUploadOverlayRefs();
@@ -2163,6 +2165,7 @@ function resetUploadUiState() {
   uploadUiState.currentPhaseLabel = '';
   uploadUiState.currentLoaded = 0;
   uploadUiState.currentTotal = 0;
+  uploadMonitorItemsByKey.clear();
 }
 
 function setUploadStopButtonState() {
@@ -2171,6 +2174,31 @@ function setUploadStopButtonState() {
   const running = isUploadRunning();
   els.uploadMonitorStop.disabled = !running || uploadStopRequested;
   els.uploadMonitorStop.textContent = uploadStopRequested ? 'Stopper…' : 'Stop upload';
+}
+
+function _uploadItemKey(name, index = null) {
+  const safeName = String(name || '').trim() || '(ukendt fil)';
+  return index === null || index === undefined
+    ? safeName
+    : `${safeName}::${String(index)}`;
+}
+
+function _setUploadMonitorItemProgress(key, pct) {
+  const ref = uploadMonitorItemsByKey.get(String(key || ''));
+  if (!ref || !ref.progressBar) return;
+  const value = Math.max(0, Math.min(100, Number(pct || 0)));
+  ref.progressBar.style.width = `${value}%`;
+}
+
+function updateUploadMonitorItem(key, ok, detail = '', progressPct = null) {
+  const ref = uploadMonitorItemsByKey.get(String(key || ''));
+  if (!ref || !ref.statusEl) return;
+  ref.statusEl.classList.remove('ok', 'err', 'work');
+  ref.statusEl.classList.add(ok === null ? 'work' : (ok ? 'ok' : 'err'));
+  ref.statusEl.textContent = String(detail || (ok === null ? 'Arbejder…' : (ok ? 'OK' : 'Fejl')));
+  if (progressPct !== null && progressPct !== undefined) {
+    _setUploadMonitorItemProgress(key, progressPct);
+  }
 }
 
 function requestStopUpload() {
@@ -2228,21 +2256,35 @@ function showUploadMonitor() {
   setUploadStopButtonState();
 }
 
-function addUploadMonitorItem(name, ok, detail = '') {
+function addUploadMonitorItem(name, ok, detail = '', key = null, progressPct = null) {
   ensureUploadMonitorRefs();
   if (!els.uploadMonitorList) return;
   const li = document.createElement('li');
   li.className = 'upload-monitor-item';
   const safeName = String(name || '').trim() || '(ukendt fil)';
+  const itemKey = String(key || _uploadItemKey(safeName));
   const statusClass = ok ? 'ok' : 'err';
   const statusText = ok ? 'OK' : 'Fejl';
   li.innerHTML = `
-    <span class="upload-monitor-item-name" title="${escapeHtml(safeName)}">${escapeHtml(safeName)}</span>
-    <span class="upload-monitor-item-status ${statusClass}">${escapeHtml(detail || statusText)}</span>
+    <div class="upload-monitor-item-top">
+      <span class="upload-monitor-item-name" title="${escapeHtml(safeName)}">${escapeHtml(safeName)}</span>
+      <span class="upload-monitor-item-status ${statusClass}">${escapeHtml(detail || statusText)}</span>
+    </div>
+    <div class="upload-monitor-item-progress"><span class="upload-monitor-item-progress-bar" style="width:${Math.max(0, Math.min(100, Number(progressPct || 0)))}%"></span></div>
   `;
   els.uploadMonitorList.insertBefore(li, els.uploadMonitorList.firstChild || null);
+  uploadMonitorItemsByKey.set(itemKey, {
+    el: li,
+    statusEl: li.querySelector('.upload-monitor-item-status'),
+    progressBar: li.querySelector('.upload-monitor-item-progress-bar'),
+  });
   while (els.uploadMonitorList.children.length > 8) {
-    els.uploadMonitorList.removeChild(els.uploadMonitorList.lastChild);
+    const last = els.uploadMonitorList.lastChild;
+    if (!last) break;
+    uploadMonitorItemsByKey.forEach((value, k) => {
+      if (value && value.el === last) uploadMonitorItemsByKey.delete(k);
+    });
+    els.uploadMonitorList.removeChild(last);
   }
 }
 
@@ -2482,12 +2524,15 @@ async function uploadFiles(fileList, options = {}) {
 
   try {
     let savedTotal = 0;
-    for (const file of files) {
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+      const file = files[fileIndex];
+      const itemKey = _uploadItemKey(file.name, fileIndex);
       if (uploadStopRequested) break;
       uploadUiState.currentPhaseLabel = 'Uploader';
       uploadUiState.currentFileName = file.name || 'fil';
       uploadUiState.currentLoaded = 0;
       uploadUiState.currentTotal = Number(file.size || 0);
+      addUploadMonitorItem(file.name, null, 'Uploader… 0%', itemKey, 0);
       renderUploadMonitor();
 
       if (!hasTusClient()) {
@@ -2496,11 +2541,15 @@ async function uploadFiles(fileList, options = {}) {
       const result = await uploadSingleFileTus(file, { destination, subdir }, (loaded, total) => {
         uploadUiState.currentLoaded = Number(loaded || 0);
         uploadUiState.currentTotal = Number(total || file.size || 0);
+        const pct = Number(total || file.size || 0) > 0
+          ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
+          : 0;
+        updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
         renderUploadMonitor();
       });
 
       if (result && result.aborted) {
-        addUploadMonitorItem(file.name, false, 'Stoppet');
+        updateUploadMonitorItem(itemKey, false, 'Stoppet', 0);
         renderUploadMonitor();
         break;
       }
@@ -2512,10 +2561,10 @@ async function uploadFiles(fileList, options = {}) {
 
       if (result.ok) {
         savedTotal += Number(result.saved || 0) || 1;
-        addUploadMonitorItem(file.name, true, fmtBytes(file.size || 0));
+        updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
       } else {
         uploadUiState.failedFiles += 1;
-        addUploadMonitorItem(file.name, false, result.errorMsg || 'Fejl');
+        updateUploadMonitorItem(itemKey, false, result.errorMsg || 'Fejl', 0);
       }
 
       renderUploadMonitor();
@@ -2535,6 +2584,24 @@ async function uploadFiles(fileList, options = {}) {
         uploadUiState.currentFileName = n || 'Arbejder…';
         uploadUiState.currentLoaded = Number(status.stage_processed || 0);
         uploadUiState.currentTotal = Number(status.stage_total || 0);
+        if (n) {
+          const phase = String(status.phase || '').toLowerCase();
+          const msg = phase === 'thumbnails'
+            ? 'Metadata/thumbnails…'
+            : phase === 'faces'
+              ? 'Ansigter…'
+              : phase === 'embeddings'
+                ? 'Embeddings…'
+                : 'Efterbehandler…';
+          uploadMonitorItemsByKey.forEach((value, k) => {
+            if (!value || !value.el) return;
+            const nameEl = value.el.querySelector('.upload-monitor-item-name');
+            const txt = nameEl ? String(nameEl.textContent || '').trim() : '';
+            if (txt === n || txt.endsWith(`/${n}`)) {
+              updateUploadMonitorItem(k, null, msg, null);
+            }
+          });
+        }
         renderUploadMonitor();
       });
     } catch (postErr) {
