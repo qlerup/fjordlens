@@ -1594,7 +1594,8 @@ body.view-mapper .mapper-header-actions { display: flex; }
   margin: 8px 0 0;
   padding: 0;
   max-height: 152px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 4px;
 }
@@ -1606,15 +1607,28 @@ body.view-mapper .mapper-header-actions { display: flex; }
   background: var(--panel-2);
   border-radius: 8px;
   padding: 5px 7px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .upload-monitor-item-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 .upload-monitor-item-name {
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-monitor-item-status {
+  flex: 0 0 auto;
+  max-width: 46%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

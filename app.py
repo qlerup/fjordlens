@@ -949,7 +949,7 @@ def _postprocess_uploaded_rels(
             pass
 
     _emit_progress({
-        "phase": "thumbnails",
+        "phase": "metadata",
         "current_rel": None,
         "stage_processed": 0,
         "stage_total": len(rels),
@@ -959,7 +959,7 @@ def _postprocess_uploaded_rels(
     index_errors = 0
     for i, rel in enumerate(rels, start=1):
         _emit_progress({
-            "phase": "thumbnails",
+            "phase": "metadata",
             "current_rel": rel,
             "stage_processed": i,
             "stage_total": len(rels),
@@ -973,7 +973,7 @@ def _postprocess_uploaded_rels(
                 pass
             continue
         try:
-            meta = extract_metadata(disk_path, rel, generate_thumb=True)
+            meta = extract_metadata(disk_path, rel, generate_thumb=False)
             meta["uploaded_by"] = user
             upsert_photo(meta)
             indexed_ok.append(rel)
@@ -985,6 +985,49 @@ def _postprocess_uploaded_rels(
             index_errors += 1
             try:
                 log_event("error", rel_path=rel, error=f"postprocess_index: {e}")
+            except Exception:
+                pass
+
+    thumb_errors = 0
+    _emit_progress({
+        "phase": "thumbnails",
+        "current_rel": None,
+        "stage_processed": 0,
+        "stage_total": len(indexed_ok),
+    })
+    for i, rel in enumerate(indexed_ok, start=1):
+        _emit_progress({
+            "phase": "thumbnails",
+            "current_rel": rel,
+            "stage_processed": i,
+            "stage_total": len(indexed_ok),
+        })
+        try:
+            disk_path = _disk_path_from_rel_path(rel)
+            if not disk_path.exists():
+                thumb_errors += 1
+                continue
+            stat = disk_path.stat()
+            thumb_name: Optional[str] = None
+            if disk_path.suffix.lower() in VIDEO_EXTS:
+                thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
+            else:
+                with Image.open(disk_path) as img:
+                    try:
+                        img = ImageOps.exif_transpose(img)
+                    except Exception:
+                        pass
+                    thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
+            if thumb_name:
+                with closing(get_conn()) as conn:
+                    conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (thumb_name, now_iso(), rel))
+                    conn.commit()
+            else:
+                thumb_errors += 1
+        except Exception as e:
+            thumb_errors += 1
+            try:
+                log_event("error", rel_path=rel, error=f"postprocess_thumb: {e}")
             except Exception:
                 pass
 
@@ -1052,6 +1095,7 @@ def _postprocess_uploaded_rels(
         "received": len(rels),
         "indexed": len(indexed_ok),
         "index_errors": index_errors,
+        "thumb_errors": thumb_errors,
         "faces_enabled": faces_enabled,
         "faces_done": faces_done,
         "faces_errors": faces_errors,

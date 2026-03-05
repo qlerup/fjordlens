@@ -2152,7 +2152,22 @@ let activeTusUpload = null;
 let uploadStopRequested = false;
 let uploadWasStopped = false;
 let uploadTransferActive = false;
+let uploadLiveRefreshBusy = false;
+let uploadLiveRefreshAt = 0;
 const uploadMonitorItemsByKey = new Map();
+
+async function maybeRefreshPhotosDuringPostprocess(force = false) {
+  if (!(state.view === 'mapper' || state.view === 'timeline')) return;
+  if (uploadLiveRefreshBusy) return;
+  const now = Date.now();
+  if (!force && (now - uploadLiveRefreshAt) < 2500) return;
+  uploadLiveRefreshBusy = true;
+  uploadLiveRefreshAt = now;
+  try {
+    await loadPhotos();
+  } catch {}
+  uploadLiveRefreshBusy = false;
+}
 
 function hideUploadOverlay() {
   ensureUploadOverlayRefs();
@@ -2366,6 +2381,7 @@ function hasTusClient() {
 
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
+  if (key === 'metadata') return 'Metadata';
   if (key === 'thumbnails') return 'Metadata + thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
   if (key === 'embeddings') return 'AI embeddings';
@@ -2630,7 +2646,9 @@ async function uploadFiles(fileList, options = {}) {
         uploadUiState.currentTotal = Number(status.stage_total || 0);
         if (n) {
           const phase = String(status.phase || '').toLowerCase();
-          const msg = phase === 'thumbnails'
+          const msg = phase === 'metadata'
+            ? 'Metadata…'
+            : phase === 'thumbnails'
             ? 'Metadata + thumbnails…'
             : phase === 'faces'
               ? 'Ansigtsgenkendelse…'
@@ -2648,6 +2666,9 @@ async function uploadFiles(fileList, options = {}) {
             });
           }
         }
+        if (String(status.phase || '').toLowerCase() === 'metadata' || String(status.phase || '').toLowerCase() === 'thumbnails') {
+          maybeRefreshPhotosDuringPostprocess(false);
+        }
         renderUploadMonitor();
       });
     } catch (postErr) {
@@ -2662,8 +2683,9 @@ async function uploadFiles(fileList, options = {}) {
     renderUploadMonitor();
 
     if (post) {
+      const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
       const postParts = [
-        `thumbs: ${Number(post.indexed || 0)}`,
+        `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
         `ansigter: ${Number(post.faces_done || 0)}${Number(post.faces_errors || 0) ? ` (fejl: ${Number(post.faces_errors || 0)})` : ''}`,
         `embeddings: ${Number(post.ai_done || 0)}${Number(post.ai_errors || 0) ? ` (fejl: ${Number(post.ai_errors || 0)})` : ''}`,
       ];
@@ -2678,7 +2700,7 @@ async function uploadFiles(fileList, options = {}) {
       );
     }
 
-    await loadPhotos();
+    await maybeRefreshPhotosDuringPostprocess(true);
     if (state.view === 'mapper') {
       loadMapperTools();
     }
