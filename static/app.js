@@ -2107,6 +2107,7 @@ const uploadUiState = {
   processedBytes: 0,
   failedFiles: 0,
   currentFileName: '',
+  currentPhaseLabel: '',
   currentLoaded: 0,
   currentTotal: 0,
   collapsed: false,
@@ -2135,6 +2136,7 @@ function resetUploadUiState() {
   uploadUiState.processedBytes = 0;
   uploadUiState.failedFiles = 0;
   uploadUiState.currentFileName = '';
+  uploadUiState.currentPhaseLabel = '';
   uploadUiState.currentLoaded = 0;
   uploadUiState.currentTotal = 0;
 }
@@ -2164,6 +2166,7 @@ function requestStopUpload() {
 function renderUploadMonitor() {
   ensureUploadMonitorRefs();
   if (!els.uploadMonitor) return;
+  setUploadStopButtonState();
   const processedVisualBytes = Math.min(uploadUiState.totalBytes, uploadUiState.processedBytes + uploadUiState.currentLoaded);
   const overallPct = uploadUiState.totalBytes > 0
     ? Math.max(0, Math.min(100, Math.round((processedVisualBytes / uploadUiState.totalBytes) * 100)))
@@ -2179,7 +2182,8 @@ function renderUploadMonitor() {
       const filePct = uploadUiState.currentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
         : 0;
-      els.uploadMonitorCurrent.textContent = `Uploader: ${uploadUiState.currentFileName} (${filePct}%)`;
+      const phasePrefix = String(uploadUiState.currentPhaseLabel || '').trim() || 'Uploader';
+      els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
     } else {
       els.uploadMonitorCurrent.textContent = uploadUiState.totalFiles
         ? 'Upload fuldført'
@@ -2254,7 +2258,25 @@ function hasTusClient() {
   return !!(window.tus && typeof window.tus.Upload === 'function');
 }
 
-async function runUploadPostprocess() {
+function postprocessPhaseLabel(phase) {
+  const key = String(phase || '').toLowerCase();
+  if (key === 'thumbnails') return 'Laver thumbnails';
+  if (key === 'faces') return 'Ansigtsgenkendelse';
+  if (key === 'embeddings') return 'AI embeddings';
+  if (key === 'starting') return 'Starter efterbehandling';
+  if (key === 'done') return 'Efterbehandling færdig';
+  if (key === 'error') return 'Efterbehandling fejl';
+  return 'Efterbehandler';
+}
+
+function shortRelName(relPath) {
+  const rel = String(relPath || '').trim();
+  if (!rel) return '';
+  const parts = rel.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : rel;
+}
+
+async function runUploadPostprocess(onProgress = null) {
   const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
   let startData = {};
   try { startData = await startRes.json(); } catch {}
@@ -2287,6 +2309,9 @@ async function runUploadPostprocess() {
     if (!statusRes.ok || !statusData.ok) {
       const msg = (statusData && statusData.error) ? String(statusData.error) : 'Efterbehandling status fejlede';
       throw new Error(msg);
+    }
+    if (statusData.running && typeof onProgress === 'function') {
+      onProgress(statusData);
     }
     if (!statusData.running) {
       if (statusData.error) throw new Error(String(statusData.error));
@@ -2435,6 +2460,7 @@ async function uploadFiles(fileList, options = {}) {
     let savedTotal = 0;
     for (const file of files) {
       if (uploadStopRequested) break;
+      uploadUiState.currentPhaseLabel = 'Uploader';
       uploadUiState.currentFileName = file.name || 'fil';
       uploadUiState.currentLoaded = 0;
       uploadUiState.currentTotal = Number(file.size || 0);
@@ -2471,18 +2497,31 @@ async function uploadFiles(fileList, options = {}) {
       renderUploadMonitor();
     }
 
-    uploadUiState.currentFileName = 'Efterbehandler uploads…';
+    uploadUiState.currentPhaseLabel = 'Efterbehandler';
+    uploadUiState.currentFileName = 'Klargør…';
+    uploadUiState.currentLoaded = 0;
+    uploadUiState.currentTotal = 0;
     renderUploadMonitor();
 
     let post = null;
     try {
-      post = await runUploadPostprocess();
+      post = await runUploadPostprocess((status) => {
+        uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
+        const n = shortRelName(status.current_rel);
+        uploadUiState.currentFileName = n || 'Arbejder…';
+        uploadUiState.currentLoaded = Number(status.stage_processed || 0);
+        uploadUiState.currentTotal = Number(status.stage_total || 0);
+        renderUploadMonitor();
+      });
     } catch (postErr) {
       console.error(postErr);
       showStatus(`Upload færdig, men efterbehandling fejlede: ${postErr && postErr.message ? postErr.message : 'ukendt fejl'}`, 'err');
     }
 
     uploadUiState.currentFileName = '';
+    uploadUiState.currentPhaseLabel = '';
+    uploadUiState.currentLoaded = 0;
+    uploadUiState.currentTotal = 0;
     renderUploadMonitor();
 
     if (post) {

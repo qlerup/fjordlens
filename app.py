@@ -13,7 +13,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session
 from flask_login import (
@@ -821,7 +821,11 @@ def _pop_uploaded_rels(uploaded_by: str) -> list[str]:
     return out
 
 
-def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[str, Any]:
+def _postprocess_uploaded_rels(
+    uploaded_by: str,
+    rel_paths: list[str],
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
     seen: set[str] = set()
@@ -832,9 +836,33 @@ def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[s
         seen.add(key)
         rels.append(key)
 
+    faces_enabled = faces_auto_index_enabled()
+    ai_enabled = ai_auto_ingest_enabled()
+
+    def _emit_progress(payload: Dict[str, Any]) -> None:
+        if not progress_cb:
+            return
+        try:
+            progress_cb(payload)
+        except Exception:
+            pass
+
+    _emit_progress({
+        "phase": "thumbnails",
+        "current_rel": None,
+        "stage_processed": 0,
+        "stage_total": len(rels),
+    })
+
     indexed_ok: list[str] = []
     index_errors = 0
-    for rel in rels:
+    for i, rel in enumerate(rels, start=1):
+        _emit_progress({
+            "phase": "thumbnails",
+            "current_rel": rel,
+            "stage_processed": i,
+            "stage_total": len(rels),
+        })
         disk_path = _disk_path_from_rel_path(rel)
         if not disk_path.exists():
             index_errors += 1
@@ -861,8 +889,20 @@ def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[s
 
     faces_done = 0
     faces_errors = 0
-    if faces_auto_index_enabled():
-        for rel in indexed_ok:
+    if faces_enabled:
+        _emit_progress({
+            "phase": "faces",
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": len(indexed_ok),
+        })
+        for i, rel in enumerate(indexed_ok, start=1):
+            _emit_progress({
+                "phase": "faces",
+                "current_rel": rel,
+                "stage_processed": i,
+                "stage_total": len(indexed_ok),
+            })
             try:
                 index_faces_for_photo(rel)
                 faces_done += 1
@@ -875,8 +915,20 @@ def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[s
 
     ai_done = 0
     ai_errors = 0
-    if ai_auto_ingest_enabled():
-        for rel in indexed_ok:
+    if ai_enabled:
+        _emit_progress({
+            "phase": "embeddings",
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": len(indexed_ok),
+        })
+        for i, rel in enumerate(indexed_ok, start=1):
+            _emit_progress({
+                "phase": "embeddings",
+                "current_rel": rel,
+                "stage_processed": i,
+                "stage_total": len(indexed_ok),
+            })
             try:
                 _embed_uploaded_photo_if_needed(rel)
                 ai_done += 1
@@ -887,15 +939,22 @@ def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[s
                 except Exception:
                     pass
 
+    _emit_progress({
+        "phase": "done",
+        "current_rel": None,
+        "stage_processed": len(rels),
+        "stage_total": len(rels),
+    })
+
     return {
         "ok": True,
         "received": len(rels),
         "indexed": len(indexed_ok),
         "index_errors": index_errors,
-        "faces_enabled": faces_auto_index_enabled(),
+        "faces_enabled": faces_enabled,
         "faces_done": faces_done,
         "faces_errors": faces_errors,
-        "ai_enabled": ai_auto_ingest_enabled(),
+        "ai_enabled": ai_enabled,
         "ai_done": ai_done,
         "ai_errors": ai_errors,
     }
@@ -911,6 +970,10 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             "finished_at": None,
             "error": None,
             "result": None,
+            "phase": "starting",
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": 0,
         },
     )
 
@@ -935,7 +998,11 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             except Exception:
                 pass
 
-            result = _postprocess_uploaded_rels(user, batch)
+            result = _postprocess_uploaded_rels(
+                user,
+                batch,
+                progress_cb=lambda p: _set_upload_postprocess_state(user, p),
+            )
             aggregate["received"] += int(result.get("received") or 0)
             aggregate["indexed"] += int(result.get("indexed") or 0)
             aggregate["index_errors"] += int(result.get("index_errors") or 0)
@@ -970,6 +1037,10 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "finished_at": now_iso(),
                 "result": aggregate,
                 "error": None,
+                "phase": "done",
+                "current_rel": None,
+                "stage_processed": int(aggregate.get("received") or 0),
+                "stage_total": int(aggregate.get("received") or 0),
             },
         )
     except Exception as e:
@@ -980,6 +1051,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "finished_at": now_iso(),
                 "error": str(e),
                 "result": aggregate,
+                "phase": "error",
             },
         )
 
@@ -5671,7 +5743,7 @@ def api_upload_postprocess_status():
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
     if not state:
-        return jsonify({"ok": True, "running": False, "pending": pending_count, "result": None, "error": None})
+        return jsonify({"ok": True, "running": False, "pending": pending_count, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
     return jsonify(
         {
             "ok": True,
@@ -5681,6 +5753,10 @@ def api_upload_postprocess_status():
             "finished_at": state.get("finished_at"),
             "result": state.get("result"),
             "error": state.get("error"),
+            "phase": state.get("phase"),
+            "current_rel": state.get("current_rel"),
+            "stage_processed": int(state.get("stage_processed") or 0),
+            "stage_total": int(state.get("stage_total") or 0),
         }
     )
 
