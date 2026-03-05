@@ -343,6 +343,7 @@ const I18N = {
     dns_shares_extend_ok: 'Share-link forlænget.',
     dns_shares_extend_failed: 'Kunne ikke forlænge share-link.',
     btn_scan_library: 'Scan bibliotek',
+    btn_stop_scan: 'Stop scan',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Genbyg thumbnails',
     btn_reset_index: 'Nulstil indeks',
@@ -429,6 +430,7 @@ const I18N = {
     profile_save: 'Gem profil',
     profile_saved: 'Profil opdateret',
     status_errors_label: 'fejl',
+    status_error_prefix: 'Fejl:',
     status_ready_scan: "Klar. Tryk 'Scan bibliotek' for at indeksere dine billeder.",
     scan_modal_title: 'Scan bibliotek',
     scan_modal_text: 'Vil du starte en fuld scanning af biblioteket nu?',
@@ -490,6 +492,96 @@ const I18N = {
     users_status_created: 'Bruger oprettet',
     users_select_all: 'Markér alle',
     users_clear_all: 'Fjern alle markeringer',
+    mapper_tree_expand: 'Fold mappe ud',
+    mapper_tree_collapse: 'Fold mappe sammen',
+    upload_failed_generic: 'Upload fejlede',
+    upload_mapper_only: 'Upload er kun aktiv i Mapper-sektionen.',
+    person_rename_save_failed: 'Kunne ikke gemme navn',
+    person_rename_merged: 'Person flettet til',
+    person_name_updated: 'Navn opdateret',
+    person_rename_merge_error: 'Fejl ved navngivning/merge',
+    person_unknown_cannot_rename: 'Ukendte kan ikke omdøbes',
+    person_rename_title: 'Navngiv / merge person',
+    person_rename_new_placeholder: 'Opret ny person',
+    person_rename_save: 'Gem',
+    person_rename_none: 'Ingen eksisterende navne endnu',
+    person_unknown: 'Ukendt',
+    person_count_suffix: 'billede(r)',
+    person_hidden_badge: 'Skjult',
+    person_btn_rename: 'Navngiv',
+    person_btn_hide: 'Skjul',
+    person_btn_unhide: 'Vis',
+    person_hide_confirm: 'Skjul denne person fra listen?',
+    person_hide_failed: 'Kunne ikke skjule',
+    person_hidden_ok: 'Person skjult',
+    person_hide_error: 'Fejl ved skjul',
+    person_unhide_failed: 'Kunne ikke gendanne',
+    person_unhidden_ok: 'Person vist igen',
+    person_unhide_error: 'Fejl ved gendannelse',
+    users_panel_render_error: 'Fejl',
+    twofa_loading: 'Indlæser…',
+    twofa_load_failed: 'Kan ikke hente 2FA-status.',
+    twofa_remember_days: 'Husk dage',
+    twofa_onetime_code: 'Engangskode',
+    twofa_code_placeholder: '6-cifret kode',
+    twofa_disable: 'Deaktivér',
+    twofa_enable: 'Aktivér',
+    twofa_regen: 'Forny QR / nøgle',
+    twofa_save_btn: 'Gem',
+    twofa_status_label: 'Status',
+    twofa_status_enabled: 'Aktiveret',
+    twofa_status_disabled: 'Deaktiveret',
+    twofa_error_prefix: '2FA-fejl:',
+    twofa_updated: '2FA opdateret',
+    scan_done_or_stopped: 'Scan færdig eller stoppet.',
+    scan_stop_failed: 'Kunne ikke stoppe scan.',
+    scan_stopping: 'Stopper scan...',
+    scan_stop_error: 'Fejl ved stop scan.',
+    scan_failed: 'Scan fejlede',
+    scan_started_hint: "Scan startet... klik 'Stop scan' for at afbryde.",
+    scan_error_prefix: 'Fejl under scan:',
+    rescan_starting: 'Rescanner metadata for eksisterende billeder...',
+    rescan_failed: 'Rescan fejlede',
+    rescan_error: 'Fejl ved rescan.',
+    rescan_done_prefix: 'Rescan færdig. Gennemgået',
+    rethumb_starting: 'Genbygger thumbnails (kan tage lidt tid)...',
+    rethumb_failed: 'Genbyg thumbnails fejlede',
+    rethumb_error: 'Fejl ved genbyg thumbnails.',
+    rethumb_done_prefix: 'Genbyg thumbnails færdig. Behandlet',
+    clear_confirm: 'Nulstil indeks? Dette sletter kun data og thumbnails i FjordLens (ikke dine originale billeder). Fortsæt?',
+    clear_starting: 'Sletter indeks og thumbnails...',
+    clear_failed: 'Fejl ved nulstilling:',
+    clear_unknown: 'ukendt',
+    clear_error: 'Fejl ved nulstilling.',
+    clear_done_prefix: 'Indeks nulstillet. Slettet',
+    file_picker_open_failed: 'Kunne ikke åbne filvælger.',
+    ai_starting: 'Starter AI-indeksering (embeddings)...',
+    ai_start_failed: 'Kunne ikke starte AI-indeksering.',
+    ai_enabled_new_uploads: 'AI aktiveret for nye uploads fremover.',
+    ai_started_bg: 'AI-indeksering er startet i baggrunden.',
+    ai_start_error: 'Fejl ved start af AI-indeksering.',
+    ai_stop_failed: 'Kunne ikke stoppe AI-indeksering.',
+    ai_stopped: 'AI-indeksering stoppet.',
+    ai_stop_error: 'Fejl ved stop af AI-indeksering.',
+    faces_starting: 'Starter ansigtsindeksering…',
+    faces_start_failed: 'Kunne ikke starte ansigtsindeksering',
+    faces_enabled_new_uploads: 'Ansigtsindeksering aktiveret for nye uploads fremover.',
+    faces_started_bg: 'Ansigtsindeksering kører i baggrunden.',
+    faces_start_error: 'Fejl ved start af ansigtsindeksering',
+    faces_stop_failed: 'Kunne ikke stoppe ansigtsindeksering.',
+    faces_stopped: 'Ansigtsindeksering stoppet.',
+    faces_stop_error: 'Fejl ved stop af ansigtsindeksering.',
+    date_update_failed: 'Kunne ikke opdatere dato',
+    date_updated: 'Dato opdateret',
+    update_error: 'Fejl ved opdatering',
+    gps_update_failed: 'Kunne ikke opdatere GPS',
+    gps_updated: 'GPS opdateret',
+    similar_fetch_failed: 'Kunne ikke hente lignende',
+    similar_fetch_error: 'Fejl ved hentning af lignende',
+    similar_view_title: 'Lignende billeder',
+    similar_view_subtitle: 'Fundet via billed-embedding',
+    raw_meta_show: 'Vis rå metadata (JSON)',
+    raw_meta_hide: 'Skjul rå metadata (JSON)',
   },
   en: {
     nav_timeline: '📅 Timeline',
@@ -594,6 +686,7 @@ const I18N = {
     dns_shares_extend_ok: 'Share link extended.',
     dns_shares_extend_failed: 'Could not extend share link.',
     btn_scan_library: 'Scan library',
+    btn_stop_scan: 'Stop scan',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Rebuild thumbnails',
     btn_reset_index: 'Reset index',
@@ -680,6 +773,7 @@ const I18N = {
     profile_save: 'Save profile',
     profile_saved: 'Profile updated',
     status_errors_label: 'failures',
+    status_error_prefix: 'Error:',
     status_ready_scan: "Ready. Press 'Scan library' to index your photos.",
     scan_modal_title: 'Scan library',
     scan_modal_text: 'Do you want to start a full library scan now?',
@@ -741,6 +835,96 @@ const I18N = {
     users_status_created: 'User created',
     users_select_all: 'Select all',
     users_clear_all: 'Clear all selections',
+    mapper_tree_expand: 'Expand folder',
+    mapper_tree_collapse: 'Collapse folder',
+    upload_failed_generic: 'Upload failed',
+    upload_mapper_only: 'Upload is only active in the Folders section.',
+    person_rename_save_failed: 'Could not save name',
+    person_rename_merged: 'Person merged to',
+    person_name_updated: 'Name updated',
+    person_rename_merge_error: 'Error while renaming/merging',
+    person_unknown_cannot_rename: 'Unknown people cannot be renamed',
+    person_rename_title: 'Rename / merge person',
+    person_rename_new_placeholder: 'Create new person',
+    person_rename_save: 'Save',
+    person_rename_none: 'No existing names yet',
+    person_unknown: 'Unknown',
+    person_count_suffix: 'photo(s)',
+    person_hidden_badge: 'Hidden',
+    person_btn_rename: 'Rename',
+    person_btn_hide: 'Hide',
+    person_btn_unhide: 'Show',
+    person_hide_confirm: 'Hide this person from the list?',
+    person_hide_failed: 'Could not hide',
+    person_hidden_ok: 'Person hidden',
+    person_hide_error: 'Error while hiding',
+    person_unhide_failed: 'Could not restore',
+    person_unhidden_ok: 'Person shown again',
+    person_unhide_error: 'Error while restoring',
+    users_panel_render_error: 'Error',
+    twofa_loading: 'Loading…',
+    twofa_load_failed: 'Could not load 2FA status.',
+    twofa_remember_days: 'Remember days',
+    twofa_onetime_code: 'One-time code',
+    twofa_code_placeholder: '6-digit code',
+    twofa_disable: 'Disable',
+    twofa_enable: 'Enable',
+    twofa_regen: 'Renew QR / key',
+    twofa_save_btn: 'Save',
+    twofa_status_label: 'Status',
+    twofa_status_enabled: 'Enabled',
+    twofa_status_disabled: 'Disabled',
+    twofa_error_prefix: '2FA error:',
+    twofa_updated: '2FA updated',
+    scan_done_or_stopped: 'Scan finished or stopped.',
+    scan_stop_failed: 'Could not stop scan.',
+    scan_stopping: 'Stopping scan...',
+    scan_stop_error: 'Error while stopping scan.',
+    scan_failed: 'Scan failed',
+    scan_started_hint: "Scan started... click 'Stop scan' to cancel.",
+    scan_error_prefix: 'Scan error:',
+    rescan_starting: 'Rescanning metadata for existing photos...',
+    rescan_failed: 'Rescan failed',
+    rescan_error: 'Error while rescanning.',
+    rescan_done_prefix: 'Rescan completed. Scanned',
+    rethumb_starting: 'Rebuilding thumbnails (may take a while)...',
+    rethumb_failed: 'Rebuild thumbnails failed',
+    rethumb_error: 'Error while rebuilding thumbnails.',
+    rethumb_done_prefix: 'Thumbnail rebuild completed. Processed',
+    clear_confirm: 'Reset index? This only deletes FjordLens data and thumbnails (not your original photos). Continue?',
+    clear_starting: 'Deleting index and thumbnails...',
+    clear_failed: 'Reset failed:',
+    clear_unknown: 'unknown',
+    clear_error: 'Error while resetting index.',
+    clear_done_prefix: 'Index reset. Removed',
+    file_picker_open_failed: 'Could not open file picker.',
+    ai_starting: 'Starting AI indexing (embeddings)...',
+    ai_start_failed: 'Could not start AI indexing.',
+    ai_enabled_new_uploads: 'AI enabled for new uploads from now on.',
+    ai_started_bg: 'AI indexing started in the background.',
+    ai_start_error: 'Error while starting AI indexing.',
+    ai_stop_failed: 'Could not stop AI indexing.',
+    ai_stopped: 'AI indexing stopped.',
+    ai_stop_error: 'Error while stopping AI indexing.',
+    faces_starting: 'Starting face indexing…',
+    faces_start_failed: 'Could not start face indexing',
+    faces_enabled_new_uploads: 'Face indexing enabled for new uploads from now on.',
+    faces_started_bg: 'Face indexing is running in the background.',
+    faces_start_error: 'Error while starting face indexing',
+    faces_stop_failed: 'Could not stop face indexing.',
+    faces_stopped: 'Face indexing stopped.',
+    faces_stop_error: 'Error while stopping face indexing.',
+    date_update_failed: 'Could not update date',
+    date_updated: 'Date updated',
+    update_error: 'Update error',
+    gps_update_failed: 'Could not update GPS',
+    gps_updated: 'GPS updated',
+    similar_fetch_failed: 'Could not load similar photos',
+    similar_fetch_error: 'Error while loading similar photos',
+    similar_view_title: 'Similar photos',
+    similar_view_subtitle: 'Found via image embedding',
+    raw_meta_show: 'Show raw metadata (JSON)',
+    raw_meta_hide: 'Hide raw metadata (JSON)',
   },
 };
 
@@ -931,8 +1115,8 @@ function renderMapperTree() {
     caret.disabled = !hasChildren;
     if (!hasChildren) caret.style.visibility = 'hidden';
     if (hasChildren) {
-      caret.title = isExpanded ? 'Fold mappe sammen' : 'Fold mappe ud';
-      caret.setAttribute('aria-label', isExpanded ? 'Fold mappe sammen' : 'Fold mappe ud');
+      caret.title = isExpanded ? tr('mapper_tree_collapse') : tr('mapper_tree_expand');
+      caret.setAttribute('aria-label', isExpanded ? tr('mapper_tree_collapse') : tr('mapper_tree_expand'));
       caret.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1507,32 +1691,32 @@ async function renameOrMergePerson(pid, name) {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) {
-      showStatus(d.error || 'Kunne ikke gemme navn', 'err');
+      showStatus(d.error || tr('person_rename_save_failed'), 'err');
       return;
     }
-    if (d.merged) showStatus(`Person merged til '${d.name || nv}'`, 'ok');
-    else showStatus('Navn opdateret', 'ok');
+    if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
+    else showStatus(tr('person_name_updated'), 'ok');
     closePersonRenameMenu();
     loadPeople();
   } catch {
-    showStatus('Fejl ved navngivning/merge', 'err');
+    showStatus(tr('person_rename_merge_error'), 'err');
   }
 }
 
 function openPersonRenameMenu(anchorBtn, person) {
   closePersonRenameMenu();
   if (!anchorBtn || !person || person.id === 'unknown') {
-    if (person && person.id === 'unknown') showStatus('Ukendte kan ikke omdøbes', 'err');
+    if (person && person.id === 'unknown') showStatus(tr('person_unknown_cannot_rename'), 'err');
     return;
   }
 
   const menu = document.createElement('div');
   menu.className = 'person-rename-menu';
   menu.innerHTML = `
-    <div class="person-rename-head">Navngiv / merge person</div>
+    <div class="person-rename-head">${escapeHtml(tr('person_rename_title'))}</div>
     <div class="person-rename-create-row">
-      <input type="text" class="person-rename-input" placeholder="Opret ny person" value="" />
-      <button type="button" class="btn tiny primary" data-act="create">Gem</button>
+      <input type="text" class="person-rename-input" placeholder="${escapeHtml(tr('person_rename_new_placeholder'))}" value="" />
+      <button type="button" class="btn tiny primary" data-act="create">${escapeHtml(tr('person_rename_save'))}</button>
     </div>
     <div class="person-rename-divider"></div>
     <div class="person-rename-list"></div>
@@ -1544,13 +1728,13 @@ function openPersonRenameMenu(anchorBtn, person) {
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
 
   if (!existing.length) {
-    listEl.innerHTML = '<div class="person-rename-empty">Ingen eksisterende navne endnu</div>';
+    listEl.innerHTML = `<div class="person-rename-empty">${escapeHtml(tr('person_rename_none'))}</div>`;
   } else {
     existing.forEach((it) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'person-rename-option';
-      btn.textContent = String(it.name || 'Ukendt');
+      btn.textContent = String(it.name || tr('person_unknown'));
       btn.addEventListener('click', async () => {
         await renameOrMergePerson(person.id, String(it.name || ''));
       });
@@ -1613,12 +1797,12 @@ function appendPersonCard(p) {
   card.innerHTML = `
     <div class="card-thumb">${img}</div>
     <div class="card-body">
-      <h4 class="card-title">${escapeHtml(p.name || 'Ukendt')}</h4>
-      <div class="card-meta"><span>${p.count||0} billede(r)</span></div>
-      <div class="pills">${p.hidden ? '<span class="pill">Skjult</span>' : ''}</div>
+      <h4 class="card-title">${escapeHtml(p.name || tr('person_unknown'))}</h4>
+      <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
+      <div class="pills">${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
       <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
-        <button class="btn tiny" data-act="rename">Navngiv</button>
-        ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${p.hidden?'Vis':'Skjul'}</button>`}
+        <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
+        ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
       </div>
     </div>
   `;
@@ -1628,7 +1812,7 @@ function appendPersonCard(p) {
   // Klik på hele kortet åbner personens billeder (undtagen når man klikker på en knap)
   card.addEventListener('click', (e)=>{
     if (e.target && e.target.closest('[data-act]')) return;
-    if (p.id === 'unknown') loadPersonPhotos('unknown', 'Ukendte');
+    if (p.id === 'unknown') loadPersonPhotos('unknown', tr('person_unknown'));
     else loadPersonPhotos(p.id, p.name);
   });
   card.querySelector('[data-act="rename"]').addEventListener('click', async (e)=>{
@@ -1639,14 +1823,14 @@ function appendPersonCard(p) {
   const hideBtn = card.querySelector('[data-act="hide"]');
   if (hideBtn) {
     hideBtn.addEventListener('click', async ()=>{
-      if (!confirm('Skjul denne person fra listen?')) return;
+      if (!confirm(tr('person_hide_confirm'))) return;
       try {
         const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
         const d = await r.json();
-        if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke skjule', 'err'); return; }
-        showStatus('Person skjult', 'ok');
+        if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
+        showStatus(tr('person_hidden_ok'), 'ok');
         loadPeople();
-      } catch { showStatus('Fejl ved skjul', 'err'); }
+      } catch { showStatus(tr('person_hide_error'), 'err'); }
     });
   }
   const unhideBtn = card.querySelector('[data-act="unhide"]');
@@ -1655,10 +1839,10 @@ function appendPersonCard(p) {
       try {
         const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })});
         const d = await r.json();
-        if (!r.ok || !d.ok) { showStatus(d.error || 'Kunne ikke gendanne', 'err'); return; }
-        showStatus('Person vist igen', 'ok');
+        if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; }
+        showStatus(tr('person_unhidden_ok'), 'ok');
         loadPeople();
-      } catch { showStatus('Fejl ved gendannelse', 'err'); }
+      } catch { showStatus(tr('person_unhide_error'), 'err'); }
     });
   }
   els.grid.appendChild(card);
@@ -2157,7 +2341,7 @@ async function uploadFiles(fileList, options = {}) {
     }
   } catch (e) {
     console.error(e);
-    showStatus('Upload fejlede', 'err');
+    showStatus(tr('upload_failed_generic'), 'err');
   } finally {
     if (uploadOverlayHideTimer) {
       window.clearTimeout(uploadOverlayHideTimer);
@@ -2810,7 +2994,7 @@ window.addEventListener('drop', async (e) => {
     e.preventDefault();
     const droppedInsideMapperZone = !!(els.mapperDropZone && e.target && els.mapperDropZone.contains(e.target));
     if (state.view !== 'mapper' || state.mapperEditMode) {
-      showStatus('Upload er kun aktiv i Mapper-sektionen.', 'err');
+      showStatus(tr('upload_mapper_only'), 'err');
     } else if (!droppedInsideMapperZone) {
       const targetSubdir = String(state.mapperPath || '');
       await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
@@ -3073,9 +3257,9 @@ function renderPlacesMarkers() {
 }
 function updateScanButton() {
   if (state.scanning) {
-    els.scanBtn.textContent = "Stop scan";
+    els.scanBtn.textContent = tr('btn_stop_scan');
   } else {
-    els.scanBtn.textContent = "Scan bibliotek";
+    els.scanBtn.textContent = tr('btn_scan_library');
   }
 }
 
@@ -3132,7 +3316,7 @@ async function pollScanStatus() {
     state.scanning = running;
     updateScanButton();
     if (!running) {
-      showStatus("Scan færdig eller stoppet.", "ok");
+      showStatus(tr('scan_done_or_stopped'), "ok");
       await loadPhotos();
       return; // stop polling
     }
@@ -3152,12 +3336,12 @@ async function scanLibrary() {
       const res = await fetch("/api/scan/stop", { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.ok) {
-        showStatus("Kunne ikke stoppe scan.", "err");
+        showStatus(tr('scan_stop_failed'), "err");
         return;
       }
-      showStatus("Stopper scan...", "ok");
+      showStatus(tr('scan_stopping'), "ok");
     } catch (_) {
-      showStatus("Fejl ved stop scan.", "err");
+      showStatus(tr('scan_stop_error'), "err");
     }
     return;
   }
@@ -3167,15 +3351,15 @@ async function scanLibrary() {
     const res = await fetch("/api/scan", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl: ${data && data.error ? data.error : "Scan fejlede"}`, "err");
+      showStatus(`${tr('status_error_prefix')} ${data && data.error ? data.error : tr('scan_failed')}`, "err");
       return;
     }
     state.scanning = true;
     updateScanButton();
-    showStatus("Scan startet... klik 'Stop scan' for at afbryde.", "ok");
+    showStatus(tr('scan_started_hint'), "ok");
     pollScanStatus();
   } catch (err) {
-    showStatus(`Fejl under scan: ${err}`, "err");
+    showStatus(`${tr('scan_error_prefix')} ${err}`, "err");
   }
 }
 
@@ -3188,7 +3372,7 @@ async function pollRescanStatus() {
     if (!data.running) {
       if (data.result) {
         const r = data.result;
-        showStatus(`Rescan færdig. Gennemgået: ${r.scanned}, opdateret: ${r.updated}, mangler: ${r.missing}, fejl: ${r.errors}.`, "ok");
+        showStatus(`${tr('rescan_done_prefix')}: ${r.scanned}, updated: ${r.updated}, missing: ${r.missing}, errors: ${r.errors}.`, "ok");
       }
       await loadPhotos();
       return;
@@ -3200,17 +3384,17 @@ async function pollRescanStatus() {
 async function rescanMetadata() {
   try {
     els.rescanBtn.disabled = true;
-    showStatus("Rescanner metadata for eksisterende billeder...", "ok");
+    showStatus(tr('rescan_starting'), "ok");
     const res = await fetch("/api/rescan", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl: ${data && data.error ? data.error : "Rescan fejlede"}`, "err");
+      showStatus(`${tr('status_error_prefix')} ${data && data.error ? data.error : tr('rescan_failed')}`, "err");
       els.rescanBtn.disabled = false;
       return;
     }
     pollRescanStatus();
   } catch (e) {
-    showStatus("Fejl ved rescan.", "err");
+    showStatus(tr('rescan_error'), "err");
     els.rescanBtn.disabled = false;
   }
 }
@@ -3224,7 +3408,7 @@ async function pollRethumbStatus() {
     if (!data.running) {
       if (data.result) {
         const r = data.result;
-        showStatus(`Genbyg thumbnails færdig. Behandlet: ${r.processed}, fejl: ${r.errors}.`, "ok");
+        showStatus(`${tr('rethumb_done_prefix')}: ${r.processed}, errors: ${r.errors}.`, "ok");
       }
       await loadPhotos();
       return;
@@ -3236,42 +3420,42 @@ async function pollRethumbStatus() {
 async function rethumbAll() {
   try {
     if (els.rethumbBtn) els.rethumbBtn.disabled = true;
-    showStatus("Genbygger thumbnails (kan tage lidt tid)...", "ok");
+    showStatus(tr('rethumb_starting'), "ok");
     const res = await fetch("/api/rethumb", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl: ${data && data.error ? data.error : "Genbyg thumbnails fejlede"}`, "err");
+      showStatus(`${tr('status_error_prefix')} ${data && data.error ? data.error : tr('rethumb_failed')}`, "err");
       if (els.rethumbBtn) els.rethumbBtn.disabled = false;
       return;
     }
     pollRethumbStatus();
   } catch (e) {
-    showStatus("Fejl ved genbyg thumbnails.", "err");
+    showStatus(tr('rethumb_error'), "err");
     if (els.rethumbBtn) els.rethumbBtn.disabled = false;
   }
 }
 
 // Clear index (DB + thumbnails, not originals)
 async function clearIndex() {
-  const ok = confirm("Nulstil indeks? Dette sletter kun data og thumbnails i FjordLens (ikke dine originale billeder). Fortsæt?");
+  const ok = confirm(tr('clear_confirm'));
   if (!ok) return;
   try {
     if (els.clearIndexBtn) els.clearIndexBtn.disabled = true;
-    showStatus("Sletter indeks og thumbnails...", "ok");
+    showStatus(tr('clear_starting'), "ok");
     const res = await fetch("/api/clear", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(`Fejl ved nulstilling: ${data && data.error ? data.error : "ukendt"}`, "err");
+      showStatus(`${tr('clear_failed')} ${data && data.error ? data.error : tr('clear_unknown')}`, "err");
       if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
       return;
     }
     const r = data.removed || {};
-    showStatus(`Indeks nulstillet. Slettet: ${r.photos || 0} poster, ${r.faces || 0} ansigter, ${r.people || 0} personer, ${r.thumbs || 0} thumbs.`, "ok");
+    showStatus(`${tr('clear_done_prefix')}: ${r.photos || 0} photos, ${r.faces || 0} faces, ${r.people || 0} people, ${r.thumbs || 0} thumbs.`, "ok");
     // Tøm UI og hent frisk
     state.items = [];
     await loadPhotos();
   } catch (e) {
-    showStatus("Fejl ved nulstilling.", "err");
+    showStatus(tr('clear_error'), "err");
   } finally {
     if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
   }
@@ -3882,7 +4066,7 @@ if (els.mapperHeaderUploadAction) {
     try {
       els.mapperUploadInput.click();
     } catch {
-      showStatus('Kunne ikke åbne filvælger.', 'err');
+      showStatus(tr('file_picker_open_failed'), 'err');
     }
   });
 }
@@ -3916,24 +4100,24 @@ els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
 els.clearIndexBtn && els.clearIndexBtn.addEventListener("click", clearIndex);
 async function startAiIngest(scope = 'all') {
   try {
-    showStatus("Starter AI‑indeksering (embeddings)...", "ok");
+    showStatus(tr('ai_starting'), "ok");
     const qs = (scope === 'new') ? '?scope=new' : '?scope=all';
     const res = await fetch(`/api/ai/ingest${qs}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus("Kunne ikke starte AI‑indeksering.", "err");
+      showStatus(tr('ai_start_failed'), "err");
       return;
     }
     if (scope === 'new') {
-      showStatus('AI aktiveret for nye uploads fremover.', 'ok');
+      showStatus(tr('ai_enabled_new_uploads'), 'ok');
     } else {
-      showStatus("AI‑indeksering er startet i baggrunden.", "ok");
+      showStatus(tr('ai_started_bg'), "ok");
     }
     state.aiAutoEnabled = true;
     state.aiRunning = !!(data && data.running);
     updateAiToggleButton();
     pollAiStatus();
-  } catch { showStatus("Fejl ved start af AI‑indeksering.", "err"); }
+  } catch { showStatus(tr('ai_start_error'), "err"); }
 }
 
 async function stopAiIngest() {
@@ -3941,16 +4125,16 @@ async function stopAiIngest() {
     const res = await fetch('/api/ai/stop', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || (data && data.ok === false)) {
-      showStatus('Kunne ikke stoppe AI‑indeksering.', 'err');
+      showStatus(tr('ai_stop_failed'), 'err');
       return;
     }
-    showStatus('AI‑indeksering stoppet.', 'ok');
+    showStatus(tr('ai_stopped'), 'ok');
     state.aiRunning = false;
     state.aiAutoEnabled = false;
     updateAiToggleButton();
     pollAiStatus();
   } catch {
-    showStatus('Fejl ved stop af AI‑indeksering.', 'err');
+    showStatus(tr('ai_stop_error'), 'err');
   }
 }
 
@@ -3994,25 +4178,25 @@ async function pollFacesStatus() {
 
 async function startFacesIndex(scope = 'all') {
   try {
-    showStatus('Starter ansigtsindeksering…', 'ok');
+    showStatus(tr('faces_starting'), 'ok');
     const url = (scope === 'new') ? '/api/faces/index?scope=new' : '/api/faces/index?scope=all';
     const res = await fetch(url, { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      showStatus(data && data.error ? data.error : 'Kunne ikke starte ansigtsindeksering', 'err');
+      showStatus(data && data.error ? data.error : tr('faces_start_failed'), 'err');
       return;
     }
     state.facesAutoEnabled = true;
     state.facesRunning = !!(data && data.running);
     updateFacesToggleButton();
     if (scope === 'new') {
-      showStatus('Ansigtsindeksering aktiveret for nye uploads fremover.', 'ok');
+      showStatus(tr('faces_enabled_new_uploads'), 'ok');
     } else {
-      showStatus('Ansigtsindeksering kører i baggrunden.', 'ok');
+      showStatus(tr('faces_started_bg'), 'ok');
     }
     pollFacesStatus();
   } catch (e) {
-    showStatus('Fejl ved start af ansigtsindeksering', 'err');
+    showStatus(tr('faces_start_error'), 'err');
   }
 }
 
@@ -4021,16 +4205,16 @@ async function stopFacesIndex() {
     const res = await fetch('/api/faces/stop', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) {
-      showStatus('Kunne ikke stoppe ansigtsindeksering.', 'err');
+      showStatus(tr('faces_stop_failed'), 'err');
       return;
     }
-    showStatus('Ansigtsindeksering stoppet.', 'ok');
+    showStatus(tr('faces_stopped'), 'ok');
     state.facesAutoEnabled = false;
     state.facesRunning = false;
     updateFacesToggleButton();
     pollFacesStatus();
   } catch {
-    showStatus('Fejl ved stop af ansigtsindeksering.', 'err');
+    showStatus(tr('faces_stop_error'), 'err');
   }
 }
 
@@ -4082,7 +4266,7 @@ pollFacesStatus();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
-  els.toggleRawBtn.textContent = hidden ? "Vis rå metadata (JSON)" : "Skjul rå metadata (JSON)";
+  els.toggleRawBtn.textContent = hidden ? tr('raw_meta_show') : tr('raw_meta_hide');
 });
 els.favoriteBtn.addEventListener("click", toggleFavorite);
 
@@ -4129,11 +4313,11 @@ if (els.dateSaveBtn) {
     try {
       const res = await fetch(`/api/photos/${state.selectedId}/captured-at`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ captured_at: v })});
       const data = await res.json();
-      if (!res.ok || !data.ok) { showStatus(data.error || 'Kunne ikke opdatere dato', 'err'); return; }
+      if (!res.ok || !data.ok) { showStatus(data.error || tr('date_update_failed'), 'err'); return; }
       const item = data.item;
       const idx = state.items.findIndex(i => i.id === item.id);
       if (idx >= 0) state.items[idx] = item;
-      showStatus('Dato opdateret', 'ok');
+      showStatus(tr('date_updated'), 'ok');
       renderGrid();
       setDetail(item);
       if (els.dateEditWrap) { els.dateEditWrap.classList.add('hidden'); els.dateEditWrap.classList.remove('floating'); els.dateEditWrap.style.left=''; els.dateEditWrap.style.top=''; }
@@ -4142,7 +4326,7 @@ if (els.dateSaveBtn) {
         if (row) row.classList.remove('popover-open');
       } catch {}
     } catch (e) {
-      showStatus('Fejl ved opdatering', 'err');
+      showStatus(tr('update_error'), 'err');
     }
   });
 }
@@ -4289,16 +4473,16 @@ if (els.gpsSaveBtn) {
     try {
       const res = await fetch(`/api/photos/${state.selectedId}/gps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat: gpsLat, lon: gpsLon })});
       const data = await res.json();
-      if (!res.ok || !data.ok) { showStatus(data.error || 'Kunne ikke opdatere GPS', 'err'); return; }
+      if (!res.ok || !data.ok) { showStatus(data.error || tr('gps_update_failed'), 'err'); return; }
       const item = data.item; const idx = state.items.findIndex(i => i.id === item.id); if (idx>=0) state.items[idx]=item;
-      showStatus('GPS opdateret', 'ok'); renderGrid(); setDetail(item);
+      showStatus(tr('gps_updated'), 'ok'); renderGrid(); setDetail(item);
       if (els.gpsEditWrap) { els.gpsEditWrap.classList.add('hidden'); els.gpsEditWrap.classList.remove('floating'); els.gpsEditWrap.classList.remove('gps-modal');
         try { if (gpsPrevParent) { if (gpsPrevNext) gpsPrevParent.insertBefore(els.gpsEditWrap, gpsPrevNext); else gpsPrevParent.appendChild(els.gpsEditWrap); } } catch {}
         try { if (gpsBackdrop) gpsBackdrop.classList.remove('active'); } catch{}
         try { if (gpsBackdrop && gpsBackdrop.parentElement) gpsBackdrop.parentElement.removeChild(gpsBackdrop); } catch{}
         gpsBackdrop = null;
       }
-    } catch(e){ showStatus('Fejl ved opdatering', 'err'); }
+    } catch(e){ showStatus(tr('update_error'), 'err'); }
   });
 }
 
@@ -5174,15 +5358,15 @@ async function openSimilarForSelected(){
   try {
     const res = await fetch(`/api/photos/${state.selectedId}/similar?limit=60`);
     const data = await res.json();
-    if (!res.ok) { showStatus(data && data.error ? data.error : 'Kunne ikke hente lignende', 'err'); return; }
+    if (!res.ok) { showStatus(data && data.error ? data.error : tr('similar_fetch_failed'), 'err'); return; }
     state.view = 'timeline';
     state.items = Array.isArray(data.items) ? data.items : [];
     state.selectedId = null;
-    if (els.viewTitle) els.viewTitle.textContent = 'Lignende billeder';
-    if (els.viewSubtitle) els.viewSubtitle.textContent = 'Fundet via billed‑embedding';
+    if (els.viewTitle) els.viewTitle.textContent = tr('similar_view_title');
+    if (els.viewSubtitle) els.viewSubtitle.textContent = tr('similar_view_subtitle');
     closeViewer();
     renderGrid();
-  } catch { showStatus('Fejl ved hentning af lignende', 'err'); }
+  } catch { showStatus(tr('similar_fetch_error'), 'err'); }
 }
 const viSimilarBtn = document.getElementById('viSimilarBtn');
 if (viSimilarBtn) viSimilarBtn.addEventListener('click', openSimilarForSelected);
@@ -5501,10 +5685,10 @@ async function renderUsersPanel(){
       });
       const jj = await rr.json();
       if (!rr.ok || !jj.ok) {
-        showStatus('Kunne ikke gemme mappeadgang: ' + ((jj && jj.error) || ''), 'err');
+        showStatus(`${tr('users_status_acl_save_failed')} ${((jj && jj.error) || '')}`.trim(), 'err');
         return;
       }
-      showStatus('Mappeadgang gemt', 'ok');
+        showStatus(tr('users_status_acl_saved'), 'ok');
       closeAclModal();
       renderUsersPanel();
     });
@@ -5513,11 +5697,11 @@ async function renderUsersPanel(){
     wrap.querySelectorAll('button[data-del]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const id = btn.getAttribute('data-del');
-        if (!confirm('Slet bruger #' + id + '?')) return;
+        if (!confirm(`${tr('users_confirm_delete')} #${id}?`)) return;
         const rr = await fetch('/api/admin/users/'+id, {method:'DELETE'});
         const jj = await rr.json();
-        if (!rr.ok || !jj.ok){ showStatus('Kunne ikke slette: ' + (jj && jj.error || ''), 'err'); return; }
-        showStatus('Bruger slettet', 'ok');
+        if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_delete_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
+        showStatus(tr('users_status_deleted'), 'ok');
         renderUsersPanel();
       });
     });
@@ -5569,13 +5753,13 @@ async function renderUsersPanel(){
         const role = document.getElementById('eu_role').value || 'user';
         const ui_language = document.getElementById('eu_ui_language').value || 'da';
         const search_language = document.getElementById('eu_search_language').value || 'da';
-        if (!username) { showStatus('Brugernavn må ikke være tomt.', 'err'); return; }
+        if (!username) { showStatus(tr('users_status_username_required'), 'err'); return; }
         const payload = { username, role, ui_language, search_language };
         if (password) payload.password = password;
         const rr = await fetch('/api/admin/users/' + editingUserId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const jj = await rr.json();
-        if (!rr.ok || !jj.ok) { showStatus('Kunne ikke gemme bruger: ' + ((jj && jj.error) || ''), 'err'); return; }
-        showStatus('Bruger opdateret', 'ok');
+        if (!rr.ok || !jj.ok) { showStatus(`${tr('users_status_update_failed')} ${((jj && jj.error) || '')}`.trim(), 'err'); return; }
+        showStatus(tr('users_status_updated'), 'ok');
         closeEdit();
         renderUsersPanel();
       });
@@ -5617,27 +5801,27 @@ async function renderUsersPanel(){
         const ui_language = document.getElementById('nu_ui_language').value || 'da';
         const search_language = document.getElementById('nu_search_language').value || 'da';
         const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
-        if (!username || !password){ showStatus('Udfyld brugernavn og adgangskode.', 'err'); return; }
+        if (!username || !password){ showStatus(tr('users_status_username_password_required'), 'err'); return; }
         const payload = { username, password, role, enforce_2fa, ui_language, search_language };
         const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         const jj = await rr.json();
-        if (!rr.ok || !jj.ok){ showStatus('Kunne ikke oprette: ' + (jj && jj.error || ''), 'err'); return; }
-        showStatus('Bruger oprettet', 'ok');
+        if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_create_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
+        showStatus(tr('users_status_created'), 'ok');
         close();
         renderUsersPanel();
       });
     }
-  }catch(e){ wrap.innerHTML = `<div class="empty">Fejl: ${e}</div>`; }
+  }catch(e){ wrap.innerHTML = `<div class="empty">${tr('users_panel_render_error')}: ${e}</div>`; }
 }
 
 async function renderTwofaPanel(){
   const wrap = document.getElementById('twofaPanelInner');
   if (!wrap) return;
-  wrap.textContent = 'Indlæser…';
+  wrap.textContent = tr('twofa_loading');
   try{
     const r = await fetch('/api/me/2fa');
     const js = await r.json();
-    if (!r.ok || !js.ok){ wrap.innerHTML = `<div class="empty">Kan ikke hente 2FA-status.</div>`; return; }
+    if (!r.ok || !js.ok){ wrap.innerHTML = `<div class="empty">${tr('twofa_load_failed')}</div>`; return; }
     const enabled = !!js.enabled;
     const daysVal = (js.remember_days||0);
     // Build UI depending on state
@@ -5646,22 +5830,22 @@ async function renderTwofaPanel(){
       leftCol = `<img src="${js.qr}" alt="QR" style="width:140px;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"/>`;
     }
     let secretRow = '';
-    const toggleLabel = enabled ? 'Deaktivér' : 'Aktivér';
+    const toggleLabel = enabled ? tr('twofa_disable') : tr('twofa_enable');
     const toggleClass = enabled ? 'btn danger' : 'btn primary';
-    const regenBtnHtml = enabled ? '<button id="tf_regen" class="btn">Forny QR / nøgle</button>' : '';
+    const regenBtnHtml = enabled ? `<button id="tf_regen" class="btn">${escapeHtml(tr('twofa_regen'))}</button>` : '';
     wrap.innerHTML = `
       <div class="panel" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
         ${leftCol}
         <div style="flex:1;min-width:260px;">
-          <div class="form-row"><label>Husk dage</label><input id="tf_days" class="input-number" type="number" min="0" max="30" value="${daysVal}"></div>
+          <div class="form-row"><label>${tr('twofa_remember_days')}</label><input id="tf_days" class="input-number" type="number" min="0" max="30" value="${daysVal}"></div>
           ${secretRow}
-          <div class="form-row"><label>Engangskode</label><input id="tf_code" class="input-number" placeholder="6-cifret kode" autocomplete="one-time-code"></div>
+          <div class="form-row"><label>${tr('twofa_onetime_code')}</label><input id="tf_code" class="input-number" placeholder="${tr('twofa_code_placeholder')}" autocomplete="one-time-code"></div>
           <div class="actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start;">
             <button id="tf_toggle" class="${toggleClass}">${toggleLabel}</button>
-            <button id="tf_save" class="btn">Gem</button>
+            <button id="tf_save" class="btn">${tr('twofa_save_btn')}</button>
             ${regenBtnHtml}
           </div>
-          <div class="mini-label" style="margin-top:6px;">Status: <strong>${enabled ? 'Aktiveret' : 'Deaktiveret'}</strong></div>
+          <div class="mini-label" style="margin-top:6px;">${tr('twofa_status_label')}: <strong>${enabled ? tr('twofa_status_enabled') : tr('twofa_status_disabled')}</strong></div>
         </div>
       </div>
     `;
@@ -5669,8 +5853,8 @@ async function renderTwofaPanel(){
       const payload = { action, code: (document.getElementById('tf_code').value||'').trim(), days: parseInt(document.getElementById('tf_days').value || '0',10) };
       const rr = await fetch('/api/me/2fa', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       const jj = await rr.json();
-      if (!rr.ok || !jj.ok){ showStatus('2FA-fejl: ' + (jj && jj.error || ''), 'err'); return; }
-      showStatus('2FA opdateret', 'ok');
+      if (!rr.ok || !jj.ok){ showStatus(`${tr('twofa_error_prefix')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
+      showStatus(tr('twofa_updated'), 'ok');
       renderTwofaPanel();
     }
     document.getElementById('tf_toggle').addEventListener('click', ()=>post(enabled ? 'disable' : 'enable'));

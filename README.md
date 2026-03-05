@@ -66,6 +66,8 @@ Open:
 - Share links for folders are now supported (public link bypassing normal login).
 - Share links support scoped permissions (`view`, `view+upload`, `view+upload+delete`).
 - Share links support expiry and optional password protection (toggle on/off when generating).
+- Upload in `Folders` now uses **TUS resumable uploads** (chunked requests) for better stability on slow/unstable networks and behind reverse proxies.
+- TUS client is bundled locally in the Docker image (`static/vendor/tus.min.js`) and is loaded without external CDN runtime dependency.
 
 ## Where to Find What (UI Map)
 
@@ -258,6 +260,13 @@ docker compose ps
 
 Expected after successful deploy:
 - `fjordlens`: healthy
+
+## Upload Behavior (TUS)
+
+- Folder uploads use TUS resumable protocol (`/api/upload/tus`) with chunked PATCH requests.
+- Default chunk size is `2 MB` per request (configured in `static/app.js`).
+- This keeps each upload request well below common proxy size/time limits and provides frequent responses during large uploads.
+- The TUS browser client is bundled in the app image and served locally for privacy-focused deployments.
 - `fjordlens-ai`: healthy
 
 ## Security Notes

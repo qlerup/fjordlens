@@ -1,24 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Login · FjordLens{% endblock %}
 {% block body %}
+  {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
     <form class="login-card small" method="post">
       <div class="login-title">
-        <span>Log ind på FjordLens</span>
+        <span>{{ 'Sign in to FjordLens' if en else 'Log ind på FjordLens' }}</span>
       </div>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
-      {% if created %}<div class="ok">Bruger oprettet. Log ind herunder.</div>{% endif %}
+      {% if created %}<div class="ok">{{ 'User created. Sign in below.' if en else 'Bruger oprettet. Log ind herunder.' }}</div>{% endif %}
       <div class="form-row">
-        <label for="username">Brugernavn</label>
+        <label for="username">{{ 'Username' if en else 'Brugernavn' }}</label>
         <input id="username" name="username" type="text" autocomplete="username" required>
       </div>
       <div class="form-row">
-        <label for="password">Adgangskode</label>
+        <label for="password">{{ 'Password' if en else 'Adgangskode' }}</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
       <div class="actions">
-        <div style="color:var(--muted); font-size:0.85rem;">Adgang påkrævet</div>
-        <button class="btn primary" type="submit">Log ind</button>
+        <div style="color:var(--muted); font-size:0.85rem;">{{ 'Authentication required' if en else 'Adgang påkrævet' }}</div>
+        <button class="btn primary" type="submit">{{ 'Sign in' if en else 'Log ind' }}</button>
       </div>
     </form>
   </div>

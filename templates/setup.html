@@ -1,22 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Første opsætning · FjordLens{% endblock %}
 {% block body %}
+  {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
     <form class="login-card" method="post">
-      <h2 style="margin:0 0 10px;">Første opsætning</h2>
-      <p>Der er endnu ingen brugere. Opret den første admin‑bruger.</p>
+      <h2 style="margin:0 0 10px;">{{ 'First setup' if en else 'Første opsætning' }}</h2>
+      <p>{{ 'No users exist yet. Create the first admin user.' if en else 'Der er endnu ingen brugere. Opret den første admin‑bruger.' }}</p>
       {% if require_token %}
-        <p style="color:var(--muted);">Indtast setup‑token for at fortsætte (sæt <code>SETUP_TOKEN</code> i miljøet).</p>
+        <p style="color:var(--muted);">{{ 'Enter setup token to continue (set ' if en else 'Indtast setup‑token for at fortsætte (sæt ' }}<code>SETUP_TOKEN</code>{{ ' in environment).' if en else ' i miljøet).' }}</p>
         <div class="form-row"><input name="token" placeholder="Setup token" required></div>
       {% endif %}
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
-      {% if ok %}<div class="ok">Bruger oprettet. Du kan nu logge ind.</div>{% endif %}
-      <div class="form-row"><input name="username" placeholder="Brugernavn" required></div>
-      <div class="form-row"><input name="password" placeholder="Adgangskode" required type="password" autocomplete="new-password"></div>
-      <div class="form-row"><input name="password2" placeholder="Gentag adgangskode" required type="password" autocomplete="new-password"></div>
+      {% if ok %}<div class="ok">{{ 'User created. You can sign in now.' if en else 'Bruger oprettet. Du kan nu logge ind.' }}</div>{% endif %}
+      <div class="form-row"><input name="username" placeholder="{{ 'Username' if en else 'Brugernavn' }}" required></div>
+      <div class="form-row"><input name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required type="password" autocomplete="new-password"></div>
+      <div class="form-row"><input name="password2" placeholder="{{ 'Repeat password' if en else 'Gentag adgangskode' }}" required type="password" autocomplete="new-password"></div>
       <div class="actions">
-        <a class="mini-link" href="/">Tilbage</a>
-        <button class="btn primary">Opret admin</button>
+        <a class="mini-link" href="/">{{ 'Back' if en else 'Tilbage' }}</a>
+        <button class="btn primary">{{ 'Create admin' if en else 'Opret admin' }}</button>
       </div>
     </form>
   </div>

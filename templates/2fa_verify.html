@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 {% block title %}2FA Login · FjordLens{% endblock %}
 {% block body %}
+  {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
     <form id="verifyForm" class="login-card small otp-card" method="post" autocomplete="off">
       <div class="otp-icon" aria-hidden="true">🛡️</div>
-      <h2 class="otp-title">To-faktor godkendelse</h2>
-      <p class="otp-subtitle">Indtast din 6-cifrede kode fra Authenticator</p>
+      <h2 class="otp-title">{{ 'Two-factor authentication' if en else 'To-faktor godkendelse' }}</h2>
+      <p class="otp-subtitle">{{ 'Enter your 6-digit Authenticator code' if en else 'Indtast din 6-cifrede kode fra Authenticator' }}</p>
       {% if error %}<div class="err">{{ error }}</div>{% endif %}
       <div class="form-row">
-        <label class="mini-label" for="code">6-cifret kode</label>
+        <label class="mini-label" for="code">{{ '6-digit code' if en else '6-cifret kode' }}</label>
         <input id="code" name="code" class="otp-input" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" placeholder="000000">
       </div>
       <div class="actions otp-actions">
-        <a class="mini-link" href="/login">Tilbage</a>
-        <button class="btn primary" type="submit">Bekræft kode</button>
+        <a class="mini-link" href="/login">{{ 'Back' if en else 'Tilbage' }}</a>
+        <button class="btn primary" type="submit">{{ 'Confirm code' if en else 'Bekræft kode' }}</button>
       </div>
     </form>
   </div>

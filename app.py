@@ -62,6 +62,36 @@ LANG_EN = "en"
 LANG_CHOICES = {LANG_DA, LANG_EN}
 DEFAULT_UI_LANGUAGE = LANG_DA
 DEFAULT_SEARCH_LANGUAGE = LANG_DA
+TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
+    LANG_DA: {
+        "login_invalid_credentials": "Forkert brugernavn eller adgangskode",
+        "setup_invalid_token": "Forkert setup-token",
+        "setup_fill_fields": "Udfyld felterne",
+        "setup_password_mismatch": "Adgangskoder matcher ikke",
+        "invalid_code": "Ugyldig kode",
+        "share_invalid_or_expired": "Share link er ugyldigt eller udløbet.",
+        "admin_user_created": "Bruger oprettet",
+        "admin_cannot_delete_self": "Du kan ikke slette din egen bruger",
+        "admin_user_not_found": "Bruger findes ikke",
+        "admin_cannot_delete_last_admin": "Kan ikke slette den sidste admin",
+        "admin_user_deleted": "Bruger slettet",
+        "error_prefix": "Fejl:",
+    },
+    LANG_EN: {
+        "login_invalid_credentials": "Invalid username or password",
+        "setup_invalid_token": "Invalid setup token",
+        "setup_fill_fields": "Please fill in all required fields",
+        "setup_password_mismatch": "Passwords do not match",
+        "invalid_code": "Invalid code",
+        "share_invalid_or_expired": "Share link is invalid or expired.",
+        "admin_user_created": "User created",
+        "admin_cannot_delete_self": "You cannot delete your own user",
+        "admin_user_not_found": "User not found",
+        "admin_cannot_delete_last_admin": "Cannot delete the last admin",
+        "admin_user_deleted": "User deleted",
+        "error_prefix": "Error:",
+    },
+}
 UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
     UPLOAD_DEST_UPLOADS: "",
     UPLOAD_DEST_LIBRARY: "Photos",
@@ -89,6 +119,41 @@ GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
+
+
+def _normalize_lang(value: Optional[str], default: str = LANG_DA) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in LANG_CHOICES else default
+
+
+def _request_ui_language() -> str:
+    try:
+        if getattr(current_user, "is_authenticated", False):
+            return _normalize_lang(getattr(current_user, "ui_language", None), LANG_DA)
+    except Exception:
+        pass
+    raw = str(request.headers.get("Accept-Language") or "")
+    for part in raw.split(","):
+        code = part.split(";", 1)[0].strip().lower()
+        if code.startswith("en"):
+            return LANG_EN
+        if code.startswith("da"):
+            return LANG_DA
+    return LANG_DA
+
+
+def _ui_text(key: str, lang: Optional[str] = None) -> str:
+    chosen = _normalize_lang(lang or _request_ui_language(), LANG_DA)
+    return TEMPLATE_I18N.get(chosen, TEMPLATE_I18N[LANG_DA]).get(key, TEMPLATE_I18N[LANG_DA].get(key, key))
+
+
+@app.context_processor
+def inject_template_i18n():
+    lang = _request_ui_language()
+    return {
+        "ui_lang": lang,
+        "tt": lambda key: _ui_text(str(key), lang),
+    }
 
 # --- Console color support (for Windows terminals and Docker logs) ---
 ANSI_RESET = "\033[0m"
@@ -1912,14 +1977,14 @@ def setup():
     if request.method == "POST":
         token = (request.form.get("token") or "").strip()
         if require_token and token != _read_secret("SETUP_TOKEN"):
-            return render_template("setup.html", error="Forkert setup‑token", require_token=True)
+            return render_template("setup.html", error=_ui_text("setup_invalid_token"), require_token=True)
         u = (request.form.get("username") or "").strip()
         p = request.form.get("password") or ""
         p2 = request.form.get("password2") or ""
         if not u or not p:
-            return render_template("setup.html", error="Udfyld felterne", require_token=require_token)
+            return render_template("setup.html", error=_ui_text("setup_fill_fields"), require_token=require_token)
         if p != p2:
-            return render_template("setup.html", error="Adgangskoder matcher ikke", require_token=require_token)
+            return render_template("setup.html", error=_ui_text("setup_password_mismatch"), require_token=require_token)
         try:
             with closing(get_conn()) as conn:
                 conn.execute(
@@ -3768,7 +3833,7 @@ def index():
 def shared_folder_view(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return render_template("login.html", error="Share link er ugyldigt eller udløbet."), 404
+        return render_template("login.html", error=_ui_text("share_invalid_or_expired")), 404
     return render_template("shared_folder.html", share_token=token)
 
 
@@ -5436,7 +5501,7 @@ def login():
             login_user(user)
             next_url = request.args.get("next") or url_for("index")
             return redirect(next_url)
-        return render_template("login.html", error="Forkert brugernavn eller adgangskode")
+        return render_template("login.html", error=_ui_text("login_invalid_credentials"))
     created = True if (request.args.get("created") in ("1", "true", "True")) else False
     return render_template("login.html", created=created)
 
@@ -5477,7 +5542,7 @@ def verify_2fa():
                 if token:
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
-        return render_template("2fa_verify.html", error="Ugyldig kode")
+        return render_template("2fa_verify.html", error=_ui_text("invalid_code"))
     # GET
     return render_template("2fa_verify.html")
 
@@ -5518,7 +5583,7 @@ def setup_2fa():
                 rdays = int(row["totp_remember_days"] or 0) if row else 0
                 # For 'save', we only require code if changes are sensitive; we re-check below
                 if action != "save":
-                    return render_template("2fa_setup.html", qrcode_url=data_url, secret=None, enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+                    return render_template("2fa_setup.html", qrcode_url=data_url, secret=None, enabled=row["totp_enabled"], error=_ui_text("invalid_code"), remember_days=rdays)
         if action == "disable":
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_enabled=0 WHERE id=?", (current_user.id,))
@@ -5538,7 +5603,7 @@ def setup_2fa():
             cur_enabled = int(row["totp_enabled"] or 0) if row else 0
             needs_code = (cur_enabled == 1) and (disable or (new_days != cur_days))
             if needs_code and not pyotp.TOTP(secret).verify(code, valid_window=1):
-                return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=cur_enabled, error="Ugyldig kode", remember_days=cur_days)
+                return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=cur_enabled, error=_ui_text("invalid_code"), remember_days=cur_days)
             enabled_after = cur_enabled
             with closing(get_conn()) as conn:
                 if disable and cur_enabled == 1:
@@ -5589,7 +5654,7 @@ def setup_2fa():
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
         rdays = int(row["totp_remember_days"] or 0) if row else 0
-        return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], error="Ugyldig kode", remember_days=rdays)
+        return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], error=_ui_text("invalid_code"), remember_days=rdays)
     rdays = int(row["totp_remember_days"] or 0) if row else 0
     return render_template("2fa_setup.html", qrcode_url=(data_url if enabled_flag == 0 else None), secret=(secret if enabled_flag == 0 else None), enabled=row["totp_enabled"], remember_days=rdays) 
 
@@ -5617,9 +5682,9 @@ def admin_users():
                             (u, generate_password_hash(p), 1 if role == "admin" else 0, role, enforce_2fa, 0, now_iso()),
                         )
                         conn.commit()
-                    msg = "Bruger oprettet"
+                    msg = _ui_text("admin_user_created")
                 except Exception as e:
-                    msg = f"Fejl: {e}"
+                    msg = f"{_ui_text('error_prefix')} {e}"
         elif action == "delete":
             try:
                 uid = int(request.form.get("user_id") or 0)
@@ -5627,29 +5692,29 @@ def admin_users():
                 uid = 0
             if uid:
                 if str(uid) == str(current_user.id):
-                    msg = "Du kan ikke slette din egen bruger"
+                    msg = _ui_text("admin_cannot_delete_self")
                 else:
                     try:
                         with closing(get_conn()) as conn:
                             row = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
                             if not row:
-                                msg = "Bruger findes ikke"
+                                msg = _ui_text("admin_user_not_found")
                             else:
                                 r = (row["role"] or "user").lower()
                                 if r == "admin":
                                     c = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND id<>?", (uid,)).fetchone()
                                     if not c or int(c["c"]) <= 0:
-                                        msg = "Kan ikke slette den sidste admin"
+                                        msg = _ui_text("admin_cannot_delete_last_admin")
                                     else:
                                         conn.execute("DELETE FROM users WHERE id=?", (uid,))
                                         conn.commit()
-                                        msg = "Bruger slettet"
+                                        msg = _ui_text("admin_user_deleted")
                                 else:
                                     conn.execute("DELETE FROM users WHERE id=?", (uid,))
                                     conn.commit()
-                                    msg = "Bruger slettet"
+                                    msg = _ui_text("admin_user_deleted")
                     except Exception as e:
-                        msg = f"Fejl: {e}"
+                        msg = f"{_ui_text('error_prefix')} {e}"
     with closing(get_conn()) as conn:
         users = conn.execute("SELECT id, username, is_admin, role, totp_enabled, created_at FROM users ORDER BY id").fetchall()
     return render_template("admin_users.html", users=users, msg=msg)
