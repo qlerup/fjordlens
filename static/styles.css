@@ -388,6 +388,42 @@ body.drawer-open .drawer-backdrop { display: block; }
   align-items: center;
   gap: 8px;
 }
+.upload-top-status {
+  min-width: 240px;
+  max-width: 360px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.upload-top-status.hidden {
+  display: none !important;
+}
+.upload-top-status-label {
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-top-status-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.upload-top-status-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .22s ease;
+}
 .mapper-header-menu {
   position: absolute;
   right: 0;
@@ -1368,6 +1404,7 @@ body.view-timeline .topbar {
   body.view-mapper #mapperHeaderActions { display: flex !important; }
   body.view-mapper #mapperSearchShell { display: flex !important; }
   body.view-mapper #mapperEditBtn { display: inline-flex !important; }
+  body.view-mapper #uploadTopStatus { display: none !important; }
   body.view-mapper #mapperSearchShell { order: 1; }
   body.view-mapper #mapperEditBtn { order: 2; }
   body.view-mapper .topbar .search-shell,

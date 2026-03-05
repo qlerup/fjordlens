@@ -200,6 +200,9 @@ const els = {
   uploadMonitorSummary: document.getElementById("uploadMonitorSummary"),
   uploadMonitorCurrent: document.getElementById("uploadMonitorCurrent"),
   uploadMonitorList: document.getElementById("uploadMonitorList"),
+  uploadTopStatus: document.getElementById("uploadTopStatus"),
+  uploadTopStatusLabel: document.getElementById("uploadTopStatusLabel"),
+  uploadTopStatusBar: document.getElementById("uploadTopStatusBar"),
 };
 
 function ensureUploadOverlayRefs() {
@@ -216,6 +219,12 @@ function ensureUploadMonitorRefs() {
   if (!els.uploadMonitorSummary) els.uploadMonitorSummary = document.getElementById("uploadMonitorSummary");
   if (!els.uploadMonitorCurrent) els.uploadMonitorCurrent = document.getElementById("uploadMonitorCurrent");
   if (!els.uploadMonitorList) els.uploadMonitorList = document.getElementById("uploadMonitorList");
+}
+
+function ensureUploadTopStatusRefs() {
+  if (!els.uploadTopStatus) els.uploadTopStatus = document.getElementById("uploadTopStatus");
+  if (!els.uploadTopStatusLabel) els.uploadTopStatusLabel = document.getElementById("uploadTopStatusLabel");
+  if (!els.uploadTopStatusBar) els.uploadTopStatusBar = document.getElementById("uploadTopStatusBar");
 }
 
 let uploadMonitorDomEventsBound = false;
@@ -2142,6 +2151,7 @@ let uploadOverlayHideTimer = null;
 let activeTusUpload = null;
 let uploadStopRequested = false;
 let uploadWasStopped = false;
+let uploadTransferActive = false;
 const uploadMonitorItemsByKey = new Map();
 
 function hideUploadOverlay() {
@@ -2152,7 +2162,7 @@ function hideUploadOverlay() {
 }
 
 function isUploadRunning() {
-  return uploadUiState.totalFiles > 0 && uploadUiState.processedFiles < uploadUiState.totalFiles;
+  return !!uploadTransferActive;
 }
 
 function resetUploadUiState() {
@@ -2216,13 +2226,41 @@ function requestStopUpload() {
 }
 
 function renderUploadMonitor() {
+  ensureUploadTopStatusRefs();
   ensureUploadMonitorRefs();
-  if (!els.uploadMonitor) return;
-  setUploadStopButtonState();
-  const processedVisualBytes = Math.min(uploadUiState.totalBytes, uploadUiState.processedBytes + uploadUiState.currentLoaded);
+  const transferLoaded = uploadTransferActive ? uploadUiState.currentLoaded : 0;
+  const processedVisualBytes = Math.min(uploadUiState.totalBytes, uploadUiState.processedBytes + transferLoaded);
   const overallPct = uploadUiState.totalBytes > 0
     ? Math.max(0, Math.min(100, Math.round((processedVisualBytes / uploadUiState.totalBytes) * 100)))
     : 0;
+  const phaseKey = String(uploadUiState.currentPhaseLabel || '').toLowerCase();
+  const isPostprocess = !!phaseKey && phaseKey !== 'uploader';
+  const stagePct = uploadUiState.currentTotal > 0
+    ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
+    : 0;
+  const stageTxt = uploadUiState.currentTotal > 0
+    ? `${uploadUiState.currentLoaded}/${uploadUiState.currentTotal}`
+    : 'venter…';
+
+  if (els.uploadTopStatus) {
+    const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
+    if (hasTopStatus) {
+      const activePct = isPostprocess ? stagePct : overallPct;
+      const topLabel = isPostprocess
+        ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
+        : `Uploader · ${Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles + (uploadUiState.currentFileName ? 1 : 0)))}/${uploadUiState.totalFiles} · ${activePct}%`;
+      els.uploadTopStatus.classList.remove('hidden');
+      if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
+      if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
+    } else {
+      els.uploadTopStatus.classList.add('hidden');
+      if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
+      if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
+    }
+  }
+
+  if (!els.uploadMonitor) return;
+  setUploadStopButtonState();
 
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
   if (els.uploadMonitorSummary) {
@@ -2230,7 +2268,9 @@ function renderUploadMonitor() {
     els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
   }
   if (els.uploadMonitorCurrent) {
-    if (uploadUiState.currentFileName) {
+    if (isPostprocess) {
+      els.uploadMonitorCurrent.textContent = 'Upload fuldført';
+    } else if (uploadUiState.currentFileName) {
       const filePct = uploadUiState.currentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
         : 0;
@@ -2326,7 +2366,7 @@ function hasTusClient() {
 
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
-  if (key === 'thumbnails') return 'Laver thumbnails';
+  if (key === 'thumbnails') return 'Metadata + thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
   if (key === 'embeddings') return 'AI embeddings';
   if (key === 'starting') return 'Starter efterbehandling';
@@ -2497,6 +2537,7 @@ async function uploadFiles(fileList, options = {}) {
   uploadStopRequested = false;
   uploadWasStopped = false;
   activeTusUpload = null;
+  uploadTransferActive = true;
   uploadUiState.totalFiles = files.length;
   uploadUiState.totalBytes = totalSize;
   uploadUiState.collapsed = false;
@@ -2570,6 +2611,9 @@ async function uploadFiles(fileList, options = {}) {
       renderUploadMonitor();
     }
 
+    uploadTransferActive = false;
+    setUploadStopButtonState();
+
     uploadUiState.currentPhaseLabel = 'Efterbehandler';
     uploadUiState.currentFileName = 'Klargør…';
     uploadUiState.currentLoaded = 0;
@@ -2587,20 +2631,22 @@ async function uploadFiles(fileList, options = {}) {
         if (n) {
           const phase = String(status.phase || '').toLowerCase();
           const msg = phase === 'thumbnails'
-            ? 'Metadata/thumbnails…'
+            ? 'Metadata + thumbnails…'
             : phase === 'faces'
-              ? 'Ansigter…'
+              ? 'Ansigtsgenkendelse…'
               : phase === 'embeddings'
-                ? 'Embeddings…'
+                ? 'AI embeddings…'
                 : 'Efterbehandler…';
-          uploadMonitorItemsByKey.forEach((value, k) => {
-            if (!value || !value.el) return;
-            const nameEl = value.el.querySelector('.upload-monitor-item-name');
-            const txt = nameEl ? String(nameEl.textContent || '').trim() : '';
-            if (txt === n || txt.endsWith(`/${n}`)) {
-              updateUploadMonitorItem(k, null, msg, null);
-            }
-          });
+          if (uploadTransferActive) {
+            uploadMonitorItemsByKey.forEach((value, k) => {
+              if (!value || !value.el) return;
+              const nameEl = value.el.querySelector('.upload-monitor-item-name');
+              const txt = nameEl ? String(nameEl.textContent || '').trim() : '';
+              if (txt === n || txt.endsWith(`/${n}`)) {
+                updateUploadMonitorItem(k, null, msg, null);
+              }
+            });
+          }
         }
         renderUploadMonitor();
       });
@@ -2642,6 +2688,7 @@ async function uploadFiles(fileList, options = {}) {
   } finally {
     activeTusUpload = null;
     uploadStopRequested = false;
+    uploadTransferActive = false;
     if (uploadOverlayHideTimer) {
       window.clearTimeout(uploadOverlayHideTimer);
       uploadOverlayHideTimer = null;
