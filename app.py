@@ -775,7 +775,7 @@ def _tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     headers = {
         "Tus-Resumable": "1.0.0",
         "Tus-Version": "1.0.0",
-        "Tus-Extension": "creation,creation-with-upload",
+        "Tus-Extension": "creation",
     }
     if extra:
         headers.update(extra)

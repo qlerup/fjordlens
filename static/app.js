@@ -214,6 +214,14 @@ function ensureUploadMonitorRefs() {
   if (!els.uploadMonitorSummary) els.uploadMonitorSummary = document.getElementById("uploadMonitorSummary");
   if (!els.uploadMonitorCurrent) els.uploadMonitorCurrent = document.getElementById("uploadMonitorCurrent");
   if (!els.uploadMonitorList) els.uploadMonitorList = document.getElementById("uploadMonitorList");
+
+  if (els.uploadMonitorToggle && !els.uploadMonitorToggle.dataset.boundToggle) {
+    els.uploadMonitorToggle.addEventListener('click', () => {
+      uploadUiState.collapsed = !uploadUiState.collapsed;
+      showUploadMonitor();
+    });
+    els.uploadMonitorToggle.dataset.boundToggle = '1';
+  }
 }
 
 // Immediate emergency cleanup in case an overlay/backdrop was left in DOM
@@ -2171,13 +2179,6 @@ function addUploadMonitorItem(name, ok, detail = '') {
   }
 }
 
-if (els.uploadMonitorToggle) {
-  els.uploadMonitorToggle.addEventListener('click', () => {
-    uploadUiState.collapsed = !uploadUiState.collapsed;
-    showUploadMonitor();
-  });
-}
-
 function uploadSingleFile(file, options = {}, onProgress = null) {
   return new Promise((resolve) => {
     const fd = new FormData();
@@ -2233,10 +2234,18 @@ function uploadSingleFileTus(file, options = {}, onProgress = null) {
     const upload = new window.tus.Upload(file, {
       endpoint: '/api/upload/tus',
       metadata,
+      uploadDataDuringCreation: false,
       chunkSize: 2 * 1024 * 1024,
       parallelUploads: 1,
       retryDelays: [0, 1000, 2500, 5000],
       removeFingerprintOnSuccess: true,
+      onShouldRetry(error, retryAttempt, options) {
+        try {
+          const status = Number(error && error.originalResponse && error.originalResponse.getStatus && error.originalResponse.getStatus());
+          if ([502, 503, 504].includes(status)) return true;
+        } catch {}
+        return window.tus.defaultOptions.onShouldRetry(error, retryAttempt, options);
+      },
       onProgress(bytesUploaded, bytesTotal) {
         if (typeof onProgress === 'function') onProgress(Number(bytesUploaded || 0), Number(bytesTotal || 0));
       },
