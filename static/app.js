@@ -2026,6 +2026,56 @@ function uploadSingleFile(file, options = {}, onProgress = null) {
   });
 }
 
+function hasTusClient() {
+  return !!(window.tus && typeof window.tus.Upload === 'function');
+}
+
+function uploadSingleFileTus(file, options = {}, onProgress = null) {
+  return new Promise((resolve) => {
+    if (!hasTusClient()) {
+      resolve({ ok: false, saved: 0, errorMsg: 'TUS client unavailable' });
+      return;
+    }
+    const safeName = String(file && file.name ? file.name : 'fil');
+    const destination = (options && options.destination) ? String(options.destination) : '';
+    const subdir = (options && Object.prototype.hasOwnProperty.call(options, 'subdir')) ? String(options.subdir || '') : '';
+    const metadata = {
+      filename: safeName,
+      destination,
+      subdir,
+      lastModified: String(Number(file && file.lastModified ? file.lastModified : 0)),
+    };
+
+    const upload = new window.tus.Upload(file, {
+      endpoint: '/api/upload/tus',
+      metadata,
+      chunkSize: 2 * 1024 * 1024,
+      parallelUploads: 1,
+      retryDelays: [0, 1000, 2500, 5000],
+      removeFingerprintOnSuccess: true,
+      onProgress(bytesUploaded, bytesTotal) {
+        if (typeof onProgress === 'function') onProgress(Number(bytesUploaded || 0), Number(bytesTotal || 0));
+      },
+      onError(error) {
+        const message = (error && error.message) ? String(error.message) : 'Upload fejl';
+        resolve({ ok: false, saved: 0, errorMsg: message });
+      },
+      onSuccess() {
+        resolve({ ok: true, saved: 1, errorMsg: '' });
+      },
+    });
+
+    upload.findPreviousUploads().then((previousUploads) => {
+      if (Array.isArray(previousUploads) && previousUploads.length > 0) {
+        upload.resumeFromPreviousUpload(previousUploads[0]);
+      }
+      upload.start();
+    }).catch(() => {
+      upload.start();
+    });
+  });
+}
+
 async function uploadFiles(fileList, options = {}) {
   ensureUploadOverlayRefs();
   ensureUploadMonitorRefs();
@@ -2069,7 +2119,10 @@ async function uploadFiles(fileList, options = {}) {
       uploadUiState.currentTotal = Number(file.size || 0);
       renderUploadMonitor();
 
-      const result = await uploadSingleFile(file, { destination, subdir }, (loaded, total) => {
+      if (!hasTusClient()) {
+        throw new Error('TUS client mangler i browseren');
+      }
+      const result = await uploadSingleFileTus(file, { destination, subdir }, (loaded, total) => {
         uploadUiState.currentLoaded = Number(loaded || 0);
         uploadUiState.currentTotal = Number(total || file.size || 0);
         renderUploadMonitor();

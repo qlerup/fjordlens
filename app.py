@@ -46,6 +46,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
 CONVERT_DIR = DATA_DIR / "converted"
 UPLOAD_DIR = DATA_DIR / "uploads"
+TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
@@ -702,6 +703,133 @@ def ensure_dirs() -> None:
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     CONVERT_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    headers = {
+        "Tus-Resumable": "1.0.0",
+        "Tus-Version": "1.0.0",
+        "Tus-Extension": "creation,creation-with-upload",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _tus_require_version() -> Optional[Tuple[dict, int]]:
+    ver = str(request.headers.get("Tus-Resumable") or "").strip()
+    if ver != "1.0.0":
+        return ({"ok": False, "error": "Missing or invalid Tus-Resumable"}, 412)
+    return None
+
+
+def _parse_tus_metadata(raw: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not raw:
+        return out
+    for pair in raw.split(","):
+        part = str(pair or "").strip()
+        if not part:
+            continue
+        chunks = part.split(" ", 1)
+        if len(chunks) != 2:
+            continue
+        key = chunks[0].strip()
+        value = chunks[1].strip()
+        if not key:
+            continue
+        try:
+            decoded = base64.b64decode(value).decode("utf-8") if value else ""
+        except Exception:
+            decoded = ""
+        out[key] = decoded
+    return out
+
+
+def _tus_upload_paths(upload_id: str) -> Tuple[Path, Path]:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", upload_id or "")
+    if not safe_id:
+        raise ValueError("Invalid upload id")
+    return (TUS_TMP_DIR / f"{safe_id}.bin", TUS_TMP_DIR / f"{safe_id}.json")
+
+
+def _tus_load_meta(upload_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        _, meta_path = _tus_upload_paths(upload_id)
+        if not meta_path.exists():
+            return None
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _tus_store_meta(upload_id: str, meta: Dict[str, Any]) -> None:
+    _, meta_path = _tus_upload_paths(upload_id)
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source_path: Path, original_name: str, last_modified_ms: Optional[int], uploaded_by: str) -> Tuple[bool, str, Optional[str]]:
+    name = secure_filename(original_name or "")
+    if not name:
+        return (False, "", "Invalid filename")
+    ext = Path(name).suffix.lower()
+    if ext not in SUPPORTED_EXTS:
+        return (False, "", f"Unsupported: {name}")
+
+    target = target_dir / name
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    i = 1
+    while target.exists():
+        target = target_dir / f"{stem}_{i}{suffix}"
+        i += 1
+
+    shutil.move(str(source_path), str(target))
+    try:
+        if last_modified_ms:
+            ts = float(last_modified_ms) / 1000.0
+            os.utime(target, (ts, ts))
+    except Exception:
+        pass
+
+    rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
+    rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
+    try:
+        meta = extract_metadata(target, rel)
+        meta["uploaded_by"] = uploaded_by
+        upsert_photo(meta)
+        try:
+            log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
+        except Exception:
+            pass
+        if ai_auto_ingest_enabled():
+            try:
+                threading.Thread(target=_embed_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
+                try:
+                    log_event("ai_embed_queued", rel_path=rel)
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    log_event("error", rel_path=rel, error=f"ai_embed_queue: {e}")
+                except Exception:
+                    pass
+        if faces_auto_index_enabled():
+            try:
+                threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
+                try:
+                    log_event("faces_queued", rel_path=rel)
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    log_event("error", rel_path=rel, error=f"faces_queue: {e}")
+                except Exception:
+                    pass
+    except Exception as e:
+        return (False, target.name, f"Index fail: {target.name}: {e}")
+    return (True, target.name, None)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -4926,6 +5054,221 @@ def api_settings_ai_performance():
 
 
 # --- Upload endpoint (drag & drop) ---
+@app.route("/api/upload/tus", methods=["OPTIONS"])
+@app.route("/api/upload/tus/<upload_id>", methods=["OPTIONS"])
+@login_required
+def api_upload_tus_options(upload_id: Optional[str] = None):
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST, HEAD, PATCH"
+    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/upload/tus", methods=["POST"])
+@login_required
+def api_upload_tus_create():
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+
+    ensure_dirs()
+    try:
+        upload_length = int(str(request.headers.get("Upload-Length") or "0").strip())
+    except Exception:
+        upload_length = -1
+    if upload_length < 0:
+        return jsonify({"ok": False, "error": "Invalid Upload-Length"}), 400, _tus_headers()
+
+    meta = _parse_tus_metadata(str(request.headers.get("Upload-Metadata") or ""))
+    filename = str(meta.get("filename") or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "Missing filename"}), 400, _tus_headers()
+
+    destination = get_upload_destination()
+    destination_override = str(meta.get("destination") or "").strip().lower()
+    if destination_override:
+        if destination_override not in UPLOAD_DEST_CHOICES:
+            return jsonify({"ok": False, "error": "Ugyldig upload-destination"}), 400, _tus_headers()
+        destination = destination_override
+
+    subdir = get_upload_subdir(destination)
+    subdir_override_raw = meta.get("subdir")
+    if subdir_override_raw is not None:
+        try:
+            subdir = _normalize_upload_subdir(str(subdir_override_raw or ""))
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig upload-undermappe"}), 400, _tus_headers()
+
+    target_root, rel_prefix = _upload_target_for_destination(destination)
+    subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
+    target_dir = (target_root / subdir) if subdir else target_root
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kan ikke oprette upload-destination: {e}"}), 500, _tus_headers()
+
+    upload_id = secrets.token_urlsafe(18)
+    data_path, _ = _tus_upload_paths(upload_id)
+    try:
+        with data_path.open("wb"):
+            pass
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Unable to create upload: {e}"}), 500, _tus_headers()
+
+    try:
+        last_modified_ms = int(str(meta.get("lastModified") or "0").strip() or "0")
+    except Exception:
+        last_modified_ms = 0
+
+    upload_meta: Dict[str, Any] = {
+        "id": upload_id,
+        "filename": filename,
+        "destination": destination,
+        "subdir": subdir,
+        "upload_length": upload_length,
+        "upload_offset": 0,
+        "target_dir": str(target_dir),
+        "rel_prefix": rel_prefix,
+        "last_modified_ms": last_modified_ms,
+        "uploaded_by": str(getattr(current_user, "username", "") or ""),
+        "created_at": now_iso(),
+    }
+    _tus_store_meta(upload_id, upload_meta)
+
+    try:
+        log_event("upload_tus_created", upload_id=upload_id, filename=filename, destination=destination, subdir=subdir, upload_length=upload_length)
+    except Exception:
+        pass
+
+    resp = make_response("", 201)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Location"] = url_for("api_upload_tus_file", upload_id=upload_id)
+    resp.headers["Upload-Offset"] = "0"
+    return resp
+
+
+@app.route("/api/upload/tus/<upload_id>", methods=["HEAD"])
+@login_required
+def api_upload_tus_head(upload_id: str):
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+
+    meta = _tus_load_meta(upload_id)
+    if not meta:
+        return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    data_path, _ = _tus_upload_paths(upload_id)
+    offset = int(meta.get("upload_offset") or 0)
+    try:
+        if data_path.exists():
+            offset = int(data_path.stat().st_size)
+    except Exception:
+        pass
+
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Upload-Offset"] = str(max(0, offset))
+    resp.headers["Upload-Length"] = str(int(meta.get("upload_length") or 0))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/upload/tus/<upload_id>", methods=["PATCH"])
+@login_required
+def api_upload_tus_file(upload_id: str):
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+    if str(request.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower() != "application/offset+octet-stream":
+        return jsonify({"ok": False, "error": "Invalid Content-Type"}), 415, _tus_headers()
+
+    meta = _tus_load_meta(upload_id)
+    if not meta:
+        return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    data_path, meta_path = _tus_upload_paths(upload_id)
+    if not data_path.exists():
+        return jsonify({"ok": False, "error": "Upload data missing"}), 410, _tus_headers()
+
+    try:
+        req_offset = int(str(request.headers.get("Upload-Offset") or "0").strip())
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid Upload-Offset"}), 400, _tus_headers()
+
+    current_size = int(data_path.stat().st_size)
+    if req_offset != current_size:
+        resp = make_response("", 409)
+        for k, v in _tus_headers().items():
+            resp.headers[k] = v
+        resp.headers["Upload-Offset"] = str(current_size)
+        return resp
+
+    body = request.get_data(cache=False, as_text=False) or b""
+    try:
+        with data_path.open("ab") as fh:
+            if body:
+                fh.write(body)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Unable to write upload chunk: {e}"}), 500, _tus_headers()
+
+    new_offset = int(data_path.stat().st_size)
+    total_length = int(meta.get("upload_length") or 0)
+    meta["upload_offset"] = new_offset
+    _tus_store_meta(upload_id, meta)
+
+    if total_length > 0 and new_offset >= total_length:
+        target_dir = Path(str(meta.get("target_dir") or ""))
+        rel_prefix = str(meta.get("rel_prefix") or "")
+        subdir = str(meta.get("subdir") or "")
+        filename = str(meta.get("filename") or "")
+        uploaded_by = str(meta.get("uploaded_by") or "")
+        try:
+            last_modified_ms = int(meta.get("last_modified_ms") or 0)
+        except Exception:
+            last_modified_ms = 0
+
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            ok, saved_name, err = _commit_uploaded_file(
+                target_dir=target_dir,
+                rel_prefix=rel_prefix,
+                subdir=subdir,
+                source_path=data_path,
+                original_name=filename,
+                last_modified_ms=last_modified_ms,
+                uploaded_by=uploaded_by,
+            )
+            try:
+                meta_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if ok:
+                try:
+                    log_event("upload_done", saved=1, errors=0)
+                except Exception:
+                    pass
+            else:
+                try:
+                    log_event("error", filename=filename, error=err)
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": err or "Upload finalize failed"}), 500, _tus_headers({"Upload-Offset": str(new_offset)})
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Upload finalize failed: {e}"}), 500, _tus_headers({"Upload-Offset": str(new_offset)})
+
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Upload-Offset"] = str(new_offset)
+    return resp
+
+
 @app.route("/api/upload", methods=["POST"])
 @login_required
 def api_upload():

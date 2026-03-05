@@ -3,6 +3,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+ARG TUS_JS_VERSION=4.2.3
+
 WORKDIR /app
 
 
@@ -14,6 +16,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Bundle tus-js-client in the image (avoid runtime CDN dependency)
+RUN mkdir -p /app/static/vendor \
+    && curl -fsSL "https://cdn.jsdelivr.net/npm/tus-js-client@${TUS_JS_VERSION}/dist/tus.min.js" \
+       -o /app/static/vendor/tus.min.js
 
 # App listens on a fixed internal port; host port is mapped in compose
 EXPOSE 8080
