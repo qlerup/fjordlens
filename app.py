@@ -222,6 +222,10 @@ scan_stop_event = threading.Event()
 from collections import deque
 LOG_BUFFER: deque[Dict[str, Any]] = deque(maxlen=1000)
 LOG_SEQ: int = 0
+UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
+UPLOAD_PENDING_LOCK = threading.Lock()
+UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
+UPLOAD_POSTPROCESS_LOCK = threading.Lock()
 
 
 def log_event(event: str, **data: Any) -> None:
@@ -771,6 +775,215 @@ def ensure_dirs() -> None:
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    rel = str(rel_path or "").strip()
+    if not rel:
+        return
+    with UPLOAD_PENDING_LOCK:
+        bucket = UPLOAD_PENDING_BY_USER.setdefault(user, [])
+        bucket.append(rel)
+
+
+def _is_upload_postprocess_running(uploaded_by: str) -> bool:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_POSTPROCESS_LOCK:
+        st = UPLOAD_POSTPROCESS_BY_USER.get(user) or {}
+        return bool(st.get("running"))
+
+
+def _set_upload_postprocess_state(uploaded_by: str, patch: Dict[str, Any]) -> None:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_POSTPROCESS_LOCK:
+        cur = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
+        cur.update(patch)
+        UPLOAD_POSTPROCESS_BY_USER[user] = cur
+
+
+def _get_upload_postprocess_state(uploaded_by: str) -> Dict[str, Any]:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_POSTPROCESS_LOCK:
+        return dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
+
+
+def _pop_uploaded_rels(uploaded_by: str) -> list[str]:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_PENDING_LOCK:
+        rels = list(UPLOAD_PENDING_BY_USER.pop(user, []))
+    out: list[str] = []
+    seen: set[str] = set()
+    for rel in rels:
+        key = str(rel or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _postprocess_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> Dict[str, Any]:
+    user = str(uploaded_by or "").strip()
+    rels = []
+    seen: set[str] = set()
+    for rel in (rel_paths or []):
+        key = str(rel or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        rels.append(key)
+
+    indexed_ok: list[str] = []
+    index_errors = 0
+    for rel in rels:
+        disk_path = _disk_path_from_rel_path(rel)
+        if not disk_path.exists():
+            index_errors += 1
+            try:
+                log_event("error", rel_path=rel, error="Upload file missing before post-process")
+            except Exception:
+                pass
+            continue
+        try:
+            meta = extract_metadata(disk_path, rel, generate_thumb=True)
+            meta["uploaded_by"] = user
+            upsert_photo(meta)
+            indexed_ok.append(rel)
+            try:
+                log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
+            except Exception:
+                pass
+        except Exception as e:
+            index_errors += 1
+            try:
+                log_event("error", rel_path=rel, error=f"postprocess_index: {e}")
+            except Exception:
+                pass
+
+    faces_done = 0
+    faces_errors = 0
+    if faces_auto_index_enabled():
+        for rel in indexed_ok:
+            try:
+                index_faces_for_photo(rel)
+                faces_done += 1
+            except Exception as e:
+                faces_errors += 1
+                try:
+                    log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
+                except Exception:
+                    pass
+
+    ai_done = 0
+    ai_errors = 0
+    if ai_auto_ingest_enabled():
+        for rel in indexed_ok:
+            try:
+                _embed_uploaded_photo_if_needed(rel)
+                ai_done += 1
+            except Exception as e:
+                ai_errors += 1
+                try:
+                    log_event("error", rel_path=rel, error=f"postprocess_ai: {e}")
+                except Exception:
+                    pass
+
+    return {
+        "ok": True,
+        "received": len(rels),
+        "indexed": len(indexed_ok),
+        "index_errors": index_errors,
+        "faces_enabled": faces_auto_index_enabled(),
+        "faces_done": faces_done,
+        "faces_errors": faces_errors,
+        "ai_enabled": ai_auto_ingest_enabled(),
+        "ai_done": ai_done,
+        "ai_errors": ai_errors,
+    }
+
+
+def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    _set_upload_postprocess_state(
+        user,
+        {
+            "running": True,
+            "started_at": now_iso(),
+            "finished_at": None,
+            "error": None,
+            "result": None,
+        },
+    )
+
+    aggregate: Dict[str, Any] = {
+        "ok": True,
+        "received": 0,
+        "indexed": 0,
+        "index_errors": 0,
+        "faces_enabled": faces_auto_index_enabled(),
+        "faces_done": 0,
+        "faces_errors": 0,
+        "ai_enabled": ai_auto_ingest_enabled(),
+        "ai_done": 0,
+        "ai_errors": 0,
+    }
+
+    batch = list(initial_rels or [])
+    try:
+        while batch:
+            try:
+                log_event("upload_postprocess_start", user=user, files=len(batch))
+            except Exception:
+                pass
+
+            result = _postprocess_uploaded_rels(user, batch)
+            aggregate["received"] += int(result.get("received") or 0)
+            aggregate["indexed"] += int(result.get("indexed") or 0)
+            aggregate["index_errors"] += int(result.get("index_errors") or 0)
+            aggregate["faces_done"] += int(result.get("faces_done") or 0)
+            aggregate["faces_errors"] += int(result.get("faces_errors") or 0)
+            aggregate["ai_done"] += int(result.get("ai_done") or 0)
+            aggregate["ai_errors"] += int(result.get("ai_errors") or 0)
+            aggregate["faces_enabled"] = bool(result.get("faces_enabled"))
+            aggregate["ai_enabled"] = bool(result.get("ai_enabled"))
+
+            try:
+                log_event(
+                    "upload_postprocess_done",
+                    user=user,
+                    files=result.get("received"),
+                    indexed=result.get("indexed"),
+                    index_errors=result.get("index_errors"),
+                    faces_done=result.get("faces_done"),
+                    faces_errors=result.get("faces_errors"),
+                    ai_done=result.get("ai_done"),
+                    ai_errors=result.get("ai_errors"),
+                )
+            except Exception:
+                pass
+
+            batch = _pop_uploaded_rels(user)
+
+        _set_upload_postprocess_state(
+            user,
+            {
+                "running": False,
+                "finished_at": now_iso(),
+                "result": aggregate,
+                "error": None,
+            },
+        )
+    except Exception as e:
+        _set_upload_postprocess_state(
+            user,
+            {
+                "running": False,
+                "finished_at": now_iso(),
+                "error": str(e),
+                "result": aggregate,
+            },
+        )
+
+
 def _tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     headers = {
         "Tus-Resumable": "1.0.0",
@@ -861,39 +1074,9 @@ def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source
     rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
     rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
     try:
-        meta = extract_metadata(target, rel)
-        meta["uploaded_by"] = uploaded_by
-        upsert_photo(meta)
-        try:
-            log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
-        except Exception:
-            pass
-        if ai_auto_ingest_enabled():
-            try:
-                threading.Thread(target=_embed_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
-                try:
-                    log_event("ai_embed_queued", rel_path=rel)
-                except Exception:
-                    pass
-            except Exception as e:
-                try:
-                    log_event("error", rel_path=rel, error=f"ai_embed_queue: {e}")
-                except Exception:
-                    pass
-        if faces_auto_index_enabled():
-            try:
-                threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
-                try:
-                    log_event("faces_queued", rel_path=rel)
-                except Exception:
-                    pass
-            except Exception as e:
-                try:
-                    log_event("error", rel_path=rel, error=f"faces_queue: {e}")
-                except Exception:
-                    pass
+        _queue_uploaded_rel(uploaded_by, rel)
     except Exception as e:
-        return (False, target.name, f"Index fail: {target.name}: {e}")
+        return (False, target.name, f"Queue fail: {target.name}: {e}")
     return (True, target.name, None)
 
 
@@ -5451,6 +5634,55 @@ def api_upload():
     except Exception:
         pass
     return jsonify({"ok": True, "saved": saved, "errors": errors})
+
+
+@app.route("/api/upload/postprocess", methods=["POST"])
+@login_required
+def api_upload_postprocess():
+    uploaded_by = str(getattr(current_user, "username", "") or "")
+    rels = _pop_uploaded_rels(uploaded_by)
+
+    if _is_upload_postprocess_running(uploaded_by):
+        for rel in rels:
+            _queue_uploaded_rel(uploaded_by, rel)
+        with UPLOAD_PENDING_LOCK:
+            pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+        return jsonify({"ok": True, "started": False, "running": True, "pending": pending_count})
+
+    if not rels:
+        state = _get_upload_postprocess_state(uploaded_by)
+        if state:
+            with UPLOAD_PENDING_LOCK:
+                pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+            return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "result": state.get("result"), "error": state.get("error")})
+        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "result": {"ok": True, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0}})
+
+    threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+    return jsonify({"ok": True, "started": True, "running": True, "pending": pending_count, "queued": len(rels)})
+
+
+@app.route("/api/upload/postprocess/status")
+@login_required
+def api_upload_postprocess_status():
+    uploaded_by = str(getattr(current_user, "username", "") or "")
+    state = _get_upload_postprocess_state(uploaded_by)
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+    if not state:
+        return jsonify({"ok": True, "running": False, "pending": pending_count, "result": None, "error": None})
+    return jsonify(
+        {
+            "ok": True,
+            "running": bool(state.get("running")),
+            "pending": pending_count,
+            "started_at": state.get("started_at"),
+            "finished_at": state.get("finished_at"),
+            "result": state.get("result"),
+            "error": state.get("error"),
+        }
+    )
 
 
 @app.route("/api/logs/clear", methods=["POST"])

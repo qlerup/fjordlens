@@ -1525,6 +1525,19 @@ body.view-mapper .mapper-header-actions { display: flex; }
   gap: 8px;
   margin-bottom: 8px;
 }
+.upload-monitor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.upload-monitor-actions .btn.small[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.upload-monitor.collapsed .upload-monitor-current,
+.upload-monitor.collapsed .upload-monitor-list {
+  display: none !important;
+}
 .upload-monitor-summary {
   margin-top: 8px;
   font-weight: 600;

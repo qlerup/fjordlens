@@ -571,7 +571,10 @@
   <section id="uploadMonitor" class="upload-monitor hidden" aria-live="polite">
     <header class="upload-monitor-head">
       <strong>Upload</strong>
-      <button id="uploadMonitorToggle" class="btn small" type="button">Minimer</button>
+      <div class="upload-monitor-actions">
+        <button id="uploadMonitorStop" class="btn small" type="button">Stop upload</button>
+        <button id="uploadMonitorToggle" class="btn small" type="button">Minimer</button>
+      </div>
     </header>
     <div class="upload-progress"><div id="uploadMonitorBar" class="bar"></div></div>
     <div id="uploadMonitorSummary" class="upload-monitor-summary">Klar</div>
