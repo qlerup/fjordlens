@@ -1486,6 +1486,40 @@ function cardHTML(item) {
 function appendPeopleInChunks(people, chunkSize = 48) {
   if (!els.grid) return;
   let index = 0;
+  // Queue for sequential image loading (1 at a time)
+  const pendingImgs = [];
+  let imgLoading = false;
+
+  function loadNextImg() {
+    if (!pendingImgs.length) { imgLoading = false; return; }
+    imgLoading = true;
+    const img = pendingImgs.shift();
+    if (!img) { loadNextImg(); return; }
+    const src = img.getAttribute('data-src');
+    if (!src) { loadNextImg(); return; }
+    const cleanup = () => {
+      img.removeEventListener('load', onload);
+      img.removeEventListener('error', onerror);
+      img.removeEventListener('abort', onerror);
+    };
+    const onload = () => { cleanup(); loadNextImg(); };
+    const onerror = () => { cleanup(); loadNextImg(); };
+    img.addEventListener('load', onload, { once: true });
+    img.addEventListener('error', onerror, { once: true });
+    img.addEventListener('abort', onerror, { once: true });
+    // Defer a tiny bit to allow layout to settle
+    (window.requestIdleCallback || window.requestAnimationFrame)(() => {
+      img.setAttribute('src', src);
+      img.removeAttribute('data-src');
+    });
+  }
+
+  function enqueueImgsFrom(node) {
+    // Find any newly added images with data-src
+    const imgs = node.querySelectorAll('img[data-src]');
+    imgs.forEach((im) => pendingImgs.push(im));
+    if (!imgLoading) loadNextImg();
+  }
   function step() {
     const end = Math.min(index + chunkSize, people.length);
     const frag = document.createDocumentFragment();
@@ -1494,7 +1528,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const card = document.createElement('article');
       card.className = 'photo-card';
       const imgHtml = p.thumb_url
-        ? `<img src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async">`
+        ? `<img data-src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async">`
         : `<div class="card-thumb placeholder">🙂</div>`;
       card.innerHTML = `
         <div class="card-thumb">${imgHtml}</div>
@@ -1523,6 +1557,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       frag.appendChild(card);
     }
     els.grid.appendChild(frag);
+    enqueueImgsFrom(els.grid);
     if (index < people.length) {
       // Yield to browser to paint and handle input, then continue
       (window.requestIdleCallback || window.requestAnimationFrame)(step);
