@@ -29,7 +29,6 @@ const els = {
   mapperTools: document.getElementById("mapperTools"),
   mapperHeaderActions: document.getElementById("mapperHeaderActions"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
-  mapperUploadBtn: document.getElementById("mapperUploadBtn"),
   mapperUpBtn: document.getElementById("mapperUpBtn"),
   mapperSearchShell: document.getElementById("mapperSearchShell"),
   mapperSearchToggleBtn: document.getElementById("mapperSearchToggleBtn"),
@@ -2155,6 +2154,10 @@ let uploadWasStopped = false;
 let uploadTransferActive = false;
 let uploadLiveRefreshBusy = false;
 let uploadLiveRefreshAt = 0;
+let uploadQueuePumpRunning = false;
+let uploadBatchSeq = 0;
+let uploadSessionSavedTotal = 0;
+const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
 
 async function maybeRefreshPhotosDuringPostprocess(force = false) {
@@ -2545,180 +2548,217 @@ async function uploadFiles(fileList, options = {}) {
   ensureUploadOverlayRefs();
   ensureUploadMonitorRefs();
   const files = Array.from(fileList || []).filter(f => !!f && f.name);
-  if (!files.length) return;
+  if (!files.length) return { ok: false, queued: 0 };
   const destination = (options && options.destination) ? String(options.destination) : '';
   const subdir = (options && Object.prototype.hasOwnProperty.call(options, 'subdir')) ? String(options.subdir || '') : null;
   const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
 
-  resetUploadUiState();
-  uploadStopRequested = false;
-  uploadWasStopped = false;
-  activeTusUpload = null;
-  uploadTransferActive = true;
-  uploadUiState.totalFiles = files.length;
-  uploadUiState.totalBytes = totalSize;
-  uploadUiState.collapsed = false;
-  if (els.uploadMonitorList) els.uploadMonitorList.innerHTML = '';
+  if (!uploadQueuePumpRunning && !isUploadRunning()) {
+    resetUploadUiState();
+    uploadStopRequested = false;
+    uploadWasStopped = false;
+    activeTusUpload = null;
+    uploadSessionSavedTotal = 0;
+    uploadUiState.collapsed = false;
+    if (els.uploadMonitorList) els.uploadMonitorList.innerHTML = '';
 
-  if (els.uploadOverlay) {
-    const titleEl = document.querySelector('#uploadOverlay .upload-title');
-    if (titleEl) titleEl.textContent = 'Starter upload…';
-    els.uploadOverlay.classList.remove('hidden');
-    els.uploadOverlay.classList.add('active', 'upload-ready');
-    if (uploadOverlayHideTimer) {
-      window.clearTimeout(uploadOverlayHideTimer);
-      uploadOverlayHideTimer = null;
+    if (els.uploadOverlay) {
+      const titleEl = document.querySelector('#uploadOverlay .upload-title');
+      if (titleEl) titleEl.textContent = 'Starter upload…';
+      els.uploadOverlay.classList.remove('hidden');
+      els.uploadOverlay.classList.add('active', 'upload-ready');
+      if (uploadOverlayHideTimer) {
+        window.clearTimeout(uploadOverlayHideTimer);
+        uploadOverlayHideTimer = null;
+      }
+      uploadOverlayHideTimer = window.setTimeout(() => {
+        hideUploadOverlay();
+        uploadOverlayHideTimer = null;
+      }, 900);
     }
-    uploadOverlayHideTimer = window.setTimeout(() => {
-      hideUploadOverlay();
-      uploadOverlayHideTimer = null;
-    }, 900);
+    if (els.uploadProgressBar) els.uploadProgressBar.style.width = '100%';
   }
-  if (els.uploadProgressBar) els.uploadProgressBar.style.width = '100%';
-  if (els.uploadProgressText) els.uploadProgressText.textContent = `${files.length} filer · ${fmtBytes(totalSize)}`;
 
+  uploadUiState.totalFiles += files.length;
+  uploadUiState.totalBytes += totalSize;
+  if (els.uploadProgressText) {
+    const queuedCount = Math.max(0, uploadUiState.totalFiles - uploadUiState.processedFiles);
+    els.uploadProgressText.textContent = `${queuedCount} filer i kø · ${fmtBytes(uploadUiState.totalBytes)}`;
+  }
   renderUploadMonitor();
   showUploadMonitor();
 
-  try {
-    let savedTotal = 0;
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-      const file = files[fileIndex];
-      const itemKey = _uploadItemKey(file.name, fileIndex);
-      if (uploadStopRequested) break;
-      uploadUiState.currentPhaseLabel = 'Uploader';
-      uploadUiState.currentFileName = file.name || 'fil';
-      uploadUiState.currentLoaded = 0;
-      uploadUiState.currentTotal = Number(file.size || 0);
-      addUploadMonitorItem(file.name, null, 'Uploader… 0%', itemKey, 0);
-      renderUploadMonitor();
+  const batchId = ++uploadBatchSeq;
+  const batchPromise = new Promise((resolve) => {
+    uploadQueue.push({ batchId, files, destination, subdir, resolve });
+  });
 
-      if (!hasTusClient()) {
-        throw new Error('TUS client mangler i browseren');
-      }
-      const result = await uploadSingleFileTus(file, { destination, subdir }, (loaded, total) => {
-        uploadUiState.currentLoaded = Number(loaded || 0);
-        uploadUiState.currentTotal = Number(total || file.size || 0);
-        const pct = Number(total || file.size || 0) > 0
-          ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
-          : 0;
-        updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
-        renderUploadMonitor();
-      });
+  if (!uploadQueuePumpRunning) {
+    const runQueue = async () => {
+      let post = null;
+      try {
+        uploadQueuePumpRunning = true;
+        let finished = false;
+        while (!finished) {
+          uploadTransferActive = true;
+          setUploadStopButtonState();
 
-      if (result && result.aborted) {
-        updateUploadMonitorItem(itemKey, false, 'Stoppet', 0);
-        renderUploadMonitor();
-        break;
-      }
+          while (uploadQueue.length && !uploadStopRequested) {
+            const batch = uploadQueue.shift();
+            if (!batch) continue;
+            let batchSaved = 0;
+            let batchFailed = 0;
 
-      uploadUiState.processedFiles += 1;
-      uploadUiState.processedBytes += Number(file.size || uploadUiState.currentTotal || 0);
-      uploadUiState.currentLoaded = 0;
-      uploadUiState.currentTotal = 0;
+            for (let fileIndex = 0; fileIndex < batch.files.length; fileIndex += 1) {
+              const file = batch.files[fileIndex];
+              const itemKey = _uploadItemKey(file.name, `${batch.batchId}-${fileIndex}`);
+              if (uploadStopRequested) break;
 
-      if (result.ok) {
-        savedTotal += Number(result.saved || 0) || 1;
-        updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
-      } else {
-        uploadUiState.failedFiles += 1;
-        updateUploadMonitorItem(itemKey, false, result.errorMsg || 'Fejl', 0);
-      }
+              uploadUiState.currentPhaseLabel = 'Uploader';
+              uploadUiState.currentFileName = file.name || 'fil';
+              uploadUiState.currentLoaded = 0;
+              uploadUiState.currentTotal = Number(file.size || 0);
+              addUploadMonitorItem(file.name, null, 'Uploader… 0%', itemKey, 0);
+              renderUploadMonitor();
 
-      renderUploadMonitor();
-    }
-
-    uploadTransferActive = false;
-    setUploadStopButtonState();
-
-    uploadUiState.currentPhaseLabel = 'Efterbehandler';
-    uploadUiState.currentFileName = 'Klargør…';
-    uploadUiState.currentLoaded = 0;
-    uploadUiState.currentTotal = 0;
-    renderUploadMonitor();
-
-    let post = null;
-    try {
-      post = await runUploadPostprocess((status) => {
-        uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
-        const n = shortRelName(status.current_rel);
-        uploadUiState.currentFileName = n || 'Arbejder…';
-        uploadUiState.currentLoaded = Number(status.stage_processed || 0);
-        uploadUiState.currentTotal = Number(status.stage_total || 0);
-        if (n) {
-          const phase = String(status.phase || '').toLowerCase();
-          const msg = phase === 'metadata'
-            ? 'Metadata…'
-            : phase === 'thumbnails'
-            ? 'Metadata + thumbnails…'
-            : phase === 'faces'
-              ? 'Ansigtsgenkendelse…'
-              : phase === 'embeddings'
-                ? 'AI embeddings…'
-                : 'Efterbehandler…';
-          if (uploadTransferActive) {
-            uploadMonitorItemsByKey.forEach((value, k) => {
-              if (!value || !value.el) return;
-              const nameEl = value.el.querySelector('.upload-monitor-item-name');
-              const txt = nameEl ? String(nameEl.textContent || '').trim() : '';
-              if (txt === n || txt.endsWith(`/${n}`)) {
-                updateUploadMonitorItem(k, null, msg, null);
+              if (!hasTusClient()) {
+                throw new Error('TUS client mangler i browseren');
               }
-            });
+              const result = await uploadSingleFileTus(file, { destination: batch.destination, subdir: batch.subdir }, (loaded, total) => {
+                uploadUiState.currentLoaded = Number(loaded || 0);
+                uploadUiState.currentTotal = Number(total || file.size || 0);
+                const pct = Number(total || file.size || 0) > 0
+                  ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
+                  : 0;
+                updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
+                renderUploadMonitor();
+              });
+
+              if (result && result.aborted) {
+                updateUploadMonitorItem(itemKey, false, 'Stoppet', 0);
+                renderUploadMonitor();
+                break;
+              }
+
+              uploadUiState.processedFiles += 1;
+              uploadUiState.processedBytes += Number(file.size || uploadUiState.currentTotal || 0);
+              uploadUiState.currentLoaded = 0;
+              uploadUiState.currentTotal = 0;
+
+              if (result.ok) {
+                const saved = Number(result.saved || 0) || 1;
+                batchSaved += saved;
+                uploadSessionSavedTotal += saved;
+                updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
+              } else {
+                batchFailed += 1;
+                uploadUiState.failedFiles += 1;
+                updateUploadMonitorItem(itemKey, false, result.errorMsg || 'Fejl', 0);
+              }
+
+              renderUploadMonitor();
+            }
+
+            try { batch.resolve({ ok: !uploadStopRequested, saved: batchSaved, failed: batchFailed, stopped: !!uploadStopRequested }); } catch {}
           }
+
+          uploadTransferActive = false;
+          setUploadStopButtonState();
+
+          if (uploadStopRequested) {
+            while (uploadQueue.length) {
+              const skipped = uploadQueue.shift();
+              if (!skipped) continue;
+              try { skipped.resolve({ ok: false, saved: 0, failed: skipped.files.length, stopped: true }); } catch {}
+            }
+            finished = true;
+            break;
+          }
+
+          if (uploadUiState.processedFiles <= 0) {
+            finished = true;
+            break;
+          }
+
+          uploadUiState.currentPhaseLabel = 'Efterbehandler';
+          uploadUiState.currentFileName = 'Klargør…';
+          uploadUiState.currentLoaded = 0;
+          uploadUiState.currentTotal = 0;
+          renderUploadMonitor();
+
+          try {
+            post = await runUploadPostprocess((status) => {
+              uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
+              const n = shortRelName(status.current_rel);
+              uploadUiState.currentFileName = n || 'Arbejder…';
+              uploadUiState.currentLoaded = Number(status.stage_processed || 0);
+              uploadUiState.currentTotal = Number(status.stage_total || 0);
+              if (String(status.phase || '').toLowerCase() === 'metadata' || String(status.phase || '').toLowerCase() === 'thumbnails') {
+                maybeRefreshPhotosDuringPostprocess(false);
+              }
+              renderUploadMonitor();
+            });
+          } catch (postErr) {
+            console.error(postErr);
+            showStatus(`Upload færdig, men efterbehandling fejlede: ${postErr && postErr.message ? postErr.message : 'ukendt fejl'}`, 'err');
+          }
+
+          if (uploadQueue.length) {
+            post = null;
+            continue;
+          }
+
+          finished = true;
         }
-        if (String(status.phase || '').toLowerCase() === 'metadata' || String(status.phase || '').toLowerCase() === 'thumbnails') {
-          maybeRefreshPhotosDuringPostprocess(false);
-        }
+
+        uploadUiState.currentFileName = '';
+        uploadUiState.currentPhaseLabel = '';
+        uploadUiState.currentLoaded = 0;
+        uploadUiState.currentTotal = 0;
         renderUploadMonitor();
-      });
-    } catch (postErr) {
-      console.error(postErr);
-      showStatus(`Upload færdig, men efterbehandling fejlede: ${postErr && postErr.message ? postErr.message : 'ukendt fejl'}`, 'err');
-    }
 
-    uploadUiState.currentFileName = '';
-    uploadUiState.currentPhaseLabel = '';
-    uploadUiState.currentLoaded = 0;
-    uploadUiState.currentTotal = 0;
-    renderUploadMonitor();
+        if (post) {
+          const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
+          const postParts = [
+            `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
+            `ansigter: ${Number(post.faces_done || 0)}${Number(post.faces_errors || 0) ? ` (fejl: ${Number(post.faces_errors || 0)})` : ''}`,
+            `embeddings: ${Number(post.ai_done || 0)}${Number(post.ai_errors || 0) ? ` (fejl: ${Number(post.ai_errors || 0)})` : ''}`,
+          ];
+          showStatus(
+            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.join(' · ')}`,
+            (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0)) ? 'err' : 'ok'
+          );
+        } else {
+          showStatus(
+            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''}`,
+            uploadUiState.failedFiles ? 'err' : 'ok'
+          );
+        }
 
-    if (post) {
-      const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
-      const postParts = [
-        `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
-        `ansigter: ${Number(post.faces_done || 0)}${Number(post.faces_errors || 0) ? ` (fejl: ${Number(post.faces_errors || 0)})` : ''}`,
-        `embeddings: ${Number(post.ai_done || 0)}${Number(post.ai_errors || 0) ? ` (fejl: ${Number(post.ai_errors || 0)})` : ''}`,
-      ];
-      showStatus(
-        `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${savedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.join(' · ')}`,
-        (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0)) ? 'err' : 'ok'
-      );
-    } else {
-      showStatus(
-        `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${savedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''}`,
-        uploadUiState.failedFiles ? 'err' : 'ok'
-      );
-    }
-
-    await maybeRefreshPhotosDuringPostprocess(true);
-    if (state.view === 'mapper') {
-      loadMapperTools();
-    }
-  } catch (e) {
-    console.error(e);
-    showStatus(tr('upload_failed_generic'), 'err');
-  } finally {
-    activeTusUpload = null;
-    uploadStopRequested = false;
-    uploadTransferActive = false;
-    if (uploadOverlayHideTimer) {
-      window.clearTimeout(uploadOverlayHideTimer);
-      uploadOverlayHideTimer = null;
-    }
-    hideUploadOverlay();
-    showUploadMonitor();
+        await maybeRefreshPhotosDuringPostprocess(true);
+        if (state.view === 'mapper') {
+          loadMapperTools();
+        }
+      } catch (e) {
+        console.error(e);
+        showStatus(tr('upload_failed_generic'), 'err');
+      } finally {
+        activeTusUpload = null;
+        uploadStopRequested = false;
+        uploadTransferActive = false;
+        uploadQueuePumpRunning = false;
+        if (uploadOverlayHideTimer) {
+          window.clearTimeout(uploadOverlayHideTimer);
+          uploadOverlayHideTimer = null;
+        }
+        hideUploadOverlay();
+        showUploadMonitor();
+      }
+    };
+    runQueue();
   }
+
+  return batchPromise;
 }
 
 function renderMapperContext(path = '') {
@@ -2734,11 +2774,6 @@ function renderMapperContext(path = '') {
   if (els.mapperUpBtn) {
     els.mapperUpBtn.textContent = tr('mapper_up');
     els.mapperUpBtn.disabled = !p;
-  }
-  if (els.mapperUploadBtn) {
-    els.mapperUploadBtn.textContent = tr('mapper_menu_upload');
-    els.mapperUploadBtn.disabled = !!state.mapperEditMode;
-    els.mapperUploadBtn.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
   }
   if (els.mapperEditBtn) {
     els.mapperEditBtn.textContent = tr('mapper_edit');
@@ -4449,12 +4484,6 @@ if (els.mapperHeaderCreateAction) {
 if (els.mapperHeaderUploadAction) {
   els.mapperHeaderUploadAction.addEventListener('click', () => {
     closeMapperHeaderMenu();
-    openMapperUploadPicker();
-  });
-}
-if (els.mapperUploadBtn) {
-  els.mapperUploadBtn.addEventListener('click', () => {
-    if (state.view !== 'mapper' || state.mapperEditMode) return;
     openMapperUploadPicker();
   });
 }
