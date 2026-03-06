@@ -915,6 +915,26 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-left: 9px solid var(--text);
   margin-left: 2px;
 }
+.gif-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 34px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  background: rgba(15, 17, 21, 0.78);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
 .uploader-badge {
   position: absolute;
   left: 8px;

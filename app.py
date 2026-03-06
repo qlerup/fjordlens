@@ -1264,6 +1264,72 @@ def _tus_store_meta(upload_id: str, meta: Dict[str, Any]) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
+def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> None:
+    """Create/update a lightweight photo row right after upload commit.
+
+    This lets the UI show newly uploaded files immediately (often as
+    'Ingen thumbnail') while background postprocess fills metadata/thumb.
+    """
+    rel = str(rel_path or "").strip()
+    if not rel:
+        return
+    try:
+        st = disk_path.stat()
+    except Exception:
+        return
+
+    ts_iso = datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+    payload = {
+        "rel_path": rel,
+        "filename": disk_path.name,
+        "ext": disk_path.suffix.lower(),
+        "file_size": int(st.st_size),
+        "created_fs": ts_iso,
+        "modified_fs": ts_iso,
+        "captured_at": ts_iso,
+        "ai_tags": json.dumps([], ensure_ascii=False),
+        "metadata_json": json.dumps({}, ensure_ascii=False),
+        "exif_json": json.dumps({}, ensure_ascii=False),
+        "uploaded_by": _sanitize_share_visitor_name(uploaded_by or "") or None,
+        "imported_at": now_iso(),
+        "last_scanned_at": now_iso(),
+    }
+
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                """
+                INSERT INTO photos (
+                    rel_path, filename, ext, file_size,
+                    created_fs, modified_fs, captured_at,
+                    ai_tags, metadata_json, exif_json,
+                    uploaded_by, imported_at, last_scanned_at
+                ) VALUES (
+                    :rel_path, :filename, :ext, :file_size,
+                    :created_fs, :modified_fs, :captured_at,
+                    :ai_tags, :metadata_json, :exif_json,
+                    :uploaded_by, :imported_at, :last_scanned_at
+                )
+                ON CONFLICT(rel_path) DO UPDATE SET
+                    filename=excluded.filename,
+                    ext=excluded.ext,
+                    file_size=excluded.file_size,
+                    modified_fs=excluded.modified_fs,
+                    created_fs=COALESCE(photos.created_fs, excluded.created_fs),
+                    captured_at=COALESCE(photos.captured_at, excluded.captured_at),
+                    uploaded_by=COALESCE(photos.uploaded_by, excluded.uploaded_by),
+                    last_scanned_at=excluded.last_scanned_at
+                """,
+                payload,
+            )
+            conn.commit()
+    except Exception as e:
+        try:
+            log_event("error", rel_path=rel, error=f"upload_stub_upsert: {e}")
+        except Exception:
+            pass
+
+
 def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source_path: Path, original_name: str, last_modified_ms: Optional[int], uploaded_by: str) -> Tuple[bool, str, Optional[str]]:
     name = secure_filename(original_name or "")
     if not name:
@@ -1294,6 +1360,9 @@ def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source
         _queue_uploaded_rel(uploaded_by, rel)
     except Exception as e:
         return (False, target.name, f"Queue fail: {target.name}: {e}")
+
+    # Make file visible in UI immediately; full metadata/thumb comes from postprocess.
+    _upsert_uploaded_stub(rel, target, uploaded_by)
     return (True, target.name, None)
 
 
@@ -2775,6 +2844,13 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     thumb_path = THUMB_DIR / thumb_name
     if thumb_path.exists() and not force:
         return thumb_name
+
+    # For animated GIFs we use the first frame for a deterministic thumbnail.
+    try:
+        if getattr(img, "is_animated", False):
+            img.seek(0)
+    except Exception:
+        pass
 
     thumb = img.convert("RGB").copy()
     try:

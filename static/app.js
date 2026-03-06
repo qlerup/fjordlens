@@ -1410,11 +1410,16 @@ function getSizeLabel(w, h) {
 }
 
 function cardHTML(item) {
+  const extRaw = String((item && (item.ext || item.filename || item.rel_path)) || '').toLowerCase();
+  const isGif = extRaw.endsWith('.gif');
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
-    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : escapeHtml(tr('no_thumb'))}</div>`;
+    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
+    : "";
+  const gifOverlay = (!item.is_video && isGif)
+    ? `<div class="gif-badge" aria-label="GIF" title="GIF">GIF</div>`
     : "";
   const uploadedByRaw = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
   const uploadedBy = uploadedByRaw ? escapeHtml(uploadedByRaw) : '';
@@ -1423,7 +1428,7 @@ function cardHTML(item) {
     : "";
 
   // Gridkort uden extra tekst/metadata – kun selve billedet
-  return `${thumb}${videoOverlay}${uploaderTag}`;
+  return `${thumb}${videoOverlay}${gifOverlay}${uploaderTag}`;
 }
 
 function renderGrid() {
@@ -2154,11 +2159,148 @@ let uploadWasStopped = false;
 let uploadTransferActive = false;
 let uploadLiveRefreshBusy = false;
 let uploadLiveRefreshAt = 0;
+let uploadImmediateRevealDone = false;
 let uploadQueuePumpRunning = false;
 let uploadBatchSeq = 0;
 let uploadSessionSavedTotal = 0;
 const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
+const UPLOAD_RESUME_DRAFT_KEY = 'fjordlens.upload.resumeDraft.v1';
+const UPLOAD_RESUME_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+
+function _uploadFileSignature(file) {
+  return [
+    String(file && file.name ? file.name : ''),
+    String(Number(file && file.size ? file.size : 0)),
+    String(Number(file && file.lastModified ? file.lastModified : 0)),
+  ].join('|');
+}
+
+function _normalizeUploadDraft(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const now = Date.now();
+  const createdAt = Number(raw.createdAt || 0);
+  const updatedAt = Number(raw.updatedAt || createdAt || now);
+  if (!createdAt || (now - updatedAt) > UPLOAD_RESUME_DRAFT_TTL_MS) return null;
+  const pending = Array.isArray(raw.pending)
+    ? raw.pending.map((v) => String(v || '').trim()).filter(Boolean)
+    : [];
+  if (!pending.length) return null;
+  return {
+    destination: String(raw.destination || ''),
+    subdir: String(raw.subdir || ''),
+    pending,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function _readUploadResumeDraft() {
+  try {
+    const raw = window.localStorage.getItem(UPLOAD_RESUME_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const normalized = _normalizeUploadDraft(parsed);
+    if (!normalized) {
+      window.localStorage.removeItem(UPLOAD_RESUME_DRAFT_KEY);
+      return null;
+    }
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function _writeUploadResumeDraft(draft) {
+  const normalized = _normalizeUploadDraft(draft);
+  if (!normalized) {
+    try { window.localStorage.removeItem(UPLOAD_RESUME_DRAFT_KEY); } catch {}
+    return;
+  }
+  try {
+    window.localStorage.setItem(UPLOAD_RESUME_DRAFT_KEY, JSON.stringify(normalized));
+  } catch {}
+}
+
+function _clearUploadResumeDraft() {
+  try { window.localStorage.removeItem(UPLOAD_RESUME_DRAFT_KEY); } catch {}
+}
+
+function _queueUploadDraftFiles(files, destination = '', subdir = '') {
+  const existing = _readUploadResumeDraft();
+  const sameTarget = !!existing
+    && String(existing.destination || '') === String(destination || '')
+    && String(existing.subdir || '') === String(subdir || '');
+  const pending = sameTarget ? Array.from(existing.pending || []) : [];
+  const set = new Set(pending);
+  for (const file of (files || [])) {
+    set.add(_uploadFileSignature(file));
+  }
+  _writeUploadResumeDraft({
+    destination: String(destination || ''),
+    subdir: String(subdir || ''),
+    pending: Array.from(set),
+    createdAt: sameTarget && existing ? Number(existing.createdAt || Date.now()) : Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+function _markUploadDraftFileDone(file) {
+  const draft = _readUploadResumeDraft();
+  if (!draft) return;
+  const sig = _uploadFileSignature(file);
+  const pending = (draft.pending || []).filter((v) => v !== sig);
+  if (!pending.length) {
+    _clearUploadResumeDraft();
+    return;
+  }
+  _writeUploadResumeDraft({
+    destination: draft.destination,
+    subdir: draft.subdir,
+    pending,
+    createdAt: Number(draft.createdAt || Date.now()),
+    updatedAt: Date.now(),
+  });
+}
+
+function _announceUploadResumeDraftIfNeeded() {
+  const draft = _readUploadResumeDraft();
+  if (!draft || !(draft.pending || []).length) return;
+  const pathTxt = String(draft.subdir || '').trim() || 'root';
+  showStatus(
+    `Upload kan genoptages: vælg de samme ${draft.pending.length} fil(er) igen (${pathTxt}) for at fortsætte via TUS.`,
+    'ok'
+  );
+}
+
+function _maybeAnnounceAutoResumeForBatch(files, destination = '', subdir = '') {
+  const draft = _readUploadResumeDraft();
+  if (!draft) return;
+  if (String(draft.destination || '') !== String(destination || '')) return;
+  if (String(draft.subdir || '') !== String(subdir || '')) return;
+  const pending = new Set((draft.pending || []).map((v) => String(v || '').trim()).filter(Boolean));
+  if (!pending.size) return;
+  let matched = 0;
+  for (const file of (files || [])) {
+    if (pending.has(_uploadFileSignature(file))) matched += 1;
+  }
+  if (matched > 0) {
+    showStatus(`Genoptager upload via TUS for ${matched} fil(er)…`, 'ok');
+  }
+}
+
+function shouldWarnOnPageLeaveDuringUpload() {
+  if (isUploadRunning() || uploadQueuePumpRunning) return true;
+  const draft = _readUploadResumeDraft();
+  return !!(draft && Array.isArray(draft.pending) && draft.pending.length > 0);
+}
+
+window.addEventListener('beforeunload', (event) => {
+  if (!shouldWarnOnPageLeaveDuringUpload()) return;
+  // Browsers ignore custom text, but setting returnValue triggers a confirmation dialog.
+  event.preventDefault();
+  event.returnValue = '';
+});
 
 async function maybeRefreshPhotosDuringPostprocess(force = false) {
   if (!(state.view === 'mapper' || state.view === 'timeline')) return;
@@ -2386,7 +2528,7 @@ function hasTusClient() {
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
   if (key === 'metadata') return 'Metadata';
-  if (key === 'thumbnails') return 'Metadata + thumbnails';
+  if (key === 'thumbnails') return 'Thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
   if (key === 'embeddings') return 'AI embeddings';
   if (key === 'starting') return 'Starter efterbehandling';
@@ -2457,6 +2599,76 @@ async function runUploadPostprocess(onProgress = null) {
   }
 
   throw new Error('Efterbehandling timeout');
+}
+
+let uploadPostprocessResumeActive = false;
+async function resumeUploadPostprocessAfterRefresh() {
+  if (uploadPostprocessResumeActive) return;
+  if (uploadQueuePumpRunning || isUploadRunning()) return;
+  uploadPostprocessResumeActive = true;
+  try {
+    const readStatus = async () => {
+      const res = await fetch('/api/upload/postprocess/status');
+      let data = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok || !data || !data.ok) return null;
+      return data;
+    };
+
+    let status = await readStatus();
+    if (!status) return;
+
+    // If a refresh happened before postprocess started, kick it off automatically.
+    if (!status.running && Number(status.pending || 0) > 0) {
+      try {
+        const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
+        let startData = {};
+        try { startData = await startRes.json(); } catch {}
+        if (!startRes.ok || !startData || !startData.ok) return;
+      } catch {
+        return;
+      }
+      status = await readStatus();
+      if (!status) return;
+    }
+
+    if (!status.running) return;
+
+    uploadUiState.collapsed = false;
+    showUploadMonitor();
+
+    while (status && status.running && !uploadQueuePumpRunning && !isUploadRunning()) {
+      const stageTotal = Number(status.stage_total || 0);
+      const stageProcessed = Number(status.stage_processed || 0);
+      if (stageTotal > 0) uploadUiState.totalFiles = Math.max(uploadUiState.totalFiles, stageTotal);
+      if (stageProcessed > 0) uploadUiState.processedFiles = Math.max(uploadUiState.processedFiles, stageProcessed);
+
+      uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
+      uploadUiState.currentFileName = shortRelName(status.current_rel) || 'Arbejder…';
+      uploadUiState.currentLoaded = stageProcessed;
+      uploadUiState.currentTotal = stageTotal;
+      renderUploadMonitor();
+
+      const phase = String(status.phase || '').toLowerCase();
+      if (phase === 'metadata' || phase === 'thumbnails') {
+        maybeRefreshPhotosDuringPostprocess(false);
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      status = await readStatus();
+    }
+
+    uploadUiState.currentFileName = '';
+    uploadUiState.currentPhaseLabel = '';
+    uploadUiState.currentLoaded = 0;
+    uploadUiState.currentTotal = 0;
+    renderUploadMonitor();
+
+    await maybeRefreshPhotosDuringPostprocess(true);
+    if (state.view === 'mapper') loadMapperTools();
+  } finally {
+    uploadPostprocessResumeActive = false;
+  }
 }
 
 function uploadSingleFileTus(file, options = {}, onProgress = null) {
@@ -2544,6 +2756,22 @@ function uploadSingleFileTus(file, options = {}, onProgress = null) {
   });
 }
 
+async function uploadSingleFileTusWithAutoResume(file, options = {}, onProgress = null, onAttempt = null) {
+  const maxAttempts = 3;
+  let last = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (typeof onAttempt === 'function') {
+      try { onAttempt(attempt, maxAttempts); } catch {}
+    }
+    const result = await uploadSingleFileTus(file, options, onProgress);
+    last = result;
+    if (!result || result.ok || result.aborted) return result;
+    if (attempt >= maxAttempts) break;
+    await new Promise((resolve) => window.setTimeout(resolve, 900 * attempt));
+  }
+  return last || { ok: false, saved: 0, errorMsg: 'Upload fejl' };
+}
+
 async function uploadFiles(fileList, options = {}) {
   ensureUploadOverlayRefs();
   ensureUploadMonitorRefs();
@@ -2553,12 +2781,16 @@ async function uploadFiles(fileList, options = {}) {
   const subdir = (options && Object.prototype.hasOwnProperty.call(options, 'subdir')) ? String(options.subdir || '') : null;
   const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
 
+  _maybeAnnounceAutoResumeForBatch(files, destination, subdir || '');
+  _queueUploadDraftFiles(files, destination, subdir || '');
+
   if (!uploadQueuePumpRunning && !isUploadRunning()) {
     resetUploadUiState();
     uploadStopRequested = false;
     uploadWasStopped = false;
     activeTusUpload = null;
     uploadSessionSavedTotal = 0;
+    uploadImmediateRevealDone = false;
     uploadUiState.collapsed = false;
     if (els.uploadMonitorList) els.uploadMonitorList.innerHTML = '';
 
@@ -2624,7 +2856,10 @@ async function uploadFiles(fileList, options = {}) {
               if (!hasTusClient()) {
                 throw new Error('TUS client mangler i browseren');
               }
-              const result = await uploadSingleFileTus(file, { destination: batch.destination, subdir: batch.subdir }, (loaded, total) => {
+              const result = await uploadSingleFileTusWithAutoResume(
+                file,
+                { destination: batch.destination, subdir: batch.subdir },
+                (loaded, total) => {
                 uploadUiState.currentLoaded = Number(loaded || 0);
                 uploadUiState.currentTotal = Number(total || file.size || 0);
                 const pct = Number(total || file.size || 0) > 0
@@ -2632,7 +2867,13 @@ async function uploadFiles(fileList, options = {}) {
                   : 0;
                 updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
                 renderUploadMonitor();
-              });
+                },
+                (attempt, maxAttempts) => {
+                  if (attempt <= 1) return;
+                  updateUploadMonitorItem(itemKey, null, `Genoptager upload… (${attempt}/${maxAttempts})`, null);
+                  renderUploadMonitor();
+                }
+              );
 
               if (result && result.aborted) {
                 updateUploadMonitorItem(itemKey, false, 'Stoppet', 0);
@@ -2649,7 +2890,15 @@ async function uploadFiles(fileList, options = {}) {
                 const saved = Number(result.saved || 0) || 1;
                 batchSaved += saved;
                 uploadSessionSavedTotal += saved;
+                _markUploadDraftFileDone(file);
                 updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
+                // Show the very first uploaded file immediately in the grid.
+                if (!uploadImmediateRevealDone) {
+                  uploadImmediateRevealDone = true;
+                  maybeRefreshPhotosDuringPostprocess(true);
+                } else {
+                  maybeRefreshPhotosDuringPostprocess(false);
+                }
               } else {
                 batchFailed += 1;
                 uploadUiState.failedFiles += 1;
@@ -2747,6 +2996,10 @@ async function uploadFiles(fileList, options = {}) {
         uploadStopRequested = false;
         uploadTransferActive = false;
         uploadQueuePumpRunning = false;
+        const draft = _readUploadResumeDraft();
+        if (draft && !(draft.pending || []).length) {
+          _clearUploadResumeDraft();
+        }
         if (uploadOverlayHideTimer) {
           window.clearTimeout(uploadOverlayHideTimer);
           uploadOverlayHideTimer = null;
@@ -5820,6 +6073,9 @@ setView(state.view, { syncUrl: false }).then(() => {
   }).catch(() => {});
   // logs always running
   startLogs();
+  _announceUploadResumeDraftIfNeeded();
+  // Resume upload postprocess monitor/state if page was refreshed mid-run.
+  resumeUploadPostprocessAfterRefresh().catch(() => {});
   // Safety: remove any stray backdrops/overlays that might block UI after reload
   try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}
