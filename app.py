@@ -1211,18 +1211,19 @@ def _postprocess_uploaded_rels(
     ai_desc_done = 0
     ai_desc_errors = 0
     if ai_desc_enabled:
+        desc_total = len(indexed_ok)
         _emit_progress({
             "phase": "descriptions",
             "current_rel": None,
             "stage_processed": 0,
-            "stage_total": len(indexed_ok),
+            "stage_total": desc_total,
         })
         for i, rel in enumerate(indexed_ok, start=1):
             _emit_progress({
                 "phase": "descriptions",
                 "current_rel": rel,
                 "stage_processed": i,
-                "stage_total": len(indexed_ok),
+                "stage_total": desc_total,
             })
             try:
                 _describe_uploaded_photo_if_needed(rel)
@@ -3295,7 +3296,16 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     }
     mj["image"] = {"width": metadata.get("width"), "height": metadata.get("height")}
     mj["exif"] = exif_map
-    mj["ai"] = {"tags": metadata["ai_tags"], "embedding": None, "faces": []}
+    # Add AI description tags and caption if present
+    ai_desc_tags = metadata.get("ai_desc_tags")
+    ai_desc_caption = metadata.get("ai_desc_caption")
+    mj["ai"] = {
+        "tags": metadata["ai_tags"],
+        "desc_tags": ai_desc_tags if ai_desc_tags is not None else [],
+        "desc_caption": ai_desc_caption if ai_desc_caption is not None else None,
+        "embedding": None,
+        "faces": []
+    }
     metadata["metadata_json"] = mj
     return metadata
 
