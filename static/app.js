@@ -29,6 +29,7 @@ const els = {
   mapperTools: document.getElementById("mapperTools"),
   mapperHeaderActions: document.getElementById("mapperHeaderActions"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
+  mapperUploadBtn: document.getElementById("mapperUploadBtn"),
   mapperUpBtn: document.getElementById("mapperUpBtn"),
   mapperSearchShell: document.getElementById("mapperSearchShell"),
   mapperSearchToggleBtn: document.getElementById("mapperSearchToggleBtn"),
@@ -2734,6 +2735,11 @@ function renderMapperContext(path = '') {
     els.mapperUpBtn.textContent = tr('mapper_up');
     els.mapperUpBtn.disabled = !p;
   }
+  if (els.mapperUploadBtn) {
+    els.mapperUploadBtn.textContent = tr('mapper_menu_upload');
+    els.mapperUploadBtn.disabled = !!state.mapperEditMode;
+    els.mapperUploadBtn.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
+  }
   if (els.mapperEditBtn) {
     els.mapperEditBtn.textContent = tr('mapper_edit');
     const mapperEditTitle = tr('mapper_edit_title');
@@ -4305,6 +4311,20 @@ function toggleMapperHeaderMenu() {
   else openMapperHeaderMenu();
 }
 
+function openMapperUploadPicker() {
+  if (!els.mapperUploadInput) return;
+  els.mapperUploadInput.value = '';
+  try {
+    if (typeof els.mapperUploadInput.showPicker === 'function') {
+      els.mapperUploadInput.showPicker();
+      return;
+    }
+    els.mapperUploadInput.click();
+  } catch {
+    showStatus(tr('file_picker_open_failed'), 'err');
+  }
+}
+
 function _syncSearchInputs(value, source = null) {
   const v = String(value || '');
   if (els.search && source !== 'top') els.search.value = v;
@@ -4429,13 +4449,13 @@ if (els.mapperHeaderCreateAction) {
 if (els.mapperHeaderUploadAction) {
   els.mapperHeaderUploadAction.addEventListener('click', () => {
     closeMapperHeaderMenu();
-    if (!els.mapperUploadInput) return;
-    els.mapperUploadInput.value = '';
-    try {
-      els.mapperUploadInput.click();
-    } catch {
-      showStatus(tr('file_picker_open_failed'), 'err');
-    }
+    openMapperUploadPicker();
+  });
+}
+if (els.mapperUploadBtn) {
+  els.mapperUploadBtn.addEventListener('click', () => {
+    if (state.view !== 'mapper' || state.mapperEditMode) return;
+    openMapperUploadPicker();
   });
 }
 if (els.mapperHeaderShareAction) {
