@@ -3052,13 +3052,9 @@ async function uploadFiles(fileList, options = {}) {
                 uploadSessionSavedTotal += saved;
                 _markUploadDraftFileDone(file);
                 updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
-                // Show the very first uploaded file immediately in the grid.
-                if (!uploadImmediateRevealDone) {
-                  uploadImmediateRevealDone = true;
-                  maybeRefreshPhotosDuringPostprocess(true);
-                } else {
-                  maybeRefreshPhotosDuringPostprocess(false);
-                }
+                // Do not refresh grid during raw upload; wait until metadata/thumbnails phase
+                // so the flow is strictly: upload -> metadata -> thumbnails -> faces/AI.
+                // Refreshes now happen from the postprocess progress callback below.
               } else {
                 batchFailed += 1;
                 uploadUiState.failedFiles += 1;
@@ -5051,6 +5047,29 @@ async function pollFacesStatus() {
       els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} · ${tr('status_processed_label')} ${processed}/${total}`;
     }
     if (s && s.running) {
+      // While faces are indexing, refresh People view incrementally when progress increases
+      try {
+        const source = (!s.running && s.last) ? s.last : s;
+        const processed = Number(source && source.processed) || 0;
+        const now = Date.now();
+        if (!Number.isNaN(processed)) {
+          const lastProc = Number(state._facesProcessed || 0);
+          const lastAt = Number(state._facesAutoRefreshAt || 0);
+          if (processed > lastProc && (now - lastAt) > 1200) {
+            state._facesProcessed = processed;
+            state._facesAutoRefreshAt = now;
+            if (state.view === 'personer') {
+              if (state.personView && state.personView.mode === 'photos' && state.personView.personId) {
+                // Refresh current person's photos if viewing a person
+                loadPersonPhotos(state.personView.personId, state.personView.personName);
+              } else {
+                // Refresh the People list so new thumbs appear without manual reload
+                loadPeople();
+              }
+            }
+          }
+        }
+      } catch {}
       setTimeout(pollFacesStatus, 1500);
     } else {
       // refresh lists when done
