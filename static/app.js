@@ -2454,6 +2454,9 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 async function maybeRefreshPhotosDuringPostprocess(force = false) {
+  // Do not refresh the grid during raw upload transfer to avoid showing
+  // any new/partial items before metadata/thumb phases begin.
+  if (!force && isUploadRunning()) return;
   if (!(state.view === 'mapper' || state.view === 'timeline')) return;
   if (uploadLiveRefreshBusy) return;
   const now = Date.now();

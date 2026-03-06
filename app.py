@@ -506,12 +506,12 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
             i += 1
 
 
-def index_faces_for_photo(rel_path: str) -> None:
+def index_faces_for_photo(rel_path: str) -> int:
     """Detect faces for a photo/video and store into DB; updates people_count."""
     try:
         disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
-            return
+            return 0
         log_event("faces_index_start", rel_path=rel_path)
         is_video = disk_path.suffix.lower() in VIDEO_EXTS
         if is_video:
@@ -523,7 +523,7 @@ def index_faces_for_photo(rel_path: str) -> None:
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
             if not row:
-                return
+                return 0
             photo_id = int(row["id"])
             # Clear previous faces for this photo (re-index)
             try:
@@ -587,8 +587,10 @@ def index_faces_for_photo(rel_path: str) -> None:
             except Exception:
                 pass
             log_event("faces_index_done", rel_path=rel_path, faces=count, matched=matched_existing, created=created_new)
+            return int(count)
     except Exception as e:
         log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {e}")
+        return 0
 
 
 # Zero-shot labels (initial simple vocabulary; can expand/customize later)
@@ -1157,6 +1159,7 @@ def _postprocess_uploaded_rels(
                 pass
 
     faces_done = 0
+    faces_found = 0
     faces_errors = 0
     if faces_enabled:
         _emit_progress({
@@ -1173,8 +1176,13 @@ def _postprocess_uploaded_rels(
                 "stage_total": len(indexed_ok),
             })
             try:
-                index_faces_for_photo(rel)
+                fc = index_faces_for_photo(rel)
                 faces_done += 1
+                try:
+                    if int(fc or 0) > 0:
+                        faces_found += 1
+                except Exception:
+                    pass
             except Exception as e:
                 faces_errors += 1
                 try:
@@ -1250,6 +1258,7 @@ def _postprocess_uploaded_rels(
         "thumb_errors": thumb_errors,
         "faces_enabled": faces_enabled,
         "faces_done": faces_done,
+        "faces_found": faces_found,
         "faces_errors": faces_errors,
         "ai_enabled": ai_enabled,
         "ai_done": ai_done,
@@ -1284,6 +1293,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "index_errors": 0,
         "faces_enabled": faces_auto_index_enabled(),
         "faces_done": 0,
+        "faces_found": 0,
         "faces_errors": 0,
         "ai_enabled": ai_auto_ingest_enabled(),
         "ai_done": 0,
@@ -1310,6 +1320,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             aggregate["indexed"] += int(result.get("indexed") or 0)
             aggregate["index_errors"] += int(result.get("index_errors") or 0)
             aggregate["faces_done"] += int(result.get("faces_done") or 0)
+            aggregate["faces_found"] += int(result.get("faces_found") or 0)
             aggregate["faces_errors"] += int(result.get("faces_errors") or 0)
             aggregate["ai_done"] += int(result.get("ai_done") or 0)
             aggregate["ai_errors"] += int(result.get("ai_errors") or 0)
@@ -1325,6 +1336,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                     user=user,
                     files=result.get("received"),
                     indexed=result.get("indexed"),
+                    faces_scanned=result.get("faces_done"),
+                    faces_found=result.get("faces_found"),
                     index_errors=result.get("index_errors"),
                     faces_done=result.get("faces_done"),
                     faces_errors=result.get("faces_errors"),
@@ -1351,6 +1364,23 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "stage_total": int(aggregate.get("received") or 0),
             },
         )
+        try:
+            log_event(
+                "upload_postprocess_summary_done",
+                user=user,
+                files=aggregate.get("received"),
+                indexed=aggregate.get("indexed"),
+                faces_scanned=aggregate.get("faces_done"),
+                faces_found=aggregate.get("faces_found"),
+                index_errors=aggregate.get("index_errors"),
+                faces_errors=aggregate.get("faces_errors"),
+                ai_done=aggregate.get("ai_done"),
+                ai_errors=aggregate.get("ai_errors"),
+                ai_desc_done=aggregate.get("ai_desc_done"),
+                ai_desc_errors=aggregate.get("ai_desc_errors"),
+            )
+        except Exception:
+            pass
     except Exception as e:
         _set_upload_postprocess_state(
             user,
