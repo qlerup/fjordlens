@@ -1490,6 +1490,18 @@ function appendPeopleInChunks(people, chunkSize = 48) {
   const pendingImgs = [];
   let imgLoading = false;
 
+  function _ensureImgStyles(img) {
+    try {
+      if (!img) return;
+      // Guarantee correct cover/crop immediately
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+      img.style.objectPosition = 'center center';
+      img.style.display = 'block';
+    } catch {}
+  }
+
   function loadNextImg() {
     if (!pendingImgs.length) { imgLoading = false; return; }
     imgLoading = true;
@@ -1509,6 +1521,9 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     img.addEventListener('abort', onerror, { once: true });
     // Defer a tiny bit to allow layout to settle
     (window.requestIdleCallback || window.requestAnimationFrame)(() => {
+      _ensureImgStyles(img);
+      // Force a reflow so object-fit takes effect immediately on some browsers
+      try { void img.offsetWidth; } catch {}
       img.setAttribute('src', src);
       img.removeAttribute('data-src');
     });
@@ -1528,7 +1543,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const card = document.createElement('article');
       card.className = 'photo-card';
       const imgHtml = p.thumb_url
-        ? `<img data-src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async">`
+        ? `<img data-src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
         : `<div class="card-thumb placeholder">🙂</div>`;
       card.innerHTML = `
         <div class="card-thumb">${imgHtml}</div>
@@ -2793,7 +2808,9 @@ async function resumeUploadPostprocessAfterRefresh() {
       renderUploadMonitor();
 
       const phase = String(status.phase || '').toLowerCase();
-      if (phase === 'metadata' || phase === 'thumbnails') {
+      if (phase === 'metadata' || phase === 'thumbnails' || phase === 'faces') {
+        // Refresh during 'faces' too to reveal any thumbnails that finished
+        // right at the phase boundary.
         maybeRefreshPhotosDuringPostprocess(false);
       }
 
@@ -3085,7 +3102,7 @@ async function uploadFiles(fileList, options = {}) {
               uploadUiState.currentFileName = n || 'Arbejder…';
               uploadUiState.currentLoaded = Number(status.stage_processed || 0);
               uploadUiState.currentTotal = Number(status.stage_total || 0);
-              if (String(status.phase || '').toLowerCase() === 'metadata' || String(status.phase || '').toLowerCase() === 'thumbnails') {
+              if (['metadata','thumbnails','faces'].includes(String(status.phase || '').toLowerCase())) {
                 maybeRefreshPhotosDuringPostprocess(false);
               }
               renderUploadMonitor();
