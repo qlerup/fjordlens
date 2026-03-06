@@ -1464,7 +1464,7 @@ function cardHTML(item) {
   const extRaw = String((item && (item.ext || item.filename || item.rel_path)) || '').toLowerCase();
   const isGif = extRaw.endsWith('.gif');
   const thumb = item.thumb_url
-    ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
+    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt=""></div>`
     : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
@@ -1480,6 +1480,55 @@ function cardHTML(item) {
 
   // Gridkort uden extra tekst/metadata – kun selve billedet
   return `${thumb}${videoOverlay}${gifOverlay}${uploaderTag}`;
+}
+
+// Render a large People list in small chunks to avoid UI jank/crashes
+function appendPeopleInChunks(people, chunkSize = 48) {
+  if (!els.grid) return;
+  let index = 0;
+  function step() {
+    const end = Math.min(index + chunkSize, people.length);
+    const frag = document.createDocumentFragment();
+    for (; index < end; index += 1) {
+      const p = people[index];
+      const card = document.createElement('article');
+      card.className = 'photo-card';
+      const imgHtml = p.thumb_url
+        ? `<img src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async">`
+        : `<div class="card-thumb placeholder">🙂</div>`;
+      card.innerHTML = `
+        <div class="card-thumb">${imgHtml}</div>
+        <div class="card-body">
+          <h4 class="card-title">${escapeHtml(p.name || tr('person_unknown'))}</h4>
+          <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
+          <div class="pills">${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
+          <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
+            <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
+            ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
+          </div>
+        </div>
+      `;
+      card.querySelectorAll('img').forEach((el) => { el.setAttribute('draggable', 'false'); });
+      card.addEventListener('click', (e)=>{
+        if (e.target && e.target.closest('[data-act]')) return;
+        if (p.id === 'unknown') loadPersonPhotos('unknown', tr('person_unknown'));
+        else loadPersonPhotos(p.id, p.name);
+      });
+      const renBtn = card.querySelector('[data-act="rename"]');
+      if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });
+      const hideBtn = card.querySelector('[data-act="hide"]');
+      if (hideBtn) hideBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); if (!confirm(tr('person_hide_confirm'))) return; try { const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })}); const d = await r.json(); if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; } showStatus(tr('person_hidden_ok'), 'ok'); loadPeople(); } catch { showStatus(tr('person_hide_error'), 'err'); } });
+      const unhideBtn = card.querySelector('[data-act="unhide"]');
+      if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); try { const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })}); const d = await r.json(); if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; } showStatus(tr('person_unhidden_ok'), 'ok'); loadPeople(); } catch { showStatus(tr('person_unhide_error'), 'err'); } });
+      frag.appendChild(card);
+    }
+    els.grid.appendChild(frag);
+    if (index < people.length) {
+      // Yield to browser to paint and handle input, then continue
+      (window.requestIdleCallback || window.requestAnimationFrame)(step);
+    }
+  }
+  step();
 }
 
 function renderGrid() {
@@ -1527,7 +1576,8 @@ function renderGrid() {
         return;
       }
       hideEmpty();
-      people.forEach(p => appendPersonCard(p));
+      // Render in chunks to avoid main-thread spikes when many people exist
+      appendPeopleInChunks(people);
       renderStats();
       return;
     } else if (state.personView.mode === 'photos') {
