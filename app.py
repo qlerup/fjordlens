@@ -52,6 +52,7 @@ AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
+AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
 UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
@@ -637,6 +638,79 @@ def _classify_labels(img_vec: list[float], top_k: int = 5, thr: float = 0.24) ->
         return []
 
 
+AI_DESC_PROMPTS: list[Dict[str, Any]] = [
+    {"prompt": "people swimming in water", "tags": ["personer", "svømning", "vand"]},
+    {"prompt": "a person swimming at the beach", "tags": ["personer", "svømning", "strand"]},
+    {"prompt": "a person running outdoors", "tags": ["personer", "løb", "udendørs"]},
+    {"prompt": "a person riding a bicycle", "tags": ["personer", "cykling"]},
+    {"prompt": "people hiking in nature", "tags": ["personer", "natur", "vandring"]},
+    {"prompt": "a family having dinner", "tags": ["familie", "mad"]},
+    {"prompt": "people on a beach", "tags": ["personer", "strand"]},
+    {"prompt": "a person in the sea", "tags": ["personer", "hav", "vand"]},
+    {"prompt": "an indoor photo", "tags": ["indendørs"]},
+    {"prompt": "an outdoor photo", "tags": ["udendørs"]},
+]
+_DESC_PROMPT_VECS: Optional[list[Tuple[str, list[str], list[float]]]] = None
+
+
+def _ensure_desc_prompt_vecs() -> list[Tuple[str, list[str], list[float]]]:
+    global _DESC_PROMPT_VECS
+    if _DESC_PROMPT_VECS is not None:
+        return _DESC_PROMPT_VECS
+    vecs: list[Tuple[str, list[str], list[float]]] = []
+    for item in AI_DESC_PROMPTS:
+        prompt = str(item.get("prompt") or "").strip()
+        tags = [str(t).strip().lower() for t in (item.get("tags") or []) if str(t).strip()]
+        if not prompt or not tags:
+            continue
+        v = _ai_embed_text(prompt)
+        if v:
+            vecs.append((prompt, tags, v))
+    _DESC_PROMPT_VECS = vecs
+    return vecs
+
+
+def _classify_descriptive_tags(img_vec: list[float], top_k: int = 6, thr: float = 0.235) -> list[str]:
+    try:
+        prompt_vecs = _ensure_desc_prompt_vecs()
+        if not prompt_vecs:
+            return []
+        scored: list[Tuple[float, list[str]]] = []
+        for _, tags, vec in prompt_vecs:
+            scored.append((_cosine(img_vec, vec), tags))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out: list[str] = []
+        seen: set[str] = set()
+        for score, tags in scored:
+            if score < thr:
+                continue
+            for tag in tags:
+                t = str(tag or "").strip().lower()
+                if not t or t in seen:
+                    continue
+                seen.add(t)
+                out.append(t)
+                if len(out) >= top_k:
+                    return out
+        return out
+    except Exception:
+        return []
+
+
+def _build_desc_caption(tags: list[str]) -> Optional[str]:
+    vals = [str(t or "").strip().lower() for t in (tags or []) if str(t or "").strip()]
+    if not vals:
+        return None
+    s = set(vals)
+    if "personer" in s and "svømning" in s:
+        if "strand" in s:
+            return "personer der svømmer på stranden"
+        if "hav" in s:
+            return "personer der svømmer i havet"
+        return "personer der svømmer"
+    return ", ".join(vals[:4])
+
+
 # --- 2FA trust helpers ---
 def _ua_fingerprint() -> str:
     ua = (request.headers.get("User-Agent") or "").encode("utf-8", errors="ignore")
@@ -792,6 +866,56 @@ def _is_upload_postprocess_running(uploaded_by: str) -> bool:
         return bool(st.get("running"))
 
 
+def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
+    """Start per-user upload postprocess worker if it is not already running."""
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_POSTPROCESS_LOCK:
+        st = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
+        if bool(st.get("running")):
+            return False
+        st.update(
+            {
+                "running": True,
+                "started_at": now_iso(),
+                "finished_at": None,
+                "error": None,
+                "result": None,
+                "phase": "starting",
+                "current_rel": None,
+                "stage_processed": 0,
+                "stage_total": 0,
+            }
+        )
+        UPLOAD_POSTPROCESS_BY_USER[user] = st
+
+    rels = _pop_uploaded_rels(user)
+    if not rels:
+        _set_upload_postprocess_state(
+            user,
+            {
+                "running": False,
+                "phase": "idle",
+                "finished_at": now_iso(),
+            },
+        )
+        return False
+
+    try:
+        threading.Thread(target=_upload_postprocess_worker, args=(user, rels), daemon=True).start()
+        return True
+    except Exception as e:
+        _set_upload_postprocess_state(
+            user,
+            {
+                "running": False,
+                "phase": "error",
+                "error": f"Unable to start postprocess worker: {e}",
+                "finished_at": now_iso(),
+            },
+        )
+        return False
+
+
 def _set_upload_postprocess_state(uploaded_by: str, patch: Dict[str, Any]) -> None:
     user = str(uploaded_by or "").strip() or "__unknown__"
     with UPLOAD_POSTPROCESS_LOCK:
@@ -939,6 +1063,7 @@ def _postprocess_uploaded_rels(
 
     faces_enabled = faces_auto_index_enabled()
     ai_enabled = ai_auto_ingest_enabled()
+    ai_desc_enabled = ai_desc_auto_ingest_enabled()
 
     def _emit_progress(payload: Dict[str, Any]) -> None:
         if not progress_cb:
@@ -1083,6 +1208,32 @@ def _postprocess_uploaded_rels(
                 except Exception:
                     pass
 
+    ai_desc_done = 0
+    ai_desc_errors = 0
+    if ai_desc_enabled:
+        _emit_progress({
+            "phase": "descriptions",
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": len(indexed_ok),
+        })
+        for i, rel in enumerate(indexed_ok, start=1):
+            _emit_progress({
+                "phase": "descriptions",
+                "current_rel": rel,
+                "stage_processed": i,
+                "stage_total": len(indexed_ok),
+            })
+            try:
+                _describe_uploaded_photo_if_needed(rel)
+                ai_desc_done += 1
+            except Exception as e:
+                ai_desc_errors += 1
+                try:
+                    log_event("error", rel_path=rel, error=f"postprocess_ai_desc: {e}")
+                except Exception:
+                    pass
+
     _emit_progress({
         "phase": "done",
         "current_rel": None,
@@ -1102,6 +1253,9 @@ def _postprocess_uploaded_rels(
         "ai_enabled": ai_enabled,
         "ai_done": ai_done,
         "ai_errors": ai_errors,
+        "ai_desc_enabled": ai_desc_enabled,
+        "ai_desc_done": ai_desc_done,
+        "ai_desc_errors": ai_desc_errors,
     }
 
 
@@ -1133,6 +1287,9 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "ai_enabled": ai_auto_ingest_enabled(),
         "ai_done": 0,
         "ai_errors": 0,
+        "ai_desc_enabled": ai_desc_auto_ingest_enabled(),
+        "ai_desc_done": 0,
+        "ai_desc_errors": 0,
     }
 
     batch = list(initial_rels or [])
@@ -1155,8 +1312,11 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             aggregate["faces_errors"] += int(result.get("faces_errors") or 0)
             aggregate["ai_done"] += int(result.get("ai_done") or 0)
             aggregate["ai_errors"] += int(result.get("ai_errors") or 0)
+            aggregate["ai_desc_done"] += int(result.get("ai_desc_done") or 0)
+            aggregate["ai_desc_errors"] += int(result.get("ai_desc_errors") or 0)
             aggregate["faces_enabled"] = bool(result.get("faces_enabled"))
             aggregate["ai_enabled"] = bool(result.get("ai_enabled"))
+            aggregate["ai_desc_enabled"] = bool(result.get("ai_desc_enabled"))
 
             try:
                 log_event(
@@ -1169,6 +1329,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                     faces_errors=result.get("faces_errors"),
                     ai_done=result.get("ai_done"),
                     ai_errors=result.get("ai_errors"),
+                    ai_desc_done=result.get("ai_desc_done"),
+                    ai_desc_errors=result.get("ai_desc_errors"),
                 )
             except Exception:
                 pass
@@ -1361,6 +1523,15 @@ def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source
     except Exception as e:
         return (False, target.name, f"Queue fail: {target.name}: {e}")
 
+    # Ensure postprocess runs in the container even if the browser refreshes/closes.
+    try:
+        _ensure_upload_postprocess_running(uploaded_by)
+    except Exception as e:
+        try:
+            log_event("error", rel_path=rel, error=f"postprocess_autostart: {e}")
+        except Exception:
+            pass
+
     # Make file visible in UI immediately; full metadata/thumb comes from postprocess.
     _upsert_uploaded_stub(rel, target, uploaded_by)
     return (True, target.name, None)
@@ -1406,6 +1577,8 @@ def init_db() -> None:
                 favorite INTEGER DEFAULT 0,
                 people_count INTEGER DEFAULT 0,
                 ai_tags TEXT,
+                ai_desc_tags TEXT,
+                ai_desc_caption TEXT,
                 embedding_json TEXT,
                 metadata_json TEXT,
                 exif_json TEXT,
@@ -1590,6 +1763,14 @@ def init_db() -> None:
         except Exception:
             pass
         try:
+            conn.execute("ALTER TABLE photos ADD COLUMN ai_desc_tags TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN ai_desc_caption TEXT")
+        except Exception:
+            pass
+        try:
             conn.execute("ALTER TABLE share_links ADD COLUMN require_visitor_name INTEGER DEFAULT 0")
         except Exception:
             pass
@@ -1692,6 +1873,9 @@ def init_db() -> None:
             row2 = conn.execute("SELECT value FROM settings WHERE key='ai_auto_ingest'").fetchone()
             if not row2:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_auto_ingest", "1" if AI_ENV_AUTO_INGEST_DEFAULT else "0"))
+            row2a = conn.execute("SELECT value FROM settings WHERE key='ai_desc_auto_ingest'").fetchone()
+            if not row2a:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_auto_ingest", "1" if AI_DESC_ENV_AUTO_INGEST_DEFAULT else "0"))
             row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
             if not row2b:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
@@ -2030,6 +2214,10 @@ def ai_feature_enabled() -> bool:
 
 def ai_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_auto_ingest", AI_ENV_AUTO_INGEST_DEFAULT)
+
+
+def ai_desc_auto_ingest_enabled() -> bool:
+    return _get_setting_bool("ai_desc_auto_ingest", AI_DESC_ENV_AUTO_INGEST_DEFAULT)
 
 
 def faces_auto_index_enabled() -> bool:
@@ -3569,14 +3757,18 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
 
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
-    for key in ("ai_tags", "embedding_json", "metadata_json", "exif_json"):
+    for key in ("ai_tags", "ai_desc_tags", "embedding_json", "metadata_json", "exif_json"):
         if d.get(key):
             try:
                 d[key] = json.loads(d[key])
             except Exception:
                 pass
         else:
-            d[key] = [] if key == "ai_tags" else None
+            d[key] = [] if key in {"ai_tags", "ai_desc_tags"} else None
+    if d.get("ai_desc_caption"):
+        d["ai_desc_caption"] = str(d.get("ai_desc_caption") or "").strip()
+    else:
+        d["ai_desc_caption"] = None
     d["favorite"] = bool(d.get("favorite", 0))
     if d.get("thumb_name"):
         d["thumb_url"] = f"/api/thumbs/{d['thumb_name']}"
@@ -3858,13 +4050,19 @@ def api_face_thumb(face_id: int):
             resp.headers["Cache-Control"] = "no-store"
             return resp
 
-        # Last resort: build synchronously if no fallback thumb exists.
-        _build_face_thumb(face_id)
-        if out_path.exists():
-            resp = send_from_directory(str(THUMB_DIR), out_name)
-            resp.headers["Cache-Control"] = "no-store"
-            return resp
-        return ("Not found", 404)
+        # Never build synchronously here: many concurrent requests can spike memory/CPU.
+        # Background worker will create the face thumb; until then return a tiny placeholder.
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+            "<rect width='64' height='64' fill='#1a2233'/>"
+            "<circle cx='32' cy='24' r='12' fill='#8aa0c8'/>"
+            "<rect x='14' y='40' width='36' height='16' rx='8' fill='#8aa0c8'/>"
+            "</svg>"
+        )
+        resp = make_response(svg, 200)
+        resp.headers["Content-Type"] = "image/svg+xml"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     except Exception as e:
         return (str(e), 500)
 
@@ -4043,6 +4241,7 @@ QUERY_STOPWORDS_EN = {
 
 
 DANISH_SYNONYM_GROUPS = [
+    {"person", "personer", "menneske", "mennesker", "people", "man", "woman", "child", "barn"},
     {"strand", "beach", "hav", "kyst"},
     {"hav", "sea", "ocean", "strand", "kyst"},
     {"skov", "forest", "woods"},
@@ -4050,6 +4249,8 @@ DANISH_SYNONYM_GROUPS = [
     {"solnedgang", "sunset", "aftenhimmel"},
     {"kamera", "camera"},
     {"familie", "family", "jul", "middag"},
+    {"løber", "løb", "loeb", "running", "runner", "jogging"},
+    {"cykler", "cykle", "cykel", "cycling", "bicycle", "bike"},
     {
         "svømmer", "svøm", "svømme", "svømning", "bader", "bade", "badning",
         "svommer", "svoemmer", "swim", "swimming", "bathing",
@@ -4108,6 +4309,8 @@ def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT
         str(photo.get("lens_model") or "").lower(),
         str(photo.get("gps_name") or "").lower(),
         " ".join((photo.get("ai_tags") or [])).lower(),
+        " ".join((photo.get("ai_desc_tags") or [])).lower(),
+        str(photo.get("ai_desc_caption") or "").lower(),
         str(photo.get("people_names") or "").lower(),
         str(photo.get("captured_at") or "").lower(),
         str(photo.get("metadata_json") or "").lower(),
@@ -4890,6 +5093,10 @@ ai_thread = None
 ai_running = False
 ai_counts: Dict[str, int] = {"embedded": 0, "failed": 0, "total": 0}
 last_ai_result: Optional[Dict[str, Any]] = None
+ai_desc_thread = None
+ai_desc_running = False
+ai_desc_counts: Dict[str, int] = {"described": 0, "failed": 0, "total": 0}
+last_ai_desc_result: Optional[Dict[str, Any]] = None
 
 
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
@@ -4977,6 +5184,91 @@ def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
         log_event("ai_embed_fail", rel_path=rel_path, source="upload", error=str(e))
 
 
+def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
+    emb = None
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT embedding_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if row and row["embedding_json"]:
+        try:
+            emb = json.loads(row["embedding_json"])
+        except Exception:
+            emb = None
+
+    if not emb:
+        if not _embed_one_photo(photo_id, rel_path):
+            return False
+        with closing(get_conn()) as conn:
+            row2 = conn.execute("SELECT embedding_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+        if row2 and row2["embedding_json"]:
+            try:
+                emb = json.loads(row2["embedding_json"])
+            except Exception:
+                emb = None
+    if not emb:
+        return False
+
+    tags = _classify_descriptive_tags(emb)
+    caption = _build_desc_caption(tags)
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE photos SET ai_desc_tags=?, ai_desc_caption=? WHERE id=?",
+            (json.dumps(tags or [], ensure_ascii=False), caption, photo_id),
+        )
+        conn.commit()
+    return True
+
+
+def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
+    global ai_desc_running, ai_desc_counts, last_ai_desc_result
+    ai_desc_running = True
+    ai_desc_counts = {"described": 0, "failed": 0, "total": 0}
+    log_event("ai_desc_start")
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT id, rel_path FROM photos WHERE (ai_desc_tags IS NULL OR ai_desc_tags = '')"
+        ).fetchall()
+    for row in rows:
+        if stop_event and stop_event.is_set():
+            break
+        pid = int(row["id"])
+        rel = row["rel_path"]
+        ai_desc_counts["total"] += 1
+        try:
+            if _describe_one_photo(pid, rel):
+                ai_desc_counts["described"] += 1
+                log_event("ai_desc_ok", rel_path=rel)
+            else:
+                ai_desc_counts["failed"] += 1
+                log_event("ai_desc_fail", rel_path=rel)
+        except Exception:
+            ai_desc_counts["failed"] += 1
+            log_event("ai_desc_fail", rel_path=rel)
+        ai_delay = ai_ingest_throttle_enabled_sec()
+        if ai_delay > 0:
+            time.sleep(ai_delay)
+    ai_desc_running = False
+    last_ai_desc_result = {"ok": True, **ai_desc_counts}
+    log_event("ai_desc_done", **ai_desc_counts)
+    return last_ai_desc_result
+
+
+def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, ai_desc_tags FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+        if not row:
+            return
+        if row["ai_desc_tags"] is not None and str(row["ai_desc_tags"]).strip() != "":
+            return
+        pid = int(row["id"])
+        if _describe_one_photo(pid, rel_path):
+            log_event("ai_desc_ok", rel_path=rel_path, source="upload")
+        else:
+            log_event("ai_desc_fail", rel_path=rel_path, source="upload")
+    except Exception as e:
+        log_event("ai_desc_fail", rel_path=rel_path, source="upload", error=str(e))
+
+
 @app.route("/api/ai/ingest", methods=["POST"])
 def api_ai_ingest():
     global ai_thread
@@ -5008,6 +5300,47 @@ def api_ai_status():
     resp: Dict[str, Any] = {"ok": True, "running": ai_running, "auto_ingest": ai_auto_ingest_enabled(), **ai_counts}
     if not ai_running and last_ai_result:
         resp["last"] = last_ai_result
+    return jsonify(resp)
+
+
+@app.route("/api/ai/describe/ingest", methods=["POST"])
+def api_ai_describe_ingest():
+    global ai_desc_thread
+    if ai_desc_thread and ai_desc_thread.is_alive():
+        return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
+    scope = (request.args.get("scope") or "").strip().lower()
+    _set_setting("ai_desc_auto_ingest", "1")
+    if scope == "new":
+        return jsonify({"ok": True, "started": False, "running": False, "auto_ingest": True, "scope": "new"})
+    scan_stop_event.clear()
+
+    def run():
+        _describe_missing_photos(stop_event=scan_stop_event)
+
+    ai_desc_thread = threading.Thread(target=run, daemon=True)
+    ai_desc_thread.start()
+    return jsonify({"ok": True, "started": True, "auto_ingest": True, "scope": (scope or "all")})
+
+
+@app.route("/api/ai/describe/stop", methods=["POST"])
+def api_ai_describe_stop():
+    _set_setting("ai_desc_auto_ingest", "0")
+    if not ai_desc_running:
+        return jsonify({"ok": True, "running": False, "auto_ingest": False})
+    scan_stop_event.set()
+    return jsonify({"ok": True, "running": True, "stopping": True, "auto_ingest": False})
+
+
+@app.route("/api/ai/describe/status")
+def api_ai_describe_status():
+    resp: Dict[str, Any] = {
+        "ok": True,
+        "running": ai_desc_running,
+        "auto_ingest": ai_desc_auto_ingest_enabled(),
+        **ai_desc_counts,
+    }
+    if not ai_desc_running and last_ai_desc_result:
+        resp["last"] = last_ai_desc_result
     return jsonify(resp)
 
 
@@ -5936,6 +6269,14 @@ def api_upload():
                     except Exception as e:
                         try: log_event("error", rel_path=rel, error=f"ai_embed_queue: {e}")
                         except Exception: pass
+                if ai_desc_auto_ingest_enabled():
+                    try:
+                        threading.Thread(target=_describe_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
+                        try: log_event("ai_desc_queued", rel_path=rel)
+                        except Exception: pass
+                    except Exception as e:
+                        try: log_event("error", rel_path=rel, error=f"ai_desc_queue: {e}")
+                        except Exception: pass
                 if faces_auto_index_enabled():
                     try:
                         threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
@@ -5979,7 +6320,7 @@ def api_upload_postprocess():
             with UPLOAD_PENDING_LOCK:
                 pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
             return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "result": state.get("result"), "error": state.get("error")})
-        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "result": {"ok": True, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0}})
+        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "result": {"ok": True, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:

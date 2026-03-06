@@ -13,6 +13,11 @@ const els = {
   aiPanelTitle: document.getElementById("aiPanelTitle"),
   aiEmbedTitle: document.getElementById("aiEmbedTitle"),
   aiEmbedDesc: document.getElementById("aiEmbedDesc"),
+  aiDescTitle: document.getElementById("aiDescTitle"),
+  aiDescDesc: document.getElementById("aiDescDesc"),
+  aiDescribeToggle: document.getElementById("aiDescribeToggle"),
+  aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
+  aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiFacesTitle: document.getElementById("aiFacesTitle"),
   aiFacesDesc: document.getElementById("aiFacesDesc"),
   aiStatus: document.getElementById("aiStatus"),
@@ -328,6 +333,8 @@ const I18N = {
     ai_panel_title: 'AI',
     ai_embed_title: 'AI-embeddings',
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
+    ai_desc_title: 'AI beskrivelser',
+    ai_desc_desc: 'Finder handlinger/scener (fx personer der svømmer) til bedre søgning.',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
@@ -380,12 +387,16 @@ const I18N = {
     btn_reset_index: 'Nulstil indeks',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
+    btn_start_ai_desc: 'Start beskrivelser',
+    btn_stop_ai_desc: 'Stop beskrivelser',
     btn_start_faces: 'Start ansigter',
     btn_stop_faces: 'Stop ansigter',
     btn_index_faces: 'Indekser ansigter',
     status_faces_prefix: 'Ansigter',
     status_ai_prefix: 'AI',
+    status_ai_desc_prefix: 'Beskrivelser',
     status_embedded_label: 'embedded',
+    status_described_label: 'beskrevet',
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
     status_running: 'kører',
@@ -469,6 +480,7 @@ const I18N = {
     scan_modal_cancel: 'Annuller',
     scan_modal_start: 'Start scan',
     ai_scope_title_ai: 'Start AI-embeddings',
+    ai_scope_title_desc: 'Start AI beskrivelser',
     ai_scope_title_faces: 'Start ansigtsindeksering',
     ai_scope_text: 'Vil du køre på alle eksisterende filer, eller kun på nye uploads fremover?',
     ai_scope_all: 'Alle eksisterende',
@@ -606,6 +618,14 @@ const I18N = {
     ai_stop_failed: 'Kunne ikke stoppe AI-indeksering.',
     ai_stopped: 'AI-indeksering stoppet.',
     ai_stop_error: 'Fejl ved stop af AI-indeksering.',
+    ai_desc_starting: 'Starter AI-beskrivelser…',
+    ai_desc_start_failed: 'Kunne ikke starte AI-beskrivelser.',
+    ai_desc_enabled_new_uploads: 'AI-beskrivelser aktiveret for nye uploads fremover.',
+    ai_desc_started_bg: 'AI-beskrivelser er startet i baggrunden.',
+    ai_desc_start_error: 'Fejl ved start af AI-beskrivelser.',
+    ai_desc_stop_failed: 'Kunne ikke stoppe AI-beskrivelser.',
+    ai_desc_stopped: 'AI-beskrivelser stoppet.',
+    ai_desc_stop_error: 'Fejl ved stop af AI-beskrivelser.',
     faces_starting: 'Starter ansigtsindeksering…',
     faces_start_failed: 'Kunne ikke starte ansigtsindeksering',
     faces_enabled_new_uploads: 'Ansigtsindeksering aktiveret for nye uploads fremover.',
@@ -683,6 +703,8 @@ const I18N = {
     ai_panel_title: 'AI',
     ai_embed_title: 'AI embeddings',
     ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
+    ai_desc_title: 'AI descriptions',
+    ai_desc_desc: 'Finds actions/scenes (for example people swimming) for better search.',
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
     dns_title: 'DNS',
@@ -735,12 +757,16 @@ const I18N = {
     btn_reset_index: 'Reset index',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
+    btn_start_ai_desc: 'Start descriptions',
+    btn_stop_ai_desc: 'Stop descriptions',
     btn_start_faces: 'Start faces',
     btn_stop_faces: 'Stop faces',
     btn_index_faces: 'Index faces',
     status_faces_prefix: 'Faces',
     status_ai_prefix: 'AI',
+    status_ai_desc_prefix: 'Descriptions',
     status_embedded_label: 'embedded',
+    status_described_label: 'described',
     status_processed_label: 'processed',
     status_stopped: 'stopped',
     status_running: 'running',
@@ -824,6 +850,7 @@ const I18N = {
     scan_modal_cancel: 'Cancel',
     scan_modal_start: 'Start scan',
     ai_scope_title_ai: 'Start AI embeddings',
+    ai_scope_title_desc: 'Start AI descriptions',
     ai_scope_title_faces: 'Start face indexing',
     ai_scope_text: 'Do you want to run on all existing files, or only on new uploads from now on?',
     ai_scope_all: 'All existing',
@@ -961,6 +988,14 @@ const I18N = {
     ai_stop_failed: 'Could not stop AI indexing.',
     ai_stopped: 'AI indexing stopped.',
     ai_stop_error: 'Error while stopping AI indexing.',
+    ai_desc_starting: 'Starting AI descriptions…',
+    ai_desc_start_failed: 'Could not start AI descriptions.',
+    ai_desc_enabled_new_uploads: 'AI descriptions enabled for new uploads from now on.',
+    ai_desc_started_bg: 'AI descriptions started in the background.',
+    ai_desc_start_error: 'Error while starting AI descriptions.',
+    ai_desc_stop_failed: 'Could not stop AI descriptions.',
+    ai_desc_stopped: 'AI descriptions stopped.',
+    ai_desc_stop_error: 'Error while stopping AI descriptions.',
     faces_starting: 'Starting face indexing…',
     faces_start_failed: 'Could not start face indexing',
     faces_enabled_new_uploads: 'Face indexing enabled for new uploads from now on.',
@@ -1001,6 +1036,15 @@ function updateAiToggleButton() {
   els.aiIngestToggle.checked = enabled;
   if (els.aiIngestToggleText) {
     els.aiIngestToggleText.textContent = enabled ? tr('btn_stop_ai') : tr('btn_start_ai');
+  }
+}
+
+function updateAiDescribeToggleButton() {
+  if (!els.aiDescribeToggle) return;
+  const enabled = !!state.aiDescribeAutoEnabled || !!state.aiDescribeRunning;
+  els.aiDescribeToggle.checked = enabled;
+  if (els.aiDescribeToggleText) {
+    els.aiDescribeToggleText.textContent = enabled ? tr('btn_stop_ai_desc') : tr('btn_start_ai_desc');
   }
 }
 
@@ -1056,6 +1100,8 @@ let state = {
   searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
   aiRunning: false,
   aiAutoEnabled: false,
+  aiDescribeRunning: false,
+  aiDescribeAutoEnabled: false,
   facesRunning: false,
   facesAutoEnabled: false,
   aiScopePendingFeature: null,
@@ -1386,7 +1432,12 @@ function setDetail(item) {
   } else {
     els.detailGps.textContent = item.gps_name || "-";
   }
-  els.detailAiTags.textContent = (item.ai_tags && item.ai_tags.length) ? item.ai_tags.join(", ") : "-";
+  const allAiTags = [
+    ...((item.ai_tags && item.ai_tags.length) ? item.ai_tags : []),
+    ...((item.ai_desc_tags && item.ai_desc_tags.length) ? item.ai_desc_tags : []),
+  ];
+  const dedupAiTags = Array.from(new Set(allAiTags.map((t) => String(t || '').trim()).filter(Boolean)));
+  els.detailAiTags.textContent = dedupAiTags.length ? dedupAiTags.join(", ") : "-";
   const geo = (item.metadata_json && item.metadata_json.geo) ? item.metadata_json.geo : {};
   els.detailCountry.textContent = geo.country || "-";
   els.detailCity.textContent = geo.city || "-";
@@ -1853,7 +1904,7 @@ function openPersonRenameMenu(anchorBtn, person) {
 function appendPersonCard(p) {
   const card = document.createElement('article');
   card.className = 'photo-card';
-  const img = p.thumb_url ? `<img src="${p.thumb_url}" alt="${p.name}">` : `<div class="card-thumb placeholder">🙂</div>`;
+  const img = p.thumb_url ? `<img src="${p.thumb_url}" alt="${p.name}" loading="lazy" decoding="async">` : `<div class="card-thumb placeholder">🙂</div>`;
   card.innerHTML = `
     <div class="card-thumb">${img}</div>
     <div class="card-body">
@@ -2531,6 +2582,7 @@ function postprocessPhaseLabel(phase) {
   if (key === 'thumbnails') return 'Thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
   if (key === 'embeddings') return 'AI embeddings';
+  if (key === 'descriptions') return 'AI beskrivelser';
   if (key === 'starting') return 'Starter efterbehandling';
   if (key === 'done') return 'Efterbehandling færdig';
   if (key === 'error') return 'Efterbehandling fejl';
@@ -2565,6 +2617,9 @@ async function runUploadPostprocess(onProgress = null) {
       ai_enabled: false,
       ai_done: 0,
       ai_errors: 0,
+      ai_desc_enabled: false,
+      ai_desc_done: 0,
+      ai_desc_errors: 0,
     };
   }
 
@@ -2594,6 +2649,9 @@ async function runUploadPostprocess(onProgress = null) {
         ai_enabled: false,
         ai_done: 0,
         ai_errors: 0,
+        ai_desc_enabled: false,
+        ai_desc_done: 0,
+        ai_desc_errors: 0,
       };
     }
   }
@@ -2972,10 +3030,11 @@ async function uploadFiles(fileList, options = {}) {
             `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
             `ansigter: ${Number(post.faces_done || 0)}${Number(post.faces_errors || 0) ? ` (fejl: ${Number(post.faces_errors || 0)})` : ''}`,
             `embeddings: ${Number(post.ai_done || 0)}${Number(post.ai_errors || 0) ? ` (fejl: ${Number(post.ai_errors || 0)})` : ''}`,
+            `beskrivelser: ${Number(post.ai_desc_done || 0)}${Number(post.ai_desc_errors || 0) ? ` (fejl: ${Number(post.ai_desc_errors || 0)})` : ''}`,
           ];
           showStatus(
             `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.join(' · ')}`,
-            (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0)) ? 'err' : 'ok'
+            (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0) || Number(post.ai_desc_errors || 0)) ? 'err' : 'ok'
           );
         } else {
           showStatus(
@@ -4240,6 +4299,8 @@ function applyUiLanguage() {
   if (els.aiPanelTitle) els.aiPanelTitle.textContent = tr('ai_panel_title');
   if (els.aiEmbedTitle) els.aiEmbedTitle.textContent = tr('ai_embed_title');
   if (els.aiEmbedDesc) els.aiEmbedDesc.textContent = tr('ai_embed_desc');
+  if (els.aiDescTitle) els.aiDescTitle.textContent = tr('ai_desc_title');
+  if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
   if (els.dnsPanelTitle) els.dnsPanelTitle.textContent = tr('dns_title');
@@ -4256,6 +4317,7 @@ function applyUiLanguage() {
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
   updateAiToggleButton();
+  updateAiDescribeToggleButton();
   updateFacesToggleButton();
 
   const logsLabel = document.querySelector('#logsPanel strong');
@@ -4320,7 +4382,9 @@ function applyUiLanguage() {
   if (els.aiScopeModalAll) els.aiScopeModalAll.textContent = tr('ai_scope_all');
   if (els.aiScopeModalTitle) {
     const feature = state.aiScopePendingFeature;
-    els.aiScopeModalTitle.textContent = feature === 'faces' ? tr('ai_scope_title_faces') : tr('ai_scope_title_ai');
+    if (feature === 'faces') els.aiScopeModalTitle.textContent = tr('ai_scope_title_faces');
+    else if (feature === 'describe') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc');
+    else els.aiScopeModalTitle.textContent = tr('ai_scope_title_ai');
   }
 
   const labels = navLabels();
@@ -4564,9 +4628,11 @@ function closeScanModal() {
 }
 
 function openAiScopeModal(feature) {
-  state.aiScopePendingFeature = feature === 'faces' ? 'faces' : 'ai';
+  state.aiScopePendingFeature = feature === 'faces' ? 'faces' : (feature === 'describe' ? 'describe' : 'ai');
   if (els.aiScopeModalTitle) {
-    els.aiScopeModalTitle.textContent = state.aiScopePendingFeature === 'faces' ? tr('ai_scope_title_faces') : tr('ai_scope_title_ai');
+    if (state.aiScopePendingFeature === 'faces') els.aiScopeModalTitle.textContent = tr('ai_scope_title_faces');
+    else if (state.aiScopePendingFeature === 'describe') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc');
+    else els.aiScopeModalTitle.textContent = tr('ai_scope_title_ai');
   }
   if (els.aiScopeModalText) els.aiScopeModalText.textContent = tr('ai_scope_text');
   if (els.aiScopeModalNew) els.aiScopeModalNew.textContent = tr('ai_scope_new');
@@ -4580,6 +4646,7 @@ function closeAiScopeModal() {
   if (els.aiScopeModal) els.aiScopeModal.classList.add('hidden');
   state.aiScopePendingFeature = null;
   updateAiToggleButton();
+  updateAiDescribeToggleButton();
   updateFacesToggleButton();
 }
 
@@ -4808,12 +4875,62 @@ async function stopAiIngest() {
   }
 }
 
+async function startAiDescribeIngest(scope = 'all') {
+  try {
+    showStatus(tr('ai_desc_starting'), 'ok');
+    const qs = (scope === 'new') ? '?scope=new' : '?scope=all';
+    const res = await fetch(`/api/ai/describe/ingest${qs}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showStatus(tr('ai_desc_start_failed'), 'err');
+      return;
+    }
+    if (scope === 'new') {
+      showStatus(tr('ai_desc_enabled_new_uploads'), 'ok');
+    } else {
+      showStatus(tr('ai_desc_started_bg'), 'ok');
+    }
+    state.aiDescribeAutoEnabled = true;
+    state.aiDescribeRunning = !!(data && data.running);
+    updateAiDescribeToggleButton();
+    pollAiDescribeStatus();
+  } catch {
+    showStatus(tr('ai_desc_start_error'), 'err');
+  }
+}
+
+async function stopAiDescribeIngest() {
+  try {
+    const res = await fetch('/api/ai/describe/stop', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data && data.ok === false)) {
+      showStatus(tr('ai_desc_stop_failed'), 'err');
+      return;
+    }
+    showStatus(tr('ai_desc_stopped'), 'ok');
+    state.aiDescribeRunning = false;
+    state.aiDescribeAutoEnabled = false;
+    updateAiDescribeToggleButton();
+    pollAiDescribeStatus();
+  } catch {
+    showStatus(tr('ai_desc_stop_error'), 'err');
+  }
+}
+
 els.aiIngestToggle && els.aiIngestToggle.addEventListener('change', async () => {
   if (els.aiIngestToggle.checked) {
     openAiScopeModal('ai');
     return;
   }
   await stopAiIngest();
+});
+
+els.aiDescribeToggle && els.aiDescribeToggle.addEventListener('change', async () => {
+  if (els.aiDescribeToggle.checked) {
+    openAiScopeModal('describe');
+    return;
+  }
+  await stopAiDescribeIngest();
 });
 
 // Faces indexing controls
@@ -4930,8 +5047,41 @@ async function pollAiStatus() {
   } catch {}
 }
 
+async function pollAiDescribeStatus() {
+  try {
+    const r = await fetch('/api/ai/describe/status');
+    const s = await r.json();
+    state.aiDescribeRunning = !!(s && s.ok && s.running);
+    state.aiDescribeAutoEnabled = !!(s && s.ok && s.auto_ingest);
+    updateAiDescribeToggleButton();
+    if (els.aiDescribeStatus) {
+      if (!s || !s.ok) {
+        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('status_dash')}`;
+      } else {
+        const run = s.running ? tr('status_running') : tr('status_stopped');
+        const source = (!s.running && s.last) ? s.last : s;
+        const described = Number(source && source.described) || 0;
+        const total = Number(source && source.total) || 0;
+        const failed = Number(source && source.failed) || 0;
+        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
+      }
+    }
+  } catch {
+    state.aiDescribeRunning = false;
+    state.aiDescribeAutoEnabled = false;
+    updateAiDescribeToggleButton();
+    if (els.aiDescribeStatus) els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('status_dash')}`;
+  }
+  try {
+    const r2 = await fetch('/api/ai/describe/status');
+    const s2 = await r2.json();
+    if (s2 && s2.running) setTimeout(pollAiDescribeStatus, 1200);
+  } catch {}
+}
+
 // Start med at vise status hvis noget kører allerede
 pollAiStatus();
+pollAiDescribeStatus();
 pollFacesStatus();
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
@@ -5362,6 +5512,8 @@ if (els.aiScopeModalNew) {
     closeAiScopeModal();
     if (feature === 'faces') {
       await startFacesIndex('new');
+    } else if (feature === 'describe') {
+      await startAiDescribeIngest('new');
     } else {
       await startAiIngest('new');
     }
@@ -5373,6 +5525,8 @@ if (els.aiScopeModalAll) {
     closeAiScopeModal();
     if (feature === 'faces') {
       await startFacesIndex('all');
+    } else if (feature === 'describe') {
+      await startAiDescribeIngest('all');
     } else {
       await startAiIngest('all');
     }
