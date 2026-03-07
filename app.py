@@ -6437,36 +6437,43 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 try:
                     parts = orig_rel.split("/", 2)
                     sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
-                except Exception:
+                try:
                     sub_rel = Path(orig_rel).name
                 subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
                 leaf_jpg = f"{Path(sub_rel).stem}.jpg"
                 conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
-                conv_dir.mkdir(parents=True, exist_ok=True)
-                dst = conv_dir / leaf_jpg
-                if dst.exists():
-                    i = 1
-                    while True:
-                        cand = conv_dir / f"{Path(leaf_jpg).stem}_{i}.jpg"
-                        if not cand.exists():
-                            dst = cand
-                            break
-                        i += 1
-                if subdir_only in {'', '.'}:
-                    tail = Path(sub_rel).with_suffix('.jpg').name
-                else:
-                    tail = (Path(subdir_only) / Path(sub_rel).with_suffix('.jpg').name).as_posix()
-                new_rel = f"uploads/converted/{tail}"
-                # If subdir_only present ensure proper joining
-                if subdir_only not in {'', '.'}:
-                    new_rel = f"uploads/converted/{subdir_only}/{Path(sub_rel).stem}.jpg".replace('\\','/')
-            else:
-                # Library fallback: write next to original
-                dst = src.with_suffix('.jpg')
-                if dst.exists():
-                    i = 1
-                    while True:
-                        cand = dst.parent / f"{dst.stem}_{i}.jpg"
+                    # Derive converted path under uploads/converted when inside uploads/*
+                    sub_rel = ""
+                    if orig_rel.startswith("uploads/"):
+                        try:
+                            # remove 'uploads/' or 'uploads/originals/' prefix to mirror remaining path under converted
+                            if orig_rel.startswith("uploads/originals/"):
+                                parts = orig_rel.split("/", 2)
+                                sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
+                            else:
+                                parts = orig_rel.split("/", 1)
+                                sub_rel = parts[1] if len(parts) >= 2 else Path(orig_rel).name
+                        except Exception:
+                            sub_rel = Path(orig_rel).name
+                        subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                        leaf_jpg = f"{Path(sub_rel).stem}.jpg"
+                        conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
+                        conv_dir.mkdir(parents=True, exist_ok=True)
+                        dst = conv_dir / leaf_jpg
+                        if dst.exists():
+                            i = 1
+                            while True:
+                                cand = conv_dir / f"{Path(leaf_jpg).stem}_{i}.jpg"
+                                if not cand.exists():
+                                    dst = cand
+                                    break
+                                i += 1
+                        # Build new_rel under uploads/converted
+                        if subdir_only in {'', '.'}:
+                            tail = Path(sub_rel).with_suffix('.jpg').name
+                        else:
+                            tail = (Path(subdir_only) / Path(sub_rel).with_suffix('.jpg').name).as_posix()
+                        new_rel = f"uploads/converted/{tail}"
                         if not cand.exists():
                             dst = cand
                             break
