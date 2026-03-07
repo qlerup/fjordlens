@@ -4199,6 +4199,48 @@ def _enqueue_face_thumb_generation(face_id: int) -> None:
     _face_thumb_queue.put(face_id)
 
 
+@app.route("/api/face-thumb/status/<int:face_id>")
+def api_face_thumb_status(face_id: int):
+    """Lightweight readiness check for a face thumbnail.
+    Returns {ready: bool, url: str, v: int} where url contains a cache-busting
+    version param based on mtime when ready.
+    """
+    try:
+        with closing(get_conn()) as conn:
+            r = conn.execute(
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                (face_id,),
+            ).fetchone()
+        if not r:
+            return jsonify({"ok": False, "ready": False, "error": "not_found"}), 404
+        src_rel = r["rel_path"]
+        if not _is_rel_path_allowed_for_current_user(src_rel):
+            return jsonify({"ok": False, "ready": False, "error": "forbidden"}), 403
+
+        out_name = f"face_{face_id}.jpg"
+        out_path = THUMB_DIR / out_name
+        src_path = (UPLOAD_DIR / src_rel.split("/", 1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
+        view_path = ensure_viewable_copy(src_path, src_rel)
+        try:
+            source_mtime = float(view_path.stat().st_mtime)
+        except Exception:
+            source_mtime = 0.0
+        ready = False
+        ver = 0
+        try:
+            ready = out_path.exists() and (out_path.stat().st_mtime >= source_mtime)
+            if ready:
+                ver = int(out_path.stat().st_mtime)
+        except Exception:
+            ready = False
+        if not ready:
+            _enqueue_face_thumb_generation(face_id)
+        url = f"/api/face-thumb/{face_id}" + (f"?v={ver}" if ver else "")
+        return jsonify({"ok": True, "ready": bool(ready), "url": url, "v": ver})
+    except Exception as e:
+        return jsonify({"ok": False, "ready": False, "error": str(e)}), 500
+
+
 @app.route("/api/people/unknown/photos")
 def api_people_unknown_photos():
     items: list[Dict[str, Any]] = []

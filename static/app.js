@@ -1528,7 +1528,38 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       img.removeEventListener('error', onerror);
       img.removeEventListener('abort', onerror);
     };
-    const onload = () => { cleanup(); loadNextImg(); };
+    const onload = () => {
+      // If this is a face-thumb URL, poll status until the cropped image is ready, then refresh src once
+      try {
+        const u = String(img.currentSrc || img.src || '').trim();
+        const m = u.match(/\/api\/face-thumb\/(\d+)/);
+        if (m) {
+          const fid = m[1];
+          let tries = 0;
+          const maxTries = 20; // ~10-15s with backoff
+          const poll = async () => {
+            tries += 1;
+            try {
+              const r = await fetch(`/api/face-thumb/status/${fid}`);
+              const d = await r.json();
+              if (r.ok && d && d.ok && d.ready && d.url) {
+                // Cache-bust to ensure fresh image
+                img.src = d.url;
+                return; // stop polling
+              }
+            } catch {}
+            if (tries < maxTries) {
+              const delay = Math.min(2500, 250 * Math.pow(1.3, tries));
+              setTimeout(poll, delay);
+            }
+          };
+          // Start polling after a brief delay to allow worker to run
+          setTimeout(poll, 250);
+        }
+      } catch {}
+      cleanup();
+      loadNextImg();
+    };
     const onerror = () => { cleanup(); loadNextImg(); };
     img.addEventListener('load', onload, { once: true });
     img.addEventListener('error', onerror, { once: true });
@@ -7132,6 +7163,17 @@ async function pollLogs() {
         if (typeof it.updated !== "undefined") extra += ` updated=${it.updated}`;
         if (typeof it.errors !== "undefined") extra += ` errors=${it.errors}`;
         if (typeof it.missing !== "undefined") extra += ` missing=${it.missing}`;
+        // Upload postprocess summaries: include useful counters
+        if (typeof it.files !== "undefined") extra += ` files=${it.files}`;
+        if (typeof it.indexed !== "undefined") extra += ` indexed=${it.indexed}`;
+        if (typeof it.faces_scanned !== "undefined") extra += ` faces_scanned=${it.faces_scanned}`;
+        if (typeof it.faces_found !== "undefined") extra += ` faces_found=${it.faces_found}`;
+        if (typeof it.index_errors !== "undefined") extra += ` index_errors=${it.index_errors}`;
+        if (typeof it.faces_errors !== "undefined") extra += ` faces_errors=${it.faces_errors}`;
+        if (typeof it.ai_done !== "undefined") extra += ` ai=${it.ai_done}`;
+        if (typeof it.ai_errors !== "undefined") extra += ` ai_errors=${it.ai_errors}`;
+        if (typeof it.ai_desc_done !== "undefined") extra += ` ai_desc=${it.ai_desc_done}`;
+        if (typeof it.ai_desc_errors !== "undefined") extra += ` ai_desc_errors=${it.ai_desc_errors}`;
         if (it.error) extra += ` :: ${it.error}`;
         const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
         const msg = `[${fmtLogTime(it.t)}] ${label}${extra}`;
