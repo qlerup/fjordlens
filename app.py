@@ -1363,6 +1363,7 @@ def _postprocess_uploaded_rels(
         "indexed": len(indexed_ok),
         "index_errors": index_errors,
         "thumb_errors": thumb_errors,
+        "heic_converted": heic_converted_count,
         "faces_enabled": faces_enabled,
         "faces_done": faces_done,
         "faces_found": faces_found,
@@ -1526,16 +1527,15 @@ def _tus_require_version() -> Optional[Tuple[dict, int]]:
 def _parse_tus_metadata(raw: str) -> Dict[str, str]:
     out: Dict[str, str] = {}
     if not raw:
-        return {
+        return out
     for pair in raw.split(","):
         part = str(pair or "").strip()
         if not part:
             continue
-            "received": len(rels),
+        chunks = part.split(" ", 1)
         if len(chunks) != 2:
             continue
         key = chunks[0].strip()
-            "heic_converted": heic_converted_count,
         value = chunks[1].strip()
         if not key:
             continue
