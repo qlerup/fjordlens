@@ -1079,7 +1079,8 @@ let state = {
   selectedIndex: -1,
   folder: null,
   // logs
-  logsRunning: true,
+  // Default off; enable only for authorized users
+  logsRunning: false,
   logsAfter: 0,
   // people view state
   people: [],
@@ -6349,8 +6350,20 @@ setView(state.view, { syncUrl: false }).then(() => {
       pollScanStatus();
     }
   }).catch(() => {});
-  // logs always running
-  startLogs();
+  // Start logs only for elevated roles (not basic 'user')
+  try {
+    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+    if (role !== 'user') {
+      startLogs();
+    } else {
+      // Ensure UI reflects stopped state
+      state.logsRunning = false;
+      if (els.logsStart) els.logsStart.textContent = tr ? tr('btn_start') : 'Start';
+    }
+  } catch {
+    // Fallback: do not start logs if uncertain about role
+    state.logsRunning = false;
+  }
   _announceUploadResumeDraftIfNeeded();
   // Resume upload postprocess monitor/state if page was refreshed mid-run.
   resumeUploadPostprocessAfterRefresh().catch(() => {});
@@ -7062,6 +7075,14 @@ async function pollLogs() {
   if (!state.logsRunning) return;
   try {
     const res = await fetch(`/api/logs?after=${state.logsAfter}`);
+    // If user lacks permission (401/403), stop polling to avoid spam
+    if (res && (res.status === 401 || res.status === 403)) {
+      stopLogs();
+      return;
+    }
+    if (!res.ok) {
+      throw new Error('logs fetch failed');
+    }
     const data = await res.json();
     if (data && data.items) {
       for (const it of data.items) {
