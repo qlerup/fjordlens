@@ -5172,6 +5172,82 @@ def api_rethumb_status():
     return jsonify(resp)
 
 
+def rethumb_missing(stop_event=None) -> Dict[str, Any]:
+    ensure_dirs()
+    init_db()
+    log_event("rethumb_missing_start")
+    total = 0
+    errors = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT rel_path, thumb_name FROM photos"
+        ).fetchall()
+    for row in rows:
+        if stop_event and stop_event.is_set():
+            break
+        rel_path = row["rel_path"]
+        try:
+            p = PHOTO_DIR / rel_path if not rel_path.startswith("uploads/") else UPLOAD_DIR / rel_path[len("uploads/"):]
+            if not p.exists():
+                continue
+            stat = p.stat()
+            expected_ok = False
+            prev = str(row["thumb_name"] or "").strip()
+            if prev:
+                tp = THUMB_DIR / prev
+                try:
+                    expected_ok = tp.exists() and (tp.stat().st_mtime >= stat.st_mtime)
+                except Exception:
+                    expected_ok = False
+            if expected_ok:
+                continue
+            # Need (re)thumb
+            tn: Optional[str] = None
+            if p.suffix.lower() in VIDEO_EXTS:
+                tn = _make_video_thumb(p, rel_path, stat.st_mtime, stat.st_size)
+            else:
+                with Image.open(p) as img:
+                    try:
+                        img = ImageOps.exif_transpose(img)
+                    except Exception:
+                        pass
+                    tn = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
+            if tn:
+                with closing(get_conn()) as conn:
+                    conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (tn, now_iso(), rel_path))
+                    conn.commit()
+                total += 1
+                log_event("rethumb_missing_ok", rel_path=rel_path)
+            else:
+                errors += 1
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=rel_path, error=f"rethumb_missing: {e}")
+    res = {"ok": True, "processed": total, "errors": errors}
+    log_event("rethumb_missing_done", processed=total, errors=errors)
+    return res
+
+
+@app.route("/api/rethumb/missing", methods=["POST"])
+def api_rethumb_missing():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    global rethumb_thread, last_rethumb_result
+    if rethumb_thread and rethumb_thread.is_alive():
+        return jsonify({"ok": False, "error": "Rethumb already running"}), 409
+    scan_stop_event.clear()
+    last_rethumb_result = None
+
+    def run_rethumb_missing():
+        global last_rethumb_result
+        last_rethumb_result = rethumb_missing(stop_event=scan_stop_event)
+
+    rethumb_thread = threading.Thread(target=run_rethumb_missing, daemon=True)
+    rethumb_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
 # --- AI: embeddings + search ---
 ai_thread = None
 ai_running = False
@@ -5944,11 +6020,20 @@ def api_viewable(rel_path: str):
         vp = str(view_path)
         if vp.startswith(str(CONVERT_DIR)):
             rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
-            return send_from_directory(CONVERT_DIR, rel_conv)
+            resp = send_from_directory(CONVERT_DIR, rel_conv)
+            try: resp.headers["Cache-Control"] = "public, max-age=86400"  # 1 day
+            except Exception: pass
+            return resp
         # No conversion: serve from the original location
         if safe_rel.startswith("uploads/"):
-            return send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
-        return send_from_directory(PHOTO_DIR, safe_rel)
+            resp = send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
+            try: resp.headers["Cache-Control"] = "public, max-age=86400"
+            except Exception: pass
+            return resp
+        resp = send_from_directory(PHOTO_DIR, safe_rel)
+        try: resp.headers["Cache-Control"] = "public, max-age=86400"
+        except Exception: pass
+        return resp
     except Exception as e:
         return (str(e), 500)
 

@@ -7,6 +7,7 @@ const els = {
   scanBtn: document.getElementById("scanBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
+  fixThumbsBtn: document.getElementById("fixThumbsBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
   factoryResetBtn: document.getElementById("factoryResetBtn"),
   aiIngestToggle: document.getElementById("aiIngestToggle"),
@@ -385,6 +386,7 @@ const I18N = {
     btn_stop_scan: 'Stop scan',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Genbyg thumbnails',
+    btn_fix_missing_thumbs: 'Ret manglende thumbnails',
     btn_reset_index: 'Nulstil indeks',
     btn_factory_reset: 'Fabriksnulstil',
     btn_start_ai: 'Start AI',
@@ -761,6 +763,7 @@ const I18N = {
     btn_stop_scan: 'Stop scan',
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Rebuild thumbnails',
+    btn_fix_missing_thumbs: 'Fix missing thumbnails',
     btn_reset_index: 'Reset index',
     btn_factory_reset: 'Factory reset',
     btn_start_ai: 'Start AI',
@@ -1516,6 +1519,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     } catch {}
   }
 
+  const currentEpoch = peopleRenderEpoch;
   function loadNextImg() {
     if (!pendingImgs.length) { imgLoading = false; return; }
     imgLoading = true;
@@ -1531,6 +1535,13 @@ function appendPeopleInChunks(people, chunkSize = 48) {
         const fid = m[1];
         let tries = 0;
         const maxTries = 25;
+        const startTick = () => {
+          if (currentEpoch !== peopleRenderEpoch) return; // view changed
+          if (!document.body.contains(imgEl)) return; // removed from DOM
+          if (activeFacePolls >= MAX_ACTIVE_FACE_POLLS) { setTimeout(startTick, 120); return; }
+          activeFacePolls += 1;
+          tick();
+        };
         const tick = async () => {
           tries += 1;
           try {
@@ -1538,16 +1549,19 @@ function appendPeopleInChunks(people, chunkSize = 48) {
             const d = await r.json();
             if (r.ok && d && d.ok && d.ready && d.url) {
               imgEl.src = d.url; // swap in the cropped face
+              activeFacePolls = Math.max(0, activeFacePolls - 1);
               return;
             }
           } catch {}
-          if (tries < maxTries) {
+          if (tries < maxTries && currentEpoch === peopleRenderEpoch && document.body.contains(imgEl)) {
             const delay = Math.min(1500, 150 + tries * 100);
             setTimeout(tick, delay);
+          } else {
+            activeFacePolls = Math.max(0, activeFacePolls - 1);
           }
         };
         // Start almost immediately so crop appears fast
-        setTimeout(tick, 120);
+        setTimeout(startTick, 120);
       } catch {}
     };
 
@@ -1684,6 +1698,9 @@ function renderGrid() {
         return;
       }
       hideEmpty();
+      // New people render epoch: cancel any leftover polling from previous view
+      peopleRenderEpoch += 1;
+      activeFacePolls = 0;
       // Render in chunks to avoid main-thread spikes when many people exist
       appendPeopleInChunks(people);
       renderStats();
@@ -2199,8 +2216,23 @@ function openViewer(index) {
     els.viewerImg.setAttribute('draggable', 'false');
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
-      // Always use the server-provided original_url (it serves a viewable copy for HEIC/HEIF)
-      els.viewerImg.src = it.original_url || it.thumb_url || '';
+      // Show a fast placeholder immediately, then swap to full viewable when ready
+      if (it.thumb_url) {
+        els.viewerImg.src = it.thumb_url;
+      } else {
+        els.viewerImg.removeAttribute('src');
+      }
+      const hi = new Image();
+      try { hi.decoding = 'async'; } catch {}
+      try { hi.fetchPriority = 'high'; } catch {}
+      hi.onload = async () => {
+        try { if (hi.decode) await hi.decode().catch(()=>{}); } catch {}
+        // Only swap if the viewer still shows this item
+        if (state.items[state.selectedIndex] === it) {
+          els.viewerImg.src = it.original_url || it.thumb_url || '';
+        }
+      };
+      hi.src = it.original_url || it.thumb_url || '';
     }
     if (it.is_video) els.viewerImg.removeAttribute('src');
   }
@@ -2216,6 +2248,17 @@ function openViewer(index) {
     }
   }
   els.viewer.classList.remove("hidden");
+  // Preload neighbors for snappier next/prev navigation
+  try {
+    const idxs = [index - 1, index + 1];
+    for (const j of idxs) {
+      const nx = state.items[j];
+      if (!nx || nx.is_video || !nx.original_url) continue;
+      const pre = new Image();
+      try { pre.decoding = 'async'; } catch {}
+      pre.src = nx.original_url;
+    }
+  } catch {}
   // Populate slide-out info with the current item's metadata
   try {
     const title = (it.filename || it.rel_path || "-");
@@ -2376,6 +2419,10 @@ const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
 const UPLOAD_RESUME_DRAFT_KEY = 'fjordlens.upload.resumeDraft.v1';
 const UPLOAD_RESUME_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+// People view: guard timers and concurrency for face-crop polling
+let peopleRenderEpoch = 0;
+let activeFacePolls = 0;
+const MAX_ACTIVE_FACE_POLLS = 6;
 
 function _uploadFileSignature(file) {
   return [
@@ -4341,6 +4388,39 @@ async function clearIndex() {
   }
 }
 
+// Fix only missing/outdated thumbnails
+async function fixMissingThumbs() {
+  try {
+    if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = true;
+    showStatus(tr('rethumb_starting'), 'ok');
+    const res = await fetch('/api/rethumb/missing', { method: 'POST' });
+    if (!res.ok) {
+      showStatus(tr('rethumb_failed'), 'err');
+      return;
+    }
+    // Reuse rethumb status polling (same thread/status variables)
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/rethumb/status');
+        const d = await r.json();
+        if (r.ok && d && d.ok) {
+          if (!d.running) {
+            const processed = d.result && (d.result.processed || 0);
+            showStatus(`${tr('rethumb_done_prefix')} ${processed}.`, 'ok');
+            await loadPhotos();
+            return;
+          }
+        }
+      } catch {}
+      setTimeout(poll, 1000);
+    };
+    poll();
+  } catch (e) {
+    showStatus(tr('rethumb_error'), 'err');
+  } finally {
+    if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = false;
+  }
+}
 // Factory reset (DB file + all generated caches and uploads)
 async function factoryReset() {
   const ok = confirm(tr('factory_confirm'));
@@ -4498,6 +4578,7 @@ function applyUiLanguage() {
   if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
+  if (els.fixThumbsBtn) els.fixThumbsBtn.textContent = tr('btn_fix_missing_thumbs');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
   if (els.factoryResetBtn) els.factoryResetBtn.textContent = tr('btn_factory_reset');
   updateAiToggleButton();
@@ -7222,3 +7303,4 @@ els.logsStart && els.logsStart.addEventListener('click', () => {
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
+els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
