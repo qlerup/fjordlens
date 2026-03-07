@@ -6452,7 +6452,11 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                             dst = cand
                             break
                         i += 1
-                new_rel = f"uploads/converted/{(Path(sub_rel).with_suffix('.jpg')).name if subdir_only in {'', '.'} else (str(Path(subdir_only)/Path(sub_rel).with_suffix('.jpg').name)).replace('\\','/')}"
+                if subdir_only in {'', '.'}:
+                    tail = Path(sub_rel).with_suffix('.jpg').name
+                else:
+                    tail = (Path(subdir_only) / Path(sub_rel).with_suffix('.jpg').name).as_posix()
+                new_rel = f"uploads/converted/{tail}"
                 # If subdir_only present ensure proper joining
                 if subdir_only not in {'', '.'}:
                     new_rel = f"uploads/converted/{subdir_only}/{Path(sub_rel).stem}.jpg".replace('\\','/')
