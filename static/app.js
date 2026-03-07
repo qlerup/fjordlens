@@ -33,6 +33,10 @@ const els = {
   aiPerfPresetFast: document.getElementById("aiPerfPresetFast"),
   aiPerfSaveBtn: document.getElementById("aiPerfSaveBtn"),
   aiPerfStatus: document.getElementById("aiPerfStatus"),
+  heicConvertToggle: document.getElementById("heicConvertToggle"),
+  heicKeepToggle: document.getElementById("heicKeepToggle"),
+  heicStatus: document.getElementById("heicStatus"),
+  heicBulkConvertBtn: document.getElementById("heicBulkConvertBtn"),
   mapperTools: document.getElementById("mapperTools"),
   mapperHeaderActions: document.getElementById("mapperHeaderActions"),
   mapperCurrentPath: document.getElementById("mapperCurrentPath"),
@@ -2405,6 +2409,7 @@ const uploadUiState = {
 };
 
 let uploadOverlayHideTimer = null;
+let uploadMonitorHideTimer = null;
 let activeTusUpload = null;
 let uploadStopRequested = false;
 let uploadWasStopped = false;
@@ -2702,12 +2707,42 @@ function renderUploadMonitor() {
         : 'Ingen aktiv upload';
     }
   }
+
+  // If everything is done (no transfer, no postprocess), auto-hide monitor after 5s
+  try {
+    const done = !isUploadRunning() && !uploadQueuePumpRunning && !isPostprocess && uploadUiState.totalFiles > 0 && !uploadUiState.currentFileName;
+    if (done) {
+      if (!uploadMonitorHideTimer) {
+        uploadMonitorHideTimer = window.setTimeout(() => {
+          if (!els.uploadMonitor) { uploadMonitorHideTimer = null; return; }
+          try {
+            els.uploadMonitor.style.transition = 'opacity .35s ease';
+            els.uploadMonitor.style.opacity = '0';
+            window.setTimeout(()=>{
+              try {
+                els.uploadMonitor.classList.add('hidden');
+                els.uploadMonitor.style.opacity = '';
+                els.uploadMonitor.style.transition = '';
+              } catch {}
+            }, 380);
+          } catch {}
+          uploadMonitorHideTimer = null;
+        }, 5000);
+      }
+    } else {
+      if (uploadMonitorHideTimer) { window.clearTimeout(uploadMonitorHideTimer); uploadMonitorHideTimer = null; }
+    }
+  } catch {}
 }
 
 function showUploadMonitor() {
   ensureUploadMonitorRefs();
   bindUploadMonitorDomEvents();
-  if (els.uploadMonitor) els.uploadMonitor.classList.remove('hidden');
+  if (els.uploadMonitor) {
+    els.uploadMonitor.classList.remove('hidden');
+    try { els.uploadMonitor.style.opacity = '1'; els.uploadMonitor.style.transition=''; } catch {}
+  }
+  if (uploadMonitorHideTimer) { window.clearTimeout(uploadMonitorHideTimer); uploadMonitorHideTimer = null; }
   const collapsed = !!uploadUiState.collapsed;
   if (els.uploadMonitor) els.uploadMonitor.classList.toggle('collapsed', collapsed);
   if (els.uploadMonitorToggle) {
@@ -3234,12 +3269,13 @@ async function uploadFiles(fileList, options = {}) {
           const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
           const postParts = [
             `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
+            `${Number(post.heic_converted || 0) ? `konverteret: ${Number(post.heic_converted || 0)}` : ''}`,
             `ansigter: ${Number(post.faces_done || 0)}${Number(post.faces_errors || 0) ? ` (fejl: ${Number(post.faces_errors || 0)})` : ''}`,
             `embeddings: ${Number(post.ai_done || 0)}${Number(post.ai_errors || 0) ? ` (fejl: ${Number(post.ai_errors || 0)})` : ''}`,
             `beskrivelser: ${Number(post.ai_desc_done || 0)}${Number(post.ai_desc_errors || 0) ? ` (fejl: ${Number(post.ai_desc_errors || 0)})` : ''}`,
           ];
           showStatus(
-            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.join(' · ')}`,
+            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.filter(Boolean).join(' · ')}`,
             (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0) || Number(post.ai_desc_errors || 0)) ? 'err' : 'ok'
           );
         } else {
@@ -4560,6 +4596,7 @@ function applyUiLanguage() {
   const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
   if (maintTitle) maintTitle.textContent = tr('maint_title');
   if (els.aiPanelTitle) els.aiPanelTitle.textContent = tr('ai_panel_title');
+    // HEIC tab labels stay Danish/English defaults already in markup
   if (els.aiEmbedTitle) els.aiEmbedTitle.textContent = tr('ai_embed_title');
   if (els.aiEmbedDesc) els.aiEmbedDesc.textContent = tr('ai_embed_desc');
   if (els.aiDescTitle) els.aiDescTitle.textContent = tr('ai_desc_title');
@@ -6527,6 +6564,16 @@ setView(state.view, { syncUrl: false }).then(() => {
     // Fallback: do not start logs if uncertain about role
     state.logsRunning = false;
   }
+  // Load HEIC settings (convert/keep) into toggles
+  try {
+    fetch('/api/settings/heic').then(r=>r.json()).then(d=>{
+      if (d && d.ok) {
+        if (els.heicConvertToggle) els.heicConvertToggle.checked = !!d.convert_on_upload;
+        if (els.heicKeepToggle) els.heicKeepToggle.checked = !!d.keep_originals;
+        if (els.heicStatus) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+      }
+    }).catch(()=>{});
+  } catch {}
   _announceUploadResumeDraftIfNeeded();
   // Resume upload postprocess monitor/state if page was refreshed mid-run.
   resumeUploadPostprocessAfterRefresh().catch(() => {});
@@ -6544,6 +6591,60 @@ setView(state.view, { syncUrl: false }).then(() => {
     } catch{}
   }, 1000);
 });
+
+// HEIC toggle handlers
+try {
+  if (els.heicConvertToggle) els.heicConvertToggle.addEventListener('change', async ()=>{
+    try {
+      const body = { convert_on_upload: !!els.heicConvertToggle.checked };
+      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+    } catch {}
+  });
+  if (els.heicKeepToggle) els.heicKeepToggle.addEventListener('change', async ()=>{
+    try {
+      const body = { keep_originals: !!els.heicKeepToggle.checked };
+      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+    } catch {}
+  });
+  if (els.heicBulkConvertBtn) els.heicBulkConvertBtn.addEventListener('click', async ()=>{
+    try {
+      const r = await fetch('/api/heic/convert-existing', { method:'POST' });
+      if (!r.ok) {
+        const d = await r.json().catch(()=>({}));
+        showStatus(d && d.error ? d.error : 'Kunne ikke starte HEIC-konvertering', 'err');
+        return;
+      }
+      showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
+      // Poll status; when done, refresh grid so visning peger på JPEG
+      const poll = async () => {
+        try {
+          const s = await fetch('/api/heic/convert-existing/status');
+          const d = await s.json();
+          if (s.ok && d && d.ok) {
+            if (!d.running) {
+              if (d.result) {
+                const p = Number(d.result.processed || 0);
+                const e = Number(d.result.errors || 0);
+                showStatus(`HEIC-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
+              }
+              await loadPhotos();
+              if (state.view === 'mapper') loadMapperTools();
+              return;
+            }
+          }
+        } catch {}
+        setTimeout(poll, 1200);
+      };
+      setTimeout(poll, 800);
+    } catch {
+      showStatus('Kunne ikke starte HEIC-konvertering', 'err');
+    }
+  });
+} catch {}
 
 // --- Embedded Admin Panels ---
 async function renderUsersPanel(){
@@ -7257,6 +7358,7 @@ async function pollLogs() {
         if (typeof it.updated !== "undefined") extra += ` updated=${it.updated}`;
         if (typeof it.errors !== "undefined") extra += ` errors=${it.errors}`;
         if (typeof it.missing !== "undefined") extra += ` missing=${it.missing}`;
+        if (typeof it.heic_converted !== "undefined") extra += ` converted=${it.heic_converted}`;
         // Upload postprocess summaries: include useful counters
         if (typeof it.files !== "undefined") extra += ` files=${it.files}`;
         if (typeof it.indexed !== "undefined") extra += ` indexed=${it.indexed}`;

@@ -54,6 +54,7 @@ AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false"
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
+HEIC_CONVERT_ON_UPLOAD_DEFAULT = (os.environ.get("HEIC_CONVERT_ON_UPLOAD", "0") in {"1", "true", "True"})
 UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
@@ -851,6 +852,11 @@ def ensure_dirs() -> None:
     CONVERT_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        (UPLOAD_DIR / "originals").mkdir(parents=True, exist_ok=True)
+        (UPLOAD_DIR / "converted").mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
 
 
 def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
@@ -1085,6 +1091,7 @@ def _postprocess_uploaded_rels(
     })
 
     indexed_ok: list[str] = []
+    heic_converted_count = 0
     index_errors = 0
     for i, rel in enumerate(rels, start=1):
         _emit_progress({
@@ -1094,6 +1101,104 @@ def _postprocess_uploaded_rels(
             "stage_total": len(rels),
         })
         disk_path = _disk_path_from_rel_path(rel)
+        orig_rel_for_convert = rel
+        # Optional: convert HEIC/HEIF to JPEG in-place (preserve EXIF when possible)
+        try:
+            if heic_convert_on_upload_enabled() and disk_path.suffix.lower() in {".heic", ".heif"} and disk_path.exists():
+                new_rel = None
+                new_path = None
+                try:
+                    with Image.open(disk_path) as himg:
+                        try:
+                            himg = ImageOps.exif_transpose(himg)
+                        except Exception:
+                            pass
+                        rgb = himg.convert("RGB")
+                        exif_bytes = None
+                        try:
+                            exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                        except Exception:
+                            exif_bytes = None
+                        # Save converted copy under uploads/converted/<subdir>/
+                        sub_rel = ""
+                        try:
+                            # rel is 'uploads/originals/<sub>/<file>' at this point
+                            parts = str(orig_rel_for_convert).split("/", 2)
+                            if len(parts) >= 3:
+                                sub_rel = parts[2]  # '<sub>/<file>'
+                            else:
+                                sub_rel = Path(orig_rel_for_convert).name
+                        except Exception:
+                            sub_rel = Path(orig_rel_for_convert).name
+                        subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                        leaf_jpg = f"{Path(sub_rel).stem}.jpg"
+                        conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
+                        conv_dir.mkdir(parents=True, exist_ok=True)
+                        new_path = conv_dir / leaf_jpg
+                        # Avoid clobbering existing .jpg — add numeric suffix
+                        if new_path.exists():
+                            stem = new_path.stem
+                            parent = new_path.parent
+                            i = 1
+                            while True:
+                                cand = parent / f"{stem}_{i}.jpg"
+                                if not cand.exists():
+                                    new_path = cand
+                                    break
+                                i += 1
+                        save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                        if exif_bytes:
+                            save_kwargs["exif"] = exif_bytes
+                        rgb.save(new_path, **save_kwargs)
+                    # Preserve timestamps
+                    try:
+                        st = disk_path.stat()
+                        os.utime(new_path, (st.st_atime, st.st_mtime))
+                    except Exception:
+                        pass
+                    # Switch rel/disk_path to the converted copy (optionally keep the original under 'originals')
+                    if rel.startswith("uploads/originals/"):
+                        # mirror to /uploads/converted/<...>.jpg
+                        try:
+                            tail = str(Path(sub_rel).with_suffix(".jpg")).replace("\\", "/")
+                        except Exception:
+                            tail = f"{Path(sub_rel).stem}.jpg"
+                        new_rel = f"uploads/converted/{tail}"
+                    else:
+                        # Library fallback
+                        try:
+                            new_rel = str(Path(rel).with_suffix(".jpg")).replace("\\", "/")
+                        except Exception:
+                            new_rel = rel + ".jpg"
+                    rel = new_rel
+                    disk_path = new_path
+                    try:
+                        log_event("heic_converted", rel_path=rel)
+                    except Exception:
+                        pass
+                    heic_converted_count += 1
+                    # Remove any stub row created under the original HEIC rel (originals path)
+                    try:
+                        with closing(get_conn()) as conn:
+                            conn.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel_for_convert,))
+                            conn.commit()
+                    except Exception:
+                        pass
+                    # Optionally delete the physical original to save space
+                    try:
+                        if not heic_keep_originals_enabled():
+                            orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
+                            orig_path.unlink(missing_ok=True)
+                            log_event("heic_original_deleted", rel_path=orig_rel_for_convert)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        log_event("error", rel_path=str(rel), error=f"heic_convert: {e}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         if not disk_path.exists():
             index_errors += 1
             try:
@@ -1293,6 +1398,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "received": 0,
         "indexed": 0,
         "index_errors": 0,
+        "heic_converted": 0,
         "faces_enabled": faces_auto_index_enabled(),
         "faces_done": 0,
         "faces_found": 0,
@@ -1321,6 +1427,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             aggregate["received"] += int(result.get("received") or 0)
             aggregate["indexed"] += int(result.get("indexed") or 0)
             aggregate["index_errors"] += int(result.get("index_errors") or 0)
+            aggregate["heic_converted"] += int(result.get("heic_converted") or 0)
             aggregate["faces_done"] += int(result.get("faces_done") or 0)
             aggregate["faces_found"] += int(result.get("faces_found") or 0)
             aggregate["faces_errors"] += int(result.get("faces_errors") or 0)
@@ -1338,6 +1445,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                     user=user,
                     files=result.get("received"),
                     indexed=result.get("indexed"),
+                    heic_converted=result.get("heic_converted"),
                     faces_scanned=result.get("faces_done"),
                     faces_found=result.get("faces_found"),
                     index_errors=result.get("index_errors"),
@@ -1372,6 +1480,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 user=user,
                 files=aggregate.get("received"),
                 indexed=aggregate.get("indexed"),
+                heic_converted=aggregate.get("heic_converted"),
                 faces_scanned=aggregate.get("faces_done"),
                 faces_found=aggregate.get("faces_found"),
                 index_errors=aggregate.get("index_errors"),
@@ -1417,15 +1526,16 @@ def _tus_require_version() -> Optional[Tuple[dict, int]]:
 def _parse_tus_metadata(raw: str) -> Dict[str, str]:
     out: Dict[str, str] = {}
     if not raw:
-        return out
+        return {
     for pair in raw.split(","):
         part = str(pair or "").strip()
         if not part:
             continue
-        chunks = part.split(" ", 1)
+            "received": len(rels),
         if len(chunks) != 2:
             continue
         key = chunks[0].strip()
+            "heic_converted": heic_converted_count,
         value = chunks[1].strip()
         if not key:
             continue
@@ -2249,6 +2359,15 @@ def ai_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_auto_ingest", AI_ENV_AUTO_INGEST_DEFAULT)
 
 
+def heic_convert_on_upload_enabled() -> bool:
+    return _get_setting_bool("heic_convert_on_upload", HEIC_CONVERT_ON_UPLOAD_DEFAULT)
+
+
+def heic_keep_originals_enabled() -> bool:
+    # default True to keep safety unless explicitly disabled
+    return _get_setting_bool("heic_keep_originals", True)
+
+
 def ai_desc_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_desc_auto_ingest", AI_DESC_ENV_AUTO_INGEST_DEFAULT)
 
@@ -2673,7 +2792,8 @@ def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row
 def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
     if destination == UPLOAD_DEST_LIBRARY:
         return PHOTO_DIR, ""
-    return UPLOAD_DIR, "uploads/"
+    # Place uploads under 'uploads/originals' so HEIC originals are kept separate from converted copies
+    return (UPLOAD_DIR / "originals"), "uploads/originals/"
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -4113,6 +4233,10 @@ _face_thumb_queue: "queue.Queue[int]" = queue.Queue()
 _face_thumb_worker_started = False
 _face_thumb_lock = threading.Lock()
 _face_thumb_queued: set[int] = set()
+
+# HEIC bulk conversion worker
+heic_convert_thread = None
+last_heic_convert_result: Optional[Dict[str, Any]] = None
 
 
 def _build_face_thumb(face_id: int) -> bool:
@@ -6264,6 +6388,164 @@ def api_settings_dns_effective():
             "using_env_default": bool(env_default and not saved and normalized),
         }
     )
+
+
+@app.route("/api/settings/heic", methods=["GET", "POST"])
+def api_settings_heic():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        conv = body.get("convert_on_upload")
+        keep = body.get("keep_originals")
+        if conv is not None:
+            _set_setting("heic_convert_on_upload", "1" if bool(conv) else "0")
+        if keep is not None:
+            _set_setting("heic_keep_originals", "1" if bool(keep) else "0")
+
+    return jsonify(
+        {
+            "ok": True,
+            "convert_on_upload": heic_convert_on_upload_enabled(),
+            "keep_originals": heic_keep_originals_enabled(),
+            "env_default_convert": HEIC_CONVERT_ON_UPLOAD_DEFAULT,
+        }
+    )
+
+
+def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
+    ensure_dirs()
+    init_db()
+    log_event("heic_bulk_start")
+    processed = 0
+    errors = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT rel_path FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+    for r in rows:
+        if stop_event and stop_event.is_set():
+            break
+        try:
+            orig_rel = r["rel_path"]
+            src = _disk_path_from_rel_path(orig_rel)
+            if not src.exists():
+                continue
+            # Derive converted path under uploads/converted when inside uploads/originals
+            sub_rel = ""
+            if orig_rel.startswith("uploads/originals/"):
+                try:
+                    parts = orig_rel.split("/", 2)
+                    sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
+                except Exception:
+                    sub_rel = Path(orig_rel).name
+                subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                leaf_jpg = f"{Path(sub_rel).stem}.jpg"
+                conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
+                conv_dir.mkdir(parents=True, exist_ok=True)
+                dst = conv_dir / leaf_jpg
+                if dst.exists():
+                    i = 1
+                    while True:
+                        cand = conv_dir / f"{Path(leaf_jpg).stem}_{i}.jpg"
+                        if not cand.exists():
+                            dst = cand
+                            break
+                        i += 1
+                new_rel = f"uploads/converted/{(Path(sub_rel).with_suffix('.jpg')).name if subdir_only in {'', '.'} else (str(Path(subdir_only)/Path(sub_rel).with_suffix('.jpg').name)).replace('\\','/')}"
+                # If subdir_only present ensure proper joining
+                if subdir_only not in {'', '.'}:
+                    new_rel = f"uploads/converted/{subdir_only}/{Path(sub_rel).stem}.jpg".replace('\\','/')
+            else:
+                # Library fallback: write next to original
+                dst = src.with_suffix('.jpg')
+                if dst.exists():
+                    i = 1
+                    while True:
+                        cand = dst.parent / f"{dst.stem}_{i}.jpg"
+                        if not cand.exists():
+                            dst = cand
+                            break
+                        i += 1
+                try:
+                    new_rel = str(Path(orig_rel).with_suffix('.jpg')).replace('\\','/')
+                except Exception:
+                    new_rel = orig_rel + '.jpg'
+
+            with Image.open(src) as himg:
+                try:
+                    himg = ImageOps.exif_transpose(himg)
+                except Exception:
+                    pass
+                rgb = himg.convert("RGB")
+                exif_bytes = None
+                try:
+                    exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                except Exception:
+                    exif_bytes = None
+                save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                if exif_bytes:
+                    save_kwargs["exif"] = exif_bytes
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                rgb.save(dst, **save_kwargs)
+            try:
+                st = src.stat()
+                os.utime(dst, (st.st_atime, st.st_mtime))
+            except Exception:
+                pass
+
+            # Update DB to new rel via fresh metadata/thumbnail
+            meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            upsert_photo(meta)
+            try:
+                with closing(get_conn()) as conn:
+                    conn.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel,))
+                    conn.commit()
+            except Exception:
+                pass
+            try:
+                if not heic_keep_originals_enabled():
+                    src.unlink(missing_ok=True)
+            except Exception:
+                pass
+            processed += 1
+            log_event("heic_converted", rel_path=new_rel)
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=str(r["rel_path"]), error=f"heic_bulk: {e}")
+    res = {"ok": True, "processed": processed, "errors": errors}
+    log_event("heic_bulk_done", **res)
+    return res
+
+
+@app.route("/api/heic/convert-existing", methods=["POST"])
+def api_heic_convert_existing():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    global heic_convert_thread, last_heic_convert_result
+    if heic_convert_thread and heic_convert_thread.is_alive():
+        return jsonify({"ok": False, "error": "HEIC-konvertering kører allerede"}), 409
+    scan_stop_event.clear()
+    last_heic_convert_result = None
+
+    def run_bulk():
+        global last_heic_convert_result
+        last_heic_convert_result = _convert_existing_heic(stop_event=scan_stop_event)
+
+    heic_convert_thread = threading.Thread(target=run_bulk, daemon=True)
+    heic_convert_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/heic/convert-existing/status")
+def api_heic_convert_existing_status():
+    running = bool(heic_convert_thread and heic_convert_thread.is_alive())
+    return jsonify({
+        "ok": True,
+        "running": running,
+        "result": (last_heic_convert_result if not running else None),
+    })
 
 
 @app.route("/api/settings/ai-performance", methods=["GET", "POST"])
