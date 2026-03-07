@@ -1523,44 +1523,57 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     if (!img) { loadNextImg(); return; }
     const src = img.getAttribute('data-src');
     if (!src) { loadNextImg(); return; }
+    const pollFaceReady = (imgEl) => {
+      try {
+        const u = String((imgEl && (imgEl.currentSrc || imgEl.src)) || '').trim();
+        const m = u.match(/\/api\/face-thumb\/(\d+)/) || String(imgEl.getAttribute('data-src') || '').match(/\/api\/face-thumb\/(\d+)/);
+        if (!m) return;
+        const fid = m[1];
+        let tries = 0;
+        const maxTries = 25;
+        const tick = async () => {
+          tries += 1;
+          try {
+            const r = await fetch(`/api/face-thumb/status/${fid}`);
+            const d = await r.json();
+            if (r.ok && d && d.ok && d.ready && d.url) {
+              imgEl.src = d.url; // swap in the cropped face
+              return;
+            }
+          } catch {}
+          if (tries < maxTries) {
+            const delay = Math.min(1500, 150 + tries * 100);
+            setTimeout(tick, delay);
+          }
+        };
+        // Start almost immediately so crop appears fast
+        setTimeout(tick, 120);
+      } catch {}
+    };
+
     const cleanup = () => {
       img.removeEventListener('load', onload);
       img.removeEventListener('error', onerror);
       img.removeEventListener('abort', onerror);
     };
     const onload = () => {
-      // If this is a face-thumb URL, poll status until the cropped image is ready, then refresh src once
-      try {
-        const u = String(img.currentSrc || img.src || '').trim();
-        const m = u.match(/\/api\/face-thumb\/(\d+)/);
-        if (m) {
-          const fid = m[1];
-          let tries = 0;
-          const maxTries = 20; // ~10-15s with backoff
-          const poll = async () => {
-            tries += 1;
-            try {
-              const r = await fetch(`/api/face-thumb/status/${fid}`);
-              const d = await r.json();
-              if (r.ok && d && d.ok && d.ready && d.url) {
-                // Cache-bust to ensure fresh image
-                img.src = d.url;
-                return; // stop polling
-              }
-            } catch {}
-            if (tries < maxTries) {
-              const delay = Math.min(2500, 250 * Math.pow(1.3, tries));
-              setTimeout(poll, delay);
-            }
-          };
-          // Start polling after a brief delay to allow worker to run
-          setTimeout(poll, 250);
-        }
-      } catch {}
+      // Kick quick face-ready polling so crop swaps in ASAP
+      pollFaceReady(img);
       cleanup();
       loadNextImg();
     };
-    const onerror = () => { cleanup(); loadNextImg(); };
+    const onerror = () => {
+      // Even if the first fetch failed, try polling face-ready and retry later
+      pollFaceReady(img);
+      const retries = Number(img.getAttribute('data-retries') || '0');
+      if (retries < 3) {
+        img.setAttribute('data-retries', String(retries + 1));
+        // push back for a later retry
+        setTimeout(() => { pendingImgs.push(img); if (!imgLoading) loadNextImg(); }, 400);
+      }
+      cleanup();
+      loadNextImg();
+    };
     img.addEventListener('load', onload, { once: true });
     img.addEventListener('error', onerror, { once: true });
     img.addEventListener('abort', onerror, { once: true });

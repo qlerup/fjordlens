@@ -120,6 +120,7 @@ GEOCODE_LANG = os.environ.get("GEOCODE_LANG", "da").strip().lower()
 
 
 app = Flask(__name__)
+APP_BUILD_ID = int(time.time())
 
 
 def _normalize_lang(value: Optional[str], default: str = LANG_DA) -> str:
@@ -154,6 +155,7 @@ def inject_template_i18n():
     return {
         "ui_lang": lang,
         "tt": lambda key: _ui_text(str(key), lang),
+        "app_build": APP_BUILD_ID,
     }
 
 # --- Console color support (for Windows terminals and Docker logs) ---

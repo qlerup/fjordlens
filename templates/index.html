@@ -576,8 +576,8 @@
     window.APP_PROFILE = {{ (user_profile or {})|tojson }};
     window.APP_ROLE = {{ (user_role or 'user')|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='vendor/tus.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
   <!-- Drag & Drop Upload Overlay -->
   <div id="uploadOverlay" class="upload-overlay hidden">
     <div class="upload-box">
