@@ -5487,6 +5487,7 @@ def clear_index() -> Dict[str, Any]:
     init_db()
     log_event("clear_start")
     thumbs_deleted = 0
+    converted_deleted = 0
     # Delete thumbs safely inside THUMB_DIR only
     for p in THUMB_DIR.glob("*"):
         try:
@@ -5495,6 +5496,24 @@ def clear_index() -> Dict[str, Any]:
                 thumbs_deleted += 1
         except Exception as e:
             log_event("error", rel_path=str(p), error=str(e))
+
+    # Delete converted cache safely inside CONVERT_DIR (may contain subfolders)
+    try:
+        for p in CONVERT_DIR.rglob("*"):
+            try:
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+                    converted_deleted += 1
+            except Exception as e:
+                log_event("error", rel_path=str(p), error=str(e))
+        # Optionally clean up empty directories
+        for d in sorted([x for x in CONVERT_DIR.rglob("*") if x.is_dir()], key=lambda x: len(str(x)), reverse=True):
+            try:
+                d.rmdir()
+            except Exception:
+                pass
+    except Exception as e:
+        log_event("error", rel_path="converted_clear", error=str(e))
 
     try:
         with closing(get_conn()) as conn:
@@ -5512,7 +5531,7 @@ def clear_index() -> Dict[str, Any]:
         log_event("error", rel_path="db_clear", error=str(e))
         return {"ok": False, "error": str(e)}
 
-    res = {"ok": True, "removed": {"photos": photos, "faces": faces, "people": people, "thumbs": thumbs_deleted}}
+    res = {"ok": True, "removed": {"photos": photos, "faces": faces, "people": people, "thumbs": thumbs_deleted, "converted": converted_deleted}}
     log_event("clear_done", **res["removed"])  # type: ignore[arg-type]
     return res
 
@@ -5525,6 +5544,149 @@ def api_clear():
     # Do not touch PHOTO_DIR; only DB + thumbs in DATA_DIR
     result = clear_index()
     return jsonify(result), 200
+
+
+def _safe_rmtree_contents(root: Path) -> dict:
+    """Delete all contents inside 'root' without removing the root directory itself.
+    Returns counts of removed files and directories.
+    """
+    removed_files = 0
+    removed_dirs = 0
+    try:
+        if not root.exists():
+            return {"files": 0, "dirs": 0}
+        # Remove files first
+        for p in root.rglob("*"):
+            try:
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+                    removed_files += 1
+            except Exception:
+                pass
+        # Then attempt to remove empty directories deepest-first
+        for d in sorted([x for x in root.rglob("*") if x.is_dir()], key=lambda x: len(str(x)), reverse=True):
+            try:
+                d.rmdir()
+                removed_dirs += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return {"files": removed_files, "dirs": removed_dirs}
+
+
+@app.route("/api/factory-reset", methods=["POST"])
+def api_factory_reset():
+    # Admin-only: full wipe of app-generated data and DB
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    try:
+        # Stop any background processing
+        try:
+            scan_stop_event.set()
+        except Exception:
+            pass
+
+        # Clear runtime upload queues
+        try:
+            with UPLOAD_PENDING_LOCK:
+                UPLOAD_PENDING_BY_USER.clear()
+        except Exception:
+            pass
+
+        ensure_dirs()
+        # Step 1: Clear index (DB photos/faces/people) and thumbs using existing helper
+        clear_res = clear_index()
+
+        # Step 2: Remove additional caches and uploads
+        converted = _safe_rmtree_contents(CONVERT_DIR)
+        uploads = _safe_rmtree_contents(UPLOAD_DIR)
+        tus_tmp = _safe_rmtree_contents(TUS_TMP_DIR)
+
+        # Step 3: Clear non-user content tables (shares, geo cache)
+        geo_deleted = 0
+        share_deleted = 0
+        share_folders_deleted = 0
+        login_audit_deleted = 0
+        try:
+            with closing(get_conn()) as conn:
+                try:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM geo_cache").fetchone()
+                    geo_deleted = int(row["c"]) if row else 0
+                    conn.execute("DELETE FROM geo_cache")
+                except Exception:
+                    pass
+                try:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM share_link_folders").fetchone()
+                    share_folders_deleted = int(row["c"]) if row else 0
+                    conn.execute("DELETE FROM share_link_folders")
+                except Exception:
+                    pass
+                try:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM share_links").fetchone()
+                    share_deleted = int(row["c"]) if row else 0
+                    conn.execute("DELETE FROM share_links")
+                except Exception:
+                    pass
+                # Optional: clear login audit to reduce DB size on reset (keeps users)
+                try:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM login_audit").fetchone()
+                    login_audit_deleted = int(row["c"]) if row else 0
+                    conn.execute("DELETE FROM login_audit")
+                except Exception:
+                    pass
+                conn.commit()
+                try:
+                    conn.execute("VACUUM")
+                    conn.commit()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Reset in-memory logs
+        try:
+            global LOG_SEQ
+            LOG_BUFFER.clear()
+            LOG_SEQ = 0
+        except Exception:
+            pass
+
+        # Recreate dirs to ensure clean state after wipe
+        try:
+            THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            CONVERT_DIR.mkdir(parents=True, exist_ok=True)
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        payload = {
+            "ok": True,
+            "removed": {
+                "photos": (clear_res.get("removed", {}) or {}).get("photos", 0),
+                "faces": (clear_res.get("removed", {}) or {}).get("faces", 0),
+                "people": (clear_res.get("removed", {}) or {}).get("people", 0),
+                "thumbs": (clear_res.get("removed", {}) or {}).get("thumbs", 0),
+                "converted_files": converted.get("files", 0),
+                "converted_dirs": converted.get("dirs", 0),
+                "uploads_files": uploads.get("files", 0),
+                "uploads_dirs": uploads.get("dirs", 0),
+                "tus_tmp_files": tus_tmp.get("files", 0),
+                "tus_tmp_dirs": tus_tmp.get("dirs", 0),
+                "geo_rows": geo_deleted,
+                "share_links": share_deleted,
+                "share_link_folders": share_folders_deleted,
+                "login_audit": login_audit_deleted,
+            },
+            # No redirect to setup; users are preserved
+        }
+        log_event("factory_reset_done", **payload["removed"])  # type: ignore[arg-type]
+        return jsonify(payload), 200
+    except Exception as e:
+        log_event("error", rel_path="factory_reset", error=str(e))
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/photos")

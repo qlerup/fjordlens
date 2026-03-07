@@ -8,6 +8,7 @@ const els = {
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
+  factoryResetBtn: document.getElementById("factoryResetBtn"),
   aiIngestToggle: document.getElementById("aiIngestToggle"),
   aiIngestToggleText: document.getElementById("aiIngestToggleText"),
   aiPanelTitle: document.getElementById("aiPanelTitle"),
@@ -385,6 +386,7 @@ const I18N = {
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Genbyg thumbnails',
     btn_reset_index: 'Nulstil indeks',
+    btn_factory_reset: 'Fabriksnulstil',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
     btn_start_ai_desc: 'Start beskrivelser',
@@ -603,12 +605,17 @@ const I18N = {
     rethumb_failed: 'Genbyg thumbnails fejlede',
     rethumb_error: 'Fejl ved genbyg thumbnails.',
     rethumb_done_prefix: 'Genbyg thumbnails færdig. Behandlet',
-    clear_confirm: 'Nulstil indeks? Dette sletter kun data og thumbnails i FjordLens (ikke dine originale billeder). Fortsæt?',
+    clear_confirm: 'Nulstil indeks? Dette sletter data, thumbnails og konverterede kopier i FjordLens (ikke dine originale billeder). Fortsæt?',
     clear_starting: 'Sletter indeks og thumbnails...',
     clear_failed: 'Fejl ved nulstilling:',
     clear_unknown: 'ukendt',
     clear_error: 'Fejl ved nulstilling.',
     clear_done_prefix: 'Indeks nulstillet. Slettet',
+    factory_confirm: 'Fabriksnulstil? Dette sletter alt INDHOLD: indeksering, personer/ansigter, thumbnails, konverterede kopier, uploads og midlertidige filer. Brugere og indstillinger bevares. Originale billeder røres ikke. Fortsæt?',
+    factory_starting: 'Udfører fabriksnulstilling af indhold…',
+    factory_failed: 'Fabriksnulstilling fejlede:',
+    factory_error: 'Fejl ved fabriksnulstilling.',
+    factory_done: 'Fabriksnulstilling gennemført. Indhold slettet – brugere bevaret.',
     file_picker_open_failed: 'Kunne ikke åbne filvælger.',
     ai_starting: 'Starter AI-indeksering (embeddings)...',
     ai_start_failed: 'Kunne ikke starte AI-indeksering.',
@@ -755,6 +762,7 @@ const I18N = {
     btn_rescan_metadata: 'Rescan metadata',
     btn_rebuild_thumbs: 'Rebuild thumbnails',
     btn_reset_index: 'Reset index',
+    btn_factory_reset: 'Factory reset',
     btn_start_ai: 'Start AI',
     btn_stop_ai: 'Stop AI',
     btn_start_ai_desc: 'Start descriptions',
@@ -973,12 +981,17 @@ const I18N = {
     rethumb_failed: 'Rebuild thumbnails failed',
     rethumb_error: 'Error while rebuilding thumbnails.',
     rethumb_done_prefix: 'Thumbnail rebuild completed. Processed',
-    clear_confirm: 'Reset index? This only deletes FjordLens data and thumbnails (not your original photos). Continue?',
+    clear_confirm: 'Reset index? This deletes FjordLens data, thumbnails and converted copies (not your original photos). Continue?',
     clear_starting: 'Deleting index and thumbnails...',
     clear_failed: 'Reset failed:',
     clear_unknown: 'unknown',
     clear_error: 'Error while resetting index.',
     clear_done_prefix: 'Index reset. Removed',
+    factory_confirm: 'Factory reset? This deletes all CONTENT: indexing, people/faces, thumbnails, converted copies, uploads and temp files. Users and settings are kept. Original photos are not touched. Continue?',
+    factory_starting: 'Performing content-only factory reset…',
+    factory_failed: 'Factory reset failed:',
+    factory_error: 'Error during factory reset.',
+    factory_done: 'Factory reset complete. Content cleared; users kept.',
     file_picker_open_failed: 'Could not open file picker.',
     ai_starting: 'Starting AI indexing (embeddings)...',
     ai_start_failed: 'Could not start AI indexing.',
@@ -4273,7 +4286,7 @@ async function clearIndex() {
       return;
     }
     const r = data.removed || {};
-    showStatus(`${tr('clear_done_prefix')}: ${r.photos || 0} photos, ${r.faces || 0} faces, ${r.people || 0} people, ${r.thumbs || 0} thumbs.`, "ok");
+    showStatus(`${tr('clear_done_prefix')}: ${r.photos || 0} photos, ${r.faces || 0} faces, ${r.people || 0} people, ${r.thumbs || 0} thumbs, ${r.converted || 0} converted.`, "ok");
     // Tøm UI og hent frisk
     state.items = [];
     await loadPhotos();
@@ -4281,6 +4294,30 @@ async function clearIndex() {
     showStatus(tr('clear_error'), "err");
   } finally {
     if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
+  }
+}
+
+// Factory reset (DB file + all generated caches and uploads)
+async function factoryReset() {
+  const ok = confirm(tr('factory_confirm'));
+  if (!ok) return;
+  try {
+    if (els.factoryResetBtn) els.factoryResetBtn.disabled = true;
+    showStatus(tr('factory_starting'), "ok");
+    const res = await fetch('/api/factory-reset', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showStatus(`${tr('factory_failed')} ${data && data.error ? data.error : tr('clear_unknown')}`, 'err');
+      return;
+    }
+    showStatus(tr('factory_done'), 'ok');
+    // After reset, refresh UI state (empty grid etc.)
+    state.items = [];
+    await loadPhotos();
+  } catch (e) {
+    showStatus(tr('factory_error'), 'err');
+  } finally {
+    if (els.factoryResetBtn) els.factoryResetBtn.disabled = false;
   }
 }
 
@@ -4418,6 +4455,7 @@ function applyUiLanguage() {
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
+  if (els.factoryResetBtn) els.factoryResetBtn.textContent = tr('btn_factory_reset');
   updateAiToggleButton();
   updateAiDescribeToggleButton();
   updateFacesToggleButton();
@@ -7128,3 +7166,4 @@ els.logsStart && els.logsStart.addEventListener('click', () => {
 });
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
+els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
