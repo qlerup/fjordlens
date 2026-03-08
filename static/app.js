@@ -6597,12 +6597,13 @@ setView(state.view, { syncUrl: false }).then(async () => {
     // Fallback: do not start logs if uncertain about role
     state.logsRunning = false;
   }
-  // Load HEIC and RAW settings (keep) into toggles
+  // Load HEIC and RAW settings into toggles
   try {
     fetch('/api/settings/heic').then(r=>r.json()).then(d=>{
       if (d && d.ok) {
+        if (els.heicConvertToggle) els.heicConvertToggle.checked = !!d.convert_on_upload;
         if (els.heicKeepToggle) els.heicKeepToggle.checked = !!d.keep_originals;
-        if (els.heicStatus) els.heicStatus.textContent = `HEIC: konvertering altid til, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+        if (els.heicStatus) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
       }
     }).catch(()=>{});
     fetch('/api/settings/raw').then(r=>r.json()).then(d=>{
@@ -6654,14 +6655,22 @@ setView(state.view, { syncUrl: false }).then(async () => {
   }, 1000);
 });
 
-// Conversion settings handlers (keep-originals)
+// Conversion settings handlers (HEIC convert/keep + RAW keep)
 try {
+  if (els.heicConvertToggle) els.heicConvertToggle.addEventListener('change', async ()=>{
+    try {
+      const body = { convert_on_upload: !!els.heicConvertToggle.checked };
+      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      const d = await r.json();
+      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+    } catch {}
+  });
   if (els.heicKeepToggle) els.heicKeepToggle.addEventListener('change', async ()=>{
     try {
       const body = { keep_originals: !!els.heicKeepToggle.checked };
       const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       const d = await r.json();
-      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering altid til, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
     } catch {}
   });
   if (els.rawKeepToggle) els.rawKeepToggle.addEventListener('change', async ()=>{

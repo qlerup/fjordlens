@@ -1119,7 +1119,7 @@ def _postprocess_uploaded_rels(
         # Optional: convert HEIC/HEIF and RAW to JPEG in-place (preserve EXIF when possible for HEIC)
         try:
             extl = disk_path.suffix.lower()
-            if heic_convert_on_upload_enabled() and extl in ({".heic", ".heif"} | RAW_EXTS) and disk_path.exists():
+            if (((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled()) or (extl in RAW_EXTS)) and disk_path.exists():
                 # Announce explicit converting phase in UI
                 _emit_progress({
                     "phase": "converting",
@@ -2415,8 +2415,8 @@ def ai_auto_ingest_enabled() -> bool:
 
 
 def heic_convert_on_upload_enabled() -> bool:
-    # Conversion is always enabled now; UI does not expose a toggle
-    return True
+    # Controlled by setting; default comes from env (HEIC_CONVERT_ON_UPLOAD_DEFAULT)
+    return _get_setting_bool("heic_convert_on_upload", HEIC_CONVERT_ON_UPLOAD_DEFAULT)
 
 
 def heic_keep_originals_enabled() -> bool:
@@ -6539,15 +6539,19 @@ def api_settings_heic():
 
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
+        conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
+        if conv is not None:
+            _set_setting("heic_convert_on_upload", "1" if bool(conv) else "0")
         if keep is not None:
             _set_setting("heic_keep_originals", "1" if bool(keep) else "0")
 
     return jsonify(
         {
             "ok": True,
+            "convert_on_upload": heic_convert_on_upload_enabled(),
             "keep_originals": heic_keep_originals_enabled(),
-            "env_default_convert": True,
+            "env_default_convert": HEIC_CONVERT_ON_UPLOAD_DEFAULT,
         }
     )
 

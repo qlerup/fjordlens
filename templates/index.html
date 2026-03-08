@@ -180,7 +180,11 @@
                   <div class="sidebar-card" style="margin-bottom:12px;">
                     <div class="sidebar-card-title">HEIC → JPEG</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
-                      <!-- Conversion always enabled; only keep-originals toggle is shown. -->
+                      <label class="ai-toggle-row" for="heicConvertToggle">
+                        <input id="heicConvertToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Convert HEIC on upload" />
+                        <span class="ai-toggle-slider" aria-hidden="true"></span>
+                        <span id="heicConvertToggleText" class="mini-label">Konvertér HEIC til JPEG ved upload</span>
+                      </label>
                       <label class="ai-toggle-row" for="heicKeepToggle">
                         <input id="heicKeepToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Keep originals" />
                         <span class="ai-toggle-slider" aria-hidden="true"></span>
