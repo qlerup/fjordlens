@@ -3329,19 +3329,35 @@ def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: i
 
 def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
     """Return a path that browsers and AI can read.
-    - HEIC/HEIF → cached JPEG under CONVERT_DIR with suffix `_<EXT>.jpg`
-    - RAW (DNG/CR2/NEF/ARW/...) → cached JPEG via rawpy (if available) with suffix `_<EXT>.jpg`
-    Otherwise return the original path.
+    For assets under uploads/, place any ad-hoc conversions under uploads/converted/<subpath>.jpg
+    instead of DATA/converted. For library files, keep using DATA/converted.
+    If rawpy is unavailable for RAW formats, return original path.
     """
     ext = path.suffix.lower()
     if ext not in ({".heic", ".heif"} | RAW_EXTS):
         return path
     try:
-        suffix_tag = ext[1:].upper()
-        dest_rel = Path(rel_path).with_suffix("")
-        dest_rel = Path(f"{dest_rel}_{suffix_tag}.jpg")
-        dest = CONVERT_DIR / dest_rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Decide destination root
+        under_uploads = str(rel_path).lstrip("/").startswith("uploads/")
+        if under_uploads:
+            # uploads/<subdir>/<file> -> uploads/converted/<subdir>/<stem>.jpg
+            try:
+                parts = str(rel_path).split("/", 1)
+                sub = parts[1] if len(parts) >= 2 else Path(rel_path).name
+            except Exception:
+                sub = Path(rel_path).name
+            subdir_only = str(Path(sub).parent).replace("\\", "/").strip("./")
+            leaf_jpg = f"{Path(sub).stem}.jpg"
+            dest = UPLOAD_DIR / "converted" / (subdir_only if subdir_only not in {"", "."} else "") / leaf_jpg
+            dest.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Library: keep using DATA/converted
+            suffix_tag = ext[1:].upper()
+            dest_rel = Path(rel_path).with_suffix("")
+            dest_rel = Path(f"{dest_rel}_{suffix_tag}.jpg")
+            dest = CONVERT_DIR / dest_rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+
         # Rebuild if missing or source newer
         if (not dest.exists()) or (path.stat().st_mtime > dest.stat().st_mtime):
             if ext in {".heic", ".heif"}:
@@ -3354,7 +3370,6 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
                     rgb.save(dest, format="JPEG", quality=92, optimize=True)
             elif ext in RAW_EXTS:
                 if rawpy is None:
-                    # rawpy unavailable; return original to avoid breaking flows
                     return path
                 with rawpy.imread(str(path)) as raw:  # type: ignore
                     rgb = raw.postprocess(
@@ -3365,12 +3380,7 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
                         gamma=None,
                         half_size=True,
                     )
-                img = Image.fromarray(rgb)
-                try:
-                    img = ImageOps.exif_transpose(img)
-                except Exception:
-                    pass
-                img.save(dest, format="JPEG", quality=92, optimize=True)
+                Image.fromarray(rgb).save(dest, format="JPEG", quality=92, optimize=True)
         return dest
     except Exception:
         return path

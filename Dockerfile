@@ -8,12 +8,16 @@ ARG TUS_JS_VERSION=4.2.3
 WORKDIR /app
 
 
-# Installer curl
-RUN apt-get update && apt-get install -y curl ffmpeg \
+# Installer systempakker (inkl. build deps til rawpy/LibRaw)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ffmpeg build-essential pkg-config \
+    libraw-dev libjpeg-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Opdater pip/setuptools/wheel først for at få præbyggede hjul hvor muligt
+RUN pip install --no-cache-dir -U pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
