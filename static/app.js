@@ -1105,7 +1105,7 @@ function navLabels() {
   return {
     timeline: [tr('view_timeline_title'), tr('view_timeline_sub')],
     favorites: [tr('view_favorites_title'), tr('view_favorites_sub')],
-    if (s.ok && d && d.ok && d.running) {
+    steder: [tr('view_steder_title'), tr('view_steder_sub')],
     kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
     mapper: [tr('view_mapper_title'), tr('view_mapper_sub')],
     personer: [tr('view_personer_title'), tr('view_personer_sub')],
@@ -1114,31 +1114,6 @@ function navLabels() {
 }
 
 let state = {
-} catch {}
-// RAW bulk status on load
-try {
-  const s = await fetch('/api/raw/convert-existing/status');
-  const d = await s.json();
-  if (s.ok && d && d.ok && d.running) {
-    const poll = async () => {
-      try {
-        const s2 = await fetch('/api/raw/convert-existing/status');
-        const d2 = await s2.json();
-        if (s2.ok && d2 && d2.ok) {
-          if (!d2.running) { hideTopStatusMessage(); return; }
-          const pr = d2.progress || {};
-          const total = Number(pr.total || 0);
-          const done = Number(pr.processed || 0);
-          const pct = total > 0 ? Math.round((done / total) * 100) : null;
-          const lbl = total > 0 ? `RAW-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW-konvertering kører…';
-          showTopStatusMessage(lbl, pct);
-        }
-      } catch {}
-      setTimeout(poll, 1200);
-    };
-    poll();
-  }
-} catch {}
   selectedId: null,
   view: "timeline",
   sort: "date_desc",
