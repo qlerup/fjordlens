@@ -5348,6 +5348,7 @@ def api_health():
         "photo_dir_exists": PHOTO_DIR.exists(),
         "data_dir": str(DATA_DIR),
         "db_path": str(DB_PATH),
+        "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
     })
 

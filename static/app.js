@@ -2442,6 +2442,27 @@ const uploadUiState = {
 
 let uploadOverlayHideTimer = null;
 let uploadMonitorHideTimer = null;
+
+function scheduleUploadMonitorAutoHide(delayMs = 10000) {
+  try {
+    if (!els.uploadMonitor) return;
+    if (uploadMonitorHideTimer) { window.clearTimeout(uploadMonitorHideTimer); uploadMonitorHideTimer = null; }
+    uploadMonitorHideTimer = window.setTimeout(() => {
+      try {
+        els.uploadMonitor.style.transition = 'opacity .35s ease';
+        els.uploadMonitor.style.opacity = '0';
+        window.setTimeout(()=>{
+          try {
+            els.uploadMonitor.classList.add('hidden');
+            els.uploadMonitor.style.opacity = '';
+            els.uploadMonitor.style.transition = '';
+          } catch {}
+        }, 380);
+      } catch {}
+      uploadMonitorHideTimer = null;
+    }, Math.max(0, Number(delayMs || 0)));
+  } catch {}
+}
 let activeTusUpload = null;
 let uploadStopRequested = false;
 let uploadWasStopped = false;
@@ -3298,6 +3319,8 @@ async function uploadFiles(fileList, options = {}) {
         uploadUiState.currentLoaded = 0;
         uploadUiState.currentTotal = 0;
         renderUploadMonitor();
+        // Ensure the monitor auto-hides after uploads are fully done
+        scheduleUploadMonitorAutoHide(10000);
 
         if (post) {
           const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
