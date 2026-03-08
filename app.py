@@ -2096,7 +2096,21 @@ def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
         rel = _normalize_rel_path_for_acl(r["rel_path"])
         if not rel:
             continue
-        parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        # Canonicalize uploads paths so converted/originals are shown under the user folder
+        rel_for_folder = rel
+        if rel.startswith("uploads/originals/"):
+            parts = rel.split("/", 2)
+            if len(parts) >= 3:
+                rel_for_folder = f"uploads/{parts[2]}"
+            else:
+                rel_for_folder = "uploads"
+        elif rel.startswith("uploads/converted/"):
+            parts = rel.split("/", 2)
+            if len(parts) >= 3:
+                rel_for_folder = f"uploads/{parts[2]}"
+            else:
+                rel_for_folder = "uploads"
+        parent = rel_for_folder.rsplit("/", 1)[0] if "/" in rel_for_folder else ""
         if not parent:
             continue
         parts = [p for p in parent.split("/") if p]
@@ -2495,6 +2509,11 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
                 try:
                     rel = str(p.relative_to(base)).replace("\\", "/")
                 except Exception:
+                    continue
+                # Hide framework folders from folder pickers ('originals' and 'converted')
+                parts = [seg for seg in rel.split("/") if seg]
+                if parts and parts[0] in {"originals", "converted"}:
+                    # Do not surface internal storage roots as user folders
                     continue
                 if rel and rel not in out:
                     out.append(rel)
