@@ -506,7 +506,9 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
         try:
             cur = conn.execute("INSERT INTO people(name, created_at) VALUES(?,?)", (name, now_iso()))
             conn.commit()
-            return int(cur.lastrowid), True, float(best_score)
+            lr = getattr(cur, "lastrowid", None)
+            pid_new = int(lr) if lr is not None else int(conn.execute("SELECT id FROM people WHERE name=? ORDER BY id DESC LIMIT 1", (name,)).fetchone()["id"])
+            return pid_new, True, float(best_score)
         except Exception:
             i += 1
 
@@ -6432,57 +6434,44 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
             src = _disk_path_from_rel_path(orig_rel)
             if not src.exists():
                 continue
-            # Derive converted path under uploads/converted when inside uploads/originals
-            sub_rel = ""
-            if orig_rel.startswith("uploads/originals/"):
+
+            new_rel = str(Path(orig_rel).with_suffix(".jpg")).replace("\\", "/")
+            dst: Path
+
+            if orig_rel.startswith("uploads/"):
                 try:
-                    parts = orig_rel.split("/", 2)
-                    sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
-                try:
+                    if orig_rel.startswith("uploads/originals/"):
+                        parts = orig_rel.split("/", 2)
+                        sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
+                    else:
+                        parts = orig_rel.split("/", 1)
+                        sub_rel = parts[1] if len(parts) >= 2 else Path(orig_rel).name
+                except Exception:
                     sub_rel = Path(orig_rel).name
+
                 subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
                 leaf_jpg = f"{Path(sub_rel).stem}.jpg"
-                conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
-                    # Derive converted path under uploads/converted when inside uploads/*
-                    sub_rel = ""
-                    if orig_rel.startswith("uploads/"):
-                        try:
-                            # remove 'uploads/' or 'uploads/originals/' prefix to mirror remaining path under converted
-                            if orig_rel.startswith("uploads/originals/"):
-                                parts = orig_rel.split("/", 2)
-                                sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
-                            else:
-                                parts = orig_rel.split("/", 1)
-                                sub_rel = parts[1] if len(parts) >= 2 else Path(orig_rel).name
-                        except Exception:
-                            sub_rel = Path(orig_rel).name
-                        subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
-                        leaf_jpg = f"{Path(sub_rel).stem}.jpg"
-                        conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
-                        conv_dir.mkdir(parents=True, exist_ok=True)
-                        dst = conv_dir / leaf_jpg
-                        if dst.exists():
-                            i = 1
-                            while True:
-                                cand = conv_dir / f"{Path(leaf_jpg).stem}_{i}.jpg"
-                                if not cand.exists():
-                                    dst = cand
-                                    break
-                                i += 1
-                        # Build new_rel under uploads/converted
-                        if subdir_only in {'', '.'}:
-                            tail = Path(sub_rel).with_suffix('.jpg').name
-                        else:
-                            tail = (Path(subdir_only) / Path(sub_rel).with_suffix('.jpg').name).as_posix()
-                        new_rel = f"uploads/converted/{tail}"
+                conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only not in {"", "."} else "")
+                conv_dir.mkdir(parents=True, exist_ok=True)
+                dst = conv_dir / leaf_jpg
+                if dst.exists():
+                    i = 1
+                    stem = Path(leaf_jpg).stem
+                    while True:
+                        cand = conv_dir / f"{stem}_{i}.jpg"
                         if not cand.exists():
                             dst = cand
                             break
                         i += 1
-                try:
-                    new_rel = str(Path(orig_rel).with_suffix('.jpg')).replace('\\','/')
-                except Exception:
-                    new_rel = orig_rel + '.jpg'
+                tail = (
+                    Path(sub_rel).with_suffix(".jpg").name
+                    if subdir_only in {"", "."}
+                    else (Path(subdir_only) / Path(sub_rel).with_suffix(".jpg").name).as_posix()
+                )
+                new_rel = f"uploads/converted/{tail}"
+            else:
+                dst = src.with_suffix(".jpg")
+                dst.parent.mkdir(parents=True, exist_ok=True)
 
             with Image.open(src) as himg:
                 try:
@@ -6498,21 +6487,20 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
                 if exif_bytes:
                     save_kwargs["exif"] = exif_bytes
-                dst.parent.mkdir(parents=True, exist_ok=True)
                 rgb.save(dst, **save_kwargs)
+
             try:
                 st = src.stat()
                 os.utime(dst, (st.st_atime, st.st_mtime))
             except Exception:
                 pass
 
-            # Update DB to new rel via fresh metadata/thumbnail
             meta = extract_metadata(dst, new_rel, generate_thumb=True)
             upsert_photo(meta)
             try:
-                with closing(get_conn()) as conn:
-                    conn.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel,))
-                    conn.commit()
+                with closing(get_conn()) as conn2:
+                    conn2.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel,))
+                    conn2.commit()
             except Exception:
                 pass
             try:
@@ -7108,7 +7096,7 @@ def setup_2fa():
         otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
         img = qrcode.make(otp_uri)
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        img.save(buf, "PNG")
         data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
     if request.method == "POST":
@@ -7337,7 +7325,13 @@ def api_admin_users():
                 "INSERT INTO users(username, password_hash, is_admin, role, ui_language, search_language, created_at) VALUES (?,?,?,?,?,?,?)",
                 (u, generate_password_hash(p), 1 if role == "admin" else 0, role, ui_language, search_language, now_iso()),
             )
-            uid = int(cur.lastrowid)
+            # Some SQLite drivers/types may expose lastrowid as Optional
+            uid_raw = getattr(cur, "lastrowid", None)
+            if uid_raw is None:
+                row = conn.execute("SELECT id FROM users WHERE username=? ORDER BY id DESC LIMIT 1", (u,)).fetchone()
+                uid = int(row["id"]) if row else 0
+            else:
+                uid = int(uid_raw)
             _set_user_allowed_folders(conn, uid, allowed_folders)
             conn.commit()
         return jsonify({"ok": True})
@@ -7757,7 +7751,7 @@ def api_me_2fa():
             otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
             img = qrcode.make(otp_uri)
             buf = io.BytesIO()
-            img.save(buf, format="PNG")
+            img.save(buf, "PNG")
             qr_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
             secret_out = secret
         return jsonify({
@@ -7801,7 +7795,7 @@ def api_me_2fa():
         otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user_label, issuer_name=issuer)
         img = qrcode.make(otp_uri)
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        img.save(buf, "PNG")
         data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
         return jsonify({"ok": True, "qr": data_url})
 
