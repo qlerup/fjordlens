@@ -1,3 +1,15 @@
+### Running without a library folder (/photos)
+
+If you don't use a pre-existing photo library and only rely on uploads:
+
+- Either set `PHOTO_DIR` in your `.env` to any existing empty folder on the host (e.g. `/volume1/docker/fjordlens/library`) and ensure it exists,
+- Or use the provided override to disable the `/photos` mount entirely:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --build
+```
+
+Note: Docker requires that bind-mount source paths exist on the host. If `PHOTO_DIR` is unset, the app now defaults `PHOTO_DIR` to `DATA_DIR/library` internally, so you can run uploads-only without any `/photos` mount.
 # FjordLens for Synology
 
 FjordLens is a Docker-based photo library app for Synology NAS (and local Docker hosts), with a Flask web UI, metadata indexing, folder-based uploads, AI embedding controls, and face indexing.

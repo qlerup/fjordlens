@@ -32,7 +32,7 @@ services:
       fjordlens-ai:
         condition: service_healthy
     volumes:
-      - "${PHOTO_DIR:-/volume1/photos}:/photos:ro"
+      - "${PHOTO_DIR:-/volume1/photo}:/photos:ro"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
     restart: unless-stopped
 

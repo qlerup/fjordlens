@@ -41,8 +41,10 @@ from urllib.parse import quote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
 APP_PORT = 8080
-PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
+# Define DATA_DIR first so PHOTO_DIR can default inside it for uploads-only setups
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
+# If PHOTO_DIR is not set, default to a library folder inside DATA_DIR so no external mount is required
+PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", str(DATA_DIR / "library"))).resolve()
 THUMB_DIR = DATA_DIR / "thumbs"
 CONVERT_DIR = DATA_DIR / "converted"
 UPLOAD_DIR = DATA_DIR / "uploads"
