@@ -1824,6 +1824,9 @@ function renderGrid() {
       let folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
       if (folder === 'uploads') folder = '';
       else if (folder.startsWith('uploads/')) folder = folder.slice('uploads/'.length);
+      // Do not surface internal framework roots; show user subfolder instead
+      if (folder.startsWith('converted/')) folder = folder.slice('converted/'.length);
+      if (folder.startsWith('originals/')) folder = folder.slice('originals/'.length);
       if (folder === current) {
         directItems.push(it);
       }
