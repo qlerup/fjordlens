@@ -87,6 +87,7 @@ const els = {
   detailGps: document.getElementById("detailGps"),
   detailCountry: document.getElementById("detailCountry"),
   detailCity: document.getElementById("detailCity"),
+  detailUploader: document.getElementById("detailUploader"),
   detailAiTags: document.getElementById("detailAiTags"),
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
@@ -236,6 +237,26 @@ function ensureUploadTopStatusRefs() {
   if (!els.uploadTopStatus) els.uploadTopStatus = document.getElementById("uploadTopStatus");
   if (!els.uploadTopStatusLabel) els.uploadTopStatusLabel = document.getElementById("uploadTopStatusLabel");
   if (!els.uploadTopStatusBar) els.uploadTopStatusBar = document.getElementById("uploadTopStatusBar");
+}
+
+// Generic top status helpers so we can reuse the same bar
+function showTopStatusMessage(label, pct = null) {
+  ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus) return;
+  els.uploadTopStatus.classList.remove('hidden');
+  if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = String(label || '');
+  if (els.uploadTopStatusBar) {
+    const v = pct == null ? null : Math.max(0, Math.min(100, Number(pct || 0)));
+    els.uploadTopStatusBar.style.width = (v == null) ? '0%' : `${v}%`;
+  }
+}
+
+function hideTopStatusMessage() {
+  ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus) return;
+  els.uploadTopStatus.classList.add('hidden');
+  if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
+  if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
 }
 
 let uploadMonitorDomEventsBound = false;
@@ -1448,6 +1469,10 @@ function setDetail(item) {
   els.detailDims.textContent = fmtDims(item.width, item.height);
   els.detailDevice.textContent = (item.device_label || [item.camera_make, item.camera_model].filter(Boolean).join(" ") ) || "-";
   els.detailLens.textContent = (item.lens_label || item.lens_model) || "-";
+  try {
+    const uploadedBy = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
+    if (els.detailUploader) els.detailUploader.textContent = uploadedBy || '-';
+  } catch {}
   if (item.gps_lat != null && item.gps_lon != null) {
     els.detailGps.textContent = `${Number(item.gps_lat).toFixed(5)}, ${Number(item.gps_lon).toFixed(5)}`;
   } else {
@@ -2274,6 +2299,7 @@ function openViewer(index) {
     const dev = it.device_label || (it.camera_make || "");
     const lens = it.lens_label || it.lens_model || "-";
     const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
+    const uploader = String(it && it.uploaded_by ? it.uploaded_by : '').trim();
     const tags = (it.ai_tags && it.ai_tags.length) ? it.ai_tags.join(", ") : "-";
     const dl = (it.download_url || it.original_url || '#');
     const q = (id)=>document.getElementById(id);
@@ -2284,6 +2310,7 @@ function openViewer(index) {
     q('viDevice').textContent = dev || '-';
     q('viLens').textContent = lens;
     q('viGps').textContent = gps;
+    try { const el = q('viUploader'); if (el) el.textContent = uploader || '—'; } catch {}
     q('viTags').textContent = tags;
     try {
       const geo = (it.metadata_json && it.metadata_json.geo) ? it.metadata_json.geo : {};
@@ -2824,6 +2851,7 @@ function hasTusClient() {
 
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
+  if (key === 'converting') return 'Konverterer HEIC';
   if (key === 'metadata') return 'Metadata';
   if (key === 'thumbnails') return 'Thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
@@ -6577,6 +6605,30 @@ setView(state.view, { syncUrl: false }).then(() => {
       }
     }).catch(()=>{});
   } catch {}
+  // If a bulk HEIC conversion is already running, start a passive poll to show top status
+  try {
+    const s = await fetch('/api/heic/convert-existing/status');
+    const d = await s.json();
+    if (s.ok && d && d.ok && d.running) {
+      const poll = async () => {
+        try {
+          const s2 = await fetch('/api/heic/convert-existing/status');
+          const d2 = await s2.json();
+          if (s2.ok && d2 && d2.ok) {
+            if (!d2.running) { hideTopStatusMessage(); return; }
+            const pr = d2.progress || {};
+            const total = Number(pr.total || 0);
+            const done = Number(pr.processed || 0);
+            const pct = total > 0 ? Math.round((done / total) * 100) : null;
+            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
+            showTopStatusMessage(lbl, pct);
+          }
+        } catch {}
+        setTimeout(poll, 1200);
+      };
+      poll();
+    }
+  } catch {}
   _announceUploadResumeDraftIfNeeded();
   // Resume upload postprocess monitor/state if page was refreshed mid-run.
   resumeUploadPostprocessAfterRefresh().catch(() => {});
@@ -6622,6 +6674,7 @@ try {
         return;
       }
       showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
+      showTopStatusMessage('HEIC-konvertering starter…', 0);
       // Poll status; when done, refresh grid so visning peger på JPEG
       const poll = async () => {
         try {
@@ -6636,8 +6689,16 @@ try {
               }
               await loadPhotos();
               if (state.view === 'mapper') loadMapperTools();
+              hideTopStatusMessage();
               return;
             }
+            // While running, if progress is available, reflect it in the top bar
+            const pr = d.progress || {};
+            const total = Number(pr.total || 0);
+            const done = Number(pr.processed || 0);
+            const pct = total > 0 ? Math.round((done / total) * 100) : null;
+            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
+            showTopStatusMessage(lbl, pct);
           }
         } catch {}
         setTimeout(poll, 1200);

@@ -1114,6 +1114,13 @@ def _postprocess_uploaded_rels(
         # Optional: convert HEIC/HEIF to JPEG in-place (preserve EXIF when possible)
         try:
             if heic_convert_on_upload_enabled() and disk_path.suffix.lower() in {".heic", ".heif"} and disk_path.exists():
+                # Announce explicit converting phase in UI
+                _emit_progress({
+                    "phase": "converting",
+                    "current_rel": orig_rel_for_convert,
+                    "stage_processed": i,
+                    "stage_total": len(rels),
+                })
                 new_rel = None
                 new_path = None
                 try:
@@ -4276,6 +4283,7 @@ _face_thumb_queued: set[int] = set()
 # HEIC bulk conversion worker
 heic_convert_thread = None
 last_heic_convert_result: Optional[Dict[str, Any]] = None
+heic_convert_progress: Dict[str, Any] = {"total": 0, "processed": 0, "errors": 0}
 
 
 def _build_face_thumb(face_id: int) -> bool:
@@ -6476,7 +6484,13 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     processed = 0
     errors = 0
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT rel_path FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+        rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+    # initialize global progress snapshot
+    try:
+        global heic_convert_progress
+        heic_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+    except Exception:
+        pass
     for r in rows:
         if stop_event and stop_event.is_set():
             break
@@ -6547,6 +6561,13 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 pass
 
             meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            try:
+                # Preserve original uploader if known
+                up_by = r.get("uploaded_by") if isinstance(r, dict) else (r["uploaded_by"] if "uploaded_by" in r.keys() else None)
+            except Exception:
+                up_by = None
+            if up_by:
+                meta["uploaded_by"] = str(up_by)
             upsert_photo(meta)
             try:
                 with closing(get_conn()) as conn2:
@@ -6564,8 +6585,18 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
         except Exception as e:
             errors += 1
             log_event("error", rel_path=str(r["rel_path"]), error=f"heic_bulk: {e}")
+        # Update progress after each item
+        try:
+            heic_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        except Exception:
+            pass
     res = {"ok": True, "processed": processed, "errors": errors}
     log_event("heic_bulk_done", **res)
+    # final snapshot stays available in status until next run
+    try:
+        heic_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+    except Exception:
+        pass
     return res
 
 
@@ -6574,11 +6605,15 @@ def api_heic_convert_existing():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global heic_convert_thread, last_heic_convert_result
+    global heic_convert_thread, last_heic_convert_result, heic_convert_progress
     if heic_convert_thread and heic_convert_thread.is_alive():
         return jsonify({"ok": False, "error": "HEIC-konvertering kører allerede"}), 409
     scan_stop_event.clear()
     last_heic_convert_result = None
+    try:
+        heic_convert_progress = {"total": 0, "processed": 0, "errors": 0}
+    except Exception:
+        pass
 
     def run_bulk():
         global last_heic_convert_result
@@ -6596,6 +6631,7 @@ def api_heic_convert_existing_status():
         "ok": True,
         "running": running,
         "result": (last_heic_convert_result if not running else None),
+        "progress": (heic_convert_progress if running else None),
     })
 
 
