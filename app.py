@@ -4599,12 +4599,38 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
     elif view == "recent":
         where.append("1=1")
 
-    # Optional folder filter: all files under folder (prefix match)
+    # Optional folder filter: include canonical uploads path AND
+    # internal originals/converted mirrors under the same user folder.
     if folder:
-        folder_norm = _normalize_upload_subdir(str(folder))
-        folder_with_uploads = folder_norm if folder_norm.startswith("uploads/") else f"uploads/{folder_norm}"
-        where.append("(rel_path LIKE ? || '/%' OR rel_path LIKE ? || '/%')")
-        params.extend([folder_norm, folder_with_uploads])
+        raw = _normalize_upload_subdir(str(folder))
+        # Strip optional 'uploads/' prefix for consistent handling
+        f = raw[8:] if raw.startswith("uploads/") else raw
+        # If caller passed 'originals/<sub>' or 'converted/<sub>', fold to base '<sub>'
+        if f.startswith("originals/"):
+            f_base = f[len("originals/"):]
+        elif f.startswith("converted/"):
+            f_base = f[len("converted/"):]
+        else:
+            f_base = f
+
+        # Build all accepted rel_path prefixes for this logical folder
+        prefixes = [
+            f"uploads/{f_base}",
+            f"uploads/originals/{f_base}",
+            f"uploads/converted/{f_base}",
+        ]
+        # Deduplicate while preserving order
+        seen = set()
+        uniq_prefixes = []
+        for pfx in prefixes:
+            if pfx and pfx not in seen:
+                uniq_prefixes.append(pfx)
+                seen.add(pfx)
+
+        if uniq_prefixes:
+            # Build OR chain: (rel_path LIKE ?||'/%' OR ...)
+            where.append("(" + " OR ".join(["rel_path LIKE ? || '/%'"] * len(uniq_prefixes)) + ")")
+            params.extend(uniq_prefixes)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
