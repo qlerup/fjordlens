@@ -10,5 +10,5 @@ Flask-Login>=0.6,<0.7
 pyotp>=2.9,<3.0
 qrcode>=7.4,<8.0
 gunicorn>=21.2,<22.0
-numpy>=1.26,<3.0
-rawpy>=0.18,<0.21
+numpy>=1.26,<1.27
+rawpy==0.19.5
