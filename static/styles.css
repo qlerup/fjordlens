@@ -383,7 +383,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   box-shadow: 0 0 0 2px rgba(91,140,255,0.12);
 }
 .mapper-header-actions {
-  display: none;
+  display: flex;
   position: relative;
   align-items: center;
   gap: 8px;
@@ -1528,6 +1528,7 @@ body:not(.view-timeline) #statusBar { display: none !important; }
 
 /* Mapper view: hide top-right stats cards for now */
 body.view-mapper .content-header .stats { display: none !important; }
+/* Header actions (incl. upload top-status) should be visible across views */
 body.view-mapper .mapper-header-actions { display: flex; }
 @media (min-width: 761px) {
   body.view-mapper .topbar { display: none !important; }

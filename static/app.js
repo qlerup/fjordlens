@@ -6667,10 +6667,14 @@ try {
   });
   if (els.heicBulkConvertBtn) els.heicBulkConvertBtn.addEventListener('click', async ()=>{
     try {
+      const btn = els.heicBulkConvertBtn;
+      const originalText = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
       const r = await fetch('/api/heic/convert-existing', { method:'POST' });
       if (!r.ok) {
         const d = await r.json().catch(()=>({}));
         showStatus(d && d.error ? d.error : 'Kunne ikke starte HEIC-konvertering', 'err');
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
         return;
       }
       showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
@@ -6690,6 +6694,7 @@ try {
               await loadPhotos();
               if (state.view === 'mapper') loadMapperTools();
               hideTopStatusMessage();
+              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
               return;
             }
             // While running, if progress is available, reflect it in the top bar
@@ -6706,6 +6711,14 @@ try {
       setTimeout(poll, 800);
     } catch {
       showStatus('Kunne ikke starte HEIC-konvertering', 'err');
+    } finally {
+      try {
+        const btn = els.heicBulkConvertBtn;
+        if (btn && !btn.classList.contains('loading')) {
+          // leave as-is if polling is still running; otherwise restore
+          btn.disabled = false;
+        }
+      } catch {}
     }
   });
 } catch {}
