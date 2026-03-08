@@ -1111,7 +1111,7 @@ def _postprocess_uploaded_rels(
         _emit_progress({
             "phase": "metadata",
             "current_rel": rel,
-            "stage_processed": i,
+            "stage_processed": max(0, i - 1),
             "stage_total": len(rels),
         })
         disk_path = _disk_path_from_rel_path(rel)
@@ -1253,6 +1253,13 @@ def _postprocess_uploaded_rels(
                 log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
             except Exception:
                 pass
+            # Emit progress after finishing this item
+            _emit_progress({
+                "phase": "metadata",
+                "current_rel": rel,
+                "stage_processed": i,
+                "stage_total": len(rels),
+            })
         except Exception as e:
             index_errors += 1
             try:
@@ -1271,7 +1278,7 @@ def _postprocess_uploaded_rels(
         _emit_progress({
             "phase": "thumbnails",
             "current_rel": rel,
-            "stage_processed": i,
+            "stage_processed": max(0, i - 1),
             "stage_total": len(indexed_ok),
         })
         try:
@@ -1296,6 +1303,12 @@ def _postprocess_uploaded_rels(
                     conn.commit()
             else:
                 thumb_errors += 1
+            _emit_progress({
+                "phase": "thumbnails",
+                "current_rel": rel,
+                "stage_processed": i,
+                "stage_total": len(indexed_ok),
+            })
         except Exception as e:
             thumb_errors += 1
             try:
@@ -1317,7 +1330,7 @@ def _postprocess_uploaded_rels(
             _emit_progress({
                 "phase": "faces",
                 "current_rel": rel,
-                "stage_processed": i,
+                "stage_processed": max(0, i - 1),
                 "stage_total": len(indexed_ok),
             })
             try:
@@ -1328,6 +1341,12 @@ def _postprocess_uploaded_rels(
                         faces_found += 1
                 except Exception:
                     pass
+                _emit_progress({
+                    "phase": "faces",
+                    "current_rel": rel,
+                    "stage_processed": i,
+                    "stage_total": len(indexed_ok),
+                })
             except Exception as e:
                 faces_errors += 1
                 try:
@@ -1348,12 +1367,18 @@ def _postprocess_uploaded_rels(
             _emit_progress({
                 "phase": "embeddings",
                 "current_rel": rel,
-                "stage_processed": i,
+                "stage_processed": max(0, i - 1),
                 "stage_total": len(indexed_ok),
             })
             try:
                 _embed_uploaded_photo_if_needed(rel)
                 ai_done += 1
+                _emit_progress({
+                    "phase": "embeddings",
+                    "current_rel": rel,
+                    "stage_processed": i,
+                    "stage_total": len(indexed_ok),
+                })
             except Exception as e:
                 ai_errors += 1
                 try:

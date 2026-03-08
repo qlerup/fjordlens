@@ -2703,9 +2703,10 @@ function renderUploadMonitor() {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
     if (hasTopStatus) {
       const activePct = isPostprocess ? stagePct : overallPct;
+      const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
       const topLabel = isPostprocess
         ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
-        : `Uploader · ${Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles + (uploadUiState.currentFileName ? 1 : 0)))}/${uploadUiState.totalFiles} · ${activePct}%`;
+        : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%`;
       els.uploadTopStatus.classList.remove('hidden');
       if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
       if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
@@ -2740,10 +2741,10 @@ function renderUploadMonitor() {
     }
   }
 
-  // If everything is done (no transfer, no postprocess), auto-hide monitor after 5s
+  // Auto-hide monitor after uploads finish (regardless of postprocess) after 10s
   try {
-    const done = !isUploadRunning() && !uploadQueuePumpRunning && !isPostprocess && uploadUiState.totalFiles > 0 && !uploadUiState.currentFileName;
-    if (done) {
+    const uploadsFinished = !isUploadRunning() && !uploadQueuePumpRunning && uploadUiState.totalFiles > 0 && !uploadUiState.currentFileName;
+    if (uploadsFinished) {
       if (!uploadMonitorHideTimer) {
         uploadMonitorHideTimer = window.setTimeout(() => {
           if (!els.uploadMonitor) { uploadMonitorHideTimer = null; return; }
@@ -2759,7 +2760,7 @@ function renderUploadMonitor() {
             }, 380);
           } catch {}
           uploadMonitorHideTimer = null;
-        }, 5000);
+        }, 10000);
       }
     } else {
       if (uploadMonitorHideTimer) { window.clearTimeout(uploadMonitorHideTimer); uploadMonitorHideTimer = null; }
