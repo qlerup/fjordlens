@@ -2851,7 +2851,7 @@ function hasTusClient() {
 
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
-  if (key === 'converting') return 'Konverterer HEIC';
+  if (key === 'converting') return 'Konverterer RAW/HEIC';
   if (key === 'metadata') return 'Metadata';
   if (key === 'thumbnails') return 'Thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';
@@ -6599,9 +6599,8 @@ setView(state.view, { syncUrl: false }).then(async () => {
   try {
     fetch('/api/settings/heic').then(r=>r.json()).then(d=>{
       if (d && d.ok) {
-        if (els.heicConvertToggle) els.heicConvertToggle.checked = !!d.convert_on_upload;
         if (els.heicKeepToggle) els.heicKeepToggle.checked = !!d.keep_originals;
-        if (els.heicStatus) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+        if (els.heicStatus) els.heicStatus.textContent = `RAW/HEIC: konvertering altid til, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
       }
     }).catch(()=>{});
   } catch {}
@@ -6620,7 +6619,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
             const total = Number(pr.total || 0);
             const done = Number(pr.processed || 0);
             const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
+            const lbl = total > 0 ? `RAW/HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW/HEIC-konvertering kører…';
             showTopStatusMessage(lbl, pct);
           }
         } catch {}
@@ -6647,22 +6646,14 @@ setView(state.view, { syncUrl: false }).then(async () => {
   }, 1000);
 });
 
-// HEIC toggle handlers
+// Conversion settings handlers
 try {
-  if (els.heicConvertToggle) els.heicConvertToggle.addEventListener('change', async ()=>{
-    try {
-      const body = { convert_on_upload: !!els.heicConvertToggle.checked };
-      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
-    } catch {}
-  });
   if (els.heicKeepToggle) els.heicKeepToggle.addEventListener('change', async ()=>{
     try {
       const body = { keep_originals: !!els.heicKeepToggle.checked };
       const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       const d = await r.json();
-      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `HEIC: konvertering ${d.convert_on_upload ? 'til' : 'fra'}, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+      if (els.heicStatus && d && d.ok) els.heicStatus.textContent = `RAW/HEIC: konvertering altid til, ${d.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
     } catch {}
   });
   if (els.heicBulkConvertBtn) els.heicBulkConvertBtn.addEventListener('click', async ()=>{
@@ -6673,12 +6664,12 @@ try {
       const r = await fetch('/api/heic/convert-existing', { method:'POST' });
       if (!r.ok) {
         const d = await r.json().catch(()=>({}));
-        showStatus(d && d.error ? d.error : 'Kunne ikke starte HEIC-konvertering', 'err');
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
+        showStatus(d && d.error ? d.error : 'Kunne ikke starte konvertering', 'err');
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/HEIC → JPEG'; }
         return;
       }
-      showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
-      showTopStatusMessage('HEIC-konvertering starter…', 0);
+      showStatus('Starter konvertering af eksisterende RAW/HEIC…', 'ok');
+      showTopStatusMessage('RAW/HEIC-konvertering starter…', 0);
       // Poll status; when done, refresh grid so visning peger på JPEG
       const poll = async () => {
         try {
@@ -6689,12 +6680,12 @@ try {
               if (d.result) {
                 const p = Number(d.result.processed || 0);
                 const e = Number(d.result.errors || 0);
-                showStatus(`HEIC-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
+                showStatus(`Konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
               }
               await loadPhotos();
               if (state.view === 'mapper') loadMapperTools();
               hideTopStatusMessage();
-              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
+              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/HEIC → JPEG'; }
               return;
             }
             // While running, if progress is available, reflect it in the top bar
@@ -6702,7 +6693,7 @@ try {
             const total = Number(pr.total || 0);
             const done = Number(pr.processed || 0);
             const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
+            const lbl = total > 0 ? `RAW/HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW/HEIC-konvertering kører…';
             showTopStatusMessage(lbl, pct);
           }
         } catch {}

@@ -1116,9 +1116,10 @@ def _postprocess_uploaded_rels(
         })
         disk_path = _disk_path_from_rel_path(rel)
         orig_rel_for_convert = rel
-        # Optional: convert HEIC/HEIF to JPEG in-place (preserve EXIF when possible)
+        # Optional: convert HEIC/HEIF and RAW to JPEG in-place (preserve EXIF when possible for HEIC)
         try:
-            if heic_convert_on_upload_enabled() and disk_path.suffix.lower() in {".heic", ".heif"} and disk_path.exists():
+            extl = disk_path.suffix.lower()
+            if heic_convert_on_upload_enabled() and extl in ({".heic", ".heif"} | RAW_EXTS) and disk_path.exists():
                 # Announce explicit converting phase in UI
                 _emit_progress({
                     "phase": "converting",
@@ -1129,48 +1130,63 @@ def _postprocess_uploaded_rels(
                 new_rel = None
                 new_path = None
                 try:
-                    with Image.open(disk_path) as himg:
-                        try:
-                            himg = ImageOps.exif_transpose(himg)
-                        except Exception:
-                            pass
-                        rgb = himg.convert("RGB")
-                        exif_bytes = None
-                        try:
-                            exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
-                        except Exception:
-                            exif_bytes = None
-                        # Save converted copy under uploads/converted/<subdir>/
-                        sub_rel = ""
-                        try:
-                            # rel is 'uploads/originals/<sub>/<file>' at this point
-                            parts = str(orig_rel_for_convert).split("/", 2)
-                            if len(parts) >= 3:
-                                sub_rel = parts[2]  # '<sub>/<file>'
-                            else:
-                                sub_rel = Path(orig_rel_for_convert).name
-                        except Exception:
+                    # Determine destination path under uploads/converted/<subdir>/
+                    sub_rel = ""
+                    try:
+                        parts = str(orig_rel_for_convert).split("/", 2)
+                        if len(parts) >= 3:
+                            sub_rel = parts[2]  # '<sub>/<file>'
+                        else:
                             sub_rel = Path(orig_rel_for_convert).name
-                        subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
-                        leaf_jpg = f"{Path(sub_rel).stem}.jpg"
-                        conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
-                        conv_dir.mkdir(parents=True, exist_ok=True)
-                        new_path = conv_dir / leaf_jpg
-                        # Avoid clobbering existing .jpg — add numeric suffix
-                        if new_path.exists():
-                            stem = new_path.stem
-                            parent = new_path.parent
-                            i = 1
-                            while True:
-                                cand = parent / f"{stem}_{i}.jpg"
-                                if not cand.exists():
-                                    new_path = cand
-                                    break
-                                i += 1
-                        save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
-                        if exif_bytes:
-                            save_kwargs["exif"] = exif_bytes
-                        rgb.save(new_path, **save_kwargs)
+                    except Exception:
+                        sub_rel = Path(orig_rel_for_convert).name
+                    subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                    leaf_jpg = f"{Path(sub_rel).stem}.jpg"
+                    conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
+                    conv_dir.mkdir(parents=True, exist_ok=True)
+                    new_path = conv_dir / leaf_jpg
+                    # Avoid clobbering existing .jpg — add numeric suffix
+                    if new_path.exists():
+                        stem = new_path.stem
+                        parent = new_path.parent
+                        j = 1
+                        while True:
+                            cand = parent / f"{stem}_{j}.jpg"
+                            if not cand.exists():
+                                new_path = cand
+                                break
+                            j += 1
+                    if extl in {".heic", ".heif"}:
+                        with Image.open(disk_path) as himg:
+                            try:
+                                himg = ImageOps.exif_transpose(himg)
+                            except Exception:
+                                pass
+                            rgb = himg.convert("RGB")
+                            exif_bytes = None
+                            try:
+                                exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                            except Exception:
+                                exif_bytes = None
+                            save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                            if exif_bytes:
+                                save_kwargs["exif"] = exif_bytes
+                            rgb.save(new_path, **save_kwargs)
+                    else:
+                        # RAW → JPEG via rawpy (if available)
+                        if rawpy is None:
+                            raise RuntimeError("RAW conversion requires rawpy")
+                        with rawpy.imread(str(disk_path)) as raw:  # type: ignore
+                            rgb = raw.postprocess(
+                                use_auto_wb=True,
+                                no_auto_bright=True,
+                                output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                                output_bps=8,
+                                gamma=None,
+                                half_size=True,
+                            )
+                        img = Image.fromarray(rgb)
+                        img.save(new_path, format="JPEG", quality=92, optimize=True)
                     # Preserve timestamps
                     try:
                         st = disk_path.stat()
@@ -2398,7 +2414,8 @@ def ai_auto_ingest_enabled() -> bool:
 
 
 def heic_convert_on_upload_enabled() -> bool:
-    return _get_setting_bool("heic_convert_on_upload", HEIC_CONVERT_ON_UPLOAD_DEFAULT)
+    # Conversion is always enabled now; UI does not expose a toggle
+    return True
 
 
 def heic_keep_originals_enabled() -> bool:
@@ -6538,8 +6555,11 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     log_event("heic_bulk_start")
     processed = 0
     errors = 0
+    # Include HEIC/HEIF and RAW extensions in bulk conversion
+    patterns = ["%.heic", "%.heif"] + [f"%{ext.lower()}" for ext in RAW_EXTS]
+    where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+        rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
     # initialize global progress snapshot
     try:
         global heic_convert_progress
@@ -6593,21 +6613,37 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 dst = src.with_suffix(".jpg")
                 dst.parent.mkdir(parents=True, exist_ok=True)
 
-            with Image.open(src) as himg:
-                try:
-                    himg = ImageOps.exif_transpose(himg)
-                except Exception:
-                    pass
-                rgb = himg.convert("RGB")
-                exif_bytes = None
-                try:
-                    exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
-                except Exception:
+            extl = src.suffix.lower()
+            if extl in {".heic", ".heif"}:
+                with Image.open(src) as himg:
+                    try:
+                        himg = ImageOps.exif_transpose(himg)
+                    except Exception:
+                        pass
+                    rgb = himg.convert("RGB")
                     exif_bytes = None
-                save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
-                if exif_bytes:
-                    save_kwargs["exif"] = exif_bytes
-                rgb.save(dst, **save_kwargs)
+                    try:
+                        exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                    except Exception:
+                        exif_bytes = None
+                    save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                    if exif_bytes:
+                        save_kwargs["exif"] = exif_bytes
+                    rgb.save(dst, **save_kwargs)
+            elif extl in RAW_EXTS:
+                if rawpy is None:
+                    raise RuntimeError("RAW conversion requires rawpy")
+                with rawpy.imread(str(src)) as raw:  # type: ignore
+                    rgb = raw.postprocess(
+                        use_auto_wb=True,
+                        no_auto_bright=True,
+                        output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                        output_bps=8,
+                        gamma=None,
+                        half_size=True,
+                    )
+                img = Image.fromarray(rgb)
+                img.save(dst, format="JPEG", quality=92, optimize=True)
 
             try:
                 st = src.stat()
