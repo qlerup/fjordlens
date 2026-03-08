@@ -2985,7 +2985,7 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
 def _merge_if_missing(meta: Dict[str, Any], key: str, val: Any):
     if val is None:
         return
-    if meta.get(key) is None or meta.get(key) in (""):
+    if meta.get(key) is None or meta.get(key) == "":
         meta[key] = val
 
 
@@ -2999,7 +2999,11 @@ def _piexif_get_first(exif_dict: dict, ifd: str, tag: int) -> Optional[Any]:
 def extract_exif_via_heif(path: Path) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     try:
-        hf = HeifFile(path)
+        # If pillow_heif is unavailable, skip gracefully
+        try:
+            hf = HeifFile(path)  # type: ignore[name-defined]
+        except NameError:
+            return out
         exif_bytes = hf.info.get("exif") if isinstance(hf.info, dict) else None
         if not exif_bytes:
             return out
@@ -3359,9 +3363,11 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
 
     # Reverse geocoding (country, city) if GPS present
     try:
-        if GEOCODE_ENABLE and metadata.get("gps_lat") is not None and metadata.get("gps_lon") is not None:
-            lat = float(metadata.get("gps_lat"))
-            lon = float(metadata.get("gps_lon"))
+        lat_raw = metadata.get("gps_lat")
+        lon_raw = metadata.get("gps_lon")
+        if GEOCODE_ENABLE and (lat_raw is not None) and (lon_raw is not None):
+            lat = float(lat_raw)
+            lon = float(lon_raw)
             country, city = reverse_geocode_with_cache(lat, lon)
             # Save into metadata_json and gps_name for quick display
             if country or city:
