@@ -853,6 +853,7 @@ def ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     try:
+        # Canonical upload subfolders used by the app
         (UPLOAD_DIR / "originals").mkdir(parents=True, exist_ok=True)
         (UPLOAD_DIR / "converted").mkdir(parents=True, exist_ok=True)
     except Exception:
