@@ -37,6 +37,10 @@ try:
     register_heif_opener()
 except Exception:
     pass
+try:
+    import rawpy  # type: ignore
+except Exception:
+    rawpy = None  # type: ignore
 from urllib.parse import quote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
@@ -108,7 +112,8 @@ VIDEO_FACE_DEDUPE_THRESHOLD = float(os.environ.get("VIDEO_FACE_DEDUPE_THRESHOLD"
 AI_INGEST_THROTTLE_SEC = max(0.0, float(os.environ.get("AI_INGEST_THROTTLE_SEC", "0.04")))
 FACES_INDEX_THROTTLE_SEC = max(0.0, float(os.environ.get("FACES_INDEX_THROTTLE_SEC", "0.06")))
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
+RAW_EXTS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".rw2", ".raf", ".orf", ".srw", ".pef"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"} | RAW_EXTS
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
@@ -3276,27 +3281,48 @@ def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: i
 
 def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
     """Return a path that browsers and AI can read.
-    For HEIC/HEIF originals (which browsers can't display and some libs can't stream),
-    create a cached JPEG copy under CONVERT_DIR mirroring the folder structure,
-    with suffix `_HEIC.jpg`. Reuse if up-to-date.
+    - HEIC/HEIF → cached JPEG under CONVERT_DIR with suffix `_<EXT>.jpg`
+    - RAW (DNG/CR2/NEF/ARW/...) → cached JPEG via rawpy (if available) with suffix `_<EXT>.jpg`
+    Otherwise return the original path.
     """
     ext = path.suffix.lower()
-    if ext not in {".heic", ".heif"}:
+    if ext not in ({".heic", ".heif"} | RAW_EXTS):
         return path
     try:
+        suffix_tag = ext[1:].upper()
         dest_rel = Path(rel_path).with_suffix("")
-        dest_rel = Path(str(dest_rel) + "_HEIC.jpg")
+        dest_rel = Path(f"{dest_rel}_{suffix_tag}.jpg")
         dest = CONVERT_DIR / dest_rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Rebuild if missing or source newer
         if (not dest.exists()) or (path.stat().st_mtime > dest.stat().st_mtime):
-            with Image.open(path) as im:
+            if ext in {".heic", ".heif"}:
+                with Image.open(path) as im:
+                    try:
+                        im = ImageOps.exif_transpose(im)
+                    except Exception:
+                        pass
+                    rgb = im.convert("RGB")
+                    rgb.save(dest, format="JPEG", quality=92, optimize=True)
+            elif ext in RAW_EXTS:
+                if rawpy is None:
+                    # rawpy unavailable; return original to avoid breaking flows
+                    return path
+                with rawpy.imread(str(path)) as raw:  # type: ignore
+                    rgb = raw.postprocess(
+                        use_auto_wb=True,
+                        no_auto_bright=True,
+                        output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                        output_bps=8,
+                        gamma=None,
+                        half_size=True,
+                    )
+                img = Image.fromarray(rgb)
                 try:
-                    im = ImageOps.exif_transpose(im)
+                    img = ImageOps.exif_transpose(img)
                 except Exception:
                     pass
-                rgb = im.convert("RGB")
-                rgb.save(dest, format="JPEG", quality=92, optimize=True)
+                img.save(dest, format="JPEG", quality=92, optimize=True)
         return dest
     except Exception:
         return path
@@ -3338,29 +3364,58 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     if not is_video:
         # Images: read via Pillow to populate EXIF-derived fields
         try:
-            with Image.open(path) as img:
-                try:
-                    img = ImageOps.exif_transpose(img)
-                except Exception:
-                    pass
-                metadata["width"], metadata["height"] = img.size
-                exif_map = parse_exif(img)
-                metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
-                metadata["camera_make"] = exif_map.get("Make")
-                metadata["camera_model"] = exif_map.get("Model")
-                metadata["lens_model"] = exif_map.get("LensModel")
-                metadata["iso"] = exif_map.get("ISOSpeedRatings") or exif_map.get("PhotographicSensitivity")
-                metadata["focal_length"] = _rational_to_float(exif_map.get("FocalLength"))
-                metadata["f_number"] = _rational_to_float(exif_map.get("FNumber"))
-                metadata["exposure_time"] = str(exif_map.get("ExposureTime")) if exif_map.get("ExposureTime") is not None else None
-                metadata["gps_lat"] = exif_map.get("_gps_lat")
-                metadata["gps_lon"] = exif_map.get("_gps_lon")
-                metadata["gps_name"] = None  # placeholder for future reverse geocoding
-                thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
-                try:
-                    phash = average_hash(img)
-                except Exception:
-                    phash = None
+            if path.suffix.lower() in RAW_EXTS:
+                if rawpy is not None:
+                    with rawpy.imread(str(path)) as raw:  # type: ignore
+                        rgb = raw.postprocess(
+                            use_auto_wb=True,
+                            no_auto_bright=True,
+                            output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                            output_bps=8,
+                            gamma=None,
+                            half_size=True,
+                        )
+                    img = Image.fromarray(rgb)
+                    try:
+                        img = ImageOps.exif_transpose(img)
+                    except Exception:
+                        pass
+                    metadata["width"], metadata["height"] = img.size
+                    # EXIF will be filled by fallbacks below (exifread)
+                    metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
+                    if generate_thumb:
+                        thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
+                    try:
+                        phash = average_hash(img)
+                    except Exception:
+                        phash = None
+                else:
+                    # rawpy not available; skip image decode but still set captured_at
+                    metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
+            else:
+                with Image.open(path) as img:
+                    try:
+                        img = ImageOps.exif_transpose(img)
+                    except Exception:
+                        pass
+                    metadata["width"], metadata["height"] = img.size
+                    exif_map = parse_exif(img)
+                    metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
+                    metadata["camera_make"] = exif_map.get("Make")
+                    metadata["camera_model"] = exif_map.get("Model")
+                    metadata["lens_model"] = exif_map.get("LensModel")
+                    metadata["iso"] = exif_map.get("ISOSpeedRatings") or exif_map.get("PhotographicSensitivity")
+                    metadata["focal_length"] = _rational_to_float(exif_map.get("FocalLength"))
+                    metadata["f_number"] = _rational_to_float(exif_map.get("FNumber"))
+                    metadata["exposure_time"] = str(exif_map.get("ExposureTime")) if exif_map.get("ExposureTime") is not None else None
+                    metadata["gps_lat"] = exif_map.get("_gps_lat")
+                    metadata["gps_lon"] = exif_map.get("_gps_lon")
+                    metadata["gps_name"] = None  # placeholder for future reverse geocoding
+                    thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
+                    try:
+                        phash = average_hash(img)
+                    except Exception:
+                        phash = None
         except Exception as e:
             # Unsupported or damaged image: still index file-level info
             metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
