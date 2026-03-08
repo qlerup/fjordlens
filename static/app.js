@@ -6572,7 +6572,7 @@ if (state.view === 'mapper') {
 
 applyUiLanguage();
 
-setView(state.view, { syncUrl: false }).then(() => {
+setView(state.view, { syncUrl: false }).then(async () => {
   // Start with a quick status check in case scan was running
   fetch("/api/scan/status").then(r => r.json()).then(d => {
     if (d && d.running) {
