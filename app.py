@@ -860,15 +860,8 @@ def ensure_dirs() -> None:
         pass
 
 
-# Ensure required directories/DB are present as soon as the app serves traffic.
-@app.before_first_request
-def _bootstrap_storage_on_first_request() -> None:
-    try:
-        ensure_dirs()
-        init_db()
-    except Exception:
-        # Best-effort only; routes that need storage also call ensure/init.
-        pass
+# Note: We intentionally avoid creating folders on startup.
+# Startup initialization is deferred to usage sites (e.g., first upload).
 
 
 def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
@@ -1648,6 +1641,10 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> N
 
 
 def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source_path: Path, original_name: str, last_modified_ms: Optional[int], uploaded_by: str) -> Tuple[bool, str, Optional[str]]:
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return (False, "", "Cannot create target directory")
     name = secure_filename(original_name or "")
     if not name:
         return (False, "", "Invalid filename")
@@ -1699,7 +1696,6 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    ensure_dirs()
     with closing(get_conn()) as conn:
         conn.executescript(
             """
@@ -3195,6 +3191,10 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     key = hashlib.md5(f"{rel_path}|{file_mtime}|{file_size}".encode("utf-8")).hexdigest()
     thumb_name = f"{key}.jpg"
     thumb_path = THUMB_DIR / thumb_name
+    try:
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     if thumb_path.exists() and not force:
         return thumb_name
 
@@ -3588,7 +3588,6 @@ def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Op
 
 
 def rescan_metadata(stop_event=None) -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("rescan_start")
     scanned = 0
@@ -3831,7 +3830,6 @@ def iter_photo_files(root: Path, prefix: str = "") -> Iterable[Tuple[Path, str]]
 
 
 def scan_library(stop_event=None) -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("scan_start")
 
@@ -5247,7 +5245,6 @@ def api_rescan_status():
 
 
 def rethumb_all(stop_event=None) -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("rethumb_start")
     total = 0
@@ -5309,7 +5306,6 @@ def api_rethumb_status():
 
 
 def rethumb_missing(stop_event=None) -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("rethumb_missing_start")
     total = 0
@@ -5739,7 +5735,6 @@ def api_ai_tags(photo_id: int):
 
 
 def clear_index() -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("clear_start")
     thumbs_deleted = 0
@@ -5851,7 +5846,7 @@ def api_factory_reset():
         except Exception:
             pass
 
-        ensure_dirs()
+        # No eager directory creation; proceed directly to clearing
         # Step 1: Clear index (DB photos/faces/people) and thumbs using existing helper
         clear_res = clear_index()
 
@@ -5909,14 +5904,7 @@ def api_factory_reset():
         except Exception:
             pass
 
-        # Recreate dirs to ensure clean state after wipe
-        try:
-            THUMB_DIR.mkdir(parents=True, exist_ok=True)
-            CONVERT_DIR.mkdir(parents=True, exist_ok=True)
-            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-            TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
+        # Do not recreate directories here; they will be created lazily on use (e.g., first upload)
 
         payload = {
             "ok": True,
@@ -6428,7 +6416,6 @@ def api_settings_heic():
 
 
 def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
-    ensure_dirs()
     init_db()
     log_event("heic_bulk_start")
     processed = 0
@@ -6615,7 +6602,11 @@ def api_upload_tus_create():
     if fb:
         return jsonify(fb[0]), fb[1], _tus_headers()
 
-    ensure_dirs()
+    try:
+        TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Will fail later when writing if path is unusable
+        pass
     try:
         upload_length = int(str(request.headers.get("Upload-Length") or "0").strip())
     except Exception:
@@ -6815,7 +6806,7 @@ def api_upload_tus_file(upload_id: str):
 def api_upload():
     if not current_user.is_authenticated:
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
-    ensure_dirs()
+    # Direct uploads: create only the specific target directory when needed
     destination = get_upload_destination()
     destination_override = str(request.form.get("destination") or "").strip().lower()
     if destination_override:
