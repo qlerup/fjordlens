@@ -859,6 +859,17 @@ def ensure_dirs() -> None:
         pass
 
 
+# Ensure required directories/DB are present as soon as the app serves traffic.
+@app.before_first_request
+def _bootstrap_storage_on_first_request() -> None:
+    try:
+        ensure_dirs()
+        init_db()
+    except Exception:
+        # Best-effort only; routes that need storage also call ensure/init.
+        pass
+
+
 def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
     user = str(uploaded_by or "").strip() or "__unknown__"
     rel = str(rel_path or "").strip()
