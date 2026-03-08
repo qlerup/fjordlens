@@ -1210,7 +1210,7 @@ def _postprocess_uploaded_rels(
                     rel = new_rel
                     disk_path = new_path
                     try:
-                        log_event("heic_converted", rel_path=rel)
+                        log_event("heic_converted" if extl in {".heic", ".heif"} else "raw_converted", rel_path=rel)
                     except Exception:
                         pass
                     heic_converted_count += 1
@@ -1223,10 +1223,11 @@ def _postprocess_uploaded_rels(
                         pass
                     # Optionally delete the physical original to save space
                     try:
-                        if not heic_keep_originals_enabled():
+                        keep = heic_keep_originals_enabled() if extl in {".heic", ".heif"} else raw_keep_originals_enabled()
+                        if not keep:
                             orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
                             orig_path.unlink(missing_ok=True)
-                            log_event("heic_original_deleted", rel_path=orig_rel_for_convert)
+                            log_event("heic_original_deleted" if extl in {".heic", ".heif"} else "raw_original_deleted", rel_path=orig_rel_for_convert)
                     except Exception:
                         pass
                 except Exception as e:
@@ -2421,6 +2422,11 @@ def heic_convert_on_upload_enabled() -> bool:
 def heic_keep_originals_enabled() -> bool:
     # default True to keep safety unless explicitly disabled
     return _get_setting_bool("heic_keep_originals", True)
+
+
+def raw_keep_originals_enabled() -> bool:
+    # default True to keep safety unless explicitly disabled
+    return _get_setting_bool("raw_keep_originals", True)
 
 
 def ai_desc_auto_ingest_enabled() -> bool:
@@ -6533,19 +6539,35 @@ def api_settings_heic():
 
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
-        conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
-        if conv is not None:
-            _set_setting("heic_convert_on_upload", "1" if bool(conv) else "0")
         if keep is not None:
             _set_setting("heic_keep_originals", "1" if bool(keep) else "0")
 
     return jsonify(
         {
             "ok": True,
-            "convert_on_upload": heic_convert_on_upload_enabled(),
             "keep_originals": heic_keep_originals_enabled(),
-            "env_default_convert": HEIC_CONVERT_ON_UPLOAD_DEFAULT,
+            "env_default_convert": True,
+        }
+    )
+
+
+@app.route("/api/settings/raw", methods=["GET", "POST"])
+def api_settings_raw():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        keep = body.get("keep_originals")
+        if keep is not None:
+            _set_setting("raw_keep_originals", "1" if bool(keep) else "0")
+
+    return jsonify(
+        {
+            "ok": True,
+            "keep_originals": raw_keep_originals_enabled(),
         }
     )
 
@@ -6555,11 +6577,9 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     log_event("heic_bulk_start")
     processed = 0
     errors = 0
-    # Include HEIC/HEIF and RAW extensions in bulk conversion
-    patterns = ["%.heic", "%.heif"] + [f"%{ext.lower()}" for ext in RAW_EXTS]
-    where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
+    # HEIC/HEIF only in this function
     with closing(get_conn()) as conn:
-        rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
+        rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
     # initialize global progress snapshot
     try:
         global heic_convert_progress
@@ -6630,20 +6650,9 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                     if exif_bytes:
                         save_kwargs["exif"] = exif_bytes
                     rgb.save(dst, **save_kwargs)
-            elif extl in RAW_EXTS:
-                if rawpy is None:
-                    raise RuntimeError("RAW conversion requires rawpy")
-                with rawpy.imread(str(src)) as raw:  # type: ignore
-                    rgb = raw.postprocess(
-                        use_auto_wb=True,
-                        no_auto_bright=True,
-                        output_color=rawpy.ColorSpace.sRGB,  # type: ignore
-                        output_bps=8,
-                        gamma=None,
-                        half_size=True,
-                    )
-                img = Image.fromarray(rgb)
-                img.save(dst, format="JPEG", quality=92, optimize=True)
+            else:
+                # Skip non-HEIC in this function
+                continue
 
             try:
                 st = src.stat()
@@ -6723,6 +6732,160 @@ def api_heic_convert_existing_status():
         "running": running,
         "result": (last_heic_convert_result if not running else None),
         "progress": (heic_convert_progress if running else None),
+    })
+
+
+# --- RAW bulk conversion (DNG/RAW) ---
+raw_convert_thread: Optional[threading.Thread] = None
+last_raw_convert_result: Optional[Dict[str, Any]] = None
+raw_convert_progress: Optional[Dict[str, Any]] = None
+
+
+def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
+    init_db()
+    log_event("raw_bulk_start")
+    processed = 0
+    errors = 0
+    patterns = [f"%{ext.lower()}" for ext in RAW_EXTS]
+    where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
+    with closing(get_conn()) as conn:
+        rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
+    global raw_convert_progress
+    try:
+        raw_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+    except Exception:
+        pass
+    for r in rows:
+        if stop_event and stop_event.is_set():
+            break
+        try:
+            orig_rel = r["rel_path"]
+            src = _disk_path_from_rel_path(orig_rel)
+            if not src.exists():
+                continue
+            # Determine destination under uploads/converted/ mirroring path
+            if orig_rel.startswith("uploads/"):
+                try:
+                    if orig_rel.startswith("uploads/originals/"):
+                        parts = orig_rel.split("/", 2)
+                        sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
+                    else:
+                        parts = orig_rel.split("/", 1)
+                        sub_rel = parts[1] if len(parts) >= 2 else Path(orig_rel).name
+                except Exception:
+                    sub_rel = Path(orig_rel).name
+                subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                leaf_jpg = f"{Path(sub_rel).stem}.jpg"
+                conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only not in {"", "."} else "")
+                conv_dir.mkdir(parents=True, exist_ok=True)
+                dst = conv_dir / leaf_jpg
+                if dst.exists():
+                    i = 1
+                    stem = Path(leaf_jpg).stem
+                    while True:
+                        cand = conv_dir / f"{stem}_{i}.jpg"
+                        if not cand.exists():
+                            dst = cand
+                            break
+                        i += 1
+                tail = (
+                    Path(sub_rel).with_suffix(".jpg").name
+                    if subdir_only in {"", "."}
+                    else (Path(subdir_only) / Path(sub_rel).with_suffix(".jpg").name).as_posix()
+                )
+                new_rel = f"uploads/converted/{tail}"
+            else:
+                dst = src.with_suffix(".jpg")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                new_rel = str(Path(orig_rel).with_suffix(".jpg")).replace("\\", "/")
+
+            # RAW → JPEG
+            if rawpy is None:
+                raise RuntimeError("RAW conversion requires rawpy")
+            with rawpy.imread(str(src)) as raw:  # type: ignore
+                rgb = raw.postprocess(
+                    use_auto_wb=True,
+                    no_auto_bright=True,
+                    output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                    output_bps=8,
+                    gamma=None,
+                    half_size=True,
+                )
+            Image.fromarray(rgb).save(dst, format="JPEG", quality=92, optimize=True)
+            try:
+                st = src.stat()
+                os.utime(dst, (st.st_atime, st.st_mtime))
+            except Exception:
+                pass
+            meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            try:
+                up_by = r.get("uploaded_by") if isinstance(r, dict) else (r["uploaded_by"] if "uploaded_by" in r.keys() else None)
+            except Exception:
+                up_by = None
+            if up_by:
+                meta["uploaded_by"] = str(up_by)
+            upsert_photo(meta)
+            try:
+                with closing(get_conn()) as conn2:
+                    conn2.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel,))
+                    conn2.commit()
+            except Exception:
+                pass
+            try:
+                if not raw_keep_originals_enabled():
+                    src.unlink(missing_ok=True)
+            except Exception:
+                pass
+            processed += 1
+            log_event("raw_converted", rel_path=new_rel)
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=str(r["rel_path"]), error=f"raw_bulk: {e}")
+        try:
+            raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        except Exception:
+            pass
+    res = {"ok": True, "processed": processed, "errors": errors}
+    log_event("raw_bulk_done", **res)
+    try:
+        raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+    except Exception:
+        pass
+    return res
+
+
+@app.route("/api/raw/convert-existing", methods=["POST"])
+def api_raw_convert_existing():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    global raw_convert_thread, last_raw_convert_result, raw_convert_progress
+    if raw_convert_thread and raw_convert_thread.is_alive():
+        return jsonify({"ok": False, "error": "RAW-konvertering kører allerede"}), 409
+    scan_stop_event.clear()
+    last_raw_convert_result = None
+    try:
+        raw_convert_progress = {"total": 0, "processed": 0, "errors": 0}
+    except Exception:
+        pass
+
+    def run_bulk():
+        global last_raw_convert_result
+        last_raw_convert_result = _convert_existing_raw(stop_event=scan_stop_event)
+
+    raw_convert_thread = threading.Thread(target=run_bulk, daemon=True)
+    raw_convert_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/raw/convert-existing/status")
+def api_raw_convert_existing_status():
+    running = bool(raw_convert_thread and raw_convert_thread.is_alive())
+    return jsonify({
+        "ok": True,
+        "running": running,
+        "result": (last_raw_convert_result if not running else None),
+        "progress": (raw_convert_progress if running else None),
     })
 
 

@@ -175,20 +175,34 @@
         </div>
 
         <!-- AI -->
-                <!-- RAW/HEIC conversion settings -->
+                <!-- Konvertering: HEIC og RAW/DNG -->
                 <div class="tab-panel hidden" data-tabpanel="heic">
                   <div class="sidebar-card" style="margin-bottom:12px;">
-                    <div class="sidebar-card-title">RAW/HEIC → JPEG</div>
+                    <div class="sidebar-card-title">HEIC → JPEG</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
                       <!-- Conversion always enabled; only keep-originals toggle is shown. -->
                       <label class="ai-toggle-row" for="heicKeepToggle">
                         <input id="heicKeepToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Keep originals" />
                         <span class="ai-toggle-slider" aria-hidden="true"></span>
-                        <span id="heicKeepToggleText" class="mini-label">Bevar originale RAW/HEIC filer</span>
+                        <span id="heicKeepToggleText" class="mini-label">Bevar originale HEIC filer</span>
                       </label>
-                      <div id="heicStatus" class="mini-label">RAW/HEIC: —</div>
+                      <div id="heicStatus" class="mini-label">HEIC: —</div>
                       <div>
-                        <button id="heicBulkConvertBtn" class="btn">Konvertér eksisterende RAW/HEIC → JPEG</button>
+                        <button id="heicBulkConvertBtn" class="btn">Konvertér eksisterende HEIC → JPEG</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="sidebar-card" style="margin-bottom:12px;">
+                    <div class="sidebar-card-title">RAW/DNG → JPEG</div>
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                      <label class="ai-toggle-row" for="rawKeepToggle">
+                        <input id="rawKeepToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Keep RAW originals" />
+                        <span class="ai-toggle-slider" aria-hidden="true"></span>
+                        <span id="rawKeepToggleText" class="mini-label">Bevar originale RAW/DNG filer</span>
+                      </label>
+                      <div id="rawStatus" class="mini-label">RAW/DNG: —</div>
+                      <div>
+                        <button id="rawBulkConvertBtn" class="btn">Konvertér eksisterende RAW/DNG → JPEG</button>
                       </div>
                     </div>
                   </div>
