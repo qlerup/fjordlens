@@ -41,6 +41,9 @@ try:
     import rawpy  # type: ignore
 except Exception:
     rawpy = None  # type: ignore
+
+import subprocess
+import shutil
 from urllib.parse import quote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
@@ -114,6 +117,56 @@ FACES_INDEX_THROTTLE_SEC = max(0.0, float(os.environ.get("FACES_INDEX_THROTTLE_S
 
 RAW_EXTS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".rw2", ".raf", ".orf", ".srw", ".pef"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"} | RAW_EXTS
+
+
+def _raw_to_jpeg(src: Path, dst: Path) -> None:
+    """Convert RAW (incl. DNG) to JPEG.
+    1) Try rawpy (preferred for quality)
+    2) Fallback to ffmpeg thumbnail/extract if rawpy cannot decode
+    Raises on failure.
+    """
+    last_error: Exception | None = None
+    # First try rawpy if available
+    if rawpy is not None:
+        try:
+            with rawpy.imread(str(src)) as raw:  # type: ignore
+                rgb = raw.postprocess(
+                    use_auto_wb=True,
+                    no_auto_bright=True,
+                    output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                    output_bps=8,
+                    gamma=None,
+                    half_size=True,
+                )
+            Image.fromarray(rgb).save(dst, format="JPEG", quality=92, optimize=True)
+            return
+        except Exception as e:  # fall back to ffmpeg
+            last_error = e
+    # Fallback: ffmpeg single-frame extraction (works for many DNG/RAWs with embedded preview)
+    try:
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("ffmpeg not available for RAW fallback")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(dst),
+        ]
+        subprocess.run(cmd, check=True)
+        if not dst.exists() or dst.stat().st_size == 0:
+            raise RuntimeError("ffmpeg produced empty output")
+        return
+    except Exception as e:
+        # Prefer reporting the rawpy error if it existed, else ffmpeg error
+        raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
@@ -1173,20 +1226,8 @@ def _postprocess_uploaded_rels(
                                 save_kwargs["exif"] = exif_bytes
                             rgb.save(new_path, **save_kwargs)
                     else:
-                        # RAW → JPEG via rawpy (if available)
-                        if rawpy is None:
-                            raise RuntimeError("RAW conversion requires rawpy")
-                        with rawpy.imread(str(disk_path)) as raw:  # type: ignore
-                            rgb = raw.postprocess(
-                                use_auto_wb=True,
-                                no_auto_bright=True,
-                                output_color=rawpy.ColorSpace.sRGB,  # type: ignore
-                                output_bps=8,
-                                gamma=None,
-                                half_size=True,
-                            )
-                        img = Image.fromarray(rgb)
-                        img.save(new_path, format="JPEG", quality=92, optimize=True)
+                        # RAW → JPEG via rawpy with ffmpeg fallback
+                        _raw_to_jpeg(disk_path, new_path)
                     # Preserve timestamps
                     try:
                         st = disk_path.stat()
@@ -1232,7 +1273,7 @@ def _postprocess_uploaded_rels(
                         pass
                 except Exception as e:
                     try:
-                        log_event("error", rel_path=str(rel), error=f"heic_convert: {e}")
+                        log_event("error", rel_path=str(rel), error=f"convert: {e}")
                     except Exception:
                         pass
         except Exception:
@@ -3369,18 +3410,8 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
                     rgb = im.convert("RGB")
                     rgb.save(dest, format="JPEG", quality=92, optimize=True)
             elif ext in RAW_EXTS:
-                if rawpy is None:
-                    return path
-                with rawpy.imread(str(path)) as raw:  # type: ignore
-                    rgb = raw.postprocess(
-                        use_auto_wb=True,
-                        no_auto_bright=True,
-                        output_color=rawpy.ColorSpace.sRGB,  # type: ignore
-                        output_bps=8,
-                        gamma=None,
-                        half_size=True,
-                    )
-                Image.fromarray(rgb).save(dest, format="JPEG", quality=92, optimize=True)
+                # Try rawpy first; fallback to ffmpeg
+                _raw_to_jpeg(path, dest)
         return dest
     except Exception:
         return path
@@ -3423,23 +3454,28 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         # Images: read via Pillow to populate EXIF-derived fields
         try:
             if path.suffix.lower() in RAW_EXTS:
+                # Try to decode RAW for dimensions/thumb; fall back gracefully
+                img: Image.Image | None = None
                 if rawpy is not None:
-                    with rawpy.imread(str(path)) as raw:  # type: ignore
-                        rgb = raw.postprocess(
-                            use_auto_wb=True,
-                            no_auto_bright=True,
-                            output_color=rawpy.ColorSpace.sRGB,  # type: ignore
-                            output_bps=8,
-                            gamma=None,
-                            half_size=True,
-                        )
-                    img = Image.fromarray(rgb)
+                    try:
+                        with rawpy.imread(str(path)) as raw:  # type: ignore
+                            rgb = raw.postprocess(
+                                use_auto_wb=True,
+                                no_auto_bright=True,
+                                output_color=rawpy.ColorSpace.sRGB,  # type: ignore
+                                output_bps=8,
+                                gamma=None,
+                                half_size=True,
+                            )
+                        img = Image.fromarray(rgb)
+                    except Exception:
+                        img = None
+                if img is not None:
                     try:
                         img = ImageOps.exif_transpose(img)
                     except Exception:
                         pass
                     metadata["width"], metadata["height"] = img.size
-                    # EXIF will be filled by fallbacks below (exifread)
                     metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
                     if generate_thumb:
                         thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
@@ -3448,7 +3484,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     except Exception:
                         phash = None
                 else:
-                    # rawpy not available; skip image decode but still set captured_at
+                    # Could not decode; still set captured_at; ensure a viewable will be produced lazily
                     metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
             else:
                 with Image.open(path) as img:
