@@ -10,7 +10,8 @@ WORKDIR /app
 
 # Installer systempakker (inkl. build deps til rawpy/LibRaw)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ffmpeg build-essential pkg-config cmake ninja-build python3-dev \
+    curl ffmpeg libimage-exiftool-perl \
+    build-essential pkg-config cmake ninja-build python3-dev \
     libraw-dev libjpeg-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 

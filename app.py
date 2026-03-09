@@ -142,7 +142,29 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
             return
         except Exception as e:  # fall back to ffmpeg
             last_error = e
-    # Fallback: ffmpeg single-frame extraction (works for many DNG/RAWs with embedded preview)
+    # Next try ExifTool preview extraction (very robust for DNG)
+    exiftool_error: Exception | None = None
+    try:
+        if shutil.which("exiftool"):
+            for tag in ("PreviewImage", "JpgFromRaw", "ThumbnailImage"):
+                try:
+                    with open(dst, "wb") as outf:
+                        subprocess.run(["exiftool", "-b", f"-{tag}", str(src)], check=True, stdout=outf)
+                    if dst.exists() and dst.stat().st_size > 0:
+                        return
+                except Exception as et:
+                    exiftool_error = et
+                    if dst.exists():
+                        try:
+                            dst.unlink()
+                        except Exception:
+                            pass
+        else:
+            exiftool_error = RuntimeError("exiftool not available")
+    except Exception as e:
+        exiftool_error = e
+
+    # Finally, try ffmpeg single-frame extraction (works for some RAWs with embedded preview)
     try:
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg not available for RAW fallback")
@@ -165,8 +187,8 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
             raise RuntimeError("ffmpeg produced empty output")
         return
     except Exception as e:
-        # Prefer reporting the rawpy error if it existed, else ffmpeg error
-        raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, ffmpeg={e!r}")
+        # Prefer reporting the rawpy error (if any) and exiftool error as context
+        raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, exiftool={exiftool_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
