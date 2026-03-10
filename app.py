@@ -4334,17 +4334,17 @@ def api_people_list():
     with closing(get_conn()) as conn:
         acl_prefixes = _current_user_acl_prefixes(conn)
         where = "" if include_hidden else "WHERE COALESCE(p.hidden,0)=0"
-                rows = conn.execute(
-                        f"""
-                        SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden
-                        FROM people p
-                        {where}
-                        ORDER BY
-                            CASE WHEN LOWER(p.name) LIKE 'ukendt%' OR LOWER(p.name) LIKE 'unknown%'
-                                     THEN 1 ELSE 0 END,
-                            p.name COLLATE NOCASE ASC
-                        """
-                ).fetchall()
+        rows = conn.execute(
+            f"""
+            SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden
+            FROM people p
+            {where}
+            ORDER BY
+              CASE WHEN LOWER(p.name) LIKE 'ukendt%' OR LOWER(p.name) LIKE 'unknown%'
+                   THEN 1 ELSE 0 END,
+              p.name COLLATE NOCASE ASC
+            """
+        ).fetchall()
         people = []
         for r in rows:
             pid = int(r["id"])
