@@ -5197,6 +5197,88 @@ def api_duplicates():
     return jsonify(resp)
 
 
+@app.route("/api/duplicates/merge", methods=["POST"])
+def api_duplicates_merge():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    data = request.get_json(silent=True) or {}
+    keep_id = int(data.get("keep_id") or 0)
+    drop_id = int(data.get("drop_id") or 0)
+    copy_meta = bool(data.get("copy_metadata", True))
+    delete_file = bool(data.get("delete_file", True))
+    if not keep_id or not drop_id or keep_id == drop_id:
+        return jsonify({"ok": False, "error": "Invalid keep/drop ids"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            keep = conn.execute("SELECT * FROM photos WHERE id=?", (keep_id,)).fetchone()
+            drop = conn.execute("SELECT * FROM photos WHERE id=?", (drop_id,)).fetchone()
+            if not keep or not drop:
+                return jsonify({"ok": False, "error": "Photo not found"}), 404
+
+            # Optionally copy metadata when missing on the kept photo
+            if copy_meta:
+                upd: dict[str, Any] = {}
+                cols_simple = [
+                    "captured_at", "camera_make", "camera_model", "lens_model",
+                    "iso", "focal_length", "f_number", "exposure_time",
+                    "gps_lat", "gps_lon", "gps_name",
+                ]
+                for col in cols_simple:
+                    if (keep[col] is None or keep[col] == "") and (drop[col] is not None and drop[col] != ""):
+                        upd[col] = drop[col]
+                # Merge JSON-ish columns
+                def _first(v):
+                    return None if v in (None, "", "null") else v
+                ai_tags_keep = _first(keep["ai_tags"])
+                ai_tags_drop = _first(drop["ai_tags"])
+                if ai_tags_drop and not ai_tags_keep:
+                    upd["ai_tags"] = ai_tags_drop
+                ai_desc_keep = _first(keep["ai_desc_tags"])
+                ai_desc_drop = _first(drop["ai_desc_tags"])
+                if ai_desc_drop and not ai_desc_keep:
+                    upd["ai_desc_tags"] = ai_desc_drop
+                if (keep["ai_desc_caption"] in (None, "")) and _first(drop["ai_desc_caption"]):
+                    upd["ai_desc_caption"] = drop["ai_desc_caption"]
+                if (keep["embedding_json"] in (None, "")) and _first(drop["embedding_json"]):
+                    upd["embedding_json"] = drop["embedding_json"]
+                if (keep["metadata_json"] in (None, "")) and _first(drop["metadata_json"]):
+                    upd["metadata_json"] = drop["metadata_json"]
+                if (keep["exif_json"] in (None, "")) and _first(drop["exif_json"]):
+                    upd["exif_json"] = drop["exif_json"]
+                if upd:
+                    sets = ", ".join([f"{k}=?" for k in upd.keys()])
+                    conn.execute(f"UPDATE photos SET {sets} WHERE id=?", (*upd.values(), keep_id))
+
+            # Move faces to kept photo, then delete the dropped one
+            try:
+                moved = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE photo_id=?", (drop_id,)).fetchone()
+                moved_n = int(moved["c"] or 0) if moved else 0
+                if moved_n:
+                    conn.execute("UPDATE faces SET photo_id=? WHERE photo_id=?", (keep_id, drop_id))
+                    cur_keep_pc = conn.execute("SELECT people_count FROM photos WHERE id=?", (keep_id,)).fetchone()
+                    pc = int(cur_keep_pc["people_count"] or 0) if cur_keep_pc else 0
+                    conn.execute("UPDATE photos SET people_count=? WHERE id=?", (pc + moved_n, keep_id))
+            except Exception:
+                pass
+
+            # Resolve disk path for the dropped photo
+            drop_rel = str(drop["rel_path"] or "")
+            conn.execute("DELETE FROM photos WHERE id=?", (drop_id,))
+            conn.commit()
+        # Optionally remove file from disk
+        if delete_file and drop_rel:
+            try:
+                path = _disk_path_from_rel_path(drop_rel)
+                if path.exists():
+                    path.unlink(missing_ok=True)  # type: ignore[call-arg]
+            except Exception:
+                pass
+        return jsonify({"ok": True, "kept": keep_id, "removed": drop_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/")
 def index():
     try:

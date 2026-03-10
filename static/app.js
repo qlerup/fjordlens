@@ -1767,17 +1767,23 @@ function renderGrid() {
     els.grid.innerHTML = '';
       els.grid.classList.remove('timeline-wrap');
       els.grid.classList.add('gallery-grid');
-    // Actions toolbar for People view (e.g., Match scan)
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-    actions.style.cssText = 'justify-content:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px;';
-    const matchBtn = document.createElement('button');
-    matchBtn.id = 'peopleMatchScanBtn';
-    matchBtn.className = 'btn small';
-    matchBtn.textContent = tr('people_match_btn');
-    matchBtn.addEventListener('click', ()=> matchUnknownFaces(1000));
-    actions.appendChild(matchBtn);
-    els.grid.appendChild(actions);
+    // Ensure top actions button (next to "Vis skjulte")
+    (function ensurePeopleTopActions(){
+      const stats = document.querySelector('.content-header .stats');
+      if (!stats) return;
+      let topBtn = document.getElementById('peopleMatchScanTopBtn');
+      if (!topBtn) {
+        topBtn = document.createElement('button');
+        topBtn.id = 'peopleMatchScanTopBtn';
+        topBtn.className = 'btn small';
+        topBtn.style.marginLeft = '8px';
+        topBtn.textContent = tr('people_match_btn');
+        topBtn.addEventListener('click', ()=> matchUnknownFaces(1000));
+        stats.appendChild(topBtn);
+      } else {
+        topBtn.textContent = tr('people_match_btn');
+      }
+    })();
     const people = state.personView.mode === 'list' ? (state.people || []) : [];
     if (state.personView.mode === 'list') {
       if (!people.length) {
@@ -7578,6 +7584,82 @@ function renderDuplicates(data) {
     wrap.innerHTML = "<div class='empty'>Ingen resultater.</div>";
     return;
   }
+  // Build quick lookup of group pairs for intersection (checksum ∩ phash_equal)
+  const checksumPairs = new Set();
+  const phashPairs = new Set();
+  try {
+    const findGrp = (reason) => (data.groups.find(g => g.reason === reason) || {}).items || [];
+    const addPairs = (items, set) => {
+      for (const arr of items) {
+        if (arr.length === 2) {
+          const ids = [Number(arr[0].id), Number(arr[1].id)].sort((a,b)=>a-b).join(':');
+          set.add(ids);
+        }
+      }
+    };
+    addPairs(findGrp('checksum'), checksumPairs);
+    addPairs(findGrp('phash_equal'), phashPairs);
+  } catch {}
+
+  const intersectionPairs = [...checksumPairs].filter(x => phashPairs.has(x));
+  if (intersectionPairs.length) {
+    const sec = document.createElement('section');
+    sec.className = 'dupe-group';
+    const title = document.createElement('h4');
+    title.textContent = `100% match · ${intersectionPairs.length} par`;
+    title.style.cursor = 'pointer';
+    const content = document.createElement('div');
+    content.style.display = 'none';
+    title.addEventListener('click', ()=>{ content.style.display = (content.style.display==='none'?'block':'none'); });
+    sec.appendChild(title);
+    // Render each pair with merge buttons
+    const getItemById = (reason, id) => {
+      const g = (data.groups.find(x=>x.reason===reason)||{}).items||[];
+      for (const arr of g) {
+        for (const it of arr) if (Number(it.id)===Number(id)) return it;
+      }
+      return null;
+    };
+    for (const key of intersectionPairs) {
+      const [aId, bId] = key.split(':').map(Number);
+      const a = getItemById('checksum', aId) || getItemById('phash_equal', aId);
+      const b = getItemById('checksum', bId) || getItemById('phash_equal', bId);
+      const strip = document.createElement('div');
+      strip.className = 'dupe-strip';
+      const makeCell = (it) => {
+        const cell = document.createElement('div');
+        cell.className = 'dupe-item';
+        cell.innerHTML = `${it.thumb_url ? `<img class='dupe-thumb' src='${it.thumb_url}' alt=''>` : `<div class='dupe-thumb' style='display:grid;place-items:center;background:#1b1f29;'>Ingen</div>`}<small>${it.filename || ''}</small>`;
+        return cell;
+      };
+      const left = makeCell(a);
+      const right = makeCell(b);
+      const btns = document.createElement('div');
+      btns.style.display = 'grid';
+      btns.style.placeItems = 'center';
+      btns.style.gap = '6px';
+      const lbl = document.createElement('div'); lbl.className='mini-label'; lbl.textContent='100% match';
+      const keepLeft = document.createElement('button'); keepLeft.className='btn tiny'; keepLeft.textContent='Flet → behold venstre';
+      const keepRight = document.createElement('button'); keepRight.className='btn tiny'; keepRight.textContent='Flet → behold højre';
+      const runMerge = async (keep, drop) => {
+        try {
+          const r = await fetch('/api/duplicates/merge', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ keep_id: keep, drop_id: drop, copy_metadata: true, delete_file: true })});
+          const d = await r.json().catch(()=>({}));
+          if (!r.ok || !d || !d.ok) { showStatus((d && d.error) || 'Fletning fejlede', 'err'); return; }
+          showStatus('Flettet (metadata overført hvis tom).', 'ok');
+          strip.parentElement && strip.parentElement.removeChild(strip);
+        } catch { showStatus('Fletning fejlede', 'err'); }
+      };
+      keepLeft.addEventListener('click', ()=> runMerge(aId, bId));
+      keepRight.addEventListener('click', ()=> runMerge(bId, aId));
+      btns.appendChild(lbl); btns.appendChild(keepLeft); btns.appendChild(keepRight);
+      strip.appendChild(left); strip.appendChild(btns); strip.appendChild(right);
+      content.appendChild(strip);
+    }
+    sec.appendChild(content);
+    wrap.appendChild(sec);
+  }
+
   for (const grp of data.groups) {
     const sets = grp.items || [];
     if (!sets.length) continue;
@@ -7585,7 +7667,13 @@ function renderDuplicates(data) {
     sec.className = "dupe-group";
     const titleMap = { checksum: "Checksum", phash_equal: "pHash (ens)", phash_near: `pHash (nær)` };
     const name = titleMap[grp.reason] || grp.reason;
-    sec.innerHTML = `<h4>${name} · ${sets.length} grupper</h4>`;
+    const header = document.createElement('h4');
+    header.textContent = `${name} · ${sets.length} grupper`;
+    header.style.cursor = 'pointer';
+    sec.appendChild(header);
+    const content = document.createElement('div');
+    content.style.display = 'none';
+    header.addEventListener('click', ()=>{ content.style.display = (content.style.display==='none'?'block':'none'); });
     for (const arr of sets) {
       const strip = document.createElement("div");
       strip.className = "dupe-strip";
@@ -7598,8 +7686,9 @@ function renderDuplicates(data) {
         a.innerHTML = `${it.thumb_url ? `<img class='dupe-thumb' src='${it.thumb_url}' alt=''>` : `<div class='dupe-thumb' style='display:grid;place-items:center;background:#1b1f29;'>Ingen</div>`}<small>${it.filename || ''}</small>`;
         strip.appendChild(a);
       }
-      sec.appendChild(strip);
+      content.appendChild(strip);
     }
+    sec.appendChild(content);
     wrap.appendChild(sec);
   }
   if (!wrap.children.length) {
