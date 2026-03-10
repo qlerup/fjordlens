@@ -3363,7 +3363,8 @@ async function uploadFiles(fileList, options = {}) {
           uploadOverlayHideTimer = null;
         }
         hideUploadOverlay();
-        showUploadMonitor();
+        // Efter afsluttet upload: opdater kun UI og bevar evt. auto-hide timer
+        renderUploadMonitor();
       }
     };
     runQueue();
@@ -4460,13 +4461,24 @@ async function clearIndex() {
   const ok = confirm(tr('clear_confirm'));
   if (!ok) return;
   try {
-    if (els.clearIndexBtn) els.clearIndexBtn.disabled = true;
+    const btn = els.clearIndexBtn;
+    const original = btn ? btn.textContent : tr('btn_reset_index');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      // Behold label eller brug oversat standard
+      btn.textContent = original || tr('btn_reset_index');
+    }
     showStatus(tr('clear_starting'), "ok");
     const res = await fetch("/api/clear", { method: "POST" });
     const data = await res.json();
     if (!res.ok || !data.ok) {
       showStatus(`${tr('clear_failed')} ${data && data.error ? data.error : tr('clear_unknown')}`, "err");
-      if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = original || tr('btn_reset_index');
+      }
       return;
     }
     const r = data.removed || {};
@@ -4477,7 +4489,12 @@ async function clearIndex() {
   } catch (e) {
     showStatus(tr('clear_error'), "err");
   } finally {
-    if (els.clearIndexBtn) els.clearIndexBtn.disabled = false;
+    const btn = els.clearIndexBtn;
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = btn.textContent || tr('btn_reset_index');
+    }
   }
 }
 
@@ -4519,12 +4536,23 @@ async function factoryReset() {
   const ok = confirm(tr('factory_confirm'));
   if (!ok) return;
   try {
-    if (els.factoryResetBtn) els.factoryResetBtn.disabled = true;
+    const btn = els.factoryResetBtn;
+    const original = btn ? btn.textContent : tr('btn_factory_reset');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.textContent = original || tr('btn_factory_reset');
+    }
     showStatus(tr('factory_starting'), "ok");
     const res = await fetch('/api/factory-reset', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
       showStatus(`${tr('factory_failed')} ${data && data.error ? data.error : tr('clear_unknown')}`, 'err');
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = original || tr('btn_factory_reset');
+      }
       return;
     }
     showStatus(tr('factory_done'), 'ok');
@@ -4534,7 +4562,12 @@ async function factoryReset() {
   } catch (e) {
     showStatus(tr('factory_error'), 'err');
   } finally {
-    if (els.factoryResetBtn) els.factoryResetBtn.disabled = false;
+    const btn = els.factoryResetBtn;
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = btn.textContent || tr('btn_factory_reset');
+    }
   }
 }
 
