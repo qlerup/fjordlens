@@ -1993,6 +1993,37 @@ function appendCardTo(item, container) {
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
+
+  // Add Info icon overlay (top-left, on red dot) on mouseover
+  const thumb = card.querySelector('.card-thumb');
+  if (thumb) {
+    // Create info icon
+    const infoIcon = document.createElement('div');
+    infoIcon.className = 'info-icon-overlay';
+    infoIcon.title = 'Info';
+    infoIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="10" fill="#fff"/><text x="10" y="15" text-anchor="middle" font-size="13" fill="#333" font-family="Arial" font-weight="bold">i</text></svg>';
+    infoIcon.style.position = 'absolute';
+    infoIcon.style.left = '6px';
+    infoIcon.style.top = '6px';
+    infoIcon.style.zIndex = '3';
+    infoIcon.style.cursor = 'pointer';
+    infoIcon.style.opacity = '0';
+    infoIcon.style.transition = 'opacity 0.15s';
+    // Show icon on hover
+    card.addEventListener('mouseenter', () => { infoIcon.style.opacity = '1'; });
+    card.addEventListener('mouseleave', () => { infoIcon.style.opacity = '0'; });
+    // Place icon above the red dot (assume red dot is at 0,0 or adjust as needed)
+    thumb.style.position = 'relative';
+    thumb.appendChild(infoIcon);
+    // Clicking the icon opens the sidebar (detail panel)
+    infoIcon.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      state.selectedId = item.id;
+      setDetail(item);
+      // Optionally scroll sidebar into view if needed
+      if (els.detailContent) els.detailContent.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
   // If viewing 'Ukendte' person folder, overlay detected face boxes on the thumbnail
   try {
     if (state.personView && state.personView.personId === 'unknown' && item && Array.isArray(item.faces) && item.faces.length) {
@@ -2028,8 +2059,10 @@ function appendCardTo(item, container) {
       }
     }
   } catch {}
-  // Single-click opens viewer directly
+  // Single-click opens viewer directly (unless clicking info icon)
   card.addEventListener("click", (ev) => {
+    // If click was on info icon, ignore (handled above)
+    if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
     state.selectedId = item.id;
     setDetail(item);
     const idx = state.items.findIndex(i => i.id === item.id);

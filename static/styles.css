@@ -1,3 +1,27 @@
+/* Info icon overlay for photo cards */
+.info-icon-overlay {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.92);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+  transition: opacity 0.15s, box-shadow 0.15s;
+  opacity: 0;
+  pointer-events: auto;
+  z-index: 3;
+}
+.photo-card:hover .info-icon-overlay {
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+.info-icon-overlay svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
 :root {
   --bg: #0f1115;
   --panel: #171a21;
