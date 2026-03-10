@@ -1664,6 +1664,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const p = people[index];
       const card = document.createElement('article');
       card.className = 'photo-card';
+      card.setAttribute('data-person-id', String(p.id));
       const imgHtml = p.thumb_url
         ? `<img data-src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
         : `<div class="card-thumb placeholder">🙂</div>`;
@@ -1688,9 +1689,45 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const renBtn = card.querySelector('[data-act="rename"]');
       if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });
       const hideBtn = card.querySelector('[data-act="hide"]');
-      if (hideBtn) hideBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); if (!confirm(tr('person_hide_confirm'))) return; try { const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })}); const d = await r.json(); if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; } showStatus(tr('person_hidden_ok'), 'ok'); loadPeople(); } catch { showStatus(tr('person_hide_error'), 'err'); } });
+      if (hideBtn) hideBtn.addEventListener('click', async (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        if (!confirm(tr('person_hide_confirm'))) return;
+        try {
+          const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
+          const d = await r.json();
+          if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
+          showStatus(tr('person_hidden_ok'), 'ok');
+          const cardEl = e.currentTarget.closest('.photo-card');
+          if (cardEl) {
+            if (!state.showHiddenPeople) {
+              cardEl.parentElement && cardEl.parentElement.removeChild(cardEl);
+            } else {
+              const pillWrap = cardEl.querySelector('.pills');
+              if (pillWrap) pillWrap.innerHTML = `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>`;
+              // swap button to Unhide
+              const btn = cardEl.querySelector('[data-act="hide"]');
+              if (btn) { btn.setAttribute('data-act','unhide'); btn.classList.add('danger'); btn.textContent = tr('person_btn_unhide'); }
+            }
+          }
+        } catch { showStatus(tr('person_hide_error'), 'err'); }
+      });
       const unhideBtn = card.querySelector('[data-act="unhide"]');
-      if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); try { const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })}); const d = await r.json(); if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; } showStatus(tr('person_unhidden_ok'), 'ok'); loadPeople(); } catch { showStatus(tr('person_unhide_error'), 'err'); } });
+      if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        try {
+          const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })});
+          const d = await r.json();
+          if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; }
+          showStatus(tr('person_unhidden_ok'), 'ok');
+          const cardEl = e.currentTarget.closest('.photo-card');
+          if (cardEl) {
+            const pillWrap = cardEl.querySelector('.pills');
+            if (pillWrap) pillWrap.innerHTML = '';
+            const btn = cardEl.querySelector('[data-act="unhide"]');
+            if (btn) { btn.setAttribute('data-act','hide'); btn.classList.remove('danger'); btn.textContent = tr('person_btn_hide'); }
+          }
+        } catch { showStatus(tr('person_unhide_error'), 'err'); }
+      });
       frag.appendChild(card);
     }
     els.grid.appendChild(frag);
@@ -2053,17 +2090,27 @@ async function renameOrMergePerson(pid, name) {
         fetch(`/api/people/${targetId}/train`, { method: 'POST' }).catch(()=>{});
       }
     } catch {}
-    // Optionally kick off a quick unknown-face re-match pass
+    // Light in-place UI update to avoid re-rendering all images
     try {
-      const res2 = await fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) });
-      const d2 = await res2.json().catch(() => ({}));
-      if (res2.ok && d2 && d2.ok) {
-        const m = Number(d2.matched || 0);
-        if (m > 0) showStatus(`Matchede ${m} ukendte ansigt(er).`, 'ok');
+      if (d.merged) {
+        const fromId = Number(d.from_id || pid);
+        const fromEl = document.querySelector(`.photo-card[data-person-id="${fromId}"]`);
+        if (fromEl && fromEl.parentElement) fromEl.parentElement.removeChild(fromEl);
+        const toId = Number(d.to_id);
+        if (Number.isFinite(toId)) {
+          const toEl = document.querySelector(`.photo-card[data-person-id="${toId}"]`);
+          const title = toEl && toEl.querySelector('.card-title');
+          if (title) title.textContent = String(d.name || nv);
+        }
+      } else {
+        const el = document.querySelector(`.photo-card[data-person-id="${Number(pid)}"] .card-title`);
+        if (el) el.textContent = nv;
       }
     } catch {}
+    // Optionally kick off a quick unknown-face re-match pass (non-blocking)
+    fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) })
+      .then(r=>r.json().catch(()=>({}))).then((d2)=>{ if (d2 && d2.ok && d2.matched>0) showStatus(`Matchede ${d2.matched} ukendte ansigt(er).`, 'ok'); }).catch(()=>{});
     closePersonRenameMenu();
-    loadPeople();
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
   }
