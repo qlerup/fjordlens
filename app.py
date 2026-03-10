@@ -4516,6 +4516,9 @@ def api_faces_match_unknown():
                             matched += 1
                         except Exception:
                             pass
+                except Exception:
+                    # Ignore malformed rows and continue matching others
+                    pass
             try:
                 conn.commit()
             except Exception:
