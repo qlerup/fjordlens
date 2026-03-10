@@ -1662,37 +1662,37 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 batch,
                 progress_cb=lambda p: _set_upload_postprocess_state(user, p),
             )
-            aggregate["received"] += int(result.get("received") or 0)
-            aggregate["indexed"] += int(result.get("indexed") or 0)
-            aggregate["index_errors"] += int(result.get("index_errors") or 0)
-            aggregate["heic_converted"] += int(result.get("heic_converted") or 0)
-            aggregate["faces_done"] += int(result.get("faces_done") or 0)
-            aggregate["faces_found"] += int(result.get("faces_found") or 0)
-            aggregate["faces_errors"] += int(result.get("faces_errors") or 0)
-            aggregate["ai_done"] += int(result.get("ai_done") or 0)
-            aggregate["ai_errors"] += int(result.get("ai_errors") or 0)
-            aggregate["ai_desc_done"] += int(result.get("ai_desc_done") or 0)
-            aggregate["ai_desc_errors"] += int(result.get("ai_desc_errors") or 0)
-            aggregate["faces_enabled"] = bool(result.get("faces_enabled"))
-            aggregate["ai_enabled"] = bool(result.get("ai_enabled"))
-            aggregate["ai_desc_enabled"] = bool(result.get("ai_desc_enabled"))
+            aggregate["received"] += int(result["received"] if "received" in result and result["received"] is not None else 0)
+            aggregate["indexed"] += int(result["indexed"] if "indexed" in result and result["indexed"] is not None else 0)
+            aggregate["index_errors"] += int(result["index_errors"] if "index_errors" in result and result["index_errors"] is not None else 0)
+            aggregate["heic_converted"] += int(result["heic_converted"] if "heic_converted" in result and result["heic_converted"] is not None else 0)
+            aggregate["faces_done"] += int(result["faces_done"] if "faces_done" in result and result["faces_done"] is not None else 0)
+            aggregate["faces_found"] += int(result["faces_found"] if "faces_found" in result and result["faces_found"] is not None else 0)
+            aggregate["faces_errors"] += int(result["faces_errors"] if "faces_errors" in result and result["faces_errors"] is not None else 0)
+            aggregate["ai_done"] += int(result["ai_done"] if "ai_done" in result and result["ai_done"] is not None else 0)
+            aggregate["ai_errors"] += int(result["ai_errors"] if "ai_errors" in result and result["ai_errors"] is not None else 0)
+            aggregate["ai_desc_done"] += int(result["ai_desc_done"] if "ai_desc_done" in result and result["ai_desc_done"] is not None else 0)
+            aggregate["ai_desc_errors"] += int(result["ai_desc_errors"] if "ai_desc_errors" in result and result["ai_desc_errors"] is not None else 0)
+            aggregate["faces_enabled"] = bool(result["faces_enabled"] if "faces_enabled" in result else False)
+            aggregate["ai_enabled"] = bool(result["ai_enabled"] if "ai_enabled" in result else False)
+            aggregate["ai_desc_enabled"] = bool(result["ai_desc_enabled"] if "ai_desc_enabled" in result else False)
 
             try:
                 log_event(
                     "upload_postprocess_done",
                     user=user,
-                    files=result.get("received"),
-                    indexed=result.get("indexed"),
-                    heic_converted=result.get("heic_converted"),
-                    faces_scanned=result.get("faces_done"),
-                    faces_found=result.get("faces_found"),
-                    index_errors=result.get("index_errors"),
-                    faces_done=result.get("faces_done"),
-                    faces_errors=result.get("faces_errors"),
-                    ai_done=result.get("ai_done"),
-                    ai_errors=result.get("ai_errors"),
-                    ai_desc_done=result.get("ai_desc_done"),
-                    ai_desc_errors=result.get("ai_desc_errors"),
+                    files=result["received"] if "received" in result else None,
+                    indexed=result["indexed"] if "indexed" in result else None,
+                    heic_converted=result["heic_converted"] if "heic_converted" in result else None,
+                    faces_scanned=result["faces_done"] if "faces_done" in result else None,
+                    faces_found=result["faces_found"] if "faces_found" in result else None,
+                    index_errors=result["index_errors"] if "index_errors" in result else None,
+                    faces_done=result["faces_done"] if "faces_done" in result else None,
+                    faces_errors=result["faces_errors"] if "faces_errors" in result else None,
+                    ai_done=result["ai_done"] if "ai_done" in result else None,
+                    ai_errors=result["ai_errors"] if "ai_errors" in result else None,
+                    ai_desc_done=result["ai_desc_done"] if "ai_desc_done" in result else None,
+                    ai_desc_errors=result["ai_desc_errors"] if "ai_desc_errors" in result else None,
                 )
             except Exception:
                 pass
@@ -1708,25 +1708,25 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "error": None,
                 "phase": "done",
                 "current_rel": None,
-                "stage_processed": int(aggregate.get("received") or 0),
-                "stage_total": int(aggregate.get("received") or 0),
+                "stage_processed": int(aggregate["received"] if "received" in aggregate and aggregate["received"] is not None else 0),
+                "stage_total": int(aggregate["received"] if "received" in aggregate and aggregate["received"] is not None else 0),
             },
         )
         try:
             log_event(
                 "upload_postprocess_summary_done",
                 user=user,
-                files=aggregate.get("received"),
-                indexed=aggregate.get("indexed"),
-                heic_converted=aggregate.get("heic_converted"),
-                faces_scanned=aggregate.get("faces_done"),
-                faces_found=aggregate.get("faces_found"),
-                index_errors=aggregate.get("index_errors"),
-                faces_errors=aggregate.get("faces_errors"),
-                ai_done=aggregate.get("ai_done"),
-                ai_errors=aggregate.get("ai_errors"),
-                ai_desc_done=aggregate.get("ai_desc_done"),
-                ai_desc_errors=aggregate.get("ai_desc_errors"),
+                files=aggregate["received"] if "received" in aggregate else None,
+                indexed=aggregate["indexed"] if "indexed" in aggregate else None,
+                heic_converted=aggregate["heic_converted"] if "heic_converted" in aggregate else None,
+                faces_scanned=aggregate["faces_done"] if "faces_done" in aggregate else None,
+                faces_found=aggregate["faces_found"] if "faces_found" in aggregate else None,
+                index_errors=aggregate["index_errors"] if "index_errors" in aggregate else None,
+                faces_errors=aggregate["faces_errors"] if "faces_errors" in aggregate else None,
+                ai_done=aggregate["ai_done"] if "ai_done" in aggregate else None,
+                ai_errors=aggregate["ai_errors"] if "ai_errors" in aggregate else None,
+                ai_desc_done=aggregate["ai_desc_done"] if "ai_desc_done" in aggregate else None,
+                ai_desc_errors=aggregate["ai_desc_errors"] if "ai_desc_errors" in aggregate else None,
             )
         except Exception:
             pass
@@ -3004,10 +3004,12 @@ def _share_requires_visitor_name(share_row: sqlite3.Row) -> bool:
 
 
 def _share_get_visitor_name(share_row: sqlite3.Row) -> str:
+    # session is a dict-like object, .get() is valid here
     return _sanitize_share_visitor_name(session.get(_share_name_session_key(share_row)) or "")
 
 
 def _share_is_authorized(share_row: sqlite3.Row) -> bool:
+    # session is a dict-like object, .get() is valid here
     if _share_is_password_protected(share_row) and not bool(session.get(_share_session_key(share_row))):
         return False
     if _share_requires_visitor_name(share_row) and not _share_get_visitor_name(share_row):
@@ -5330,7 +5332,10 @@ def api_duplicates_merge_auto():
             sb = _metadata_score_row(b)
             # Tie-breakers: prefer GPS, then larger file, else lower id keeps
             def _prefers_x(has_gps_row):
-                return 1 if (has_gps_row.get("gps_lat") is not None and has_gps_row.get("gps_lon") is not None) else 0
+                try:
+                    return 1 if (has_gps_row["gps_lat"] is not None and has_gps_row["gps_lon"] is not None) else 0
+                except Exception:
+                    return 0
             if sa > sb:
                 keep_id, drop_id = int(a["id"]), int(b["id"])
             elif sb > sa:
