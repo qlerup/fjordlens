@@ -262,6 +262,17 @@ function hideTopStatusMessage() {
   if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
 }
 
+// Toggle indeterminate animation for the top status bar (no known percentage)
+function setTopStatusIndeterminate(on = true) {
+  ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus || !els.uploadTopStatusBar) return;
+  els.uploadTopStatus.classList.remove('hidden');
+  els.uploadTopStatusBar.classList.toggle('indeterminate', !!on);
+  if (!on) {
+    els.uploadTopStatusBar.style.width = '0%';
+  }
+}
+
 let uploadMonitorDomEventsBound = false;
 function bindUploadMonitorDomEvents() {
   if (uploadMonitorDomEventsBound) return;
@@ -605,6 +616,10 @@ const I18N = {
     person_unhide_failed: 'Kunne ikke gendanne',
     person_unhidden_ok: 'Person vist igen',
     person_unhide_error: 'Fejl ved gendannelse',
+    people_match_btn: 'Match scan (ukendte → kendte)',
+    people_match_running: 'Scanner…',
+    people_match_failed: 'Match scan fejlede',
+    people_match_done: 'Match scan færdig: {matched} matchet ud af {scanned}',
     users_panel_render_error: 'Fejl',
     twofa_loading: 'Indlæser…',
     twofa_load_failed: 'Kan ikke hente 2FA-status.',
@@ -982,6 +997,10 @@ const I18N = {
     person_unhide_failed: 'Could not restore',
     person_unhidden_ok: 'Person shown again',
     person_unhide_error: 'Error while restoring',
+    people_match_btn: 'Match scan (unknown → known)',
+    people_match_running: 'Scanning…',
+    people_match_failed: 'Match scan failed',
+    people_match_done: 'Match scan done: {matched} matched of {scanned}',
     users_panel_render_error: 'Error',
     twofa_loading: 'Loading…',
     twofa_load_failed: 'Could not load 2FA status.',
@@ -1720,6 +1739,17 @@ function renderGrid() {
     els.grid.innerHTML = '';
       els.grid.classList.remove('timeline-wrap');
       els.grid.classList.add('gallery-grid');
+    // Actions toolbar for People view (e.g., Match scan)
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.style.cssText = 'justify-content:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px;';
+    const matchBtn = document.createElement('button');
+    matchBtn.id = 'peopleMatchScanBtn';
+    matchBtn.className = 'btn small';
+    matchBtn.textContent = tr('people_match_btn');
+    matchBtn.addEventListener('click', ()=> matchUnknownFaces(1000));
+    actions.appendChild(matchBtn);
+    els.grid.appendChild(actions);
     const people = state.personView.mode === 'list' ? (state.people || []) : [];
     if (state.personView.mode === 'list') {
       if (!people.length) {
@@ -2016,10 +2046,62 @@ async function renameOrMergePerson(pid, name) {
     }
     if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
     else showStatus(tr('person_name_updated'), 'ok');
+    // Trigger training so future matches improve for this person
+    try {
+      const targetId = Number(d.to_id || pid);
+      if (Number.isFinite(targetId)) {
+        fetch(`/api/people/${targetId}/train`, { method: 'POST' }).catch(()=>{});
+      }
+    } catch {}
+    // Optionally kick off a quick unknown-face re-match pass
+    try {
+      const res2 = await fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) });
+      const d2 = await res2.json().catch(() => ({}));
+      if (res2.ok && d2 && d2.ok) {
+        const m = Number(d2.matched || 0);
+        if (m > 0) showStatus(`Matchede ${m} ukendte ansigt(er).`, 'ok');
+      }
+    } catch {}
     closePersonRenameMenu();
     loadPeople();
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
+  }
+}
+
+async function matchUnknownFaces(limit = 1000) {
+  const btn = document.getElementById('peopleMatchScanBtn');
+  const orig = btn ? btn.textContent : tr('people_match_btn');
+  try {
+    if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = tr('people_match_running'); }
+    // Show top status in the header with indeterminate progress
+    showTopStatusMessage(tr('people_match_running'));
+    setTopStatusIndeterminate(true);
+    const res = await fetch('/api/faces/match-unknown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: Number(limit) || 1000 }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || tr('people_match_failed'), 'err');
+      setTopStatusIndeterminate(false);
+      hideTopStatusMessage();
+      return;
+    }
+    const msg = (tr('people_match_done') || '').replace('{matched}', String(data.matched || 0)).replace('{scanned}', String(data.scanned || 0));
+    showStatus(msg, 'ok');
+    // Show brief result in top bar then hide
+    if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = msg;
+    setTopStatusIndeterminate(false);
+    setTimeout(hideTopStatusMessage, 2500);
+    await loadPeople();
+  } catch {
+    showStatus(tr('people_match_failed'), 'err');
+    setTopStatusIndeterminate(false);
+    hideTopStatusMessage();
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = orig || tr('people_match_btn'); }
   }
 }
 

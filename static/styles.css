@@ -424,6 +424,17 @@ body.drawer-open .drawer-backdrop { display: block; }
   background: var(--accent);
   transition: width .22s ease;
 }
+/* Indeterminate animation for top status bar (e.g., face match scan) */
+.upload-top-status-bar.indeterminate {
+  width: 100% !important;
+  background: linear-gradient(90deg, rgba(255,255,255,0.18) 0%, var(--accent) 50%, rgba(255,255,255,0.18) 100%);
+  background-size: 200% 100%;
+  animation: topbarShimmer 1s linear infinite;
+}
+@keyframes topbarShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: 0 0; }
+}
 .mapper-header-menu {
   position: absolute;
   right: 0;

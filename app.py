@@ -108,6 +108,7 @@ UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
     UPLOAD_DEST_LIBRARY: "Photos",
 }
 FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
+FACE_MATCH_THRESHOLD_CENTROID = float(os.environ.get("FACE_MATCH_THRESHOLD_CENTROID", str(FACE_MATCH_THRESHOLD)))
 VIDEO_FACE_SAMPLE_INTERVAL_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_INTERVAL_SEC", "3.0"))
 VIDEO_FACE_SAMPLE_MAX_FRAMES = int(os.environ.get("VIDEO_FACE_SAMPLE_MAX_FRAMES", "24"))
 VIDEO_FACE_SAMPLE_START_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_START_SEC", "0.5"))
@@ -555,11 +556,38 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
 
 
 def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tuple[int, bool, float]:
-    """Return (person_id, created_new, score). Find best match by cosine; create 'Ukendt-#' if below threshold."""
+    """Return (person_id, created_new, score).
+    1) Try matching against person centroids (if available)
+    2) Fall back to nearest single-face embedding
+    3) If below threshold, create new 'Ukendt-*' person
+    """
+    # 1) Try person centroids first (fewer comparisons; reflects prior merges = training)
     best_pid: Optional[int] = None
     best_score = -1.0
     try:
-        rows = conn.execute("SELECT id, embedding_json, person_id FROM faces WHERE embedding_json IS NOT NULL").fetchall()
+        rows = conn.execute("SELECT id, centroid_json FROM people WHERE centroid_json IS NOT NULL AND TRIM(centroid_json) != ''").fetchall()
+        for row in rows:
+            try:
+                cvec = json.loads(row["centroid_json"]) if row["centroid_json"] else None
+            except Exception:
+                cvec = None
+            if not cvec:
+                continue
+            sc = _cosine(emb, cvec)
+            if sc > best_score:
+                best_score = sc
+                best_pid = int(row["id"]) if row["id"] is not None else None
+    except Exception:
+        pass
+
+    if best_pid is not None and best_score >= FACE_MATCH_THRESHOLD_CENTROID:
+        return int(best_pid), False, float(best_score)
+
+    # 2) Fallback: nearest neighbor among all face embeddings
+    best_pid = None
+    best_score = -1.0
+    try:
+        rows = conn.execute("SELECT embedding_json, person_id FROM faces WHERE embedding_json IS NOT NULL").fetchall()
         for row in rows:
             try:
                 vec = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -591,6 +619,76 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
             return pid_new, True, float(best_score)
         except Exception:
             i += 1
+
+
+def _compute_centroid(vectors: list[list[float]]) -> Optional[list[float]]:
+    try:
+        if not vectors:
+            return None
+        L = max((len(v) for v in vectors if isinstance(v, list)), default=0)
+        if L <= 0:
+            return None
+        acc = [0.0] * L
+        n = 0
+        for v in vectors:
+            if not isinstance(v, list) or len(v) != L:
+                continue
+            for i, x in enumerate(v):
+                acc[i] += float(x or 0.0)
+            n += 1
+        if n <= 0:
+            return None
+        return [x / float(n) for x in acc]
+    except Exception:
+        return None
+
+
+def _recompute_person_centroid(conn: sqlite3.Connection, pid: int) -> dict:
+    """Recompute centroid from all face embeddings for a given person and store on people.centroid_json."""
+    try:
+        rows = conn.execute("SELECT embedding_json FROM faces WHERE person_id=? AND embedding_json IS NOT NULL", (pid,)).fetchall()
+        vecs: list[list[float]] = []
+        for r in rows:
+            try:
+                v = json.loads(r["embedding_json"]) if r["embedding_json"] else None
+            except Exception:
+                v = None
+            if isinstance(v, list) and v:
+                vecs.append([float(x or 0.0) for x in v])
+        centroid = _compute_centroid(vecs)
+        if centroid is None:
+            conn.execute("UPDATE people SET centroid_json=NULL WHERE id=?", (pid,))
+            conn.commit()
+            return {"ok": True, "id": pid, "faces": 0, "updated": False}
+        conn.execute("UPDATE people SET centroid_json=? WHERE id=?", (json.dumps(centroid), pid))
+        conn.commit()
+        return {"ok": True, "id": pid, "faces": len(vecs), "updated": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[float]]]:
+    """Return list of (person_id, centroid_vec). Recompute missing on the fly."""
+    out: list[tuple[int, list[float]]] = []
+    try:
+        rows = conn.execute("SELECT id, centroid_json FROM people").fetchall()
+        for r in rows:
+            pid = int(r["id"]) if r and r["id"] is not None else None
+            if pid is None:
+                continue
+            try:
+                c = json.loads(r["centroid_json"]) if r["centroid_json"] else None
+            except Exception:
+                c = None
+            if not (isinstance(c, list) and c):
+                # Recompute on demand
+                res = _recompute_person_centroid(conn, pid)
+                if res.get("ok") and res.get("updated"):
+                    c = json.loads(conn.execute("SELECT centroid_json FROM people WHERE id=?", (pid,)).fetchone()["centroid_json"])  # type: ignore[index]
+            if isinstance(c, list) and c:
+                out.append((pid, [float(x or 0.0) for x in c]))
+    except Exception:
+        pass
+    return out
 
 
 def index_faces_for_photo(rel_path: str) -> int:
@@ -674,10 +772,23 @@ def index_faces_for_photo(rel_path: str) -> int:
             except Exception:
                 pass
             log_event("faces_index_done", rel_path=rel_path, faces=count, matched=matched_existing, created=created_new)
+            # Optional: update centroids for any persons touched in this photo
+            try:
+                pids = [int(r["person_id"]) for r in conn.execute("SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL", (photo_id,)).fetchall()]
+            except Exception:
+                pids = []
+            for pid in pids:
+                try:
+                    _recompute_person_centroid(conn, int(pid))
+                except Exception:
+                    pass
             return int(count)
     except Exception as e:
         log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {e}")
         return 0
+
+
+    
 
 
 # Zero-shot labels (initial simple vocabulary; can expand/customize later)
@@ -1982,6 +2093,14 @@ def init_db() -> None:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(people)").fetchall()]  # type: ignore[index]
             if "hidden" not in cols:
                 conn.execute("ALTER TABLE people ADD COLUMN hidden INTEGER DEFAULT 0")
+                conn.commit()
+        except Exception:
+            pass
+        # Add people.centroid_json if missing (for face training)
+        try:
+            cols2 = [r[1] for r in conn.execute("PRAGMA table_info(people)").fetchall()]  # type: ignore[index]
+            if "centroid_json" not in cols2:
+                conn.execute("ALTER TABLE people ADD COLUMN centroid_json TEXT")
                 conn.commit()
         except Exception:
             pass
@@ -4309,6 +4428,103 @@ def api_people_list():
     return jsonify({"ok": True, "items": people})
 
 
+@app.route("/api/people/<int:pid>/train", methods=["POST"])
+def api_people_train_one(pid: int):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    try:
+        with closing(get_conn()) as conn:
+            person = conn.execute("SELECT id FROM people WHERE id=?", (pid,)).fetchone()
+            if not person:
+                return jsonify({"ok": False, "error": "Person not found"}), 404
+            result = _recompute_person_centroid(conn, pid)
+        return jsonify(result), (200 if result.get("ok") else 500)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/people/train", methods=["POST"])
+def api_people_train_all():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    out = {"ok": True, "trained": 0}
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute("SELECT id FROM people").fetchall()
+            for r in rows:
+                pid = int(r["id"]) if r and r["id"] is not None else None
+                if pid is None:
+                    continue
+                res = _recompute_person_centroid(conn, pid)
+                if res.get("ok"):
+                    out["trained"] += 1
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/faces/match-unknown", methods=["POST"])
+def api_faces_match_unknown():
+    """Try to match previously unknown faces (person_id IS NULL) against known person centroids."""
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    body = request.get_json(silent=True) or {}
+    try:
+        limit_val = body.get("limit")
+        limit = int(limit_val) if (limit_val is not None) else None
+    except Exception:
+        limit = None
+    scanned = 0
+    matched = 0
+    try:
+        with closing(get_conn()) as conn:
+            # Ensure centroids ready
+            cents = _load_person_centroids(conn)
+            if not cents:
+                return jsonify({"ok": True, "scanned": 0, "matched": 0})
+            # Load unknown faces
+            sql = "SELECT id, embedding_json FROM faces WHERE person_id IS NULL AND embedding_json IS NOT NULL"
+            if isinstance(limit, int) and limit > 0:
+                sql += f" LIMIT {int(limit)}"
+            rows = conn.execute(sql).fetchall()
+            for r in rows:
+                try:
+                    fid = int(r["id"]) if r and r["id"] is not None else None
+                    if fid is None:
+                        continue
+                    try:
+                        vec = json.loads(r["embedding_json"]) if r["embedding_json"] else None
+                    except Exception:
+                        vec = None
+                    if not (isinstance(vec, list) and vec):
+                        continue
+                    scanned += 1
+                    # Find best centroid match
+                    best_pid = None
+                    best_sc = -1.0
+                    for pid, cvec in cents:
+                        sc = _cosine(vec, cvec)
+                        if sc > best_sc:
+                            best_sc = sc
+                            best_pid = pid
+                    if best_pid is not None and best_sc >= FACE_MATCH_THRESHOLD_CENTROID:
+                        try:
+                            conn.execute("UPDATE faces SET person_id=? WHERE id=?", (int(best_pid), fid))
+                            matched += 1
+                        except Exception:
+                            pass
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        return jsonify({"ok": True, "scanned": scanned, "matched": matched})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/people/<int:pid>/hide", methods=["POST"])
 def api_people_hide(pid: int):
     fb = _forbid_user_role_for_maintenance()
@@ -4625,6 +4841,11 @@ def api_people_rename(pid: int):
                 conn.execute("UPDATE faces SET person_id=? WHERE person_id=?", (target_id, pid))
                 conn.execute("DELETE FROM people WHERE id=?", (pid,))
                 conn.commit()
+                # Recompute centroid for target person after merge
+                try:
+                    _recompute_person_centroid(conn, target_id)
+                except Exception:
+                    pass
                 return jsonify({
                     "ok": True,
                     "merged": True,
@@ -4635,6 +4856,12 @@ def api_people_rename(pid: int):
 
             conn.execute("UPDATE people SET name=? WHERE id=?", (new_name, pid))
             conn.commit()
+        # Recompute centroid for renamed person as well (no-op if unchanged)
+        try:
+            with closing(get_conn()) as conn2:
+                _recompute_person_centroid(conn2, pid)
+        except Exception:
+            pass
         return jsonify({"ok": True, "id": pid, "name": new_name, "merged": False})
     except sqlite3.IntegrityError:
         return jsonify({"ok": False, "error": "Name already exists"}), 409
