@@ -1698,16 +1698,9 @@ function appendPeopleInChunks(people, chunkSize = 48) {
           if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
           showStatus(tr('person_hidden_ok'), 'ok');
           const cardEl = e.currentTarget.closest('.photo-card');
-          if (cardEl) {
-            if (!state.showHiddenPeople) {
-              cardEl.parentElement && cardEl.parentElement.removeChild(cardEl);
-            } else {
-              const pillWrap = cardEl.querySelector('.pills');
-              if (pillWrap) pillWrap.innerHTML = `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>`;
-              // swap button to Unhide
-              const btn = cardEl.querySelector('[data-act="hide"]');
-              if (btn) { btn.setAttribute('data-act','unhide'); btn.classList.add('danger'); btn.textContent = tr('person_btn_unhide'); }
-            }
+          if (cardEl && cardEl.parentElement) {
+            // Fjern kortet med det samme for en snappy oplevelse
+            cardEl.parentElement.removeChild(cardEl);
           }
         } catch { showStatus(tr('person_hide_error'), 'err'); }
       });
@@ -2904,7 +2897,7 @@ function renderUploadMonitor() {
     const transferDone = !isUploadRunning() && uploadUiState.totalFiles > 0;
     if (transferDone) {
       if (!uploadMonitorHideTimer) {
-        const delay = (uploadUiState.currentFileName || uploadQueuePumpRunning) ? 800 : 10000; // quick hide during postprocess
+        const delay = 10000; // always wait 10s after transfer completes
         uploadMonitorHideTimer = window.setTimeout(() => {
           if (!els.uploadMonitor) { uploadMonitorHideTimer = null; return; }
           try {
