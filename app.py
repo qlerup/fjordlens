@@ -4334,14 +4334,17 @@ def api_people_list():
     with closing(get_conn()) as conn:
         acl_prefixes = _current_user_acl_prefixes(conn)
         where = "" if include_hidden else "WHERE COALESCE(p.hidden,0)=0"
-        rows = conn.execute(
-            f"""
-            SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden
-            FROM people p
-            {where}
-            ORDER BY p.name COLLATE NOCASE ASC
-            """
-        ).fetchall()
+                rows = conn.execute(
+                        f"""
+                        SELECT p.id, p.name, COALESCE(p.hidden,0) AS hidden
+                        FROM people p
+                        {where}
+                        ORDER BY
+                            CASE WHEN LOWER(p.name) LIKE 'ukendt%' OR LOWER(p.name) LIKE 'unknown%'
+                                     THEN 1 ELSE 0 END,
+                            p.name COLLATE NOCASE ASC
+                        """
+                ).fetchall()
         people = []
         for r in rows:
             pid = int(r["id"])
@@ -4424,7 +4427,8 @@ def api_people_list():
 
         if unk_count > 0:
             thumb_url = f"/api/face-thumb/{int(frow['id'])}" if frow else None
-            people.insert(0, {"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
+            # Place aggregated unknowns at the end so named people come first
+            people.append({"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
     return jsonify({"ok": True, "items": people})
 
 

@@ -2125,8 +2125,14 @@ function openPersonRenameMenu(anchorBtn, person) {
   `;
 
   const listEl = menu.querySelector('.person-rename-list');
+  // Exclude auto-generated unknown buckets like "Ukendt-10" from merge targets
+  const _isAutoUnknown = (nm) => {
+    const s = String(nm || '').trim().toLowerCase();
+    return /^ukendt(?:-|\b)/.test(s) || /^unknown(?:-|\b)/.test(s);
+  };
   const existing = (Array.isArray(state.people) ? state.people : [])
-    .filter((it) => it && it.id !== 'unknown' && Number(it.id) !== Number(person.id) && String(it.name || '').trim())
+    .filter((it) => it && it.id !== 'unknown' && Number(it.id) !== Number(person.id)
+      && String(it.name || '').trim() && !_isAutoUnknown(it.name))
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
 
   if (!existing.length) {
@@ -2844,11 +2850,14 @@ function renderUploadMonitor() {
     }
   }
 
-  // Auto-hide monitor after uploads finish (regardless of postprocess) after 10s
+  // Auto-hide monitor:
+  // - If raw transfer is done (even if postprocess continues), hide quickly
+  // - Else fallback to old behavior (hide 10s after everything done)
   try {
-    const uploadsFinished = !isUploadRunning() && !uploadQueuePumpRunning && uploadUiState.totalFiles > 0 && !uploadUiState.currentFileName;
-    if (uploadsFinished) {
+    const transferDone = !isUploadRunning() && uploadUiState.totalFiles > 0;
+    if (transferDone) {
       if (!uploadMonitorHideTimer) {
+        const delay = (uploadUiState.currentFileName || uploadQueuePumpRunning) ? 800 : 10000; // quick hide during postprocess
         uploadMonitorHideTimer = window.setTimeout(() => {
           if (!els.uploadMonitor) { uploadMonitorHideTimer = null; return; }
           try {
@@ -2863,7 +2872,7 @@ function renderUploadMonitor() {
             }, 380);
           } catch {}
           uploadMonitorHideTimer = null;
-        }, 10000);
+        }, delay);
       }
     } else {
       if (uploadMonitorHideTimer) { window.clearTimeout(uploadMonitorHideTimer); uploadMonitorHideTimer = null; }
