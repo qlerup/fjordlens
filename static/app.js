@@ -1146,6 +1146,7 @@ let state = {
   logsAfter: 0,
   // people view state
   people: [],
+  _peopleCache: { key: '', items: [], ts: 0 },
   personView: { mode: 'list', personId: null, personName: null },
   showHiddenPeople: false,
   mapperPath: "",
@@ -1767,10 +1768,12 @@ function renderGrid() {
     els.grid.innerHTML = '';
       els.grid.classList.remove('timeline-wrap');
       els.grid.classList.add('gallery-grid');
-    // Ensure top actions button (next to "Vis skjulte")
+    // Ensure top actions button placed next to the global search, and hide global search in People view
     (function ensurePeopleTopActions(){
-      const stats = document.querySelector('.content-header .stats');
-      if (!stats) return;
+      const topbar = document.querySelector('.topbar');
+      if (!topbar) return;
+      // Hide the global search in People view (not used here)
+      if (els.searchShell) els.searchShell.style.display = 'none';
       let topBtn = document.getElementById('peopleMatchScanTopBtn');
       if (!topBtn) {
         topBtn = document.createElement('button');
@@ -1779,8 +1782,10 @@ function renderGrid() {
         topBtn.style.marginLeft = '8px';
         topBtn.textContent = tr('people_match_btn');
         topBtn.addEventListener('click', ()=> matchUnknownFaces(1000));
-        stats.appendChild(topBtn);
+        const anchor = document.getElementById('searchShell') || document.getElementById('sortSelect') || topbar.lastElementChild;
+        try { anchor.parentNode.insertBefore(topBtn, anchor.nextSibling); } catch { topbar.appendChild(topBtn); }
       } else {
+        topBtn.style.display = '';
         topBtn.textContent = tr('people_match_btn');
       }
     })();
@@ -1821,6 +1826,12 @@ function renderGrid() {
   // Hide hidden-toggle outside People view
   if (state.view !== 'personer' && els.statHiddenToggle) {
     els.statHiddenToggle.style.display = 'none';
+  }
+  if (state.view !== 'personer') {
+    // Show global search again in other views and hide the match-scan btn
+    if (els.searchShell) els.searchShell.style.display = '';
+    const topBtn = document.getElementById('peopleMatchScanTopBtn');
+    if (topBtn) topBtn.style.display = 'none';
   }
   // Timeline view: group by year-month headers
   if (state.view === "timeline") {
@@ -2524,13 +2535,20 @@ async function loadPhotos() {
   renderGrid();
 }
 
-async function loadPeople() {
+async function loadPeople(useCache = true) {
   closePersonRenameMenu();
   try {
-    const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
-    const res = await fetch(url);
-    const data = await res.json();
-    state.people = data.items || [];
+    const cacheKey = state.showHiddenPeople ? 'hidden:1' : 'hidden:0';
+    const now = Date.now();
+    if (useCache && state._peopleCache && state._peopleCache.key === cacheKey && (now - (state._peopleCache.ts || 0) < 60000)) {
+      state.people = Array.isArray(state._peopleCache.items) ? state._peopleCache.items : [];
+    } else {
+      const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
+      const res = await fetch(url);
+      const data = await res.json();
+      state.people = data.items || [];
+      state._peopleCache = { key: cacheKey, items: state.people.slice(), ts: now };
+    }
   } catch { state.people = []; }
   // Update headings for People view
   const labels = navLabels();

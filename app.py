@@ -6788,6 +6788,77 @@ def api_filters():
 
 
 @app.route("/api/thumbs/<path:thumb_name>")
+def api_thumb_file(thumb_name: str):
+    # Serve hashed thumbnail names with aggressive caching
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "", str(thumb_name or ""))
+    if not safe:
+        return ("Not found", 404)
+    p = THUMB_DIR / safe
+    if not p.exists() or not p.is_file():
+        return ("Not found", 404)
+    resp = send_from_directory(str(THUMB_DIR), safe)
+    # Filename is content-addressed (md5), safe to cache long-term
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+def _cleanup_orphan_thumbs(dry_run: bool = False) -> dict:
+    """Remove thumbnails on disk that are no longer referenced in DB.
+    Preserves current photo thumbnails (photos.thumb_name) and generated face_* thumbs.
+    Returns {removed, bytes_freed}.
+    """
+    used: set[str] = set()
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT thumb_name FROM photos WHERE thumb_name IS NOT NULL").fetchall()
+        for r in rows:
+            tn = str(r["thumb_name"] or "").strip()
+            if tn:
+                used.add(tn)
+        # Protect existing face thumbs
+        face_rows = conn.execute("SELECT id FROM faces").fetchall()
+        for fr in face_rows:
+            try:
+                used.add(f"face_{int(fr['id'])}.jpg")
+            except Exception:
+                continue
+
+    removed = 0
+    bytes_freed = 0
+    try:
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    for p in THUMB_DIR.glob("*"):
+        try:
+            if not p.is_file():
+                continue
+            name = p.name
+            if name in used:
+                continue
+            size = p.stat().st_size
+            if not dry_run:
+                try:
+                    p.unlink(missing_ok=True)  # type: ignore[call-arg]
+                except TypeError:
+                    try:
+                        p.unlink()
+                    except Exception:
+                        continue
+            removed += 1
+            bytes_freed += int(size or 0)
+        except Exception:
+            continue
+    return {"removed": removed, "bytes_freed": bytes_freed}
+
+
+@app.route("/api/thumbs/cleanup", methods=["POST"])
+def api_thumbs_cleanup():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    dry = str((request.args.get("dry") or "").strip().lower()) in {"1", "true", "yes"}
+    res = _cleanup_orphan_thumbs(dry_run=dry)
+    return jsonify({"ok": True, **res, "dry_run": dry})
 def api_thumbs(thumb_name: str):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT rel_path FROM photos WHERE thumb_name=? LIMIT 1", (thumb_name,)).fetchone()
