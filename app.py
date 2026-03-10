@@ -5301,7 +5301,11 @@ def _metadata_score_row(row: sqlite3.Row) -> int:
     except Exception:
         pass
     # bonus for having GPS
-    if row.get("gps_lat") is not None and row.get("gps_lon") is not None:
+    try:
+        has_gps = (row["gps_lat"] is not None) and (row["gps_lon"] is not None)
+    except Exception:
+        has_gps = False
+    if has_gps:
         sc += 1
     return sc
 
