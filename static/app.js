@@ -7634,26 +7634,25 @@ function renderDuplicates(data) {
       };
       const left = makeCell(a);
       const right = makeCell(b);
-      const btns = document.createElement('div');
-      btns.style.display = 'grid';
-      btns.style.placeItems = 'center';
-      btns.style.gap = '6px';
+      const btnWrap = document.createElement('div');
+      btnWrap.style.display = 'grid';
+      btnWrap.style.placeItems = 'center';
+      btnWrap.style.gap = '6px';
       const lbl = document.createElement('div'); lbl.className='mini-label'; lbl.textContent='100% match';
-      const keepLeft = document.createElement('button'); keepLeft.className='btn tiny'; keepLeft.textContent='Flet → behold venstre';
-      const keepRight = document.createElement('button'); keepRight.className='btn tiny'; keepRight.textContent='Flet → behold højre';
-      const runMerge = async (keep, drop) => {
+      const autoBtn = document.createElement('button'); autoBtn.className='btn tiny primary'; autoBtn.textContent='Flet (auto)';
+      autoBtn.addEventListener('click', async ()=>{
         try {
-          const r = await fetch('/api/duplicates/merge', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ keep_id: keep, drop_id: drop, copy_metadata: true, delete_file: true })});
+          autoBtn.disabled = true; autoBtn.classList.add('loading');
+          const r = await fetch('/api/duplicates/merge-auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id1: aId, id2: bId })});
           const d = await r.json().catch(()=>({}));
+          autoBtn.disabled = false; autoBtn.classList.remove('loading');
           if (!r.ok || !d || !d.ok) { showStatus((d && d.error) || 'Fletning fejlede', 'err'); return; }
-          showStatus('Flettet (metadata overført hvis tom).', 'ok');
+          showStatus('Flettet automatisk (metadata vurderet).', 'ok');
           strip.parentElement && strip.parentElement.removeChild(strip);
-        } catch { showStatus('Fletning fejlede', 'err'); }
-      };
-      keepLeft.addEventListener('click', ()=> runMerge(aId, bId));
-      keepRight.addEventListener('click', ()=> runMerge(bId, aId));
-      btns.appendChild(lbl); btns.appendChild(keepLeft); btns.appendChild(keepRight);
-      strip.appendChild(left); strip.appendChild(btns); strip.appendChild(right);
+        } catch { autoBtn.disabled = false; autoBtn.classList.remove('loading'); showStatus('Fletning fejlede', 'err'); }
+      });
+      btnWrap.appendChild(lbl); btnWrap.appendChild(autoBtn);
+      strip.appendChild(left); strip.appendChild(btnWrap); strip.appendChild(right);
       content.appendChild(strip);
     }
     sec.appendChild(content);

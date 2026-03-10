@@ -5279,6 +5279,140 @@ def api_duplicates_merge():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _metadata_score_row(row: sqlite3.Row) -> int:
+    if not row:
+        return 0
+    def _has(v):
+        return 1 if (v not in (None, "", "null")) else 0
+    fields = [
+        "captured_at", "camera_make", "camera_model", "lens_model",
+        "iso", "focal_length", "f_number", "exposure_time",
+        "gps_lat", "gps_lon", "gps_name",
+        "ai_tags", "ai_desc_tags", "ai_desc_caption",
+        "embedding_json", "metadata_json", "exif_json",
+    ]
+    sc = 0
+    for f in fields:
+        sc += _has(row[f])
+    # light bonus: larger file size often means original
+    try:
+        fs = int(row["file_size"] or 0)
+        sc += 1 if fs > 0 else 0
+    except Exception:
+        pass
+    # bonus for having GPS
+    if row.get("gps_lat") is not None and row.get("gps_lon") is not None:
+        sc += 1
+    return sc
+
+
+@app.route("/api/duplicates/merge-auto", methods=["POST"])
+def api_duplicates_merge_auto():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    data = request.get_json(silent=True) or {}
+    a_id = int(data.get("id1") or 0)
+    b_id = int(data.get("id2") or 0)
+    if not a_id or not b_id or a_id == b_id:
+        return jsonify({"ok": False, "error": "Invalid ids"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            a = conn.execute("SELECT * FROM photos WHERE id=?", (a_id,)).fetchone()
+            b = conn.execute("SELECT * FROM photos WHERE id=?", (b_id,)).fetchone()
+            if not a or not b:
+                return jsonify({"ok": False, "error": "Photo not found"}), 404
+            sa = _metadata_score_row(a)
+            sb = _metadata_score_row(b)
+            # Tie-breakers: prefer GPS, then larger file, else lower id keeps
+            def _prefers_x(has_gps_row):
+                return 1 if (has_gps_row.get("gps_lat") is not None and has_gps_row.get("gps_lon") is not None) else 0
+            if sa > sb:
+                keep_id, drop_id = int(a["id"]), int(b["id"])
+            elif sb > sa:
+                keep_id, drop_id = int(b["id"]), int(a["id"])
+            else:
+                if _prefers_x(a) > _prefers_x(b):
+                    keep_id, drop_id = int(a["id"]), int(b["id"])
+                elif _prefers_x(b) > _prefers_x(a):
+                    keep_id, drop_id = int(b["id"]), int(a["id"])
+                else:
+                    fa = int(a["file_size"] or 0)
+                    fbz = int(b["file_size"] or 0)
+                    if fa >= fbz:
+                        keep_id, drop_id = int(a["id"]), int(b["id"])
+                    else:
+                        keep_id, drop_id = int(b["id"]), int(a["id"])
+
+        # Reuse the regular merge logic by calling it inline
+        return api_duplicates_merge_impl(keep_id, drop_id)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def api_duplicates_merge_impl(keep_id: int, drop_id: int):
+    try:
+        with closing(get_conn()) as conn:
+            keep = conn.execute("SELECT * FROM photos WHERE id=?", (keep_id,)).fetchone()
+            drop = conn.execute("SELECT * FROM photos WHERE id=?", (drop_id,)).fetchone()
+            if not keep or not drop:
+                return jsonify({"ok": False, "error": "Photo not found"}), 404
+            # Copy metadata if missing on keep
+            upd: dict[str, Any] = {}
+            cols_simple = [
+                "captured_at", "camera_make", "camera_model", "lens_model",
+                "iso", "focal_length", "f_number", "exposure_time",
+                "gps_lat", "gps_lon", "gps_name",
+            ]
+            for col in cols_simple:
+                if (keep[col] is None or keep[col] == "") and (drop[col] is not None and drop[col] != ""):
+                    upd[col] = drop[col]
+            def _first(v):
+                return None if v in (None, "", "null") else v
+            if _first(drop["ai_tags"]) and not _first(keep["ai_tags"]):
+                upd["ai_tags"] = drop["ai_tags"]
+            if _first(drop["ai_desc_tags"]) and not _first(keep["ai_desc_tags"]):
+                upd["ai_desc_tags"] = drop["ai_desc_tags"]
+            if _first(drop["ai_desc_caption"]) and not _first(keep["ai_desc_caption"]):
+                upd["ai_desc_caption"] = drop["ai_desc_caption"]
+            if _first(drop["embedding_json"]) and not _first(keep["embedding_json"]):
+                upd["embedding_json"] = drop["embedding_json"]
+            if _first(drop["metadata_json"]) and not _first(keep["metadata_json"]):
+                upd["metadata_json"] = drop["metadata_json"]
+            if _first(drop["exif_json"]) and not _first(keep["exif_json"]):
+                upd["exif_json"] = drop["exif_json"]
+            if upd:
+                sets = ", ".join([f"{k}=?" for k in upd.keys()])
+                conn.execute(f"UPDATE photos SET {sets} WHERE id=?", (*upd.values(), keep_id))
+
+            # Move faces from drop to keep
+            try:
+                moved = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE photo_id=?", (drop_id,)).fetchone()
+                moved_n = int(moved["c"] or 0) if moved else 0
+                if moved_n:
+                    conn.execute("UPDATE faces SET photo_id=? WHERE photo_id=?", (keep_id, drop_id))
+                    cur_keep_pc = conn.execute("SELECT people_count FROM photos WHERE id=?", (keep_id,)).fetchone()
+                    pc = int(cur_keep_pc["people_count"] or 0) if cur_keep_pc else 0
+                    conn.execute("UPDATE photos SET people_count=? WHERE id=?", (pc + moved_n, keep_id))
+            except Exception:
+                pass
+
+            drop_rel = str(drop["rel_path"] or "")
+            conn.execute("DELETE FROM photos WHERE id=?", (drop_id,))
+            conn.commit()
+        # Remove file from disk if exists
+        try:
+            if drop_rel:
+                p = _disk_path_from_rel_path(drop_rel)
+                if p.exists():
+                    p.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+        return jsonify({"ok": True, "kept": keep_id, "removed": drop_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/")
 def index():
     try:
