@@ -1768,25 +1768,36 @@ function renderGrid() {
     els.grid.innerHTML = '';
       els.grid.classList.remove('timeline-wrap');
       els.grid.classList.add('gallery-grid');
-    // Ensure top actions button placed next to the global search, and hide global search in People view
-    (function ensurePeopleTopActions(){
-      const topbar = document.querySelector('.topbar');
-      if (!topbar) return;
-      // Hide the global search in People view (not used here)
+    // Hide global search in People view and place Match-scan in the content header (next to where search normally sits)
+    (function ensurePeopleHeaderActions(){
       if (els.searchShell) els.searchShell.style.display = 'none';
-      let topBtn = document.getElementById('peopleMatchScanTopBtn');
-      if (!topBtn) {
-        topBtn = document.createElement('button');
-        topBtn.id = 'peopleMatchScanTopBtn';
-        topBtn.className = 'btn small';
-        topBtn.style.marginLeft = '8px';
-        topBtn.textContent = tr('people_match_btn');
-        topBtn.addEventListener('click', ()=> matchUnknownFaces(1000));
-        const anchor = document.getElementById('searchShell') || document.getElementById('sortSelect') || topbar.lastElementChild;
-        try { anchor.parentNode.insertBefore(topBtn, anchor.nextSibling); } catch { topbar.appendChild(topBtn); }
+      // Remove any topbar button if we previously added it
+      const oldTop = document.getElementById('peopleMatchScanTopBtn');
+      if (oldTop && oldTop.parentNode) { try { oldTop.parentNode.removeChild(oldTop); } catch {} }
+
+      const header = document.querySelector('.content-header');
+      if (!header) return;
+      let actions = document.getElementById('peopleHeaderActions');
+      if (!actions) {
+        actions = document.createElement('div');
+        actions.id = 'peopleHeaderActions';
+        actions.style.display = 'flex';
+        actions.style.alignItems = 'center';
+        actions.style.gap = '8px';
+        actions.style.marginLeft = 'auto';
+        header.appendChild(actions);
+      }
+      let btn = document.getElementById('peopleMatchScanBtn');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.id = 'peopleMatchScanBtn';
+        btn.className = 'btn';
+        btn.textContent = tr('people_match_btn');
+        btn.addEventListener('click', ()=> matchUnknownFaces(1000));
+        actions.appendChild(btn);
       } else {
-        topBtn.style.display = '';
-        topBtn.textContent = tr('people_match_btn');
+        btn.textContent = tr('people_match_btn');
+        btn.style.display = '';
       }
     })();
     const people = state.personView.mode === 'list' ? (state.people || []) : [];
@@ -1828,10 +1839,10 @@ function renderGrid() {
     els.statHiddenToggle.style.display = 'none';
   }
   if (state.view !== 'personer') {
-    // Show global search again in other views and hide the match-scan btn
+    // Show global search again in other views and hide the match-scan btn in header
     if (els.searchShell) els.searchShell.style.display = '';
-    const topBtn = document.getElementById('peopleMatchScanTopBtn');
-    if (topBtn) topBtn.style.display = 'none';
+    const hdrBtn = document.getElementById('peopleMatchScanBtn');
+    if (hdrBtn) hdrBtn.style.display = 'none';
   }
   // Timeline view: group by year-month headers
   if (state.view === "timeline") {
@@ -7662,11 +7673,15 @@ function renderDuplicates(data) {
         try {
           autoBtn.disabled = true; autoBtn.classList.add('loading');
           const r = await fetch('/api/duplicates/merge-auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id1: aId, id2: bId })});
-          const d = await r.json().catch(()=>({}));
+          let txt = await r.text();
+          let d = {};
+          try { d = JSON.parse(txt); } catch { d = {}; }
           autoBtn.disabled = false; autoBtn.classList.remove('loading');
-          if (!r.ok || !d || !d.ok) { showStatus((d && d.error) || 'Fletning fejlede', 'err'); return; }
+          if (!r.ok || !d || !d.ok) { showStatus((d && d.error) || (txt || 'Fletning fejlede'), 'err'); alert((d && d.error) || txt || 'Fletning fejlede'); return; }
           showStatus('Flettet automatisk (metadata vurderet).', 'ok');
           strip.parentElement && strip.parentElement.removeChild(strip);
+          // Refresh counts so grupper opdateres
+          try { if (document.getElementById('dupeResults')) fetchDuplicates(); } catch {}
         } catch { autoBtn.disabled = false; autoBtn.classList.remove('loading'); showStatus('Fletning fejlede', 'err'); }
       });
       btnWrap.appendChild(lbl); btnWrap.appendChild(autoBtn);

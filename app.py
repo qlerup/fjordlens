@@ -5349,6 +5349,7 @@ def api_duplicates_merge_auto():
                         keep_id, drop_id = int(b["id"]), int(a["id"])
 
         # Reuse the regular merge logic by calling it inline
+        log_event("dupe_merge_auto", kept=keep_id, drop=drop_id)
         return api_duplicates_merge_impl(keep_id, drop_id)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
