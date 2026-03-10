@@ -1697,11 +1697,9 @@ function appendPeopleInChunks(people, chunkSize = 48) {
           const d = await r.json();
           if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
           showStatus(tr('person_hidden_ok'), 'ok');
-          const cardEl = e.currentTarget.closest('.photo-card');
-          if (cardEl && cardEl.parentElement) {
-            // Fjern kortet med det samme for en snappy oplevelse
-            cardEl.parentElement.removeChild(cardEl);
-          }
+          // Fjern kortet med det samme for en snappy oplevelse
+          const node = document.querySelector(`.photo-card[data-person-id="${Number(p.id)}"]`);
+          if (node && node.parentElement) node.parentElement.removeChild(node);
         } catch { showStatus(tr('person_hide_error'), 'err'); }
       });
       const unhideBtn = card.querySelector('[data-act="unhide"]');
