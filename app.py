@@ -73,6 +73,9 @@ LANG_EN = "en"
 LANG_CHOICES = {LANG_DA, LANG_EN}
 DEFAULT_UI_LANGUAGE = LANG_DA
 DEFAULT_SEARCH_LANGUAGE = LANG_DA
+# Static directories (for icons and assets resolved outside templates)
+STATIC_DIR = Path(__file__).parent / "static"
+ICONS_DIR = STATIC_DIR / "icons"
 TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
     LANG_DA: {
         "login_invalid_credentials": "Forkert brugernavn eller adgangskode",
@@ -241,6 +244,68 @@ def inject_template_i18n():
         "tt": lambda key: _ui_text(str(key), lang),
         "app_build": APP_BUILD_ID,
     }
+
+# --- iOS/Android Home Screen icons at well-known root URLs ---
+@app.route("/apple-touch-icon.png")
+@app.route("/apple-touch-icon-precomposed.png")
+def apple_touch_icon():
+    try:
+        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
+    except Exception:
+        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_256.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+@app.route("/apple-touch-icon-180x180.png")
+def apple_touch_icon_180():
+    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+@app.route("/apple-touch-icon-167x167.png")
+def apple_touch_icon_167():
+    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+@app.route("/apple-touch-icon-152x152.png")
+def apple_touch_icon_152():
+    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+@app.route("/apple-touch-icon-120x120.png")
+def apple_touch_icon_120():
+    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+@app.route("/favicon.ico")
+def favicon_ico():
+    try:
+        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_favicon_256.png")
+    except Exception:
+        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_favicon_128.png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
 
 # --- Console color support (for Windows terminals and Docker logs) ---
 ANSI_RESET = "\033[0m"
