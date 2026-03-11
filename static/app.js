@@ -2064,7 +2064,6 @@ function appendCardTo(item, container) {
     // If click was on info icon, ignore (handled above)
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
     state.selectedId = item.id;
-    setDetail(item);
     const idx = state.items.findIndex(i => i.id === item.id);
     if (idx >= 0) openViewer(idx);
   });
