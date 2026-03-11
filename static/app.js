@@ -2064,6 +2064,7 @@ function appendCardTo(item, container) {
   card.addEventListener("click", (ev) => {
     // If click was on info icon, ignore (handled above)
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
+    try { document.body.classList.remove('detail-open'); } catch {}
     state.selectedId = item.id;
     const idx = state.items.findIndex(i => i.id === item.id);
     if (idx >= 0) openViewer(idx);
@@ -6527,6 +6528,23 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") nextViewer(-1);
   if (e.key === "ArrowRight") nextViewer(1);
 });
+
+// Detail panel: luk med Escape og klik udenfor
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    try { document.body.classList.remove('detail-open'); } catch {}
+  }
+});
+const __mainEl = document.querySelector('main.main');
+if (__mainEl) {
+  __mainEl.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('detail-open')) return;
+    // Bevar åben hvis man klikker på info-ikon eller inde i panelet
+    const t = e.target;
+    if (t && (t.closest('.detail-panel') || t.closest('.info-icon-overlay'))) return;
+    document.body.classList.remove('detail-open');
+  });
+}
 
 // Close viewer when clicking the dark backdrop (outside media/content)
 if (els.viewer) {

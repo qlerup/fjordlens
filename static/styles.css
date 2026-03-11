@@ -121,12 +121,8 @@ body.drawer-open .drawer-backdrop { display: block; }
 .app-shell {
   min-height: 100vh;
   display: grid;
-  /* Default: hide detail column; expand content */
+  /* 2 kolonner som standard (højre info vises som overlay) */
   grid-template-columns: 250px 1fr;
-}
-/* When detail panel is opened, add the third column */
-body.detail-open .app-shell {
-  grid-template-columns: 250px 1fr 360px;
 }
 
 /* Sidebar */
@@ -1145,21 +1141,34 @@ body.detail-open .app-shell {
 }
 
 /* Detail panel */
-/* Hidden by default; only shown when body has .detail-open (desktop) */
+/* Højre infopanel som overlay med slide-in, ligesom viewer */
 .detail-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 360px;
   border-left: 1px solid var(--border);
   background: var(--panel);
   padding: 16px;
-  /* Stick details panel on desktop and allow its own scroll */
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100dvh;
   overflow-y: auto;
-  display: none; /* default hidden */
+  z-index: 1000;
+  /* Skjult som udgangspunkt */
+  transform: translateX(104%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .26s cubic-bezier(.22,1,.36,1), opacity .2s ease, visibility 0s linear .2s;
 }
-/* Show detail panel when explicitly opened */
-body.detail-open .detail-panel { display: block; }
+/* Åben tilstand: glid ind og gør klikbar */
+body.detail-open .detail-panel {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform .26s cubic-bezier(.22,1,.36,1), opacity .2s ease;
+  box-shadow: -10px 0 28px rgba(0,0,0,0.45);
+}
 .detail-empty {
   height: 100%;
   display: grid;
@@ -1529,11 +1538,8 @@ body.view-timeline .topbar {
     align-items: center;
     justify-content: center;
   }
-  body.view-settings .topbar { display: flex !important; }
-  body.view-settings .topbar .search-shell,
-  body.view-settings .topbar .search-wrap,
-  body.view-settings .topbar .select,
-  body.view-settings .topbar #aiToggle { display: none !important; }
+  /* Hold topbar skjult i Indstillinger for at spare plads */
+  body.view-settings .topbar { display: none !important; }
 
   body.view-timeline .topbar {
     justify-content: flex-end;
@@ -1739,6 +1745,39 @@ body.view-mapper .mapper-header-actions { display: flex; }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab-panel.hidden { display: none; }
+
+/* Settings: mobile-friendly tweaks */
+@media (max-width: 760px) {
+  #settingsPanel { padding: 8px; }
+  .settings-header { margin: 2px 0 8px; }
+  .settings-header h1 { font-size: 1.2rem; }
+  .tabs {
+    gap: 10px;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    z-index: 6;
+    padding-bottom: 6px;
+  }
+  .tabs::-webkit-scrollbar { height: 6px; }
+  .tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 999px; }
+  .tab-btn { flex: 0 0 auto; padding: 8px 6px; font-size: 0.95rem; }
+  /* Cards: tighten spacing */
+  .sidebar-card { padding: 10px; }
+  /* Maintenance buttons: 2 pr. række og fuld bredde på små skærme */
+  #settingsPanel .sidebar-card > div[style*='flex-wrap:wrap'] .btn {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 140px;
+  }
+  /* Make single primary actions stretch nicely */
+  #settingsPanel .sidebar-card .actions { gap: 8px; }
+  #settingsPanel .sidebar-card .actions .btn { flex: 1 1 auto; }
+  /* Inputs already 100% width; ensure smaller paddings for compact UI */
+  .form-row { gap: 6px; margin-bottom: 8px; }
+}
 
 /* Panels and data tables */
 .panel { border:1px solid var(--border); background: var(--panel); border-radius:12px; padding:12px; }
