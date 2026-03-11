@@ -651,7 +651,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  align-items: flex-start;
+  align-items: center; /* align controls on same baseline */
   margin-bottom: 12px;
 }
 .content-header h1 {
