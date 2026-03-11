@@ -1751,24 +1751,32 @@ body.compact-settings .settings-header { display: none !important; }
 
 /* Settings: mobile-friendly tweaks */
 @media (max-width: 760px) {
+  html, body { max-width: 100%; overflow-x: hidden; }
   #settingsPanel { padding: 8px; }
   /* Fjern topbaren (titel/undertitel) på mobil for mere plads */
   .settings-header { display: none !important; }
   .settings-header h1 { font-size: 1.2rem; }
+  /* Tabs: swipebar der ikke udvider layoutbredden */
   .tabs {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
     gap: 10px;
+    max-width: 100%;
+    width: 100%;
     overflow-x: auto;
-    white-space: nowrap;
     -webkit-overflow-scrolling: touch;
     position: sticky;
     top: 0;
     background: var(--panel);
     z-index: 6;
-    padding-bottom: 6px;
+    padding: 6px 8px 6px;
+    margin: 0 0 8px 0;
+    scroll-snap-type: x proximity;
   }
   .tabs::-webkit-scrollbar { height: 6px; }
   .tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 999px; }
-  .tab-btn { flex: 0 0 auto; padding: 8px 6px; font-size: 0.95rem; }
+  .tab-btn { flex: 0 0 auto; padding: 8px 6px; font-size: 0.95rem; white-space: nowrap; scroll-snap-align: start; display: inline-block; }
   /* Cards: tighten spacing */
   .sidebar-card { padding: 10px; }
   /* Maintenance buttons: 2 pr. række og fuld bredde på små skærme */
