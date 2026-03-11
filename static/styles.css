@@ -1749,7 +1749,8 @@ body.view-mapper .mapper-header-actions { display: flex; }
 /* Settings: mobile-friendly tweaks */
 @media (max-width: 760px) {
   #settingsPanel { padding: 8px; }
-  .settings-header { margin: 2px 0 8px; }
+  /* Fjern topbaren (titel/undertitel) på mobil for mere plads */
+  .settings-header { display: none !important; }
   .settings-header h1 { font-size: 1.2rem; }
   .tabs {
     gap: 10px;
