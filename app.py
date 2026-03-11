@@ -246,54 +246,46 @@ def inject_template_i18n():
     }
 
 # --- iOS/Android Home Screen icons at well-known root URLs ---
+def _resize_icon(target: int) -> bytes:
+    base = ICONS_DIR / "fjordlens_lens_fullcolor_512.png"
+    if not base.exists():
+        base = ICONS_DIR / "fjordlens_lens_fullcolor_256.png"
+    img = Image.open(str(base)).convert("RGBA")
+    img = img.resize((target, target), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+def _png_response(data: bytes):
+    from flask import Response
+    resp = Response(data, mimetype="image/png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
 @app.route("/apple-touch-icon.png")
 @app.route("/apple-touch-icon-precomposed.png")
 def apple_touch_icon():
-    try:
-        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
-    except Exception:
-        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_256.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    # Default iOS prefers 180x180 when unspecified; provide 180
+    return _png_response(_resize_icon(180))
 
 @app.route("/apple-touch-icon-180x180.png")
 def apple_touch_icon_180():
-    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    return _png_response(_resize_icon(180))
 
 @app.route("/apple-touch-icon-167x167.png")
 def apple_touch_icon_167():
-    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    return _png_response(_resize_icon(167))
 
 @app.route("/apple-touch-icon-152x152.png")
 def apple_touch_icon_152():
-    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    return _png_response(_resize_icon(152))
 
 @app.route("/apple-touch-icon-120x120.png")
 def apple_touch_icon_120():
-    resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_fullcolor_512.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    return _png_response(_resize_icon(120))
 
 @app.route("/favicon.ico")
 def favicon_ico():
