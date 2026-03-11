@@ -2018,6 +2018,7 @@ function appendCardTo(item, container) {
     // Clicking the icon opens the sidebar (detail panel)
     infoIcon.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      try { document.body.classList.add('detail-open'); } catch {}
       state.selectedId = item.id;
       setDetail(item);
       // Optionally scroll sidebar into view if needed
