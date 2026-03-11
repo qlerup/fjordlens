@@ -4798,6 +4798,11 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
+  // Toggle compact Settings layout on small viewports
+  try {
+    const isSmall = window.matchMedia('(max-width: 760px)').matches;
+    document.body.classList.toggle('compact-settings', nextView === 'settings' && isSmall);
+  } catch {}
   if (nextView !== 'mapper') closeMapperHeaderMenu();
   if (nextView !== 'mapper' && els.mapperTreeNav) {
     if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
@@ -6527,6 +6532,18 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeViewer();
   if (e.key === "ArrowLeft") nextViewer(-1);
   if (e.key === "ArrowRight") nextViewer(1);
+});
+
+// Keep compact-settings class in sync on resize
+window.addEventListener('resize', () => {
+  try {
+    const isSmall = window.matchMedia('(max-width: 760px)').matches;
+    if (document.body.classList.contains('view-settings')) {
+      document.body.classList.toggle('compact-settings', isSmall);
+    } else {
+      document.body.classList.remove('compact-settings');
+    }
+  } catch {}
 });
 
 // Detail panel: luk med Escape og klik udenfor

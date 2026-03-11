@@ -1746,6 +1746,9 @@ body.view-mapper .mapper-header-actions { display: flex; }
 .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab-panel.hidden { display: none; }
 
+/* Force-hide header when JS marks compact mode */
+body.compact-settings .settings-header { display: none !important; }
+
 /* Settings: mobile-friendly tweaks */
 @media (max-width: 760px) {
   #settingsPanel { padding: 8px; }
