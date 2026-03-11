@@ -6178,8 +6178,23 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'shared') {
       loadDnsShares();
     }
+    // Sync mobile selector when clicking desktop tabs
+    try { const sel = document.getElementById('settingsTabSelect'); if (sel) sel.value = tab; } catch {}
   });
 });
+
+// Mobile tab selector → switch tab
+(function(){
+  const sel = document.getElementById('settingsTabSelect');
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    try {
+      const tab = sel.value;
+      const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
+      if (btn) btn.click();
+    } catch {}
+  });
+})();
 
 if (els.dnsSaveBtn) {
   els.dnsSaveBtn.addEventListener('click', async () => {

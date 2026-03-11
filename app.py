@@ -287,6 +287,10 @@ def apple_touch_icon_152():
 def apple_touch_icon_120():
     return _png_response(_resize_icon(120))
 
+@app.route("/icon-192.png")
+def icon_192():
+    return _png_response(_resize_icon(192))
+
 @app.route("/favicon.ico")
 def favicon_ico():
     try:

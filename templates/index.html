@@ -21,6 +21,8 @@
   <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png">
   <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png">
   <link rel="manifest" href="{{ url_for('static', filename='icons/site.webmanifest') }}">
+  <!-- Android/Chromium high-res icon -->
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
   <meta name="theme-color" content="#0f1115">
   <!-- iOS/Android PWA fullscreen + title -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -171,6 +173,19 @@
           <button class="tab-btn" data-tab="users">Brugere</button>
           <button class="tab-btn" data-tab="other">Andet</button>
         </nav>
+        <!-- Mobile-friendly tab selector -->
+        <div class="tabs-mobile">
+          <select id="settingsTabSelect" aria-label="Vælg faneblad">
+            <option value="maint" selected>Vedligeholdelse</option>
+            <option value="ai">AI</option>
+            <option value="dns">DNS</option>
+            <option value="heic">Konvertering</option>
+            <option value="shared">Delte</option>
+            <option value="logs">Logs</option>
+            <option value="users">Brugere</option>
+            <option value="other">Andet</option>
+          </select>
+        </div>
 
         <!-- Vedligeholdelse -->
         <div class="tab-panel" data-tabpanel="maint">
