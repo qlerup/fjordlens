@@ -852,8 +852,9 @@ body.drawer-open .drawer-backdrop { display: block; }
 .sheet-content { max-height: 22vh; overflow-x: auto; overflow-y: hidden; padding: 8px 12px 10px; }
 .sheet-grid { display:flex; gap:10px; align-items:center; }
 .sheet-grid img { width:140px; height:105px; object-fit:cover; border-radius:10px; border:1px solid var(--border); cursor:pointer; display:block; flex:0 0 auto; }
+/* Make folder grid use same column sizing as timeline thumbnails */
 .gallery-grid.folders-view {
-  grid-template-columns: repeat(auto-fill, 220px);
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
 }
 .photo-card {
   position: relative;
