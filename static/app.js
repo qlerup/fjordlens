@@ -452,7 +452,7 @@ const I18N = {
     btn_clear: 'Ryd',
     mapper_current_folder: 'Aktuel mappe',
     mapper_root_folder: 'uploads (rodmappe)',
-    mapper_drop_here: 'Slip filer her for at uploade til',
+    mapper_drop_here: 'Slip filer eller mapper her for at uploade til',
     mapper_up: 'Tilbage',
     mapper_done: 'Færdig',
     mapper_edit: '⋮',
@@ -833,7 +833,7 @@ const I18N = {
     btn_clear: 'Clear',
     mapper_current_folder: 'Current folder',
     mapper_root_folder: 'uploads (root)',
-    mapper_drop_here: 'Drop files here to upload to',
+    mapper_drop_here: 'Drop files or folders here to upload to',
     mapper_up: 'Back',
     mapper_done: 'Done',
     mapper_edit: '⋮',
@@ -4130,6 +4130,96 @@ async function deleteSelectedMapperFolders() {
   }
 }
 
+// --- Drag & drop: collect files with relative paths (supports folders) ---
+async function _readDirectoryEntriesRecursive(entry, basePath) {
+  const out = [];
+  const prefix = basePath ? `${basePath}/` : '';
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => {
+      try { entry.file(resolve, reject); } catch (e) { reject(e); }
+    });
+    out.push({ file, relPath: `${prefix}${file.name}` });
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const readAll = async () => {
+      const batch = await new Promise((resolve, reject) => {
+        try { reader.readEntries(resolve, reject); } catch (e) { reject(e); }
+      });
+      if (!batch || !batch.length) return [];
+      const nested = [];
+      for (const child of batch) {
+        const childItems = await _readDirectoryEntriesRecursive(child, `${prefix}${entry.name}`);
+        for (const it of childItems) nested.push(it);
+      }
+      const more = await readAll();
+      return nested.concat(more);
+    };
+    const all = await readAll();
+    // Empty folders yield no files; creation happens implicitly when first file in a subdir is uploaded
+    return all;
+  }
+  return out;
+}
+
+async function collectDroppedFilesWithPaths(dataTransfer) {
+  const result = [];
+  try {
+    const items = (dataTransfer && dataTransfer.items) ? Array.from(dataTransfer.items) : [];
+    const entries = [];
+    for (const it of items) {
+      try {
+        if (it && it.kind === 'file' && typeof it.webkitGetAsEntry === 'function') {
+          const entry = it.webkitGetAsEntry();
+          if (entry) entries.push(entry);
+        }
+      } catch {}
+    }
+    if (entries.length) {
+      for (const entry of entries) {
+        const parts = await _readDirectoryEntriesRecursive(entry, '');
+        for (const p of parts) result.push(p);
+      }
+      if (result.length) return result;
+    }
+  } catch {}
+  // Fallback: use File.webkitRelativePath if present or just the filename
+  const files = (dataTransfer && dataTransfer.files) ? Array.from(dataTransfer.files) : [];
+  for (const f of files) {
+    const rel = String(f.webkitRelativePath || f.relativePath || f.name || '').trim() || f.name;
+    result.push({ file: f, relPath: rel });
+  }
+  return result;
+}
+
+function _groupByRelDir(fileItems) {
+  const groups = new Map();
+  for (const { file, relPath } of fileItems) {
+    const rp = String(relPath || '').replace(/\\/g, '/');
+    const parts = rp.split('/').filter(Boolean);
+    const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(file);
+  }
+  return groups; // Map<dir, File[]>
+}
+
+async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
+  const items = await collectDroppedFilesWithPaths(dataTransfer);
+  if (!items || !items.length) return;
+  const groups = _groupByRelDir(items);
+  // If everything is root files (single group with dir==''), fall back to a single batch
+  if (groups.size === 1 && groups.has('')) {
+    await uploadFiles(groups.get(''), { destination: 'uploads', subdir: String(baseSubdir || '') });
+    return;
+  }
+  // Otherwise, queue one batch per subfolder to preserve structure
+  for (const [dir, files] of groups.entries()) {
+    const target = String(baseSubdir || '').trim();
+    const subdir = dir ? (target ? `${target}/${dir}` : dir) : target;
+    await uploadFiles(files, { destination: 'uploads', subdir });
+  }
+}
+
 let _dragDepth = 0;
 let _internalImageDrag = false;
 
@@ -4216,7 +4306,7 @@ window.addEventListener('drop', async (e) => {
       showStatus(tr('upload_mapper_only'), 'err');
     } else if (!droppedInsideMapperZone) {
       const targetSubdir = String(state.mapperPath || '');
-      await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
+      await uploadDroppedDataTransfer(e.dataTransfer, targetSubdir);
       await loadMapperTools(targetSubdir);
       await loadPhotos();
     }
@@ -4847,6 +4937,7 @@ function applyUiLanguage() {
       if (opt) opt.textContent = text;
     });
   }
+  
 
   const navMap = {
     timeline: tr('nav_timeline'),
@@ -6286,7 +6377,7 @@ if (els.mapperDropZone) {
     if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
     e.preventDefault();
     const targetSubdir = String(state.mapperPath || '');
-    await uploadFiles(e.dataTransfer.files, { destination: 'uploads', subdir: targetSubdir });
+    await uploadDroppedDataTransfer(e.dataTransfer, targetSubdir);
     await loadMapperTools(targetSubdir);
     await loadPhotos();
   });
