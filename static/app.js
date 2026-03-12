@@ -5206,6 +5206,10 @@ async function openMapperShareModal() {
   _syncMapperSharePasswordVisibility();
   if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
   if (els.mapperShareResultInput) els.mapperShareResultInput.value = '';
+  const qrWrap = document.getElementById('mapperShareQrWrap');
+  const qrImg = document.getElementById('mapperShareQrImg');
+  if (qrWrap) qrWrap.classList.add('hidden');
+  if (qrImg) qrImg.removeAttribute('src');
   if (els.mapperShareModalConfirm) {
     els.mapperShareModalConfirm.disabled = false;
     els.mapperShareModalConfirm.classList.remove('loading');
@@ -5270,8 +5274,16 @@ async function createMapperShareLink() {
       showStatus((data && data.error) || tr('mapper_share_create_failed'), 'err');
       return;
     }
-    if (els.mapperShareResultInput) els.mapperShareResultInput.value = String(data.link || '');
+    const link = String(data.link || '');
+    if (els.mapperShareResultInput) els.mapperShareResultInput.value = link;
     if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.remove('hidden');
+    // Show QR for the generated link
+    try {
+      const qrImg = document.getElementById('mapperShareQrImg');
+      const qrWrap = document.getElementById('mapperShareQrWrap');
+      if (qrImg) qrImg.src = `/api/qr?text=${encodeURIComponent(link)}&box=6&border=2`;
+      if (qrWrap) qrWrap.classList.remove('hidden');
+    } catch {}
     showStatus(tr('mapper_share_created'), 'ok');
   } catch {
     showStatus(tr('mapper_share_create_failed'), 'err');
@@ -5301,6 +5313,27 @@ async function copyMapperShareLink() {
   } catch {
     showStatus(tr('mapper_share_copy_fail'), 'err');
   }
+}
+
+// Download QR image helper
+const mapperShareQrDownload = document.getElementById('mapperShareQrDownload');
+if (mapperShareQrDownload) {
+  mapperShareQrDownload.addEventListener('click', async () => {
+    const img = document.getElementById('mapperShareQrImg');
+    if (!(img && img.src)) return;
+    try {
+      const res = await fetch(img.src, { cache: 'no-store' });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'share-qr.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {}
+  });
 }
 
 function openScanModal() {

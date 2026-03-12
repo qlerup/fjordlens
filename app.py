@@ -266,6 +266,52 @@ def _png_response(data: bytes):
         pass
     return resp
 
+@app.route("/api/qr")
+def api_qr():
+    """Generate a QR code PNG for the provided text (admin UI use).
+    Query params:
+      - text: The content to encode (URL or text)
+      - box:  Box size (pixels per module), default 8, 2..16
+      - border: Quiet zone modules, default 2, 1..8
+    """
+    try:
+        raw = str(request.args.get("text") or "").strip()
+        if not raw:
+            return jsonify({"ok": False, "error": "Missing text"}), 400
+        if len(raw) > 2048:
+            return jsonify({"ok": False, "error": "Text too long"}), 400
+        try:
+            box = int(request.args.get("box") or 8)
+        except Exception:
+            box = 8
+        try:
+            border = int(request.args.get("border") or 2)
+        except Exception:
+            border = 2
+        box = max(2, min(16, box))
+        border = max(1, min(8, border))
+        # Build QR image
+        try:
+            qr = qrcode.QRCode(
+                version=None,
+                box_size=box,
+                border=border,
+            )
+            qr.add_data(raw)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+        except Exception:
+            # Fallback simple generator
+            img = qrcode.make(raw)
+        buf = io.BytesIO()
+        try:
+            img.save(buf, 'PNG')
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"QR save failed: {e}"}), 500
+        return _png_response(buf.getvalue())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route("/apple-touch-icon.png")
 @app.route("/apple-touch-icon-precomposed.png")
 def apple_touch_icon():
