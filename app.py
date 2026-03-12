@@ -3046,9 +3046,17 @@ def _share_folder_paths(conn: sqlite3.Connection, share_row: sqlite3.Row) -> lis
 def _share_rel_prefixes(folder_paths: list[str]) -> list[str]:
     prefixes: list[str] = []
     for fp in folder_paths:
-        rel_prefix = _share_folder_rel_prefix(fp)
-        if rel_prefix and rel_prefix not in prefixes:
-            prefixes.append(rel_prefix)
+        # Canonical UI prefix (virtual root)
+        base = _share_folder_rel_prefix(fp)  # e.g. 'uploads/Tulle_og_Mor'
+        # Physical storage variants for uploads (originals/converted)
+        variants = [
+            base,
+            (f"uploads/originals/{fp}" if fp else "uploads/originals"),
+            (f"uploads/converted/{fp}" if fp else "uploads/converted"),
+        ]
+        for v in variants:
+            if v and v not in prefixes:
+                prefixes.append(v)
     return prefixes
 
 

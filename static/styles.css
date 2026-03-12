@@ -884,10 +884,9 @@ body.drawer-open .drawer-backdrop { display: block; }
   position: relative;
   overflow: hidden; /* prevent mosaic from bleeding into label area */
 }
-/* In folder view, reserve vertical space for titel+metadata under mosaikken */
-.folder-card .card-thumb {
-  aspect-ratio: 1 / 0.82; /* ca. 82% af bredden i højde, så bund kan vise titel */
-}
+/* Folder view: hide bottom meta bar entirely and use overlay on the thumb */
+.gallery-grid.folders-view .folder-card .card-body { display: none; }
+.folder-card .card-thumb { aspect-ratio: 1 / 1; }
 .card-thumb img {
   width: 100%;
   height: 100%;
