@@ -888,7 +888,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .gallery-grid.folders-view .folder-card .card-body { display: none; }
 /* Make folder cards a bit taller so the bottom thumbnails are fully visible
   even with the name overlay on top */
-.folder-card .card-thumb { aspect-ratio: 1 / 1.12; }
+.folder-card .card-thumb { aspect-ratio: 1 / 1; }
 .card-thumb img {
   width: 100%;
   height: 100%;
@@ -898,7 +898,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .card-thumb.folder-mosaic { position: relative; width: 100%; }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {
-  position: absolute; inset: 0;
+  position: absolute; top: 0; left: 0; right: 0; bottom: 40px; /* room for overlay */
   z-index: 1; /* Always behind label/body overlay */
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FjordLens Share</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
 </head>
 <body>
   <main class="main" style="max-width:1200px;margin:0 auto;">
@@ -61,6 +61,6 @@
   <script>
     window.SHARE_TOKEN = {{ share_token|tojson }};
   </script>
-  <script src="{{ url_for('static', filename='shared.js') }}"></script>
+  <script src="{{ url_for('static', filename='shared.js') }}?v={{ app_build }}"></script>
 </body>
 </html>
