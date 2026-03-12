@@ -138,9 +138,11 @@ function renderGrid() {
   };
 
   const items = Array.isArray(state.items) ? state.items : [];
-  const byFolder = new Map();
+  const byFolder = new Map(); // folderKey -> preview urls (max 4)
+  const folderCounts = new Map(); // folderKey -> total items count
   const current = String(state.currentPath || '');
   const includeFolder = (f) => { if (!byFolder.has(f)) byFolder.set(f, []); };
+  const incCount = (f) => { folderCounts.set(f, (folderCounts.get(f) || 0) + 1); };
   const immediateChild = (folder) => {
     const base = current ? `${root}/${current}` : root;
     const rel = relFromRoot(folder);
@@ -157,7 +159,15 @@ function renderGrid() {
     const rel = relFromRoot(folder);
     if (rel === current) directItems.push(it);
     const child = immediateChild(folder);
-    if (child) includeFolder(child);
+    if (child) {
+      includeFolder(child);
+      incCount(child);
+      try {
+        const prev = byFolder.get(child);
+        const url = String(it.thumb_url || it.view_url || it.original_url || it.download_url || '');
+        if (url && prev.length < 4) prev.push(url);
+      } catch {}
+    }
   }
 
   // Render
@@ -182,9 +192,12 @@ function renderGrid() {
   for (const fk of folderKeys) {
     const card = document.createElement('article');
     card.className = 'photo-card folder-card';
+    const prev = byFolder.get(fk) || [];
+    const thumbs = prev.map(u => `<img src="${u}" alt="">`).join("");
+    const count = Number(folderCounts.get(fk) || 0);
     card.innerHTML = `
-      <div class="card-thumb folder-mosaic"><div class="folder-grid"></div></div>
-      <div class="folder-name-overlay"><span class="folder-name">${(fk.split('/').pop() || fk)}</span><span class="folder-count"></span></div>
+      <div class="card-thumb folder-mosaic"><div class="folder-grid">${thumbs}</div></div>
+      <div class="folder-name-overlay"><span class="folder-name">${(fk.split('/').pop() || fk)}</span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
     `;
     card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });
     els.grid.appendChild(card);

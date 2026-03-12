@@ -1,3 +1,6 @@
+:root {
+  --folder-overlay-h: 44px; /* fixed title bar height for folder tiles */
+}
 /* Info icon overlay for photo cards */
 .info-icon-overlay {
   width: 24px;
@@ -899,7 +902,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .card-thumb.folder-mosaic { position: relative; width: 100%; }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 40px; /* room for overlay */
+  position: absolute; top: 0; left: 0; right: 0; bottom: var(--folder-overlay-h); /* reserve space for overlay */
   z-index: 1; /* Always behind label/body overlay */
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -914,7 +917,8 @@ body.drawer-open .drawer-backdrop { display: block; }
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px; /* slightly slimmer so it covers less of the mosaic */
+  height: var(--folder-overlay-h);
+  padding: 6px 8px; /* compact paddings; fixed height ensures equal rows */
   background: linear-gradient(180deg, rgba(15,17,21,0.0) 0%, rgba(15,17,21,0.75) 60%, rgba(15,17,21,0.92) 100%);
   color: var(--text);
   pointer-events: none;
@@ -928,7 +932,10 @@ body.drawer-open .drawer-backdrop { display: block; }
   font-size: 0.78rem;
   color: var(--muted);
 }
-.folder-mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.folder-mosaic img,
+.folder-mosaic .folder-grid > img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
 
 /* Make folder cards uniform height regardless of title length */
 .folder-card { display: flex; flex-direction: column; }

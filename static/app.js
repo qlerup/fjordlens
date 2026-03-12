@@ -2100,7 +2100,25 @@ function appendFolderCard(folder, arr, opts = {}) {
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
+  // --- Hold-to-select (long press) for Mapper ---
+  let _lpTimer = null;
+  let _lpActivated = false;
+  const _lpTriggerMs = 550;
+  const _lpStart = () => {
+    if (state.mapperEditMode) return; // already selecting
+    _lpActivated = false;
+    _lpTimer = window.setTimeout(() => {
+      _lpActivated = true;
+      try { setMapperEditMode(true); } catch {}
+      toggleMapperFolderSelection(folder);
+    }, _lpTriggerMs);
+  };
+  const _lpCancel = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+  card.addEventListener('mousedown', _lpStart);
+  card.addEventListener('touchstart', _lpStart, { passive: true });
+  ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev => card.addEventListener(ev, _lpCancel));
   card.addEventListener("click", () => {
+    if (_lpActivated) { _lpActivated = false; return; }
     if (state.mapperEditMode) {
       toggleMapperFolderSelection(folder);
       return;
@@ -4217,10 +4235,14 @@ async function collectDroppedFilesWithPaths(dataTransfer) {
   return result;
 }
 
-function _groupByRelDir(fileItems) {
+function _groupByRelDir(fileItems, rootToStrip = '') {
   const groups = new Map();
   for (const { file, relPath } of fileItems) {
-    const rp = String(relPath || '').replace(/\\/g, '/');
+    let rp = String(relPath || '').replace(/\\/g, '/');
+    if (rootToStrip) {
+      const pfx = `${rootToStrip}/`;
+      if (rp.startsWith(pfx)) rp = rp.slice(pfx.length);
+    }
     const parts = rp.split('/').filter(Boolean);
     const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
     if (!groups.has(dir)) groups.set(dir, []);
@@ -4232,7 +4254,16 @@ function _groupByRelDir(fileItems) {
 async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
   const items = await collectDroppedFilesWithPaths(dataTransfer);
   if (!items || !items.length) return;
-  const groups = _groupByRelDir(items);
+  // If all items share the same top-level folder (dragged parent), strip it
+  let commonRoot = '';
+  try {
+    const first = String(items[0].relPath || '').replace(/\\/g, '/');
+    const seg = first.split('/').filter(Boolean)[0] || '';
+    if (seg && items.every(it => String(it.relPath || '').replace(/\\/g, '/').startsWith(seg + '/'))) {
+      commonRoot = seg;
+    }
+  } catch {}
+  const groups = _groupByRelDir(items, commonRoot);
   // If everything is root files (single group with dir==''), fall back to a single batch
   if (groups.size === 1 && groups.has('')) {
     await uploadFiles(groups.get(''), { destination: 'uploads', subdir: String(baseSubdir || '') });
