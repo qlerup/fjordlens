@@ -4264,17 +4264,47 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
     }
   } catch {}
   const groups = _groupByRelDir(items, commonRoot);
+  // 1) Create all folders upfront for nicer UX
+  try {
+    const makeOne = async (parent, name) => {
+      const res = await fetch('/api/settings/upload-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination: 'uploads', parent, path: name }),
+      });
+      await res.json().catch(()=>({}));
+    };
+    const created = new Set();
+    const base = String(baseSubdir || '').trim();
+    const allDirs = Array.from(groups.keys()).filter(Boolean)
+      .sort((a,b)=>a.split('/').length - b.split('/').length);
+    for (const dir of allDirs) {
+      let parent = base;
+      const parts = dir.split('/').filter(Boolean);
+      for (const part of parts) {
+        const p = parent ? `${parent}/${part}` : part;
+        if (!created.has(p)) {
+          await makeOne(parent, part);
+          created.add(p);
+        }
+        parent = p;
+      }
+    }
+  } catch {}
   // If everything is root files (single group with dir==''), fall back to a single batch
   if (groups.size === 1 && groups.has('')) {
     await uploadFiles(groups.get(''), { destination: 'uploads', subdir: String(baseSubdir || '') });
     return;
   }
   // Otherwise, queue one batch per subfolder to preserve structure
+  const promises = [];
   for (const [dir, files] of groups.entries()) {
     const target = String(baseSubdir || '').trim();
     const subdir = dir ? (target ? `${target}/${dir}` : dir) : target;
-    await uploadFiles(files, { destination: 'uploads', subdir });
+    // Enqueue all batches quickly; queue runner will handle sequence
+    promises.push(uploadFiles(files, { destination: 'uploads', subdir }));
   }
+  // Do not await here to keep UI snappy; callers don't depend on resolution
 }
 
 let _dragDepth = 0;
