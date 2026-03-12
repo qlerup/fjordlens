@@ -893,6 +893,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {
   position: absolute; inset: 0;
+  z-index: 1; /* Always behind label/body overlay */
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
@@ -902,7 +903,15 @@ body.drawer-open .drawer-backdrop { display: block; }
 
 /* Make folder cards uniform height regardless of title length */
 .folder-card { display: flex; flex-direction: column; }
-.folder-card .card-body { min-height: 74px; display: flex; flex-direction: column; justify-content: center; }
+.folder-card .card-body {
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  z-index: 2; /* Ensure on top of any overlapping thumbs */
+  background: var(--panel);
+}
 .folder-card .card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .folder-card .card-meta { justify-content: space-between; }
 .folder-card.selected {

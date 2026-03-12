@@ -379,9 +379,9 @@ const I18N = {
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
-    dns_desc: 'Opsæt DuckDNS-base URL til delte links.',
-    dns_duckdns_base_url: 'DuckDNS base URL',
-    dns_duckdns_placeholder: 'https://mitnavn.duckdns.org',
+    dns_desc: 'Opsæt ekstern base-URL til delte links (f.eks. https://photos.mitdomæne.dk).',
+    dns_duckdns_base_url: 'Ekstern base-URL',
+    dns_duckdns_placeholder: 'https://photos.eksempel.dk',
     dns_save: 'Gem DNS',
     dns_saved: 'DNS-indstillinger gemt.',
     dns_load_failed: 'Kunne ikke hente DNS-indstillinger.',
@@ -490,8 +490,8 @@ const I18N = {
     mapper_share_perm_view: 'Se',
     mapper_share_perm_upload: 'Se og uploade',
     mapper_share_perm_manage: 'Se, uploade og slette',
-    mapper_share_duckdns_toggle: 'Brug DuckDNS-link',
-    mapper_share_duckdns_not_configured: 'DuckDNS er ikke konfigureret i DNS-tabben.',
+    mapper_share_duckdns_toggle: 'Brug ekstern base-URL',
+    mapper_share_duckdns_not_configured: 'Ekstern base-URL er ikke konfigureret under DNS.',
     mapper_share_password_toggle: 'Kodebeskyt link',
     mapper_share_require_name_toggle: 'Kræv navn ved åbning',
     mapper_share_password_label: 'Adgangskode',
@@ -760,9 +760,9 @@ const I18N = {
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
     dns_title: 'DNS',
-    dns_desc: 'Configure the DuckDNS base URL used for shared links.',
-    dns_duckdns_base_url: 'DuckDNS base URL',
-    dns_duckdns_placeholder: 'https://myname.duckdns.org',
+    dns_desc: 'Configure external base URL for shared links (e.g. https://photos.example.com).',
+    dns_duckdns_base_url: 'External base URL',
+    dns_duckdns_placeholder: 'https://photos.example.com',
     dns_save: 'Save DNS',
     dns_saved: 'DNS settings saved.',
     dns_load_failed: 'Could not load DNS settings.',
@@ -3710,6 +3710,7 @@ function renderDnsSharesList() {
     const extendBtn = isActive
       ? `<button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
       : '';
+    const qrBtn = `<button class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
     return `
       <tr>
         <td>${escapeHtml(folder)}</td>
@@ -3720,6 +3721,7 @@ function renderDnsSharesList() {
         <td style="text-align:right;">
           <div class="dns-share-actions">
             <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
+            ${qrBtn}
             ${extendBtn}
             ${actionBtn}
             ${deleteBtn}
@@ -3833,6 +3835,24 @@ async function deleteDnsShare(shareId) {
   } catch {
     showSharedStatus(tr('dns_shares_delete_failed'), 'err');
   }
+}
+
+async function _downloadQrForLink(link, filename = 'share-qr.png') {
+  const value = String(link || '').trim();
+  if (!value) return;
+  try {
+    const res = await fetch(`/api/qr?text=${encodeURIComponent(value)}&box=6&border=2`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch {}
 }
 
 async function extendDnsShare(shareId) {
@@ -6356,6 +6376,13 @@ if (els.sharedLinksList) {
     if (copyId > 0) {
       const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === copyId) : null;
       await _copySharedLink(item && item.link ? String(item.link) : '');
+      return;
+    }
+    const qrId = Number(target.getAttribute('data-share-qr') || 0) || 0;
+    if (qrId > 0) {
+      const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === qrId) : null;
+      const link = item && item.link ? String(item.link) : '';
+      if (link) await _downloadQrForLink(link, `share-${qrId}-qr.png`);
       return;
     }
     const revokeId = Number(target.getAttribute('data-share-revoke') || 0) || 0;
