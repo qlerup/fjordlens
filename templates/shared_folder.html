@@ -41,6 +41,21 @@
     </section>
 
     <section id="shareGrid" class="gallery-grid"></section>
+
+    <!-- Simple viewer for shared links (popup with prev/next) -->
+    <div id="shareViewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;z-index:10000;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;">
+        <div id="shareViewerTitle" class="mini-label" style="color:#d7e0f1;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72vw;"></div>
+        <div>
+          <button id="shareViewerClose" class="btn" style="min-width:86px;">Luk</button>
+        </div>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;">
+        <button id="shareViewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.85;">◀</button>
+        <img id="shareViewerImg" alt="" style="max-width:92vw;max-height:82vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);" />
+        <button id="shareViewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);opacity:.85;">▶</button>
+      </div>
+    </div>
   </main>
 
   <script>

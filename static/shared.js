@@ -16,6 +16,12 @@ const els = {
   uploadBtn: document.getElementById('uploadBtn'),
   deleteBtn: document.getElementById('deleteBtn'),
   grid: document.getElementById('shareGrid'),
+  viewer: document.getElementById('shareViewer'),
+  viewerImg: document.getElementById('shareViewerImg'),
+  viewerClose: document.getElementById('shareViewerClose'),
+  viewerPrev: document.getElementById('shareViewerPrev'),
+  viewerNext: document.getElementById('shareViewerNext'),
+  viewerTitle: document.getElementById('shareViewerTitle'),
 };
 
 const state = {
@@ -24,6 +30,9 @@ const state = {
   items: [],
   selected: new Set(),
   auth: { passwordRequired: false, nameRequired: false },
+  currentPath: '', // relative to share root (e.g. "sub/child")
+  visible: [],    // items filtered to currentPath
+  viewerIndex: -1,
 };
 
 function isMobileShareView() {
@@ -111,63 +120,112 @@ function updateDeleteButton() {
 
 function renderGrid() {
   if (!els.grid) return;
-  const mobile = isMobileShareView();
+  // Build folder cards and photo cards based on currentPath
+  const root = (Array.isArray(state.info && state.info.folder_paths) && state.info.folder_paths[0]) ? String(state.info.folder_paths[0] || '') : '';
+  const norm = (rel) => {
+    // Map uploads/originals|converted/<path>/<file> → <path>
+    let p = String(rel || '').replace(/\\/g, '/');
+    if (p.startsWith('uploads/originals/')) p = p.slice('uploads/originals/'.length);
+    else if (p.startsWith('uploads/converted/')) p = p.slice('uploads/converted/'.length);
+    else if (p.startsWith('uploads/')) p = p.slice('uploads/'.length);
+    const parts = p.split('/');
+    parts.pop();
+    return parts.join('/');
+  };
+  const relFromRoot = (folder) => {
+    const f = String(folder || '').replace(/\\/g, '/');
+    return f.startsWith(root + '/') ? f.slice((root + '/').length) : (f === root ? '' : f);
+  };
+
+  const items = Array.isArray(state.items) ? state.items : [];
+  const byFolder = new Map();
+  const current = String(state.currentPath || '');
+  const includeFolder = (f) => { if (!byFolder.has(f)) byFolder.set(f, []); };
+  const immediateChild = (folder) => {
+    const base = current ? `${root}/${current}` : root;
+    const rel = relFromRoot(folder);
+    if (!rel.startsWith(current ? current + '/' : '')) return null;
+    const rest = current ? rel.slice(current.length + 1) : rel;
+    if (!rest) return null;
+    const seg = rest.split('/').filter(Boolean)[0] || null;
+    return seg ? (current ? `${current}/${seg}` : seg) : null;
+  };
+
+  const directItems = [];
+  for (const it of items) {
+    const folder = norm(it.rel_path || '');
+    const rel = relFromRoot(folder);
+    if (rel === current) directItems.push(it);
+    const child = immediateChild(folder);
+    if (child) includeFolder(child);
+  }
+
+  // Render
   els.grid.innerHTML = '';
-  state.items.forEach((item) => {
+  // Back button + path label (simple)
+  if (current) {
+    const back = document.createElement('div');
+    back.className = 'mini-label';
+    back.style.margin = '4px 0 6px 2px';
+    back.innerHTML = `<button class="btn small" id="sharePathBack">Tilbage</button> <span style="opacity:.8">${root}/${current}</span>`;
+    els.grid.appendChild(back);
+    const btn = back.querySelector('#sharePathBack');
+    if (btn) btn.addEventListener('click', () => {
+      const parts = current.split('/').filter(Boolean); parts.pop();
+      state.currentPath = parts.join('/');
+      renderGrid();
+    });
+  }
+
+  // Folder cards
+  const folderKeys = Array.from(byFolder.keys()).sort((a,b)=>a.localeCompare(b,'da-DK'));
+  for (const fk of folderKeys) {
     const card = document.createElement('article');
-    card.className = 'photo-card' + (state.selected.has(item.id) ? ' selected' : '');
+    card.className = 'photo-card folder-card';
+    card.innerHTML = `
+      <div class="card-thumb folder-mosaic"><div class="folder-grid"></div></div>
+      <div class="folder-name-overlay"><span class="folder-name">${(fk.split('/').pop() || fk)}</span><span class="folder-count"></span></div>
+    `;
+    card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });
+    els.grid.appendChild(card);
+  }
+
+  // Photo cards
+  state.visible = directItems.slice();
+  state.visible.forEach((item, idx) => {
+    const card = document.createElement('article');
+    card.className = 'photo-card';
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
-    const actions = mobile
-      ? `<div class="card-meta" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;">
-          <button class="btn small" data-open="1">${t('open')}</button>
-        </div>`
-      : `<div class="card-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <button class="btn small" data-open="1">${t('open')}</button>
-          <label class="mini-label" style="display:flex;align-items:center;gap:6px;">
-            <input type="checkbox" data-check="1" ${state.selected.has(item.id) ? 'checked' : ''} />
-            <span>${t('selected')}</span>
-          </label>
-        </div>`;
-    const uploadedBy = String(item.uploaded_by || '').trim().replace(/</g, '&lt;');
-    card.innerHTML = `
-      ${thumb}
-      <div class="card-body">
-        <h4 class="card-title">${(item.filename || '').replace(/</g, '&lt;')}</h4>
-        ${uploadedBy ? `<div class="pills"><span class="pill">👤 ${uploadedBy}</span></div>` : ''}
-        ${actions}
-      </div>`;
-
-    const openBtn = card.querySelector('[data-open="1"]');
-    if (openBtn) {
-      openBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openSharedItem(item);
-      });
-    }
-    const check = card.querySelector('[data-check="1"]');
-    if (check && !mobile) {
-      check.addEventListener('change', () => {
-        if (check.checked) state.selected.add(item.id);
-        else state.selected.delete(item.id);
-        updateDeleteButton();
-      });
-    }
-    card.addEventListener('click', () => {
-      if (mobile) {
-        openSharedItem(item);
-        return;
-      }
-      if (state.selected.has(item.id)) state.selected.delete(item.id);
-      else state.selected.add(item.id);
-      renderGrid();
-      updateDeleteButton();
-    });
+    card.innerHTML = `${thumb}`;
+    card.addEventListener('click', () => openShareViewer(idx));
     els.grid.appendChild(card);
   });
-  updateDeleteButton();
 }
+
+// --- Simple viewer (popup) ---
+function openShareViewer(index) {
+  if (!els.viewer || !state.visible.length) return;
+  const clamp = (i)=> (i+state.visible.length)%state.visible.length;
+  state.viewerIndex = clamp(index);
+  const it = state.visible[state.viewerIndex];
+  els.viewerImg.src = it && (it.original_url || it.view_url || it.download_url || it.thumb_url) || '';
+  els.viewerTitle.textContent = String(it && it.filename || '');
+  els.viewer.classList.remove('hidden');
+}
+function closeShareViewer(){ if (els.viewer) els.viewer.classList.add('hidden'); }
+function navShareViewer(step){ if (!state.visible.length) return; openShareViewer(state.viewerIndex + step); }
+
+if (els.viewerClose) els.viewerClose.addEventListener('click', closeShareViewer);
+if (els.viewerPrev) els.viewerPrev.addEventListener('click', ()=>navShareViewer(-1));
+if (els.viewerNext) els.viewerNext.addEventListener('click', ()=>navShareViewer(1));
+document.addEventListener('keydown',(e)=>{
+  if (els.viewer && els.viewer.classList.contains('hidden')) return;
+  if (e.key==='Escape') closeShareViewer();
+  if (e.key==='ArrowLeft') navShareViewer(-1);
+  if (e.key==='ArrowRight') navShareViewer(1);
+});
 
 function applyAuthRequirements(data = {}) {
   const passwordRequired = !!data.password_required;
