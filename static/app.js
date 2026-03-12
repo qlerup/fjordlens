@@ -3436,24 +3436,42 @@ async function uploadFiles(fileList, options = {}) {
               if (!hasTusClient()) {
                 throw new Error('TUS client mangler i browseren');
               }
-              const result = await uploadSingleFileTusWithAutoResume(
-                file,
-                { destination: batch.destination, subdir: batch.subdir },
-                (loaded, total) => {
-                uploadUiState.currentLoaded = Number(loaded || 0);
-                uploadUiState.currentTotal = Number(total || file.size || 0);
-                const pct = Number(total || file.size || 0) > 0
-                  ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
-                  : 0;
-                updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
-                renderUploadMonitor();
-                },
-                (attempt, maxAttempts) => {
-                  if (attempt <= 1) return;
-                  updateUploadMonitorItem(itemKey, null, `Genoptager upload… (${attempt}/${maxAttempts})`, null);
-                  renderUploadMonitor();
-                }
-              );
+              let result;
+              const useTus = hasTusClient() && Number(file && file.size || 0) > (1024 * 1024); // >1MB → TUS
+              if (useTus) {
+                result = await uploadSingleFileTusWithAutoResume(
+                  file,
+                  { destination: batch.destination, subdir: batch.subdir },
+                  (loaded, total) => {
+                    uploadUiState.currentLoaded = Number(loaded || 0);
+                    uploadUiState.currentTotal = Number(total || file.size || 0);
+                    const pct = Number(total || file.size || 0) > 0
+                      ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
+                      : 0;
+                    updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
+                    renderUploadMonitor();
+                  },
+                  (attempt, maxAttempts) => {
+                    if (attempt <= 1) return;
+                    updateUploadMonitorItem(itemKey, null, `Genoptager upload… (${attempt}/${maxAttempts})`, null);
+                    renderUploadMonitor();
+                  }
+                );
+              } else {
+                result = await uploadSingleFile(
+                  file,
+                  { destination: batch.destination, subdir: batch.subdir },
+                  (loaded, total) => {
+                    uploadUiState.currentLoaded = Number(loaded || 0);
+                    uploadUiState.currentTotal = Number(total || file.size || 0);
+                    const pct = Number(total || file.size || 0) > 0
+                      ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
+                      : 0;
+                    updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
+                    renderUploadMonitor();
+                  }
+                );
+              }
 
               if (result && result.aborted) {
                 updateUploadMonitorItem(itemKey, false, 'Stoppet', 0);
