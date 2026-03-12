@@ -882,6 +882,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   aspect-ratio: 1 / 1; /* more square thumbs */
   display: block;
   position: relative;
+  overflow: hidden; /* prevent mosaic from bleeding into label area */
 }
 .card-thumb img {
   width: 100%;
@@ -911,6 +912,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   position: relative;
   z-index: 2; /* Ensure on top of any overlapping thumbs */
   background: var(--panel);
+  border-top: 1px solid var(--border);
 }
 .folder-card .card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .folder-card .card-meta { justify-content: space-between; }

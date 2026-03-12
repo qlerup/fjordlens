@@ -5624,12 +5624,24 @@ def api_create_share():
 
     base = UPLOAD_DIR.resolve()
     for folder_path in folder_paths:
-        try:
-            target = (UPLOAD_DIR / folder_path).resolve()
-            target.relative_to(base)
-        except Exception:
-            return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
-        if not target.exists() or not target.is_dir():
+        # Accept both canonical uploads/<subdir> and internal storage roots like
+        # uploads/originals/<subdir> or uploads/converted/<subdir>.
+        candidates = [
+            (UPLOAD_DIR / folder_path),
+            (UPLOAD_DIR / "originals" / folder_path),
+            (UPLOAD_DIR / "converted" / folder_path),
+        ]
+        found = False
+        for cand in candidates:
+            try:
+                target = cand.resolve()
+                target.relative_to(base)
+            except Exception:
+                continue
+            if target.exists() and target.is_dir():
+                found = True
+                break
+        if not found:
             return jsonify({"ok": False, "error": f"Mappen findes ikke: {folder_path}"}), 404
 
     share_name = str(body.get("share_name") or "").strip()
