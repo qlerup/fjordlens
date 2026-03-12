@@ -5230,6 +5230,8 @@ async function openMapperShareModal() {
   const qrImg = document.getElementById('mapperShareQrImg');
   if (qrWrap) qrWrap.classList.add('hidden');
   if (qrImg) qrImg.removeAttribute('src');
+  const errEl = document.getElementById('mapperShareError');
+  if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
   if (els.mapperShareModalConfirm) {
     els.mapperShareModalConfirm.disabled = false;
     els.mapperShareModalConfirm.classList.remove('loading');
@@ -5261,6 +5263,8 @@ async function createMapperShareLink() {
   const password = String((els.mapperSharePasswordInput && els.mapperSharePasswordInput.value) || '');
   if (passwordEnabled && password.length < 4) {
     showStatus(tr('mapper_share_password_placeholder'), 'err');
+    const errEl = document.getElementById('mapperShareError');
+    if (errEl) { errEl.textContent = tr('mapper_share_password_placeholder'); errEl.classList.remove('hidden'); }
     return;
   }
   try {
@@ -5289,9 +5293,15 @@ async function createMapperShareLink() {
         password,
       }),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(async () => {
+      try { return { ok:false, error: await res.text() }; } catch { return { ok:false, error:'' }; }
+    });
     if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || tr('mapper_share_create_failed'), 'err');
+      const message = (data && data.error) || tr('mapper_share_create_failed');
+      console.error('Share create failed:', { status: res.status, message, response: data });
+      showStatus(message, 'err');
+      const errEl = document.getElementById('mapperShareError');
+      if (errEl) { errEl.textContent = message; errEl.classList.remove('hidden'); }
       return;
     }
     const link = String(data.link || '');
@@ -5307,6 +5317,8 @@ async function createMapperShareLink() {
     showStatus(tr('mapper_share_created'), 'ok');
   } catch {
     showStatus(tr('mapper_share_create_failed'), 'err');
+    const errEl = document.getElementById('mapperShareError');
+    if (errEl) { errEl.textContent = tr('mapper_share_create_failed'); errEl.classList.remove('hidden'); }
   } finally {
     if (confirmBtn) {
       confirmBtn.classList.remove('loading');

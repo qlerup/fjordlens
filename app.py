@@ -7226,7 +7226,7 @@ def api_settings_dns():
         if raw:
             normalized = _normalize_share_base_url(raw)
             if not normalized:
-                return jsonify({"ok": False, "error": "Ugyldig URL. Brug fx https://mitnavn.duckdns.org"}), 400
+                return jsonify({"ok": False, "error": "Ugyldig URL. Brug fx https://photos.eksempel.dk"}), 400
             _set_setting("share_duckdns_base_url", normalized)
         else:
             _set_setting("share_duckdns_base_url", "")
