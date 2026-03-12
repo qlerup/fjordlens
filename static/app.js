@@ -2082,9 +2082,12 @@ function appendFolderCard(folder, arr, opts = {}) {
   const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
   const title = opts.title || folder;
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
+  const folderTitle = escapeHtml(title || '');
+  const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
+  const overlay = `<div class="folder-name-overlay"><span class="folder-name">${folderTitle}</span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
   const thumbHtml = (previews && previews.length)
-    ? `<div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div>${selBadge}</div>`
-    : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}</div>`;
+    ? `<div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div>${selBadge}${overlay}</div>`
+    : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
   card.innerHTML = `
     ${thumbHtml}
     <div class="card-body">

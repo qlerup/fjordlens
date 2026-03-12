@@ -884,6 +884,10 @@ body.drawer-open .drawer-backdrop { display: block; }
   position: relative;
   overflow: hidden; /* prevent mosaic from bleeding into label area */
 }
+/* In folder view, reserve vertical space for titel+metadata under mosaikken */
+.folder-card .card-thumb {
+  aspect-ratio: 1 / 0.82; /* ca. 82% af bredden i højde, så bund kan vise titel */
+}
 .card-thumb img {
   width: 100%;
   height: 100%;
@@ -899,6 +903,28 @@ body.drawer-open .drawer-backdrop { display: block; }
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
   gap: 1px;
+}
+.folder-name-overlay {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(15,17,21,0.0) 0%, rgba(15,17,21,0.75) 60%, rgba(15,17,21,0.92) 100%);
+  color: var(--text);
+  pointer-events: none;
+}
+.folder-name-overlay .folder-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.folder-name-overlay .folder-count {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 .folder-mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
