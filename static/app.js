@@ -4276,10 +4276,18 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
     };
     const created = new Set();
     const base = String(baseSubdir || '').trim();
+    // Ensure the dropped top folder itself is created
+    let effectiveBase = base;
+    if (commonRoot) {
+      const rootTarget = base ? `${base}/${commonRoot}` : commonRoot;
+      await makeOne(base, commonRoot);
+      created.add(rootTarget);
+      effectiveBase = rootTarget;
+    }
     const allDirs = Array.from(groups.keys()).filter(Boolean)
       .sort((a,b)=>a.split('/').length - b.split('/').length);
     for (const dir of allDirs) {
-      let parent = base;
+      let parent = effectiveBase;
       const parts = dir.split('/').filter(Boolean);
       for (const part of parts) {
         const p = parent ? `${parent}/${part}` : part;
@@ -4293,14 +4301,17 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
   } catch {}
   // If everything is root files (single group with dir==''), fall back to a single batch
   if (groups.size === 1 && groups.has('')) {
-    await uploadFiles(groups.get(''), { destination: 'uploads', subdir: String(baseSubdir || '') });
+    const base = String(baseSubdir || '').trim();
+    const sub = commonRoot ? (base ? `${base}/${commonRoot}` : commonRoot) : base;
+    await uploadFiles(groups.get(''), { destination: 'uploads', subdir: sub });
     return;
   }
   // Otherwise, queue one batch per subfolder to preserve structure
   const promises = [];
   for (const [dir, files] of groups.entries()) {
-    const target = String(baseSubdir || '').trim();
-    const subdir = dir ? (target ? `${target}/${dir}` : dir) : target;
+    const base = String(baseSubdir || '').trim();
+    const baseWithRoot = commonRoot ? (base ? `${base}/${commonRoot}` : commonRoot) : base;
+    const subdir = dir ? (baseWithRoot ? `${baseWithRoot}/${dir}` : dir) : baseWithRoot;
     // Enqueue all batches quickly; queue runner will handle sequence
     promises.push(uploadFiles(files, { destination: 'uploads', subdir }));
   }
