@@ -251,7 +251,8 @@ def _resize_icon(target: int) -> bytes:
     if not base.exists():
         base = ICONS_DIR / "fjordlens_lens_fullcolor_256.png"
     img = Image.open(str(base)).convert("RGBA")
-    img = img.resize((target, target), Image.LANCZOS)
+    # Pillow 10+: use Resampling.LANCZOS (fallback handled by import version)
+    img = img.resize((target, target), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
