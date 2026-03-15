@@ -7420,11 +7420,11 @@ def api_logs():
 
 @app.route("/api/settings/upload-destination", methods=["GET", "POST"])
 def api_settings_upload_destination():
-    fb = _forbid_user_role_for_maintenance()
-    if fb:
-        return jsonify(fb[0]), fb[1]
-
+    # Only protect write operations; reads are allowed for basic users (payload is ACL-filtered)
     if request.method == "POST":
+        fb = _forbid_user_role_for_maintenance()
+        if fb:
+            return jsonify(fb[0]), fb[1]
         body = request.get_json(silent=True) or {}
         destination_raw = body.get("destination")
         destination = get_upload_destination() if destination_raw is None else str(destination_raw).strip().lower()
