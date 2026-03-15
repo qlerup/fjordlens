@@ -478,7 +478,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-radius: 12px;
   background: var(--panel);
   transition: max-height .24s ease, opacity .2s ease, transform .24s ease, border-color .2s ease;
-  z-index: 1002; /* ensure above sticky headers and grids on mobile */
+  z-index: 20000; /* ensure above sticky headers and OS UI on mobile */
 }
 .mapper-header-menu.open {
   max-height: 180px;
@@ -657,6 +657,10 @@ body.drawer-open .drawer-backdrop { display: block; }
   gap: 14px;
   align-items: center; /* align controls on same baseline */
   margin-bottom: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
 }
 .content-header h1 {
   margin: 0;
