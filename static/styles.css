@@ -905,7 +905,10 @@ body.drawer-open .drawer-backdrop { display: block; }
 .card-thumb.folder-mosaic { position: relative; width: 100%; }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {
-  position: absolute; top: 0; left: 0; right: 0; bottom: 0; /* fill full square; overlay floats on top */
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  /* Reserve space for the name overlay so all 4 thumbs are equally visible */
+  bottom: var(--folder-overlay-h);
   z-index: 1; /* Always behind label/body overlay */
   display: grid;
   grid-template-columns: 1fr 1fr;
