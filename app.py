@@ -2599,7 +2599,8 @@ def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Opt
         with closing(get_conn()) as conn2:
             rows = _load(conn2)
     if not rows:
-        return None
+        # No explicit ACLs → no access (non-admin users)
+        return []
     return rows
 
 
