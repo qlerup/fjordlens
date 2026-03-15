@@ -5104,7 +5104,12 @@ async function toggleFavorite() {
 
 async function setView(view, opts = {}) {
   const { syncUrl = true } = opts || {};
-  const nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
+  let nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
+  // Block settings for basic users (UI safety)
+  try {
+    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+    if (nextView === 'settings' && role === 'user') nextView = 'timeline';
+  } catch {}
   state.view = nextView;
   if (nextView !== 'mapper') state.mapperPath = _normalizeMapperPath(state.mapperPath);
   state.folder = (nextView === 'mapper' ? (_normalizeMapperPath(state.mapperPath) || null) : null);
@@ -7315,6 +7320,24 @@ if (state.view === 'mapper') {
 }
 
 applyUiLanguage();
+// Resolve user role early to gate admin UI
+try {
+  const mr = await fetch('/api/me');
+  const mj = await mr.json();
+  if (mr.ok && mj && mj.ok && mj.item) {
+    state.currentUser = { id: mj.item.id, username: mj.item.username, role: mj.item.role || 'user' };
+  }
+} catch {}
+// Hide settings for basic users
+try {
+  const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+  if (role === 'user') {
+    const settingsBtn = document.querySelector('.nav-item[data-view="settings"]');
+    if (settingsBtn) settingsBtn.style.display = 'none';
+    document.querySelectorAll('.mobile-nav-item[data-view="settings"]').forEach(el=>{ el.style.display = 'none'; });
+    if (state.view === 'settings') state.view = 'timeline';
+  }
+} catch {}
 
 setView(state.view, { syncUrl: false }).then(async () => {
   // Start with a quick status check in case scan was running
@@ -7758,7 +7781,8 @@ async function renderUsersPanel(){
         const rows = filteredFolders.map((folder) => {
           const depth = String(folder || '').split('/').filter(Boolean).length;
           const pad = Math.max(0, (depth - 1) * 14);
-          const label = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
+          const labelFull = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
+          const label = labelFull.split('/').filter(Boolean).pop() || labelFull;
           const current = selectedPerm.get(folder) || 'none';
           const name = `perm:${folder}`;
           const cell = (val, txt) => `
@@ -7772,7 +7796,7 @@ async function renderUsersPanel(){
           const parent = parentOf(folder);
           return `
             <div class="ua-row" data-folder="${escapeHtml(folder)}" data-parent="${escapeHtml(parent)}" data-depth="${depth}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
-              <div class="ua-label" style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${caret}<span class="ua-name">${escapeHtml(label)}</span></div>
+              <div class="ua-label" style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${caret}<span class="ua-name" title="${escapeHtml(labelFull)}">${escapeHtml(label)}</span></div>
               ${cell('view','Viser')}
               ${cell('upload','Uploader')}
               ${cell('edit','Redigere')}
