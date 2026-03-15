@@ -3751,9 +3751,13 @@ function renderMapperContext(path = '') {
     els.mapperHeaderUploadAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
   }
   if (els.mapperDeleteBtn) {
-    els.mapperDeleteBtn.classList.add('hidden');
-    els.mapperDeleteBtn.disabled = true;
-    els.mapperDeleteBtn.textContent = tr('mapper_delete_selected');
+    const show = !!state.mapperEditMode;
+    const canDelete = show && selectedCount > 0;
+    els.mapperDeleteBtn.classList.toggle('hidden', !show);
+    els.mapperDeleteBtn.disabled = !canDelete;
+    els.mapperDeleteBtn.textContent = canDelete
+      ? `${tr('mapper_delete_selected')} (${selectedCount})`
+      : tr('mapper_delete_selected');
   }
   renderMapperTree();
 }
