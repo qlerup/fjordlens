@@ -732,6 +732,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 /* Align the 'Tilbage' button to the far right; keep delete just to its left */
 #mapperUpBtn { margin-left: auto; order: 3; }
 #mapperDeleteBtn { order: 2; }
+#mapperCancelBtn { order: 1; }
 .mapper-input {
   min-width: 260px;
   background: var(--panel);

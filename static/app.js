@@ -54,6 +54,7 @@ const els = {
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
+  mapperCancelBtn: document.getElementById("mapperCancelBtn"),
   mapperNavMenu: document.getElementById("mapperNavMenu"),
   mapperTreeNav: document.getElementById("mapperTreeNav"),
   mapperDropZone: document.getElementById("mapperDropZone"),
@@ -3764,6 +3765,11 @@ function renderMapperContext(path = '') {
       ? `${tr('mapper_delete_selected')} (${selectedCount})`
       : tr('mapper_delete_selected');
   }
+  if (els.mapperCancelBtn) {
+    const show = !!state.mapperEditMode;
+    els.mapperCancelBtn.classList.toggle('hidden', !show);
+    els.mapperCancelBtn.textContent = tr ? (tr('mapper_cancel') || 'Annuller') : 'Annuller';
+  }
   renderMapperTree();
 }
 
@@ -5717,6 +5723,17 @@ document.addEventListener('pointerdown', (e) => {
   closeMapperHeaderMenu();
 });
 
+// Global ESC to cancel selection in Mapper view
+document.addEventListener('keydown', (e) => {
+  try {
+    if (e.key === 'Escape' && state && state.view === 'mapper' && state.mapperEditMode) {
+      setMapperEditMode(false);
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  } catch {}
+});
+
 if (els.mapperSearchToggleBtn) {
   els.mapperSearchToggleBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -5753,6 +5770,7 @@ if (els.mapperSearchInput) {
   });
 }
 if (els.mapperEditBtn) {
+  let _menuOpenedByTouchAt = 0;
   const _openMenu = (ev) => {
     try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
     try { ev && ev.stopPropagation && ev.stopPropagation(); } catch {}
@@ -5761,16 +5779,20 @@ if (els.mapperEditBtn) {
   els.mapperEditBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // If a touch just opened the menu, ignore the follow-up synthetic click
+    if (Date.now() - _menuOpenedByTouchAt < 500) return;
     toggleMapperHeaderMenu();
   });
   // Improve mobile tap support: open on touch/pointer without toggling twice
   els.mapperEditBtn.addEventListener('touchstart', (e) => {
     try { e.preventDefault(); e.stopPropagation(); } catch {}
     openMapperHeaderMenu();
+    _menuOpenedByTouchAt = Date.now();
   }, { passive: false });
   els.mapperEditBtn.addEventListener('pointerdown', (e) => {
     try { e.preventDefault(); e.stopPropagation(); } catch {}
     openMapperHeaderMenu();
+    if (e && e.pointerType === 'touch') _menuOpenedByTouchAt = Date.now();
   }, { passive: false });
 }
 // Prevent outside-click handler from immediately closing when interacting inside the menu
@@ -6670,6 +6692,7 @@ if (els.sharedLinksList) {
 }
 
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
+els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');
   if (!cur) return;
