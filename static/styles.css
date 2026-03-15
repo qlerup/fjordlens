@@ -906,7 +906,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   object-fit: cover;
   display: block;
 }
-.card-thumb.folder-mosaic { position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; }
+.card-thumb.folder-mosaic { position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; background: var(--panel); }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {
   position: absolute;
@@ -940,6 +940,8 @@ body.drawer-open .drawer-backdrop { display: block; }
   /* Solid, non-transparent bar to avoid color shift across variants */
   background: var(--panel);
   border-top: 1px solid var(--border);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
   color: var(--text);
   pointer-events: none;
 }
