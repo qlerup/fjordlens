@@ -2158,6 +2158,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS user_folder_access (
                 user_id INTEGER NOT NULL,
                 folder_path TEXT NOT NULL,
+                permission TEXT DEFAULT 'view',
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(user_id, folder_path),
                 FOREIGN KEY(user_id) REFERENCES users(id)
@@ -2296,6 +2297,16 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE login_audit ADD COLUMN user_agent TEXT")
+        except Exception:
+            pass
+        # Add per-folder permission for user_folder_access
+        try:
+            conn.execute("ALTER TABLE user_folder_access ADD COLUMN permission TEXT DEFAULT 'view'")
+        except Exception:
+            pass
+        try:
+            # Backfill NULL/empty permissions to 'view'
+            conn.execute("UPDATE user_folder_access SET permission='view' WHERE permission IS NULL OR TRIM(permission)='' ")
         except Exception:
             pass
         try:
@@ -2480,48 +2491,76 @@ def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
     return sorted(folders, key=lambda x: x.lower())
 
 
-def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: list[str]) -> list[str]:
-    cleaned = []
-    for path in folders:
+def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: list) -> list[dict]:
+    """Persist per-folder access with permissions.
+    Accepts list of strings (legacy: folder paths => 'view') or list of dicts
+    like {"folder": "uploads/X", "permission": "view|upload|edit"}.
+    Returns reduced list of {folder_path, permission} after normalization.
+    """
+    def _extract(item: object) -> tuple[str, str]:
+        # Normalize various payload shapes
+        if isinstance(item, str):
+            return (_normalize_folder_acl_path(item), "view")
         try:
-            p = _normalize_folder_acl_path(path)
+            # Support keys: folder, folder_path, path
+            folder = None
+            if isinstance(item, dict):
+                folder = item.get("folder") or item.get("folder_path") or item.get("path")
+                perm = str(item.get("permission") or item.get("perm") or "view").strip().lower()
+            else:
+                folder = None
+                perm = "view"
+            p = _normalize_folder_acl_path(folder)
+            if perm not in {"view", "upload", "edit", "manage", "delete"}:
+                perm = "view"
+            # Collapse synonyms
+            if perm in {"manage", "delete"}:
+                perm = "edit"
+            return (p, perm)
         except Exception:
-            continue
+            return ("", "view")
+
+    cleaned: list[tuple[str, str]] = []
+    for it in (folders or []):
+        p, perm = _extract(it)
         if p:
-            cleaned.append(p)
-    cleaned = sorted(set(cleaned), key=lambda x: (-x.count("/"), x.lower()))
-    reduced: list[str] = []
-    for path in cleaned:
-        # Keep the deepest selections only.
-        # If a deeper descendant is selected, parent is ignored to allow narrowing access.
-        if any((child == path) or child.startswith(path + "/") for child in reduced):
+            cleaned.append((p, perm))
+    # Deduplicate by longest path first; keep deepest only
+    cleaned = sorted(set(cleaned), key=lambda x: (-x[0].count("/"), x[0].lower()))
+    reduced: list[tuple[str, str]] = []
+    for path, perm in cleaned:
+        if any((child_path == path) or child_path.startswith(path + "/") for (child_path, _cp) in reduced):
             continue
-        reduced.append(path)
-    reduced = sorted(reduced, key=lambda x: x.lower())
+        reduced.append((path, perm))
+    reduced = sorted(reduced, key=lambda x: x[0].lower())
 
     conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (user_id,))
     if reduced:
         now = now_iso()
         conn.executemany(
-            "INSERT INTO user_folder_access(user_id, folder_path, created_at) VALUES(?,?,?)",
-            [(user_id, p, now) for p in reduced],
+            "INSERT INTO user_folder_access(user_id, folder_path, permission, created_at) VALUES(?,?,?,?)",
+            [(user_id, p, perm, now) for (p, perm) in reduced],
         )
-    return reduced
+    return [{"folder_path": p, "permission": perm} for (p, perm) in reduced]
 
 
-def _get_user_allowed_folders(conn: sqlite3.Connection, user_id: int) -> list[str]:
+def _get_user_allowed_folders(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     rows = conn.execute(
-        "SELECT folder_path FROM user_folder_access WHERE user_id=? ORDER BY folder_path COLLATE NOCASE",
+        "SELECT folder_path, COALESCE(permission,'view') AS permission FROM user_folder_access WHERE user_id=? ORDER BY folder_path COLLATE NOCASE",
         (user_id,),
     ).fetchall()
-    out: list[str] = []
+    out: list[dict] = []
     for r in rows:
         try:
-            p = _normalize_folder_acl_path(r["folder_path"])
+            p = _normalize_folder_acl_path(r["folder_path"]) 
         except Exception:
             continue
-        if p:
-            out.append(p)
+        if not p:
+            continue
+        perm = str(r["permission"] or "view").strip().lower()
+        if perm not in {"view", "upload", "edit"}:
+            perm = "view"
+        out.append({"folder_path": p, "permission": perm})
     return out
 
 
@@ -2536,7 +2575,13 @@ def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Opt
         return None
 
     def _load(c: sqlite3.Connection) -> list[str]:
-        return _get_user_allowed_folders(c, uid)
+        items = _get_user_allowed_folders(c, uid)
+        out: list[str] = []
+        for it in items:
+            p = _normalize_folder_acl_path((it or {}).get("folder_path")) if isinstance(it, dict) else _normalize_folder_acl_path(it)
+            if p:
+                out.append(p)
+        return out
 
     if conn is not None:
         rows = _load(conn)
@@ -2641,6 +2686,56 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
         seen.add(f)
         deduped.append(f)
     return deduped
+
+
+def _current_user_folder_permission_for_rel(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> Optional[str]:
+    """Return the effective permission for the current user on a rel path under uploads.
+    Values: 'edit' > 'upload' > 'view'. None if no access.
+    Admins and owners receive 'edit'.
+    """
+    rel = _normalize_rel_path_for_acl(rel_path)
+    if not rel:
+        return None
+    try:
+        if getattr(current_user, "is_admin", False):
+            return "edit"
+    except Exception:
+        pass
+    owner_uid = _folder_owner_user_id_for_rel(rel, conn)
+    try:
+        if owner_uid is not None and int(getattr(current_user, "id", 0) or 0) == int(owner_uid):
+            return "edit"
+    except Exception:
+        pass
+    # Load ACL rows and find the most specific match
+    try:
+        if conn is None:
+            with closing(get_conn()) as c:
+                rows = _get_user_allowed_folders(c, int(getattr(current_user, "id", 0) or 0))
+        else:
+            rows = _get_user_allowed_folders(conn, int(getattr(current_user, "id", 0) or 0))
+    except Exception:
+        rows = []
+    best: Optional[tuple[str, str]] = None
+    for r in rows:
+        try:
+            p = _normalize_folder_acl_path(r.get("folder_path"))
+            perm = str(r.get("permission") or "view").strip().lower()
+        except Exception:
+            continue
+        if not p or perm not in {"view", "upload", "edit"}:
+            continue
+        if rel == p or rel.startswith(p + "/"):
+            if best is None or len(p) > len(best[0]):
+                best = (p, perm)
+    return best[1] if best else None
+
+
+def _perm_allows(perm: Optional[str], required: str) -> bool:
+    order = {"view": 1, "upload": 2, "edit": 3}
+    a = order.get(str(perm or "").strip().lower(), 0)
+    b = order.get(str(required or "").strip().lower(), 0)
+    return a >= b
 
 
 @app.before_request
@@ -7350,6 +7445,18 @@ def api_settings_upload_folder():
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig overmappe"}), 400
 
+    # Permission check: creating under uploads requires 'edit' on parent, or admin/manager
+    if destination == UPLOAD_DEST_UPLOADS:
+        if parent_subdir:
+            base_rel = f"uploads/{parent_subdir}"
+            perm = _current_user_folder_permission_for_rel(base_rel)
+            if not _perm_allows(perm, "edit") and not (getattr(current_user, "is_admin", False) or getattr(current_user, "is_manager", False)):
+                return jsonify({"ok": False, "error": "Ingen rettighed til at oprette i denne mappe"}), 403
+        else:
+            # Creating directly under uploads root limited to admins/managers
+            if not (getattr(current_user, "is_admin", False) or getattr(current_user, "is_manager", False)):
+                return jsonify({"ok": False, "error": "Kun admin/manager kan oprette i rodmappen"}), 403
+
     try:
         new_subdir_input = _normalize_upload_subdir(str(body.get("path") or ""))
     except Exception:
@@ -7441,6 +7548,11 @@ def api_settings_upload_folder_delete():
     deleted: list[str] = []
     missing: list[str] = []
     for subdir in selected:
+        # Enforce per-folder manage permission
+        base_rel = f"uploads/{subdir}" if subdir else "uploads"
+        perm = _current_user_folder_permission_for_rel(base_rel)
+        if not _perm_allows(perm, "edit"):
+            return jsonify({"ok": False, "error": f"Ingen slette-adgang til '{subdir}'"}), 403
         try:
             target = (target_root / subdir).resolve()
             target.relative_to(base)
@@ -7963,6 +8075,12 @@ def api_upload_tus_create():
     target_root, rel_prefix = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
+    # Enforce per-folder upload permission when uploading to user folders
+    if destination == UPLOAD_DEST_UPLOADS:
+        base_rel = f"uploads/{subdir}" if subdir else "uploads"
+        perm = _current_user_folder_permission_for_rel(base_rel)
+        if not _perm_allows(perm, "upload"):
+            return jsonify({"ok": False, "error": "Ingen upload-adgang til denne mappe"}), 403, _tus_headers()
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -8151,6 +8269,12 @@ def api_upload():
     target_root, rel_prefix = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
+    # Enforce per-folder upload permission when uploading to user folders
+    if destination == UPLOAD_DEST_UPLOADS:
+        base_rel = f"uploads/{subdir}" if subdir else "uploads"
+        perm = _current_user_folder_permission_for_rel(base_rel)
+        if not _perm_allows(perm, "upload"):
+            return jsonify({"ok": False, "error": "Ingen upload-adgang til denne mappe"}), 403
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -8591,7 +8715,7 @@ def api_admin_users():
         with closing(get_conn()) as conn:
             rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, ui_language, search_language, created_at FROM users ORDER BY id").fetchall()
             all_folders = _list_all_photo_folders(conn)
-            acl_rows = conn.execute("SELECT user_id, folder_path FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
+            acl_rows = conn.execute("SELECT user_id, folder_path, COALESCE(permission,'view') AS permission FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
             audit_rows = conn.execute(
                 """
                 SELECT id, at, username_input, user_id, username, success, event_type, reason, ip, country, device
@@ -8600,7 +8724,7 @@ def api_admin_users():
                 LIMIT 300
                 """
             ).fetchall()
-        by_user_acl: dict[int, list[str]] = {}
+        by_user_acl: dict[int, list[dict]] = {}
         for ar in acl_rows:
             try:
                 uid = int(ar["user_id"])
@@ -8609,7 +8733,10 @@ def api_admin_users():
                 continue
             if not folder_path:
                 continue
-            by_user_acl.setdefault(uid, []).append(folder_path)
+            perm = str(ar["permission"] or "view").strip().lower()
+            if perm not in {"view", "upload", "edit"}:
+                perm = "view"
+            by_user_acl.setdefault(uid, []).append({"folder_path": folder_path, "permission": perm})
         items = []
         for r in rows:
             allowed_folders = by_user_acl.get(int(r["id"]), [])

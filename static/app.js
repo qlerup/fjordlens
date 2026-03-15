@@ -7700,10 +7700,34 @@ async function renderUsersPanel(){
       .replace(/\/+/g, '/')
       .replace(/^\/+|\/+$/g, '');
 
+    const toPerm = (raw) => {
+      const v = String(raw || '').toLowerCase();
+      if (v === 'edit' || v === 'manage' || v === 'delete') return 'edit';
+      if (v === 'upload') return 'upload';
+      if (v === 'view') return 'view';
+      return 'none';
+    };
+
+    const permRank = (p) => (p === 'edit' ? 3 : p === 'upload' ? 2 : p === 'view' ? 1 : 0);
+
     const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
       const root = document.getElementById(containerId);
       if (!root) return;
       if (Array.isArray(allFolders) && allFolders.length) {
+        // Build a map of folder -> permission from selectedFolders (supports legacy strings)
+        const selectedPerm = new Map();
+        (selectedFolders || []).forEach((it) => {
+          if (typeof it === 'string') {
+            const p = normalizeAclFolder(it);
+            if (p && p !== 'uploads') selectedPerm.set(p, 'view');
+            return;
+          }
+          if (it && typeof it === 'object'){
+            const p = normalizeAclFolder(it.folder_path || it.folder || it.path || '');
+            const perm = toPerm(it.permission || it.perm);
+            if (p && p !== 'uploads' && perm !== 'none') selectedPerm.set(p, perm);
+          }
+        });
         const seen = new Set();
         const filteredFolders = allFolders
           .map((folder) => normalizeAclFolder(folder))
@@ -7713,35 +7737,51 @@ async function renderUsersPanel(){
             seen.add(folder);
             return true;
           });
-        root.innerHTML = filteredFolders.map((folder) => {
+        const rows = filteredFolders.map((folder) => {
           const depth = String(folder || '').split('/').filter(Boolean).length;
           const pad = Math.max(0, (depth - 1) * 14);
           const label = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
+          const current = selectedPerm.get(folder) || 'none';
+          const name = `perm:${folder}`;
+          const cell = (val, txt) => `
+            <label style="display:flex;align-items:center;gap:6px;justify-content:center;">
+              <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
+            </label>`;
           return `
-            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;padding-left:${pad}px;">
-              <input type="checkbox" data-folder="${escapeHtml(folder)}" />
-              <span>${escapeHtml(label)}</span>
-            </label>
-          `;
+            <div class="ua-row" data-folder="${escapeHtml(folder)}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
+              <div style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(label)}</div>
+              ${cell('view','Viser')}
+              ${cell('upload','Uploader')}
+              ${cell('edit','Redigere')}
+            </div>`;
         }).join('');
+        const header = `
+          <div class="ua-head" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-weight:600;">
+            <div>Mappe</div>
+            <div style="text-align:center;">Viser</div>
+            <div style="text-align:center;">Uploader</div>
+            <div style="text-align:center;">Redigere</div>
+          </div>`;
+        root.innerHTML = header + rows;
       } else if (!root.children.length) {
         root.innerHTML = `<div class="mini-label muted">${escapeHtml(tr('users_acl_none_found'))}</div>`;
       }
-      const selected = new Set((selectedFolders || [])
-        .map(v => normalizeAclFolder(v))
-        .filter(v => !!v && v !== 'uploads'));
-      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
-        const key = normalizeAclFolder(el.getAttribute('data-folder') || '');
-        el.checked = selected.has(key);
-      });
+      // Pre-selection handled above by radio 'checked' attributes
     };
 
     const getFolderSelection = (containerId) => {
       const root = document.getElementById(containerId);
       if (!root) return [];
-      return Array.from(root.querySelectorAll('input[type="checkbox"][data-folder]:checked'))
-        .map((el) => normalizeAclFolder(el.getAttribute('data-folder') || ''))
-        .filter((folder) => !!folder && folder !== 'uploads');
+      const rows = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
+      const out = [];
+      rows.forEach((row) => {
+        const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+        if (!folder || folder === 'uploads') return;
+        const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+        const perm = sel ? toPerm(sel.value) : 'none';
+        if (perm !== 'none') out.push({ folder_path: folder, permission: perm });
+      });
+      return out;
     };
 
     const bindAclHierarchy = (containerId) => {
@@ -7798,15 +7838,19 @@ async function renderUsersPanel(){
     aclSelectAllBtn && aclSelectAllBtn.addEventListener('click', () => {
       const root = document.getElementById('ua_folder_access');
       if (!root) return;
-      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
-        el.checked = true;
+      root.querySelectorAll('.ua-row[data-folder]').forEach((row) => {
+        const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+        const radio = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"][value="view"]`);
+        if (radio) radio.checked = true;
       });
     });
     aclClearAllBtn && aclClearAllBtn.addEventListener('click', () => {
       const root = document.getElementById('ua_folder_access');
       if (!root) return;
-      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
-        el.checked = false;
+      root.querySelectorAll('.ua-row[data-folder]').forEach((row) => {
+        const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+        const radios = row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`);
+        radios.forEach((r)=>{ r.checked = false; });
       });
     });
     aclModal && aclModal.addEventListener('click', (e)=>{ if(e.target === aclModal) closeAclModal(); });
