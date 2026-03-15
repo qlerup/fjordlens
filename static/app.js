@@ -3714,6 +3714,11 @@ function renderMapperContext(path = '') {
   const selectedCount = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
   if (els.mapperCurrentPath) {
     els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p ? `uploads/${p}` : tr('mapper_root_folder')}`;
+    // On mobile, hide the current-path label while in selection mode to make room for buttons
+    try {
+      const isMobile = window.matchMedia('(max-width: 760px)').matches;
+      els.mapperCurrentPath.classList.toggle('hidden', !!state.mapperEditMode && isMobile);
+    } catch {}
   }
   if (els.mapperDropZone) {
     els.mapperDropZone.textContent = `${tr('mapper_drop_here')}: ${p || tr('mapper_root_folder')}`;

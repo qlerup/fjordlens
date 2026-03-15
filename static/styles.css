@@ -1591,7 +1591,7 @@ body.view-timeline .topbar {
   body.view-mapper .topbar .search-wrap,
   body.view-mapper .topbar .select { display: none !important; }
   body.view-mapper .mapper-header-actions {
-    width: 100%;
+    width: auto;
     justify-content: flex-end;
     align-items: center;
     gap: 10px;
