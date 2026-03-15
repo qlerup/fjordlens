@@ -5754,13 +5754,15 @@ if (els.mapperEditBtn) {
     e.stopPropagation();
     toggleMapperHeaderMenu();
   });
-  // Improve mobile tap support (iOS Safari) by handling touchstart directly
+  // Improve mobile tap support: open on touch/pointer without toggling twice
   els.mapperEditBtn.addEventListener('touchstart', (e) => {
     try { e.preventDefault(); e.stopPropagation(); } catch {}
-    toggleMapperHeaderMenu();
+    openMapperHeaderMenu();
   }, { passive: false });
-  els.mapperEditBtn.addEventListener('pointerdown', _openMenu, { passive: false });
-  els.mapperEditBtn.addEventListener('touchend', _openMenu, { passive: false });
+  els.mapperEditBtn.addEventListener('pointerdown', (e) => {
+    try { e.preventDefault(); e.stopPropagation(); } catch {}
+    openMapperHeaderMenu();
+  }, { passive: false });
 }
 // Prevent outside-click handler from immediately closing when interacting inside the menu
 if (els.mapperHeaderMenu) {
