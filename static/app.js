@@ -7320,24 +7320,25 @@ if (state.view === 'mapper') {
 }
 
 applyUiLanguage();
-// Resolve user role early to gate admin UI
-try {
-  const mr = await fetch('/api/me');
-  const mj = await mr.json();
-  if (mr.ok && mj && mj.ok && mj.item) {
-    state.currentUser = { id: mj.item.id, username: mj.item.username, role: mj.item.role || 'user' };
-  }
-} catch {}
-// Hide settings for basic users
-try {
-  const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-  if (role === 'user') {
-    const settingsBtn = document.querySelector('.nav-item[data-view="settings"]');
-    if (settingsBtn) settingsBtn.style.display = 'none';
-    document.querySelectorAll('.mobile-nav-item[data-view="settings"]').forEach(el=>{ el.style.display = 'none'; });
-    if (state.view === 'settings') state.view = 'timeline';
-  }
-} catch {}
+// Resolve user role early to gate admin UI (wrapped to avoid top-level await)
+(async () => {
+  try {
+    const mr = await fetch('/api/me');
+    const mj = await mr.json();
+    if (mr.ok && mj && mj.ok && mj.item) {
+      state.currentUser = { id: mj.item.id, username: mj.item.username, role: mj.item.role || 'user' };
+    }
+  } catch {}
+  try {
+    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+    if (role === 'user') {
+      const settingsBtn = document.querySelector('.nav-item[data-view="settings"]');
+      if (settingsBtn) settingsBtn.style.display = 'none';
+      document.querySelectorAll('.mobile-nav-item[data-view="settings"]').forEach(el=>{ el.style.display = 'none'; });
+      if (state.view === 'settings') state.view = 'timeline';
+    }
+  } catch {}
+})();
 
 setView(state.view, { syncUrl: false }).then(async () => {
   // Start with a quick status check in case scan was running
