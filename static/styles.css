@@ -812,6 +812,20 @@ body.drawer-open .drawer-backdrop { display: block; }
 @keyframes btn-spin {
   to { transform: rotate(360deg); }
 }
+.ua-row .ua-dot { display:flex; justify-content:center; align-items:center; }
+.ua-row .ua-dot input { position:absolute; opacity:0; width:0; height:0; }
+.ua-row .ua-dot .dot { width:10px; height:10px; border-radius:50%; border:2px solid var(--border); background:transparent; display:inline-block; }
+/* Tree caret */
+.ua-row .ua-label { display:flex; align-items:center; gap:6px; }
+.ua-caret { width:16px; height:16px; border:0; background:transparent; color:var(--text); opacity:.85; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.ua-caret::before { content:'\25B8'; /* ▸ */ font-size:12px; line-height:1; transform-origin:center; }
+.ua-row.open .ua-caret::before { content:'\25BE'; /* ▾ */ }
+.ua-caret.ua-caret-placeholder { visibility:hidden; }
+/* Fill logic: selecting a higher level fills earlier dots visually */
+.ua-row.lvl-view .ua-dot[data-level="view"] .dot { background: var(--text); border-color: var(--text); }
+.ua-row.lvl-upload .ua-dot[data-level="view"] .dot,
+.ua-row.lvl-upload .ua-dot[data-level="upload"] .dot { background: var(--text); border-color: var(--text); }
+.ua-row.lvl-edit .ua-dot .dot { background: var(--text); border-color: var(--text); }
 .mapper-dropzone {
   margin-top: 8px;
   border: 1px dashed var(--border);

@@ -7633,6 +7633,10 @@ async function renderUsersPanel(){
               <option value="en">English</option>
             </select>
           </div>
+          <div class="toolbar" style="gap:8px;margin:8px 0;align-items:center;">
+            <button id="nu_acl" class="btn">Mappeadgang…</button>
+            <div id="nu_acl_count" class="mini-label" style="opacity:.8;">Ingen mapper valgt</div>
+          </div>
           <label style="display:flex;align-items:center;gap:8px;margin:6px 0 2px;">
             <input type="checkbox" id="nu_2fa" />
             <span>Aktivér 2FA fra start</span>
@@ -7689,7 +7693,6 @@ async function renderUsersPanel(){
           <div id="ua_hint" class="mini-label" style="margin-bottom:8px;">${escapeHtml(tr('users_folders_hint'))}</div>
           <div id="ua_folder_access" style="max-height:55vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
           <div class="actions" style="justify-content:flex-end;margin-top:10px;">
-            <button id="ua_select_all" class="btn">${escapeHtml(tr('users_select_all'))}</button>
             <button id="ua_clear_all" class="btn">${escapeHtml(tr('users_clear_all'))}</button>
             <button id="ua_cancel" class="btn">${escapeHtml(tr('users_cancel'))}</button>
             <button id="ua_save" class="btn primary">${escapeHtml(tr('users_save_access'))}</button>
@@ -7742,6 +7745,16 @@ async function renderUsersPanel(){
             seen.add(folder);
             return true;
           });
+        // Build parent->hasChildren map
+        const hasChildren = new Set();
+        const parentOf = (p) => {
+          const i = String(p||'').lastIndexOf('/');
+          return i === -1 ? '' : String(p).slice(0, i);
+        };
+        filteredFolders.forEach((f)=>{
+          const parent = parentOf(f);
+          if (parent) hasChildren.add(parent);
+        });
         const rows = filteredFolders.map((folder) => {
           const depth = String(folder || '').split('/').filter(Boolean).length;
           const pad = Math.max(0, (depth - 1) * 14);
@@ -7749,12 +7762,17 @@ async function renderUsersPanel(){
           const current = selectedPerm.get(folder) || 'none';
           const name = `perm:${folder}`;
           const cell = (val, txt) => `
-            <label style="display:flex;align-items:center;gap:6px;justify-content:center;">
+            <label class="ua-dot" data-level="${val}" title="${escapeHtml(txt||'')}">
               <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
+              <span class="dot" aria-hidden="true"></span>
             </label>`;
+          const caret = hasChildren.has(folder)
+            ? `<button class=\"ua-caret\" type=\"button\" aria-label=\"Fold\"></button>`
+            : `<span class=\"ua-caret ua-caret-placeholder\"></span>`;
+          const parent = parentOf(folder);
           return `
-            <div class="ua-row" data-folder="${escapeHtml(folder)}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
-              <div style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(label)}</div>
+            <div class="ua-row" data-folder="${escapeHtml(folder)}" data-parent="${escapeHtml(parent)}" data-depth="${depth}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
+              <div class="ua-label" style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${caret}<span class="ua-name">${escapeHtml(label)}</span></div>
               ${cell('view','Viser')}
               ${cell('upload','Uploader')}
               ${cell('edit','Redigere')}
@@ -7768,6 +7786,55 @@ async function renderUsersPanel(){
             <div style="text-align:center;">Redigere</div>
           </div>`;
         root.innerHTML = header + rows;
+
+        // Initialize visual levels so earlier dots fill up
+        const toRank = (v) => (v==='edit'?3:(v==='upload'?2:(v==='view'?1:0)));
+        const updateRowLevel = (row) => {
+          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+          const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+          const val = sel ? String(sel.value||'') : 'none';
+          row.classList.remove('lvl-view','lvl-upload','lvl-edit');
+          if (val==='view') row.classList.add('lvl-view');
+          else if (val==='upload') row.classList.add('lvl-upload');
+          else if (val==='edit') row.classList.add('lvl-edit');
+        };
+        const rowsAll = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
+        const rowByPath = new Map(rowsAll.map(r => [String(r.getAttribute('data-folder')||''), r]));
+        const updateTreeVisibility = () => {
+          rowsAll.forEach((row)=>{
+            const depth = parseInt(row.getAttribute('data-depth')||'1', 10) || 1;
+            if (depth === 1) { row.style.display = 'grid'; return; }
+            const path = String(row.getAttribute('data-folder')||'');
+            let parent = parentOf(path);
+            let visible = true;
+            while (parent) {
+              const pr = rowByPath.get(parent);
+              if (pr && !pr.classList.contains('open')) { visible = false; break; }
+              parent = parentOf(parent);
+            }
+            row.style.display = visible ? 'grid' : 'none';
+          });
+        };
+
+        rowsAll.forEach((row)=>{
+          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+          const caretBtn = row.querySelector('.ua-caret');
+          if (caretBtn && !caretBtn.classList.contains('ua-caret-placeholder')){
+            caretBtn.addEventListener('click', ()=>{
+              row.classList.toggle('open');
+              updateTreeVisibility();
+            });
+          }
+        });
+        updateTreeVisibility();
+
+        rowsAll.forEach((row)=>{
+          updateRowLevel(row);
+          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+          row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`).forEach((r)=>{
+            r.addEventListener('change', ()=> updateRowLevel(row));
+          });
+        });
       } else if (!root.children.length) {
         root.innerHTML = `<div class="mini-label muted">${escapeHtml(tr('users_acl_none_found'))}</div>`;
       }
@@ -7810,7 +7877,6 @@ async function renderUsersPanel(){
     const aclModal = document.getElementById('ua_modal');
     const aclCloseBtn = document.getElementById('ua_close');
     const aclCancelBtn = document.getElementById('ua_cancel');
-    const aclSelectAllBtn = document.getElementById('ua_select_all');
     const aclClearAllBtn = document.getElementById('ua_clear_all');
     const aclSaveBtn = document.getElementById('ua_save');
     const aclUserLabel = document.getElementById('ua_user');
@@ -7840,15 +7906,6 @@ async function renderUsersPanel(){
 
     aclCloseBtn && aclCloseBtn.addEventListener('click', closeAclModal);
     aclCancelBtn && aclCancelBtn.addEventListener('click', closeAclModal);
-    aclSelectAllBtn && aclSelectAllBtn.addEventListener('click', () => {
-      const root = document.getElementById('ua_folder_access');
-      if (!root) return;
-      root.querySelectorAll('.ua-row[data-folder]').forEach((row) => {
-        const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-        const radio = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"][value="view"]`);
-        if (radio) radio.checked = true;
-      });
-    });
     aclClearAllBtn && aclClearAllBtn.addEventListener('click', () => {
       const root = document.getElementById('ua_folder_access');
       if (!root) return;
@@ -7856,27 +7913,35 @@ async function renderUsersPanel(){
         const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
         const radios = row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`);
         radios.forEach((r)=>{ r.checked = false; });
+        row.classList.remove('lvl-view','lvl-upload','lvl-edit');
       });
     });
     aclModal && aclModal.addEventListener('click', (e)=>{ if(e.target === aclModal) closeAclModal(); });
     aclSaveBtn && aclSaveBtn.addEventListener('click', async () => {
-      await withBtnLoading(aclSaveBtn, async () => {
-        if (!aclEditingUserId) return;
-        const allowed_folders = getFolderSelection('ua_folder_access');
-        const rr = await fetch('/api/admin/users/' + aclEditingUserId + '/folders', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ allowed_folders }),
-        });
-        const jj = await rr.json();
-        if (!rr.ok || !jj.ok) {
-          showStatus(`${tr('users_status_acl_save_failed')} ${((jj && jj.error) || '')}`.trim(), 'err');
-          return;
-        }
+      const allowed_folders = getFolderSelection('ua_folder_access');
+      // If editing existing user
+      if (aclEditingUserId) {
+        await withBtnLoading(aclSaveBtn, async () => {
+          const rr = await fetch('/api/admin/users/' + aclEditingUserId + '/folders', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allowed_folders }),
+          });
+          const jj = await rr.json();
+          if (!rr.ok || !jj.ok) {
+            showStatus(`${tr('users_status_acl_save_failed')} ${((jj && jj.error) || '')}`.trim(), 'err');
+            return;
+          }
           showStatus(tr('users_status_acl_saved'), 'ok');
+          closeAclModal();
+          renderUsersPanel();
+        });
+      } else {
+        // Pre-create mode: just store locally for the new user form
+        newUserAllowedFolders = allowed_folders || [];
+        setNuAclCount();
         closeAclModal();
-        renderUsersPanel();
-      });
+      }
     });
 
     // bind delete
@@ -7968,6 +8033,13 @@ async function renderUsersPanel(){
     const openBtn = document.getElementById('nu_open');
     const closeBtn = document.getElementById('nu_close');
     const cancelBtn = document.getElementById('nu_cancel');
+    const nuAclBtn = document.getElementById('nu_acl');
+    const nuAclCount = document.getElementById('nu_acl_count');
+    let newUserAllowedFolders = [];
+    const setNuAclCount = () => {
+      const n = Array.isArray(newUserAllowedFolders) ? newUserAllowedFolders.length : 0;
+      if (nuAclCount) nuAclCount.textContent = n ? `${n} mapper valgt` : 'Ingen mapper valgt';
+    };
     function open(){ if(modal) modal.classList.remove('hidden'); }
     function clear(){
       const u = document.getElementById('nu_username');
@@ -7982,12 +8054,24 @@ async function renderUsersPanel(){
       if (f) f.checked = false;
       if (ul) ul.value = 'da';
       if (sl) sl.value = 'da';
+      newUserAllowedFolders = [];
+      setNuAclCount();
     }
     function close(){ if(modal) { modal.classList.add('hidden'); clear(); } }
     openBtn && openBtn.addEventListener('click', open);
     closeBtn && closeBtn.addEventListener('click', close);
     cancelBtn && cancelBtn.addEventListener('click', close);
     modal && modal.addEventListener('click', (e)=>{ if(e.target === modal) close(); });
+
+    // Open ACL modal for new user
+    nuAclBtn && nuAclBtn.addEventListener('click', () => {
+      if (!availableFolders) return;
+      aclEditingUserId = null; // pre-create mode
+      if (aclUserLabel) aclUserLabel.textContent = `Mappeadgang: ny bruger`;
+      setFolderSelection('ua_folder_access', newUserAllowedFolders || [], availableFolders);
+      bindAclHierarchy('ua_folder_access');
+      if (aclModal) aclModal.classList.remove('hidden');
+    });
 
     // bind create (modal)
     const saveBtn = document.getElementById('nu_save');
@@ -8001,7 +8085,7 @@ async function renderUsersPanel(){
           const search_language = document.getElementById('nu_search_language').value || 'da';
           const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
           if (!username || !password){ showStatus(tr('users_status_username_password_required'), 'err'); return; }
-          const payload = { username, password, role, enforce_2fa, ui_language, search_language };
+          const payload = { username, password, role, enforce_2fa, ui_language, search_language, allowed_folders: newUserAllowedFolders || [] };
           const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
           const jj = await rr.json();
           if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_create_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
