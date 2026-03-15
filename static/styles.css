@@ -617,8 +617,10 @@ body.drawer-open .drawer-backdrop { display: block; }
 }
 .select {
   width: 170px;
-  height: 34px;
-  padding: 6px 10px;
+  min-height: 40px;
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.35;
 }
 .select:focus {
   border-color: var(--accent);

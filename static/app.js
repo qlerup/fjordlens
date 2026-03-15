@@ -467,6 +467,7 @@ const I18N = {
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
     mapper_delete_selected: 'Slet valgte',
+    mapper_cancel: 'Annuller',
     mapper_create_name_required: 'Skriv mappenavn først.',
     mapper_create_failed: 'Kunne ikke oprette mappe',
     mapper_create_error: 'Fejl ved oprettelse af mappe.',
@@ -848,6 +849,7 @@ const I18N = {
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
     mapper_delete_selected: 'Delete selected',
+    mapper_cancel: 'Cancel',
     mapper_create_name_required: 'Enter a folder name first.',
     mapper_create_failed: 'Could not create folder',
     mapper_create_error: 'Error while creating folder.',
@@ -3768,7 +3770,7 @@ function renderMapperContext(path = '') {
   if (els.mapperCancelBtn) {
     const show = !!state.mapperEditMode;
     els.mapperCancelBtn.classList.toggle('hidden', !show);
-    els.mapperCancelBtn.textContent = tr ? (tr('mapper_cancel') || 'Annuller') : 'Annuller';
+    els.mapperCancelBtn.textContent = tr('mapper_cancel');
   }
   renderMapperTree();
 }
