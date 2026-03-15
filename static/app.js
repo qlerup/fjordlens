@@ -2075,16 +2075,16 @@ function appendCardTo(item, container) {
 function appendCard(item){ return appendCardTo(item, els.grid); }
 
 function appendFolderCard(folder, arr, opts = {}) {
-  const previews = arr.slice(0, 4);
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
   card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
-  // Build up to 4 preview URLs; if fewer available, duplicate to fill a fixed 2x2 grid
+  // Build up to 4 preview URLs by scanning folder items until 4 usable
   const urls = [];
-  previews.forEach(p => {
+  for (let i = 0; i < arr.length && urls.length < 4; i++) {
+    const p = arr[i];
     const u = p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
     if (u) urls.push(u);
-  });
+  }
   const baseLen = urls.length;
   while (baseLen > 0 && urls.length < 4) {
     urls.push(urls[urls.length % baseLen]);
