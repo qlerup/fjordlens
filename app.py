@@ -2525,14 +2525,24 @@ def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: l
         p, perm = _extract(it)
         if p:
             cleaned.append((p, perm))
-    # Deduplicate by longest path first; keep deepest only
-    cleaned = sorted(set(cleaned), key=lambda x: (-x[0].count("/"), x[0].lower()))
-    reduced: list[tuple[str, str]] = []
+    # Build final permission map keeping the highest permission for duplicates
+    perm_rank = {"view": 1, "upload": 2, "edit": 3}
+    def max_perm(a: str, b: str) -> str:
+        return a if perm_rank.get(a, 0) >= perm_rank.get(b, 0) else b
+
+    cleaned = sorted(set(cleaned), key=lambda x: (x[0].count("/"), x[0].lower()))
+    perm_map: dict[str, str] = {}
     for path, perm in cleaned:
-        if any((child_path == path) or child_path.startswith(path + "/") for (child_path, _cp) in reduced):
-            continue
-        reduced.append((path, perm))
-    reduced = sorted(reduced, key=lambda x: x[0].lower())
+        cur = perm_map.get(path)
+        perm_map[path] = perm if cur is None else max_perm(cur, perm)
+        # Ensure all ancestors are at least 'view' to allow navigating to this folder
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        while parent:
+            if parent not in perm_map:
+                perm_map[parent] = "view"
+            parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
+
+    reduced = sorted([(p, perm_map[p]) for p in perm_map.keys()], key=lambda x: x[0].lower())
 
     conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (user_id,))
     if reduced:
