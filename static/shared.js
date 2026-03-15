@@ -193,16 +193,19 @@ function renderGrid() {
     const card = document.createElement('article');
     card.className = 'photo-card folder-card';
     const prev = byFolder.get(fk) || [];
-    // Ensure a fixed 2x2 grid: duplicate available previews up to 4
-    const urls = prev.slice(0, 4);
-    const baseLen = urls.length;
-    while (baseLen > 0 && urls.length < 4) {
-      urls.push(urls[urls.length % baseLen]);
-    }
-    const thumbs = urls.map(u => `<img src="${u}" alt="">`).join("");
+    const shuffled = (a) => { const b = a.slice(); for (let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [b[i],b[j]]=[b[j],b[i]];} return b; };
+    const uniq = [];
+    const seen = new Set();
+    for (const u of shuffled(prev)) { if (u && !seen.has(u)) { seen.add(u); uniq.push(u); } }
+    let variant = 'v4';
+    let useUrls = [];
+    if (uniq.length === 1) { useUrls = [uniq[0]]; variant = 'v1'; }
+    else if (uniq.length === 2 || uniq.length === 3) { useUrls = uniq.slice(0,2); variant = 'v2'; }
+    else { useUrls = uniq.slice(0,4); variant = 'v4'; }
+    const thumbs = useUrls.map(u => `<img src="${u}" alt="">`).join("");
     const count = Number(folderCounts.get(fk) || 0);
     card.innerHTML = `
-      <div class="card-thumb folder-mosaic"><div class="folder-grid">${thumbs}</div></div>
+      <div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${thumbs}</div></div>
       <div class="folder-name-overlay"><span class="folder-name">${(fk.split('/').pop() || fk)}</span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
     `;
     card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });

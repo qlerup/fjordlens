@@ -2078,25 +2078,64 @@ function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
   card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
-  // Build up to 4 preview URLs by scanning folder items until 4 usable
-  const urls = [];
-  for (let i = 0; i < arr.length && urls.length < 4; i++) {
-    const p = arr[i];
-    const u = p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
-    if (u) urls.push(u);
+  // Randomize and select unique preview URLs (prefer folder's own items; arr includes subtree)
+  const shuffled = (list) => {
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const toUrl = (p) => p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
+  const normFolder = (rel) => {
+    let f = String(rel || '');
+    f = f.includes('/') ? f.split('/').slice(0, -1).join('/') : '';
+    if (f === 'uploads') f = '';
+    else if (f.startsWith('uploads/')) f = f.slice('uploads/'.length);
+    if (f.startsWith('converted/')) f = f.slice('converted/'.length);
+    if (f.startsWith('originals/')) f = f.slice('originals/'.length);
+    return f;
+  };
+  const ownFirst = []; // items whose immediate folder equals this tile
+  const descLater = []; // deeper descendants
+  for (const it of arr) {
+    const u = toUrl(it);
+    if (!u) continue;
+    const f = normFolder(String(it.rel_path || ''));
+    if (f === folder) ownFirst.push({u}); else descLater.push({u});
   }
-  const baseLen = urls.length;
-  while (baseLen > 0 && urls.length < 4) {
-    urls.push(urls[urls.length % baseLen]);
+  // Deduplicate and randomize within priority buckets
+  const collect = (list) => {
+    const seen = new Set();
+    const out = [];
+    for (const x of shuffled(list)) { if (x.u && !seen.has(x.u)) { seen.add(x.u); out.push(x.u); } }
+    return out;
+  };
+  const uniqUrls = collect(ownFirst).concat(collect(descLater));
+  // Decide variant: 1 image → full; 2 or 3 images → 2 tall columns; 4+ → 2×2 grid
+  let variant = 'v4';
+  let useUrls = [];
+  if (uniqUrls.length <= 0) {
+    useUrls = [];
+  } else if (uniqUrls.length === 1) {
+    useUrls = [uniqUrls[0]];
+    variant = 'v1';
+  } else if (uniqUrls.length === 2 || uniqUrls.length === 3) {
+    useUrls = uniqUrls.slice(0, 2);
+    variant = 'v2';
+  } else {
+    useUrls = uniqUrls.slice(0, 4);
+    variant = 'v4';
   }
-  const cells = urls.map(u => `<img src="${u}" alt="">`).join("");
+  const cells = useUrls.map(u => `<img src="${u}" alt="">`).join("");
   const title = opts.title || folder;
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
   const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
   const overlay = `<div class="folder-name-overlay"><span class="folder-name">${folderTitle}</span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
-  const thumbHtml = (urls && urls.length)
-    ? `<div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div>${selBadge}${overlay}</div>`
+  const thumbHtml = (useUrls && useUrls.length)
+    ? `<div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${cells}</div>${selBadge}${overlay}</div>`
     : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
   card.innerHTML = `
     ${thumbHtml}
