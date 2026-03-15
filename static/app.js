@@ -2113,20 +2113,39 @@ function appendFolderCard(folder, arr, opts = {}) {
     return out;
   };
   const uniqUrls = collect(ownFirst).concat(collect(descLater));
+
+  // Persist selection per folder in localStorage so it stays after refresh
+  const STORE_KEY = 'fl_folder_previews_v1';
+  const loadStore = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch { return {}; } };
+  const saveStore = (obj) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(obj)); } catch {} };
+  const store = loadStore();
+  const stored = Array.isArray(store[folder]) ? store[folder] : null;
+  const intersect = (want, avail) => want.filter(u => avail.includes(u));
+
   // Decide variant: 1 image → full; 2 or 3 images → 2 tall columns; 4+ → 2×2 grid
   let variant = 'v4';
   let useUrls = [];
-  if (uniqUrls.length <= 0) {
-    useUrls = [];
-  } else if (uniqUrls.length === 1) {
-    useUrls = [uniqUrls[0]];
-    variant = 'v1';
-  } else if (uniqUrls.length === 2 || uniqUrls.length === 3) {
-    useUrls = uniqUrls.slice(0, 2);
-    variant = 'v2';
+  const pickFresh = () => {
+    if (uniqUrls.length <= 0) return [];
+    if (uniqUrls.length === 1) { variant = 'v1'; return [uniqUrls[0]]; }
+    if (uniqUrls.length === 2 || uniqUrls.length === 3) { variant = 'v2'; return uniqUrls.slice(0,2); }
+    variant = 'v4'; return uniqUrls.slice(0,4);
+  };
+  const desired = () => (uniqUrls.length === 1 ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4));
+  if (stored && stored.length) {
+    const candidates = intersect(stored, uniqUrls);
+    if (candidates.length >= desired()) {
+      useUrls = candidates.slice(0, desired());
+      variant = (useUrls.length === 1 ? 'v1' : (useUrls.length === 2 ? 'v2' : 'v4'));
+    } else {
+      useUrls = pickFresh();
+      store[folder] = useUrls;
+      saveStore(store);
+    }
   } else {
-    useUrls = uniqUrls.slice(0, 4);
-    variant = 'v4';
+    useUrls = pickFresh();
+    store[folder] = useUrls;
+    saveStore(store);
   }
   const cells = useUrls.map(u => `<img src="${u}" alt="">`).join("");
   const title = opts.title || folder;
@@ -2182,6 +2201,33 @@ function appendFolderCard(folder, arr, opts = {}) {
     loadPhotos();
   });
   els.grid.appendChild(card);
+
+  // After initial render, try to load persisted selection from server; else persist our pick
+  (async () => {
+    try {
+      const res = await fetch(`/api/folder-previews?folders=${encodeURIComponent(folder)}`);
+      const data = await res.json();
+      const saved = data && data.items ? data.items[folder] : null;
+      const grid = card.querySelector('.folder-grid');
+      const updateGrid = (urls, v) => {
+        if (!grid || !urls || !urls.length) return;
+        grid.classList.remove('v1','v2','v4');
+        grid.classList.add(v);
+        grid.innerHTML = urls.map(u => `<img src="${u}" alt="">`).join("");
+      };
+      if (Array.isArray(saved) && saved.length) {
+        const v = (saved.length === 1 ? 'v1' : (saved.length === 2 ? 'v2' : 'v4'));
+        // Only update if different from what we rendered
+        const same = Array.isArray(useUrls) && useUrls.length === saved.length && useUrls.every((u,i)=>u===saved[i]);
+        if (!same) updateGrid(saved, v);
+      } else if (useUrls && useUrls.length) {
+        await fetch('/api/folder-previews', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder, previews: useUrls })
+        });
+      }
+    } catch {}
+  })();
 }
 
 let personRenameMenuEl = null;

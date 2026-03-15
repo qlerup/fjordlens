@@ -194,14 +194,35 @@ function renderGrid() {
     card.className = 'photo-card folder-card';
     const prev = byFolder.get(fk) || [];
     const shuffled = (a) => { const b = a.slice(); for (let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [b[i],b[j]]=[b[j],b[i]];} return b; };
-    const uniq = [];
-    const seen = new Set();
-    for (const u of shuffled(prev)) { if (u && !seen.has(u)) { seen.add(u); uniq.push(u); } }
+    const uniq = []; const seen = new Set(); for (const u of shuffled(prev)) { if (u && !seen.has(u)) { seen.add(u); uniq.push(u); } }
+    const STORE_KEY = 'fl_folder_previews_v1';
+    const loadStore = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch { return {}; } };
+    const saveStore = (obj) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(obj)); } catch {} };
+    const store = loadStore();
+    const stored = Array.isArray(store[fk]) ? store[fk] : null;
+    const intersect = (want, avail) => want.filter(u => avail.includes(u));
+    const desired = () => (uniq.length === 1 ? 1 : ((uniq.length === 2 || uniq.length === 3) ? 2 : 4));
     let variant = 'v4';
     let useUrls = [];
-    if (uniq.length === 1) { useUrls = [uniq[0]]; variant = 'v1'; }
-    else if (uniq.length === 2 || uniq.length === 3) { useUrls = uniq.slice(0,2); variant = 'v2'; }
-    else { useUrls = uniq.slice(0,4); variant = 'v4'; }
+    const pickFresh = () => {
+      if (uniq.length <= 0) return [];
+      if (uniq.length === 1) { variant='v1'; return [uniq[0]]; }
+      if (uniq.length === 2 || uniq.length === 3) { variant='v2'; return uniq.slice(0,2); }
+      variant='v4'; return uniq.slice(0,4);
+    };
+    if (stored && stored.length) {
+      const cand = intersect(stored, uniq);
+      if (cand.length >= desired()) {
+        useUrls = cand.slice(0, desired());
+        variant = (useUrls.length === 1 ? 'v1' : (useUrls.length === 2 ? 'v2' : 'v4'));
+      } else {
+        useUrls = pickFresh();
+        store[fk] = useUrls; saveStore(store);
+      }
+    } else {
+      useUrls = pickFresh();
+      store[fk] = useUrls; saveStore(store);
+    }
     const thumbs = useUrls.map(u => `<img src="${u}" alt="">`).join("");
     const count = Number(folderCounts.get(fk) || 0);
     card.innerHTML = `
