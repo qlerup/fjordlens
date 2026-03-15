@@ -478,7 +478,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-radius: 12px;
   background: var(--panel);
   transition: max-height .24s ease, opacity .2s ease, transform .24s ease, border-color .2s ease;
-  z-index: 20;
+  z-index: 1002; /* ensure above sticky headers and grids on mobile */
 }
 .mapper-header-menu.open {
   max-height: 180px;

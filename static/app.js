@@ -5671,7 +5671,19 @@ if (els.mapperSearchInput) {
 if (els.mapperEditBtn) {
   els.mapperEditBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     toggleMapperHeaderMenu();
+  });
+  // Improve mobile tap support (iOS Safari) by handling touchstart directly
+  els.mapperEditBtn.addEventListener('touchstart', (e) => {
+    try { e.preventDefault(); e.stopPropagation(); } catch {}
+    toggleMapperHeaderMenu();
+  }, { passive: false });
+}
+// Prevent outside-click handler from immediately closing when interacting inside the menu
+if (els.mapperHeaderMenu) {
+  ['pointerdown','touchstart','click'].forEach(ev => {
+    els.mapperHeaderMenu.addEventListener(ev, (e) => { e.stopPropagation(); }, { passive: true });
   });
 }
 if (els.mapperHeaderEditAction) {
