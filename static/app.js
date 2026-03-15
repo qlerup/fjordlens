@@ -8087,8 +8087,13 @@ async function renderUsersPanel(){
           if (!username || !password){ showStatus(tr('users_status_username_password_required'), 'err'); return; }
           const payload = { username, password, role, enforce_2fa, ui_language, search_language, allowed_folders: newUserAllowedFolders || [] };
           const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-          const jj = await rr.json();
-          if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_create_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
+          const raw = await rr.text();
+          let jj; try { jj = JSON.parse(raw); } catch(e){ jj = null; }
+          if (!rr.ok || !jj || !jj.ok){
+            const snippet = raw ? raw.slice(0,200) : '';
+            showStatus(`${tr('users_status_create_failed')} ${jj && jj.error ? jj.error : snippet}`.trim(), 'err');
+            return;
+          }
           showStatus(tr('users_status_created'), 'ok');
           close();
           renderUsersPanel();

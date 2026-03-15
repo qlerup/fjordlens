@@ -8814,6 +8814,13 @@ def api_admin_users():
                 uid = int(row["id"]) if row else 0
             else:
                 uid = int(uid_raw)
+            # Ensure permission column exists before writing ACL rows
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(user_folder_access)").fetchall()]  # type: ignore[index]
+                if "permission" not in cols:
+                    conn.execute("ALTER TABLE user_folder_access ADD COLUMN permission TEXT DEFAULT 'view'")
+            except Exception:
+                pass
             _set_user_allowed_folders(conn, uid, allowed_folders)
             conn.commit()
         return jsonify({"ok": True})
@@ -9114,6 +9121,13 @@ def api_admin_user_folders(uid: int):
             row = conn.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
             if not row:
                 return jsonify({"ok": False, "error": "not_found"}), 404
+            # Ensure permission column exists for legacy DBs
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(user_folder_access)").fetchall()]  # type: ignore[index]
+                if "permission" not in cols:
+                    conn.execute("ALTER TABLE user_folder_access ADD COLUMN permission TEXT DEFAULT 'view'")
+            except Exception:
+                pass
             reduced = _set_user_allowed_folders(conn, uid, raw_allowed)
             conn.commit()
         return jsonify({"ok": True, "allowed_folders": reduced})
