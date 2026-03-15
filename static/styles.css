@@ -729,6 +729,9 @@ body.drawer-open .drawer-backdrop { display: block; }
   flex-wrap: wrap;
   align-items: center;
 }
+/* Align the 'Tilbage' button to the far right; keep delete just to its left */
+#mapperUpBtn { margin-left: auto; order: 3; }
+#mapperDeleteBtn { order: 2; }
 .mapper-input {
   min-width: 260px;
   background: var(--panel);
@@ -1532,7 +1535,8 @@ body.detail-open .detail-panel {
     order: 1;
   }
   #scanBtn { width: 100%; }
-  .content-header { flex-direction: column; align-items: flex-start; }
+  .content-header { flex-direction: row; align-items: center; flex-wrap: nowrap; }
+  #mapperHeaderActions { margin-left: auto; }
   .gallery-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
