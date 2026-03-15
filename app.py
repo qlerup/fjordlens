@@ -8715,7 +8715,16 @@ def api_admin_users():
         with closing(get_conn()) as conn:
             rows = conn.execute("SELECT id, username, role, is_admin, totp_enabled, ui_language, search_language, created_at FROM users ORDER BY id").fetchall()
             all_folders = _list_all_photo_folders(conn)
-            acl_rows = conn.execute("SELECT user_id, folder_path, COALESCE(permission,'view') AS permission FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
+            # Be robust across older DBs that may miss the 'permission' column
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(user_folder_access)").fetchall()]  # type: ignore[index]
+                has_perm = "permission" in cols
+            except Exception:
+                has_perm = False
+            if has_perm:
+                acl_rows = conn.execute("SELECT user_id, folder_path, COALESCE(permission,'view') AS permission FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
+            else:
+                acl_rows = conn.execute("SELECT user_id, folder_path FROM user_folder_access ORDER BY folder_path COLLATE NOCASE").fetchall()
             audit_rows = conn.execute(
                 """
                 SELECT id, at, username_input, user_id, username, success, event_type, reason, ip, country, device
@@ -8733,7 +8742,7 @@ def api_admin_users():
                 continue
             if not folder_path:
                 continue
-            perm = str(ar["permission"] or "view").strip().lower()
+            perm = str((ar["permission"] if "permission" in ar.keys() else "view") or "view").strip().lower()
             if perm not in {"view", "upload", "edit"}:
                 perm = "view"
             by_user_acl.setdefault(uid, []).append({"folder_path": folder_path, "permission": perm})

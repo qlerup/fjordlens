@@ -7534,7 +7534,14 @@ async function renderUsersPanel(){
   wrap.textContent = 'Indlæser…';
   try{
     const r = await fetch('/api/admin/users');
-    const js = await r.json();
+    const raw = await r.text();
+    let js;
+    try { js = JSON.parse(raw); }
+    catch(parseErr){
+      const snippet = (raw || '').slice(0, 200).trim();
+      wrap.innerHTML = `<div class="empty">Kan ikke hente brugere. Server svarede ikke med JSON.${snippet ? `\n\n${escapeHtml(snippet)}` : ''}</div>`;
+      return;
+    }
     if (!r.ok || !js.ok){
       wrap.innerHTML = `<div class="empty">Kan ikke hente brugere. ${js && js.error ? js.error : ''}</div>`;
       return;
