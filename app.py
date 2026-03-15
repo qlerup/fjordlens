@@ -7445,11 +7445,29 @@ def api_settings_upload_destination():
         payload = _upload_settings_payload(current)
         return jsonify(payload)
     except Exception as e:
+        # Log and fall back to a minimal, safe payload so UI can render
         try:
             log_event("error", error=f"upload_destination_get: {e}")
         except Exception:
             pass
-        return jsonify({"ok": False, "error": str(e)}), 500
+        try:
+            opts = [
+                {"value": "uploads", "label": "Kopiér til uploads-mappen"},
+                {"value": "library", "label": "Flyt (hurtigt) til bibliotek"},
+            ]
+        except Exception:
+            opts = []
+        return jsonify({
+            "ok": True,
+            "destination": current,
+            "saved_destination": get_upload_destination(),
+            "subdir": "",
+            "folders": [],
+            "photo_dir": str(PHOTO_DIR),
+            "upload_dir": str(UPLOAD_DIR),
+            "note": "(fallback) Mapper kunne ikke hentes",
+            "options": opts,
+        })
 
 
 @app.route("/api/settings/upload-folder", methods=["POST"])
