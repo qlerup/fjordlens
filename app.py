@@ -1083,7 +1083,7 @@ class User(UserMixin):
         self.id = str(id)
         self.username = username
         role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
-        if role_norm not in {"admin", "manager", "user"}:
+        if role_norm not in {"admin", "user"}:
             role_norm = "user"
         self.role = role_norm
         self.ui_language = _normalize_language(ui_language, DEFAULT_UI_LANGUAGE)
@@ -1095,13 +1095,13 @@ class User(UserMixin):
 
     @property
     def is_manager(self) -> bool:
-        return (getattr(self, "role", "user") == "manager")
+        return False
 
     def can_manage_users(self) -> bool:
         return self.is_admin
 
     def can_maintain(self) -> bool:
-        return self.is_admin or self.is_manager
+        return self.is_admin
 
 
 def _row_to_user(row: sqlite3.Row) -> Optional[User]:
@@ -7445,17 +7445,17 @@ def api_settings_upload_folder():
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig overmappe"}), 400
 
-    # Permission check: creating under uploads requires 'edit' on parent, or admin/manager
+    # Permission check: creating under uploads requires 'edit' on parent, or admin
     if destination == UPLOAD_DEST_UPLOADS:
         if parent_subdir:
             base_rel = f"uploads/{parent_subdir}"
             perm = _current_user_folder_permission_for_rel(base_rel)
-            if not _perm_allows(perm, "edit") and not (getattr(current_user, "is_admin", False) or getattr(current_user, "is_manager", False)):
+            if not _perm_allows(perm, "edit") and not getattr(current_user, "is_admin", False):
                 return jsonify({"ok": False, "error": "Ingen rettighed til at oprette i denne mappe"}), 403
         else:
-            # Creating directly under uploads root limited to admins/managers
-            if not (getattr(current_user, "is_admin", False) or getattr(current_user, "is_manager", False)):
-                return jsonify({"ok": False, "error": "Kun admin/manager kan oprette i rodmappen"}), 403
+            # Creating directly under uploads root limited to admins
+            if not getattr(current_user, "is_admin", False):
+                return jsonify({"ok": False, "error": "Kun admin kan oprette i rodmappen"}), 403
 
     try:
         new_subdir_input = _normalize_upload_subdir(str(body.get("path") or ""))
@@ -8657,7 +8657,7 @@ def admin_users():
             p = request.form.get("password") or ""
             role = (request.form.get("role") or "user").strip().lower()
             enforce_2fa = 1 if (request.form.get("enforce_2fa") in ("1", "on", "true", "True")) else 0
-            if role not in {"admin", "manager", "user"}:
+            if role not in {"admin", "user"}:
                 role = "user"
             if u and p:
                 try:
@@ -8778,7 +8778,7 @@ def api_admin_users():
     search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
     raw_allowed = data.get("allowed_folders")
     allowed_folders = raw_allowed if isinstance(raw_allowed, list) else []
-    if role not in {"admin", "manager", "user"}:
+    if role not in {"admin", "user"}:
         role = "user"
     if not u or not p:
         return jsonify({"ok": False, "error": "username_password_required"}), 400
@@ -9005,7 +9005,7 @@ def api_admin_users_delete(uid: int):
         new_role = None
         if new_role_raw is not None:
             new_role = str(new_role_raw).strip().lower()
-            if new_role not in {"admin", "manager", "user"}:
+            if new_role not in {"admin", "user"}:
                 return jsonify({"ok": False, "error": "invalid_role"}), 400
         ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
         search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)

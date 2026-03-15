@@ -7611,7 +7611,6 @@ async function renderUsersPanel(){
           <div class="form-row"><label for="nu_role">Rolle</label>
             <select id="nu_role" class="select">
               <option value="user">Bruger</option>
-              <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>
           </div>
@@ -7650,7 +7649,6 @@ async function renderUsersPanel(){
           <div class="form-row"><label for="eu_role">Rolle</label>
             <select id="eu_role" class="select">
               <option value="user">Bruger</option>
-              <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>
           </div>
@@ -7855,21 +7853,23 @@ async function renderUsersPanel(){
     });
     aclModal && aclModal.addEventListener('click', (e)=>{ if(e.target === aclModal) closeAclModal(); });
     aclSaveBtn && aclSaveBtn.addEventListener('click', async () => {
-      if (!aclEditingUserId) return;
-      const allowed_folders = getFolderSelection('ua_folder_access');
-      const rr = await fetch('/api/admin/users/' + aclEditingUserId + '/folders', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_folders }),
+      await withBtnLoading(aclSaveBtn, async () => {
+        if (!aclEditingUserId) return;
+        const allowed_folders = getFolderSelection('ua_folder_access');
+        const rr = await fetch('/api/admin/users/' + aclEditingUserId + '/folders', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ allowed_folders }),
+        });
+        const jj = await rr.json();
+        if (!rr.ok || !jj.ok) {
+          showStatus(`${tr('users_status_acl_save_failed')} ${((jj && jj.error) || '')}`.trim(), 'err');
+          return;
+        }
+          showStatus(tr('users_status_acl_saved'), 'ok');
+        closeAclModal();
+        renderUsersPanel();
       });
-      const jj = await rr.json();
-      if (!rr.ok || !jj.ok) {
-        showStatus(`${tr('users_status_acl_save_failed')} ${((jj && jj.error) || '')}`.trim(), 'err');
-        return;
-      }
-        showStatus(tr('users_status_acl_saved'), 'ok');
-      closeAclModal();
-      renderUsersPanel();
     });
 
     // bind delete
@@ -7926,23 +7926,35 @@ async function renderUsersPanel(){
     const editSaveBtn = document.getElementById('eu_save');
     if (editSaveBtn) {
       editSaveBtn.addEventListener('click', async () => {
-        if (!editingUserId) return;
-        const username = (document.getElementById('eu_username').value || '').trim();
-        const password = document.getElementById('eu_password').value || '';
-        const role = document.getElementById('eu_role').value || 'user';
-        const ui_language = document.getElementById('eu_ui_language').value || 'da';
-        const search_language = document.getElementById('eu_search_language').value || 'da';
-        if (!username) { showStatus(tr('users_status_username_required'), 'err'); return; }
-        const payload = { username, role, ui_language, search_language };
-        if (password) payload.password = password;
-        const rr = await fetch('/api/admin/users/' + editingUserId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-        const jj = await rr.json();
-        if (!rr.ok || !jj.ok) { showStatus(`${tr('users_status_update_failed')} ${((jj && jj.error) || '')}`.trim(), 'err'); return; }
-        showStatus(tr('users_status_updated'), 'ok');
-        closeEdit();
-        renderUsersPanel();
+        await withBtnLoading(editSaveBtn, async () => {
+          if (!editingUserId) return;
+          const username = (document.getElementById('eu_username').value || '').trim();
+          const password = document.getElementById('eu_password').value || '';
+          const role = document.getElementById('eu_role').value || 'user';
+          const ui_language = document.getElementById('eu_ui_language').value || 'da';
+          const search_language = document.getElementById('eu_search_language').value || 'da';
+          if (!username) { showStatus(tr('users_status_username_required'), 'err'); return; }
+          const payload = { username, role, ui_language, search_language };
+          if (password) payload.password = password;
+          const rr = await fetch('/api/admin/users/' + editingUserId, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          const jj = await rr.json();
+          if (!rr.ok || !jj.ok) { showStatus(`${tr('users_status_update_failed')} ${((jj && jj.error) || '')}`.trim(), 'err'); return; }
+          showStatus(tr('users_status_updated'), 'ok');
+          closeEdit();
+          renderUsersPanel();
+        });
       });
     }
+
+    // small helper for button loading states
+    const withBtnLoading = async (btn, fn) => {
+      if (!btn || typeof fn !== 'function') return await fn?.();
+      const prevDisabled = btn.disabled;
+      btn.classList.add('loading');
+      btn.disabled = true;
+      try { return await fn(); }
+      finally { btn.classList.remove('loading'); btn.disabled = prevDisabled; }
+    };
 
     // modal wiring
     const modal = document.getElementById('nu_modal');
@@ -7974,20 +7986,22 @@ async function renderUsersPanel(){
     const saveBtn = document.getElementById('nu_save');
     if (saveBtn){
       saveBtn.addEventListener('click', async ()=>{
-        const username = (document.getElementById('nu_username').value || '').trim();
-        const password = document.getElementById('nu_password').value || '';
-        const role = document.getElementById('nu_role').value || 'user';
-        const ui_language = document.getElementById('nu_ui_language').value || 'da';
-        const search_language = document.getElementById('nu_search_language').value || 'da';
-        const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
-        if (!username || !password){ showStatus(tr('users_status_username_password_required'), 'err'); return; }
-        const payload = { username, password, role, enforce_2fa, ui_language, search_language };
-        const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-        const jj = await rr.json();
-        if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_create_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
-        showStatus(tr('users_status_created'), 'ok');
-        close();
-        renderUsersPanel();
+        await withBtnLoading(saveBtn, async () => {
+          const username = (document.getElementById('nu_username').value || '').trim();
+          const password = document.getElementById('nu_password').value || '';
+          const role = document.getElementById('nu_role').value || 'user';
+          const ui_language = document.getElementById('nu_ui_language').value || 'da';
+          const search_language = document.getElementById('nu_search_language').value || 'da';
+          const enforce_2fa = !!(document.getElementById('nu_2fa') && document.getElementById('nu_2fa').checked);
+          if (!username || !password){ showStatus(tr('users_status_username_password_required'), 'err'); return; }
+          const payload = { username, password, role, enforce_2fa, ui_language, search_language };
+          const rr = await fetch('/api/admin/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+          const jj = await rr.json();
+          if (!rr.ok || !jj.ok){ showStatus(`${tr('users_status_create_failed')} ${(jj && jj.error || '')}`.trim(), 'err'); return; }
+          showStatus(tr('users_status_created'), 'ok');
+          close();
+          renderUsersPanel();
+        });
       });
     }
   }catch(e){ wrap.innerHTML = `<div class="empty">${tr('users_panel_render_error')}: ${e}</div>`; }
