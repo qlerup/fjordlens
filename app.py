@@ -2685,7 +2685,11 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
         if not folder:
             out.append("")
             continue
-        if _is_rel_visible_for_current_user(folder, conn):
+        # Map bare subfolder paths to full rel under uploads for ACL checks
+        rel_check = folder
+        if folder and not folder.startswith("uploads/"):
+            rel_check = f"uploads/{folder}"
+        if _is_rel_visible_for_current_user(rel_check, conn):
             out.append(folder)
     # Only include root label when there is at least one visible folder
     if out and "" not in out:
