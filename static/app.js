@@ -1126,7 +1126,8 @@ function navLabels() {
     favorites: [tr('view_favorites_title'), tr('view_favorites_sub')],
     steder: [tr('view_steder_title'), tr('view_steder_sub')],
     kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
-    mapper: [tr('view_mapper_title'), tr('view_mapper_sub')],
+    // Remove subtitle for mapper view
+    mapper: [tr('view_mapper_title'), ''],
     personer: [tr('view_personer_title'), tr('view_personer_sub')],
     settings: [tr('view_settings_title'), tr('view_settings_sub')],
   };
@@ -5594,12 +5595,40 @@ function closeAiScopeModal() {
 
 function openMapperHeaderMenu() {
   if (!els.mapperHeaderMenu) return;
-  els.mapperHeaderMenu.classList.add('open');
+  const menu = els.mapperHeaderMenu;
+  menu.classList.add('open');
+  // On mobile, place the menu within the viewport using fixed positioning
+  try {
+    const btn = els.mapperEditBtn;
+    if (btn && typeof btn.getBoundingClientRect === 'function') {
+      const r = btn.getBoundingClientRect();
+      const vw = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0);
+      const width = 220; // menu css width
+      const pad = 8;
+      let left = r.right - width; // prefer right-aligned to button
+      left = Math.max(pad, Math.min(left, vw - width - pad));
+      const top = Math.max(pad, r.bottom + 8);
+      menu.style.position = 'fixed';
+      menu.style.left = `${left}px`;
+      menu.style.right = 'auto';
+      menu.style.top = `${top}px`;
+      menu.style.maxWidth = `${width}px`;
+    }
+  } catch {}
 }
 
 function closeMapperHeaderMenu() {
   if (!els.mapperHeaderMenu) return;
-  els.mapperHeaderMenu.classList.remove('open');
+  const menu = els.mapperHeaderMenu;
+  menu.classList.remove('open');
+  // Reset any inline positioning to fall back to CSS on desktop
+  try {
+    menu.style.position = '';
+    menu.style.left = '';
+    menu.style.right = '';
+    menu.style.top = '';
+    menu.style.maxWidth = '';
+  } catch {}
 }
 
 function toggleMapperHeaderMenu() {
