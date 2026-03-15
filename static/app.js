@@ -5669,6 +5669,11 @@ if (els.mapperSearchInput) {
   });
 }
 if (els.mapperEditBtn) {
+  const _openMenu = (ev) => {
+    try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
+    try { ev && ev.stopPropagation && ev.stopPropagation(); } catch {}
+    toggleMapperHeaderMenu();
+  };
   els.mapperEditBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -5679,6 +5684,8 @@ if (els.mapperEditBtn) {
     try { e.preventDefault(); e.stopPropagation(); } catch {}
     toggleMapperHeaderMenu();
   }, { passive: false });
+  els.mapperEditBtn.addEventListener('pointerdown', _openMenu, { passive: false });
+  els.mapperEditBtn.addEventListener('touchend', _openMenu, { passive: false });
 }
 // Prevent outside-click handler from immediately closing when interacting inside the menu
 if (els.mapperHeaderMenu) {

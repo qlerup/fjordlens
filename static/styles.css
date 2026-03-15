@@ -1547,6 +1547,8 @@ body.view-timeline .topbar {
   body.view-mapper #mapperSearchShell { display: flex !important; }
   body.view-mapper #mapperEditBtn { display: inline-flex !important; }
   body.view-mapper #uploadTopStatus { display: none !important; }
+  /* Hide drag-and-drop zone on mobile (no DnD support) */
+  #mapperDropZone { display: none !important; }
   body.view-mapper #mapperSearchShell { order: 1; }
   body.view-mapper #mapperEditBtn { order: 2; }
   body.view-mapper .topbar .search-shell,
@@ -1603,6 +1605,8 @@ body.view-timeline .topbar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    position: relative; /* create stacking context above neighboring elements */
+    z-index: 1003;
   }
   /* Hold topbar skjult i Indstillinger for at spare plads */
   body.view-settings .topbar { display: none !important; }
