@@ -2079,13 +2079,23 @@ function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
   card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
-  const cells = previews.map(p => p.thumb_url ? `<img src="${p.thumb_url}" alt="">` : "").join("");
+  // Build up to 4 preview URLs; if fewer available, duplicate to fill a fixed 2x2 grid
+  const urls = [];
+  previews.forEach(p => {
+    const u = p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
+    if (u) urls.push(u);
+  });
+  const baseLen = urls.length;
+  while (baseLen > 0 && urls.length < 4) {
+    urls.push(urls[urls.length % baseLen]);
+  }
+  const cells = urls.map(u => `<img src="${u}" alt="">`).join("");
   const title = opts.title || folder;
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
   const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
   const overlay = `<div class="folder-name-overlay"><span class="folder-name">${folderTitle}</span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
-  const thumbHtml = (previews && previews.length)
+  const thumbHtml = (urls && urls.length)
     ? `<div class="card-thumb folder-mosaic"><div class="folder-grid">${cells}</div>${selBadge}${overlay}</div>`
     : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
   card.innerHTML = `

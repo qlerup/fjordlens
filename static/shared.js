@@ -193,7 +193,13 @@ function renderGrid() {
     const card = document.createElement('article');
     card.className = 'photo-card folder-card';
     const prev = byFolder.get(fk) || [];
-    const thumbs = prev.map(u => `<img src="${u}" alt="">`).join("");
+    // Ensure a fixed 2x2 grid: duplicate available previews up to 4
+    const urls = prev.slice(0, 4);
+    const baseLen = urls.length;
+    while (baseLen > 0 && urls.length < 4) {
+      urls.push(urls[urls.length % baseLen]);
+    }
+    const thumbs = urls.map(u => `<img src="${u}" alt="">`).join("");
     const count = Number(folderCounts.get(fk) || 0);
     card.innerHTML = `
       <div class="card-thumb folder-mosaic"><div class="folder-grid">${thumbs}</div></div>
