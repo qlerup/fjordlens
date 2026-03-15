@@ -2687,7 +2687,8 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
             continue
         if _is_rel_visible_for_current_user(folder, conn):
             out.append(folder)
-    if "" not in out:
+    # Only include root label when there is at least one visible folder
+    if out and "" not in out:
         out.insert(0, "")
     seen: set[str] = set()
     deduped: list[str] = []
