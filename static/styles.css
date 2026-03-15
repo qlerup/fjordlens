@@ -937,7 +937,9 @@ body.drawer-open .drawer-backdrop { display: block; }
   gap: 8px;
   height: var(--folder-overlay-h);
   padding: 6px 8px; /* compact paddings; fixed height ensures equal rows */
-  background: linear-gradient(180deg, rgba(15,17,21,0.0) 0%, rgba(15,17,21,0.75) 60%, rgba(15,17,21,0.92) 100%);
+  /* Solid, non-transparent bar to avoid color shift across variants */
+  background: var(--panel);
+  border-top: 1px solid var(--border);
   color: var(--text);
   pointer-events: none;
 }
