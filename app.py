@@ -7441,7 +7441,15 @@ def api_settings_upload_destination():
 
     requested = str(request.args.get("destination") or "").strip().lower()
     current = requested if requested in UPLOAD_DEST_CHOICES else get_upload_destination()
-    return jsonify(_upload_settings_payload(current))
+    try:
+        payload = _upload_settings_payload(current)
+        return jsonify(payload)
+    except Exception as e:
+        try:
+            log_event("error", error=f"upload_destination_get: {e}")
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/settings/upload-folder", methods=["POST"])
