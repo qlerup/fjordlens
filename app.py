@@ -2199,6 +2199,12 @@ def init_db() -> None:
                 previews_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            
+            -- Owner of private folders (visibility restricted unless ACL grants access)
+            CREATE TABLE IF NOT EXISTS folder_owners (
+                folder_path TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL
+            );
             """
         )
         conn.commit()
@@ -2555,41 +2561,75 @@ def _is_rel_path_allowed_for_current_user(rel_path: Optional[str], conn: Optiona
     return False
 
 
+def _folder_owner_user_id_for_rel(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> Optional[int]:
+    rel = _normalize_rel_path_for_acl(rel_path)
+    if not rel:
+        return None
+    try:
+        if conn is None:
+            with closing(get_conn()) as c:
+                row = c.execute(
+                    "SELECT user_id FROM folder_owners WHERE ? = folder_path OR ? LIKE folder_path || '/%' ORDER BY LENGTH(folder_path) DESC LIMIT 1",
+                    (rel, rel),
+                ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT user_id FROM folder_owners WHERE ? = folder_path OR ? LIKE folder_path || '/%' ORDER BY LENGTH(folder_path) DESC LIMIT 1",
+                (rel, rel),
+            ).fetchone()
+        if row:
+            return int(row[0])
+    except Exception:
+        return None
+    return None
+
+
+def _is_rel_visible_for_current_user(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> bool:
+    # Admins can always see
+    try:
+        if getattr(current_user, "is_admin", False):
+            return True
+    except Exception:
+        pass
+    owner_uid = _folder_owner_user_id_for_rel(rel_path, conn)
+    # If no owner, fall back to ACL logic only
+    if owner_uid is None:
+        return _is_rel_path_allowed_for_current_user(rel_path, conn)
+    # Owner can always see
+    try:
+        if int(getattr(current_user, "id", 0) or 0) == int(owner_uid):
+            return True
+    except Exception:
+        pass
+    # Not owner: require explicit ACL match
+    return _is_rel_path_allowed_for_current_user(rel_path, conn)
+
+
 def _filter_public_items_by_current_user_acl(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
     if not items:
-        return items
-    prefixes = _current_user_acl_prefixes()
-    if prefixes is None:
         return items
     out: list[Dict[str, Any]] = []
     for item in items:
         rel = _normalize_rel_path_for_acl(item.get("rel_path"))
         if not rel:
             continue
-        if any(rel == p or rel.startswith(p + "/") for p in prefixes):
+        if _is_rel_visible_for_current_user(rel):
             out.append(item)
     return out
 
 
 def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlite3.Connection] = None) -> list[str]:
-    prefixes = _current_user_acl_prefixes(conn)
-    if prefixes is None:
-        return folders
     out: list[str] = []
     for raw in folders:
         try:
             folder = _normalize_folder_acl_path(raw)
         except Exception:
             continue
+        # Always include root label
         if not folder:
             out.append("")
             continue
-        if any(
-            folder == p
-            or folder.startswith(p + "/")
-            or p.startswith(folder + "/")
-            for p in prefixes
-        ):
+        if _is_rel_visible_for_current_user(folder, conn):
             out.append(folder)
     if "" not in out:
         out.insert(0, "")
@@ -7343,6 +7383,14 @@ def api_settings_upload_folder():
         return jsonify({"ok": False, "error": f"Kunne ikke oprette mappe: {e}"}), 400
 
     _set_upload_subdir(destination, new_subdir)
+    # Record folder owner for access control (owner and admins can always see; others need explicit ACL)
+    try:
+        owner_path = f"uploads/{new_subdir}" if destination == UPLOAD_DEST_UPLOADS else new_subdir
+        with closing(get_conn()) as conn:
+            conn.execute("INSERT OR REPLACE INTO folder_owners(folder_path, user_id) VALUES (?,?)", (owner_path, int(getattr(current_user, 'id', 0) or 0)))
+            conn.commit()
+    except Exception:
+        pass
     payload = _upload_settings_payload(destination)
     payload["created"] = new_subdir
     return jsonify(payload)
