@@ -119,7 +119,7 @@ body {
 .ok  { color:#d1fae5; background: rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.35); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
 
 /* Drawer backdrop (ensure hidden by default on all viewports) */
-.drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; }
+.drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; pointer-events: none; }
 body.drawer-open .drawer-backdrop { display: block; }
 
 .app-shell {
