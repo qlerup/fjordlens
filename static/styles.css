@@ -344,7 +344,7 @@ body.drawer-open .drawer-backdrop { display: block; }
 .menu-btn { display: none; }
 
 .mobile-bottom-nav {
-  display: none;
+  display: none; /* hidden by default; enabled in mobile media query below */
   position: fixed;
   left: 0;
   right: 0;
@@ -354,7 +354,6 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-top: 1px solid var(--border);
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   gap: 8px;
-  display: flex;
 }
 
 .mobile-nav-item {
