@@ -405,16 +405,28 @@ body.drawer-open .drawer-backdrop { display: block; }
 .mobile-upload-bar {
   display: none;
   position: fixed;
-  /* Indrykning så linjen ligger over topkanten af bundmenuen og flugter med dens vandrette padding */
   left: 10px;
-  right: 54px; /* giv plads i højre side til procent-badge */
-  bottom: calc(56px + 10px + env(safe-area-inset-bottom)); /* lidt luft over knapperne */
+  right: 10px;
+  bottom: calc(56px + 10px + env(safe-area-inset-bottom));
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mobile-upload-info {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8eeff;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.35);
+}
+.mobile-upload-track {
+  flex: 1 1 auto;
   height: 4px;
   background: rgba(255,255,255,0.10);
   border-radius: 999px;
-  z-index: 9998;
+  overflow: hidden;
 }
-.mobile-upload-bar > span {
+#mobileUploadBarFill {
   display: block;
   height: 100%;
   width: 0%;
@@ -423,10 +435,6 @@ body.drawer-open .drawer-backdrop { display: block; }
   transition: width .2s ease;
 }
 .mobile-upload-pct {
-  position: absolute;
-  right: -44px; /* placeres lige til højre for linjen */
-  top: 50%;
-  transform: translateY(-50%);
   font-size: 12px;
   font-weight: 700;
   color: #fff;

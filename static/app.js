@@ -142,6 +142,7 @@ const els = {
   mobileUploadBar: document.getElementById("mobileUploadBar"),
   mobileUploadBarFill: document.getElementById("mobileUploadBarFill"),
   mobileUploadPct: document.getElementById("mobileUploadPct"),
+  mobileUploadInfo: document.getElementById("mobileUploadInfo"),
   mobileUploadsBtn: document.getElementById("mobileUploadsBtn"),
   mobileUploadsBadge: document.getElementById("mobileUploadsBadge"),
   profileLink: document.getElementById("profileLink"),
@@ -3105,6 +3106,10 @@ function renderUploadMonitor() {
         const activePct = isPostprocess ? stagePct : overallPct;
         els.mobileUploadBarFill.style.width = `${activePct}%`;
         if (els.mobileUploadPct) els.mobileUploadPct.textContent = `${activePct}%`;
+        if (els.mobileUploadInfo) {
+          const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
+          els.mobileUploadInfo.textContent = `${visibleProcessed}/${uploadUiState.totalFiles || 0}`;
+        }
       }
     }
     // Button visibility: show while active, then linger 10s after done
