@@ -120,7 +120,7 @@ body {
 
 /* Drawer backdrop (ensure hidden by default on all viewports) */
 .drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; pointer-events: none; }
-body.drawer-open .drawer-backdrop { display: block; }
+body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor: pointer; }
 
 .app-shell {
   min-height: 100vh;
@@ -417,13 +417,8 @@ body.drawer-open .drawer-backdrop { display: block; }
 .mobile-upload-badge {
   font-size: 12px;
   font-weight: 700;
-  color: #000; /* sort tekst i begge bobler */
-  background: rgba(91,140,255,0.25);
-  border: 1px solid rgba(91,140,255,0.45);
-  border-radius: 999px;
-  padding: 2px 6px;
+  padding: 2px 6px; /* supplerer uploader-badge */
   line-height: 1;
-  backdrop-filter: blur(2px);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -445,7 +440,8 @@ body.drawer-open .drawer-backdrop { display: block; }
 .mobile-upload-pct {
   position: absolute;
   right: 10px; /* helt ude i højre side over linjen */
-  top: -16px;  /* placer over selve processen */
+  top: 50%;
+  transform: translateY(-50%); /* samme vertikale linje som venstre boble og baren */
 }
 @media (max-width: 760px) {
   .mobile-upload-bar { display: block; }
