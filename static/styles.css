@@ -1905,9 +1905,9 @@ body.compact-settings .settings-header { display: none !important; }
   .tab-btn { flex: 0 0 auto; padding: 8px 6px; font-size: 0.9rem; white-space: nowrap; scroll-snap-align: start; display: inline-block; max-width: 100%; }
   .main, .content-header, #settingsPanel { max-width: 100vw; overflow-x: hidden; }
   .content-header { flex-wrap: wrap; }
-  /* Hide desktop tabs on mobile and show a compact selector */
-  .tabs { display: none !important; }
-  .tabs-mobile { display: block; position: sticky; top: 0; z-index: 6; margin: 0 0 8px 0; }
+  /* Mobile: keep horizontal tabs visible (scrollable), hide select */
+  .tabs { display: flex !important; }
+  .tabs-mobile { display: none; }
   .tabs-mobile select {
     width: 100%;
     appearance: none;
