@@ -2596,7 +2596,9 @@ def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Opt
             # Ignore accidental or legacy entries that grant the root 'uploads'
             # folder, which would make all subfolders visible.
             if p and p != "uploads":
-                out.append(p)
+                # Canonicalize to rel path under 'uploads/' so checks align
+                canon = p if p.startswith("uploads/") else f"uploads/{p}"
+                out.append(canon)
         return out
 
     if conn is not None:
@@ -3248,6 +3250,31 @@ def _upload_settings_payload(destination: str) -> dict:
             {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
         ],
     }
+
+
+@app.route("/api/debug/acl", methods=["GET"])
+def api_debug_acl():
+    try:
+        if not getattr(current_user, "is_admin", False):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+    except Exception:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    prefixes = _current_user_acl_prefixes()
+    try:
+        raw = _list_upload_subdirs(UPLOAD_DIR, limit=2000)
+        filtered = _filter_folders_by_current_user_acl(list(raw))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({
+        "ok": True,
+        "user": {
+            "id": int(getattr(current_user, "id", 0) or 0),
+            "is_admin": bool(getattr(current_user, "is_admin", False)),
+        },
+        "prefixes": prefixes,
+        "raw": raw,
+        "filtered": filtered,
+    })
 
 
 def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
