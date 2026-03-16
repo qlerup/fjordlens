@@ -6530,7 +6530,15 @@ if (els.mobileNavItems && els.mobileNavItems.length) {
         return;
       }
       if (action === 'uploads') {
-        showUploadMonitor();
+        ensureUploadMonitorRefs();
+        const hidden = !els.uploadMonitor || els.uploadMonitor.classList.contains('hidden');
+        if (hidden) {
+          uploadUiState.collapsed = false;
+          showUploadMonitor();
+        } else {
+          // Toggle detaljer: ét tryk minimerer/udfolder
+          els.uploadMonitor.classList.toggle('collapsed');
+        }
         return;
       }
       if (action === 'profile') {
