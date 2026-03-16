@@ -438,10 +438,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   transition: width .2s ease;
 }
 .mobile-upload-pct {
-  position: absolute;
-  right: 10px; /* helt ude i højre side over linjen */
-  top: 50%;
-  transform: translateY(-50%); /* samme vertikale linje som venstre boble og baren */
+  position: static; /* indgår i samme flex-række som antal */
+  margin-left: 10px; /* lidt luft fra linjen */
 }
 @media (max-width: 760px) {
   .mobile-upload-bar { display: block; }
