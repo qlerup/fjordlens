@@ -422,6 +422,14 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-bottom-right-radius: 999px;
   transition: width .2s ease;
 }
+.mobile-upload-pct {
+  position: absolute;
+  right: 12px;
+  top: -14px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
 @media (max-width: 760px) {
   .mobile-upload-bar { display: block; }
   .mobile-upload-bar.hidden { display: none; }
@@ -1589,7 +1597,7 @@ body.detail-open .detail-panel {
     gap: 8px;
   }
   .menu-btn { display: none !important; }
-  .mobile-bottom-nav { display: grid; }
+  .mobile-bottom-nav { display: flex; }
   .search-shell {
     flex: 0 0 42px;
     min-width: 42px;

@@ -141,8 +141,12 @@ const els = {
   mobileNavItems: document.querySelectorAll(".mobile-nav-item"),
   mobileUploadBar: document.getElementById("mobileUploadBar"),
   mobileUploadBarFill: document.getElementById("mobileUploadBarFill"),
+  mobileUploadPct: document.getElementById("mobileUploadPct"),
   mobileUploadsBtn: document.getElementById("mobileUploadsBtn"),
   mobileUploadsBadge: document.getElementById("mobileUploadsBadge"),
+  function isSmallMobile(){
+    try { return window.matchMedia && window.matchMedia('(max-width: 760px)').matches; } catch { return false; }
+  }
   profileLink: document.getElementById("profileLink"),
   profileModal: document.getElementById("profileModal"),
   profileModalClose: document.getElementById("profileModalClose"),
@@ -3070,6 +3074,7 @@ function renderUploadMonitor() {
       if (els.mobileUploadBarFill) {
         const activePct = isPostprocess ? stagePct : overallPct;
         els.mobileUploadBarFill.style.width = `${activePct}%`;
+        if (els.mobileUploadPct) els.mobileUploadPct.textContent = `${activePct}%`;
       }
     }
     // Button visibility: show while active, then linger 10s after done
@@ -3358,7 +3363,7 @@ async function resumeUploadPostprocessAfterRefresh() {
     if (!status.running) return;
 
     uploadUiState.collapsed = false;
-    showUploadMonitor();
+    if (!isSmallMobile()) showUploadMonitor();
 
     while (status && status.running && !uploadQueuePumpRunning && !isUploadRunning()) {
       const stageTotal = Number(status.stage_total || 0);
@@ -3543,7 +3548,7 @@ async function uploadFiles(fileList, options = {}) {
     els.uploadProgressText.textContent = `${queuedCount} filer i kø · ${fmtBytes(uploadUiState.totalBytes)}`;
   }
   renderUploadMonitor();
-  showUploadMonitor();
+  if (!isSmallMobile()) showUploadMonitor();
 
   const batchId = ++uploadBatchSeq;
   const batchPromise = new Promise((resolve) => {
