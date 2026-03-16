@@ -2442,7 +2442,14 @@ def _normalize_rel_path_for_acl(value: Optional[str]) -> str:
     rel = str(value or "").replace("\\", "/")
     while "//" in rel:
         rel = rel.replace("//", "/")
-    return rel.lstrip("/")
+    rel = rel.lstrip("/")
+    # Collapse framework storage roots so ACLs like 'uploads/foo' also cover
+    # photos stored in 'uploads/originals/foo' and 'uploads/converted/foo'.
+    if rel.startswith("uploads/originals/"):
+        rel = "uploads/" + rel[len("uploads/originals/"):]
+    elif rel.startswith("uploads/converted/"):
+        rel = "uploads/" + rel[len("uploads/converted/"):]
+    return rel
 
 
 def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
