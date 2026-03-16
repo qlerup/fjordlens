@@ -2991,189 +2991,22 @@ def _set_upload_subdir(destination: str, subdir: str) -> None:
 
 
 def _ensure_default_upload_subdir(destination: str, target_root: Path, current_subdir: str) -> str:
-
-
-    # --- Folder preview selections (persisted server-side) ---
-    def _normalize_folder_preview_key(value: Optional[str]) -> str:
-        """Normalize a folder key used by the Mapper view (relative path under uploads root).
-        Empty string is allowed for root; otherwise validate via upload-subdir normalizer.
-        """
-        raw = str(value or "").strip().replace("\\", "/")
-        if raw == "":
-            return ""
-        # Reuse upload subdir sanitizer (disallows '..', trims, secures parts)
-        return _normalize_upload_subdir(raw)
-
-    def _ensure_folder_previews_table() -> None:
-        try:
-            with closing(get_conn()) as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS folder_previews (
-                        folder_path TEXT PRIMARY KEY,
-                        previews_json TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    )
-                    """
-                )
-                conn.commit()
-        except Exception:
-            pass
-
-
-    @app.route("/api/folder-previews", methods=["GET"])
-    def api_folder_previews_get():
-        _ensure_folder_previews_table()
-
-        def _mapper_folder_from_rel(rel_path: str) -> str:
-            rel = str(rel_path or "").replace("\\", "/").lstrip("/")
-            base = rel
-            if rel.startswith("uploads/originals/"):
-                base = rel[len("uploads/originals/"):]
-            elif rel.startswith("uploads/converted/"):
-                base = rel[len("uploads/converted/"):]
-            elif rel.startswith("uploads/"):
-                base = rel[len("uploads/"):]
-            parent = base.rsplit("/", 1)[0] if "/" in base else ""
-            return parent
-
-        def _compute_and_store(folder_key: str) -> list[str]:
-            # Build accepted prefixes under uploads
-            f = str(folder_key or "").strip()
-            prefixes = [
-                f"uploads/{f}",
-                f"uploads/originals/{f}" if f else "uploads/originals",
-                f"uploads/converted/{f}" if f else "uploads/converted",
-            ]
-            where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
-            with closing(get_conn()) as conn:
-                rows = conn.execute(
-                    f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC",
-                    prefixes,
-                ).fetchall()
-            own: list[str] = []
-            desc: list[str] = []
-            seen: set[str] = set()
-            for r in rows:
-                try:
-                    pub = row_to_public(r)
-                    url = pub.get("thumb_url")
-                except Exception:
-                    url = None
-                if not url or url in seen:
-                    continue
-                photo_folder = _mapper_folder_from_rel(str(r["rel_path"]))
-                if photo_folder == f:
-                    own.append(url)
-                else:
-                    # Only include deeper descendants under this folder
-                    if f == "" or photo_folder.startswith(f + "/"):
-                        desc.append(url)
-                seen.add(url)
-            ordered = own + desc
-            if not ordered:
-                return []
-            pick: list[str]
-            if len(ordered) >= 4:
-                pick = ordered[:4]
-            elif len(ordered) >= 2:
-                pick = ordered[:2]
-            else:
-                pick = ordered[:1]
-            payload = json.dumps(pick, ensure_ascii=False)
-            now = now_iso()
-            with closing(get_conn()) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO folder_previews(folder_path, previews_json, updated_at)
-                    VALUES(?,?,?)
-                    ON CONFLICT(folder_path) DO UPDATE SET
-                        previews_json=excluded.previews_json,
-                        updated_at=excluded.updated_at
-                    """,
-                    (f, payload, now),
-                )
-                conn.commit()
-            return pick
-        _ensure_folder_previews_table()
-        folders_raw = str(request.args.get("folders") or "").strip()
-        if not folders_raw:
-            return jsonify({"ok": True, "items": {}})
-        keys_in = [p for p in (folders_raw.split(",") if folders_raw else [])]
-        if not keys_in:
-            return jsonify({"ok": True, "items": {}})
-        keys: list[str] = []
-        for k in keys_in:
-            try:
-                nk = _normalize_folder_preview_key(k)
-            except Exception:
-                nk = None
-            if nk is None:
-                continue
-            keys.append(nk)
-        if not keys:
-            return jsonify({"ok": True, "items": {}})
-        placeholders = ",".join(["?"] * len(keys))
-        with closing(get_conn()) as conn:
-            rows = conn.execute(
-                f"SELECT folder_path, previews_json FROM folder_previews WHERE folder_path IN ({placeholders})",
-                keys,
-            ).fetchall()
-        items: dict[str, list[str]] = {}
-        for r in rows:
-            try:
-                items[str(r[0])] = json.loads(str(r[1] or "[]")) or []
-            except Exception:
-                items[str(r[0])] = []
-        # For any requested keys without saved previews, compute and store now
-        for k in keys:
-            if k not in items or not items[k]:
-                try:
-                    items[k] = _compute_and_store(k)
-                except Exception:
-                    items[k] = items.get(k, [])
-        return jsonify({"ok": True, "items": items})
-
-
-    @app.route("/api/folder-previews", methods=["POST"])
-    def api_folder_previews_set():
-        _ensure_folder_previews_table()
-        try:
-            data = request.get_json(force=True, silent=True) or {}
-        except Exception:
-            data = {}
-        folder = _normalize_folder_preview_key(data.get("folder"))
-        previews = data.get("previews") or []
-        if folder is None:
-            return jsonify({"ok": False, "error": "invalid_folder"}), 400
-        # Accept only up to 4 URLs; lengths allowed: 1,2,4
-        urls: list[str] = []
-        for u in (previews or []):
-            s = str(u or "").strip()
-            if not s:
-                continue
-            if len(s) > 512:
-                s = s[:512]
-            urls.append(s)
-            if len(urls) >= 4:
-                break
-        if len(urls) not in {1, 2, 4}:
-            return jsonify({"ok": False, "error": "invalid_count"}), 400
-        payload = json.dumps(urls, ensure_ascii=False)
-        now = now_iso()
-        with closing(get_conn()) as conn:
-            conn.execute(
-                """
-                INSERT INTO folder_previews(folder_path, previews_json, updated_at)
-                VALUES(?,?,?)
-                ON CONFLICT(folder_path) DO UPDATE SET
-                    previews_json=excluded.previews_json,
-                    updated_at=excluded.updated_at
-                """,
-                (folder, payload, now),
-            )
-            conn.commit()
-        return jsonify({"ok": True, "folder": folder, "previews": urls, "updated_at": now})
+    if current_subdir:
+        return current_subdir
+    default_name = UPLOAD_DEFAULT_SUBDIR_BY_DEST.get(destination, "")
+    if not default_name:
+        return ""
+    try:
+        safe = _normalize_upload_subdir(default_name)
+    except Exception:
+        return ""
+    try:
+        target = target_root / safe
+        target.mkdir(parents=True, exist_ok=True)
+        _set_upload_subdir(destination, safe)
+        return safe
+    except Exception:
+        return ""
     if current_subdir:
         return current_subdir
     default_name = UPLOAD_DEFAULT_SUBDIR_BY_DEST.get(destination, "")
@@ -3250,6 +3083,190 @@ def _upload_settings_payload(destination: str) -> dict:
             {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
         ],
     }
+
+
+# --- Folder preview selections (persisted server-side) ---
+def _normalize_folder_preview_key(value: Optional[str]) -> Optional[str]:
+    """Normalize a folder key used by the Mapper view (relative path under uploads root).
+    Empty string is allowed for root; otherwise validate via upload-subdir normalizer.
+    Returns None if invalid.
+    """
+    try:
+        raw = str(value or "").strip().replace("\\", "/")
+        if raw == "":
+            return ""
+        return _normalize_upload_subdir(raw)
+    except Exception:
+        return None
+
+
+def _ensure_folder_previews_table() -> None:
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS folder_previews (
+                    folder_path TEXT PRIMARY KEY,
+                    previews_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _mapper_folder_from_rel(rel_path: str) -> str:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    base = rel
+    if rel.startswith("uploads/originals/"):
+        base = rel[len("uploads/originals/"):]
+    elif rel.startswith("uploads/converted/"):
+        base = rel[len("uploads/converted/"):]
+    elif rel.startswith("uploads/"):
+        base = rel[len("uploads/"):]
+    parent = base.rsplit("/", 1)[0] if "/" in base else ""
+    return parent
+
+
+def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
+    # Build accepted prefixes under uploads
+    f = str(folder_key or "").strip()
+    prefixes = [
+        f"uploads/{f}",
+        f"uploads/originals/{f}" if f else "uploads/originals",
+        f"uploads/converted/{f}" if f else "uploads/converted",
+    ]
+    where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC",
+            prefixes,
+        ).fetchall()
+    own: list[str] = []
+    desc: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        try:
+            pub = row_to_public(r)
+            url = pub.get("thumb_url")
+        except Exception:
+            url = None
+        if not url or url in seen:
+            continue
+        photo_folder = _mapper_folder_from_rel(str(r["rel_path"]))
+        if photo_folder == f:
+            own.append(url)
+        else:
+            if f == "" or photo_folder.startswith(f + "/"):
+                desc.append(url)
+        seen.add(url)
+    ordered = own + desc
+    if not ordered:
+        return []
+    pick: list[str]
+    if len(ordered) >= 4:
+        pick = ordered[:4]
+    elif len(ordered) >= 2:
+        pick = ordered[:2]
+    else:
+        pick = ordered[:1]
+    payload = json.dumps(pick, ensure_ascii=False)
+    now = now_iso()
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            INSERT INTO folder_previews(folder_path, previews_json, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(folder_path) DO UPDATE SET
+                previews_json=excluded.previews_json,
+                updated_at=excluded.updated_at
+            """,
+            (f, payload, now),
+        )
+        conn.commit()
+    return pick
+
+
+@app.route("/api/folder-previews", methods=["GET"])
+def api_folder_previews_get():
+    _ensure_folder_previews_table()
+    folders_raw = str(request.args.get("folders") or "").strip()
+    if not folders_raw:
+        return jsonify({"ok": True, "items": {}})
+    keys_in = [p for p in (folders_raw.split(",") if folders_raw else [])]
+    if not keys_in:
+        return jsonify({"ok": True, "items": {}})
+    keys: list[str] = []
+    for k in keys_in:
+        nk = _normalize_folder_preview_key(k)
+        if nk is None:
+            continue
+        keys.append(nk)
+    if not keys:
+        return jsonify({"ok": True, "items": {}})
+    placeholders = ",".join(["?"] * len(keys))
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT folder_path, previews_json FROM folder_previews WHERE folder_path IN ({placeholders})",
+            keys,
+        ).fetchall()
+    items: dict[str, list[str]] = {}
+    for r in rows:
+        try:
+            items[str(r[0])] = json.loads(str(r[1] or "[]")) or []
+        except Exception:
+            items[str(r[0])] = []
+    # For any requested keys without saved previews, compute and store now
+    for k in keys:
+        if k not in items or not items[k]:
+            try:
+                items[k] = _compute_and_store_folder_previews(k)
+            except Exception:
+                items[k] = items.get(k, [])
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/folder-previews", methods=["POST"])
+def api_folder_previews_set():
+    _ensure_folder_previews_table()
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        data = {}
+    folder = _normalize_folder_preview_key(data.get("folder"))
+    previews = data.get("previews") or []
+    if folder is None:
+        return jsonify({"ok": False, "error": "invalid_folder"}), 400
+    # Accept only up to 4 URLs; lengths allowed: 1,2,4
+    urls: list[str] = []
+    for u in (previews or []):
+        s = str(u or "").strip()
+        if not s:
+            continue
+        if len(s) > 512:
+            s = s[:512]
+        urls.append(s)
+        if len(urls) >= 4:
+            break
+    if len(urls) not in {1, 2, 4}:
+        return jsonify({"ok": False, "error": "invalid_count"}), 400
+    payload = json.dumps(urls, ensure_ascii=False)
+    now = now_iso()
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            INSERT INTO folder_previews(folder_path, previews_json, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(folder_path) DO UPDATE SET
+                previews_json=excluded.previews_json,
+                updated_at=excluded.updated_at
+            """,
+            (folder, payload, now),
+        )
+        conn.commit()
+    return jsonify({"ok": True, "folder": folder, "previews": urls, "updated_at": now})
 
 
 @app.route("/api/debug/acl", methods=["GET"])
