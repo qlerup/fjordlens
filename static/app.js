@@ -3074,14 +3074,17 @@ function renderUploadMonitor() {
     }
     // Button visibility: show while active, then linger 10s after done
     const showBtnNow = showMini; // active upload or postprocess
-    if (els.mobileUploadsBtn) {
+    if (els.mobileUploadsBtn && els.mobileBottomNav) {
       if (showBtnNow) {
         if (mobileUploadsHideTimer) { window.clearTimeout(mobileUploadsHideTimer); mobileUploadsHideTimer = null; }
-        els.mobileUploadsBtn.classList.remove('hidden');
+        if (els.mobileUploadsBtn.classList.contains('hidden')) { els.mobileUploadsBtn.classList.remove('hidden'); void els.mobileUploadsBtn.offsetWidth; }
+        els.mobileBottomNav.classList.add('with-uploads');
       } else {
         if (!mobileUploadsHideTimer) {
           mobileUploadsHideTimer = window.setTimeout(() => {
-            try { if (els.mobileUploadsBtn) els.mobileUploadsBtn.classList.add('hidden'); } catch {}
+            try { els.mobileBottomNav.classList.remove('with-uploads'); } catch {}
+            // After slide-out transition, fully hide to remove from a11y/tab order
+            window.setTimeout(() => { try { els.mobileUploadsBtn.classList.add('hidden'); } catch {} }, 300);
             mobileUploadsHideTimer = null;
           }, 10000);
         }

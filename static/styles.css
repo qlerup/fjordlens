@@ -354,7 +354,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   border-top: 1px solid var(--border);
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   gap: 8px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
 }
 
 .mobile-nav-item {
@@ -370,6 +370,8 @@ body.drawer-open .drawer-backdrop { display: block; }
   gap: 2px;
   padding: 6px;
   cursor: pointer;
+  flex: 1 1 0;
+  transition: flex-basis .25s ease;
 }
 
 .mobile-nav-item.active {
@@ -385,6 +387,19 @@ body.drawer-open .drawer-backdrop { display: block; }
 .mobile-nav-label {
   font-size: 0.7rem;
   line-height: 1;
+}
+
+/* Uploads button slides in/out and participates in flex sizing */
+#mobileUploadsBtn {
+  flex: 0 0 0;
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform .26s cubic-bezier(.22,1,.36,1), opacity .2s ease, flex-basis .25s ease;
+}
+.mobile-bottom-nav.with-uploads #mobileUploadsBtn {
+  flex: 1 1 0;
+  transform: translateX(0);
+  opacity: 1;
 }
 
 /* Mobile: global upload bar just above nav */
