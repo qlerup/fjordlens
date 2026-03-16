@@ -139,6 +139,10 @@ const els = {
   drawerBackdrop: document.getElementById("drawerBackdrop"),
   mobileBottomNav: document.getElementById("mobileBottomNav"),
   mobileNavItems: document.querySelectorAll(".mobile-nav-item"),
+  mobileUploadBar: document.getElementById("mobileUploadBar"),
+  mobileUploadBarFill: document.getElementById("mobileUploadBarFill"),
+  mobileUploadsBtn: document.getElementById("mobileUploadsBtn"),
+  mobileUploadsBadge: document.getElementById("mobileUploadsBadge"),
   profileLink: document.getElementById("profileLink"),
   profileModal: document.getElementById("profileModal"),
   profileModalClose: document.getElementById("profileModalClose"),
@@ -3055,6 +3059,28 @@ function renderUploadMonitor() {
       if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
     }
   }
+
+  // Update compact mobile status bar and badge
+  try {
+    const remaining = Math.max(0, Number(uploadUiState.totalFiles || 0) - Number(uploadUiState.processedFiles || 0));
+    const showMini = (isUploadRunning() || isPostprocess || remaining > 0);
+    if (els.mobileUploadBar) {
+      els.mobileUploadBar.classList.toggle('hidden', !showMini);
+      if (els.mobileUploadBarFill) {
+        const activePct = isPostprocess ? stagePct : overallPct;
+        els.mobileUploadBarFill.style.width = `${activePct}%`;
+      }
+    }
+    if (els.mobileUploadsBadge) {
+      if (remaining > 0) {
+        els.mobileUploadsBadge.textContent = String(remaining);
+        els.mobileUploadsBadge.classList.remove('hidden');
+      } else {
+        els.mobileUploadsBadge.classList.add('hidden');
+        els.mobileUploadsBadge.textContent = '0';
+      }
+    }
+  } catch {}
 
   if (!els.uploadMonitor) return;
   setUploadStopButtonState();
@@ -6446,6 +6472,10 @@ if (els.mobileNavItems && els.mobileNavItems.length) {
       if (action === 'navigate') {
         if (document.body.classList.contains('drawer-open')) closeDrawer();
         else openDrawer();
+        return;
+      }
+      if (action === 'uploads') {
+        showUploadMonitor();
         return;
       }
       if (action === 'profile') {

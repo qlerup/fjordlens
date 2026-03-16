@@ -446,6 +446,7 @@
     </aside>
   </div>
 
+  <div id="mobileUploadBar" class="mobile-upload-bar hidden" aria-hidden="true"><span id="mobileUploadBarFill"></span></div>
   <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Mobil menu">
     <button class="mobile-nav-item" data-mobile-action="navigate" type="button" aria-label="Åbn navigation">
       <span class="mobile-nav-icon" aria-hidden="true">☰</span>
@@ -462,6 +463,11 @@
     <button class="mobile-nav-item" data-mobile-action="view" data-view="settings" type="button" aria-label="Vis indstillinger">
       <span class="mobile-nav-icon" aria-hidden="true">⚙️</span>
       <span class="mobile-nav-label">Indstillinger</span>
+    </button>
+    <button id="mobileUploadsBtn" class="mobile-nav-item" data-mobile-action="uploads" type="button" aria-label="Vis uploads">
+      <span class="mobile-nav-icon" aria-hidden="true">⬆️</span>
+      <span class="mobile-nav-label">Uploads</span>
+      <span id="mobileUploadsBadge" class="nav-badge hidden">0</span>
     </button>
   </nav>
 
