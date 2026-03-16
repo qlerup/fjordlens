@@ -7580,32 +7580,45 @@ async function renderUsersPanel(){
         : `<button data-acl="${u.id}" class="btn small">Mapper</button>`;
       return `
       <tr>
-        <td class="muted">#${u.id}</td>
-        <td><strong>${u.username}</strong></td>
-        <td>${u.role}</td>
-        <td>${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
-        <td>${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
-        <td style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
+        <td class="col-id muted">#${u.id}</td>
+        <td class="col-user"><strong>${u.username}</strong></td>
+        <td class="col-role">${u.role}</td>
+        <td class="col-lang">${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
+        <td class="col-2fa">${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
+        <td class="col-actions" style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
           ${aclButton}
-          <button data-edit="${u.id}" class="btn small">Rediger</button>
+          <button data-edit="${u.id}" class="btn small" aria-label="Rediger bruger">Rediger</button>
           <button data-del="${u.id}" class="btn danger small">Slet</button>
         </td>
       </tr>`;
     }).join('');
-    const auditRows = loginAudit.map((entry) => {
+    // Build compact, paginated login log (4 per page) with expandable details
+    const LOG_PAGE_SIZE = 4;
+    const curPageInput = parseInt(window.usersLogPage || '1', 10);
+    const pageSafe = isNaN(curPageInput) ? 1 : Math.max(1, curPageInput);
+    const totalPages = Math.max(1, Math.ceil((loginAudit.length || 0) / LOG_PAGE_SIZE));
+    const curPage = Math.min(pageSafe, totalPages);
+    if (curPage !== pageSafe) window.usersLogPage = curPage;
+    const start = (curPage - 1) * LOG_PAGE_SIZE;
+    const pageItems = (loginAudit || []).slice(start, start + LOG_PAGE_SIZE);
+    const auditRows = pageItems.map((entry, idx) => {
       const status = entry && entry.success ? tr('users_login_status_ok') : tr('users_login_status_fail');
       const statusClass = entry && entry.success ? 'ok' : 'err';
       const userTxt = (entry && entry.username) || (entry && entry.username_input) || tr('users_login_unknown');
       const reasonTxt = (entry && entry.reason) || (entry && entry.event_type) || '—';
+      const targetId = `log_${start + idx}`;
       return `
       <tr>
-        <td>${escapeHtml(fmtDate(entry && entry.at))}</td>
-        <td>${escapeHtml(userTxt)}</td>
-        <td><span class="upload-monitor-item-status ${statusClass}">${escapeHtml(status)}</span></td>
-        <td>${escapeHtml(reasonTxt)}</td>
-        <td>${escapeHtml((entry && entry.ip) || '—')}</td>
-        <td>${escapeHtml((entry && entry.country) || '—')}</td>
-        <td>${escapeHtml((entry && entry.device) || '—')}</td>
+        <td class="col-time">${escapeHtml(fmtDate(entry && entry.at))}</td>
+        <td class="col-user">${escapeHtml(userTxt)}</td>
+        <td class="col-status"><span class="upload-monitor-item-status ${statusClass}">${escapeHtml(status)}</span></td>
+        <td class="col-action" style="text-align:right;"><button class="btn small log-toggle" data-target="${targetId}">Vis mere</button></td>
+      </tr>
+      <tr class="log-details hidden" id="${targetId}">
+        <td colspan="4">
+          <div class="mini-label">Begrundelse: ${escapeHtml(reasonTxt)}</div>
+          <div class="mini-label">IP: ${escapeHtml((entry && entry.ip) || '—')} · Land: ${escapeHtml((entry && entry.country) || '—')} · Enhed: ${escapeHtml((entry && entry.device) || '—')}</div>
+        </td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `
@@ -7617,18 +7630,23 @@ async function renderUsersPanel(){
       </div>
       <div class="data-table" style="margin-bottom:12px;">
         <table>
-          <thead><tr><th>${escapeHtml(tr('users_col_id'))}</th><th>${escapeHtml(tr('users_col_username'))}</th><th>${escapeHtml(tr('users_col_role'))}</th><th>${escapeHtml(tr('users_col_language'))}</th><th>${escapeHtml(tr('users_col_2fa'))}</th><th></th></tr></thead>
+          <thead><tr><th class="col-id">${escapeHtml(tr('users_col_id'))}</th><th class="col-user">${escapeHtml(tr('users_col_username'))}</th><th class="col-role">${escapeHtml(tr('users_col_role'))}</th><th class="col-lang">${escapeHtml(tr('users_col_language'))}</th><th class="col-2fa">${escapeHtml(tr('users_col_2fa'))}</th><th class="col-actions"></th></tr></thead>
           <tbody>${rows || `<tr><td colspan=6 class="muted">${escapeHtml(tr('users_no_users'))}</td></tr>`}</tbody>
         </table>
       </div>
       <div class="panel" style="margin-bottom:8px;">
         <div class="toolbar"><strong>${escapeHtml(tr('users_login_log_title'))}</strong></div>
       </div>
-      <div class="data-table" style="margin-bottom:12px;">
+      <div class="data-table" style="margin-bottom:8px;">
         <table>
-          <thead><tr><th>${escapeHtml(tr('users_login_col_time'))}</th><th>${escapeHtml(tr('users_login_col_user'))}</th><th>${escapeHtml(tr('users_login_col_status'))}</th><th>${escapeHtml(tr('users_login_col_reason'))}</th><th>${escapeHtml(tr('users_login_col_ip'))}</th><th>${escapeHtml(tr('users_login_col_country'))}</th><th>${escapeHtml(tr('users_login_col_device'))}</th></tr></thead>
-          <tbody>${auditRows || `<tr><td colspan=7 class="muted">${escapeHtml(tr('users_login_log_empty'))}</td></tr>`}</tbody>
+          <thead><tr><th>${escapeHtml(tr('users_login_col_time'))}</th><th>${escapeHtml(tr('users_login_col_user'))}</th><th>${escapeHtml(tr('users_login_col_status'))}</th><th></th></tr></thead>
+          <tbody>${auditRows || `<tr><td colspan=4 class="muted">${escapeHtml(tr('users_login_log_empty'))}</td></tr>`}</tbody>
         </table>
+      </div>
+      <div class="pager" id="loginLogPager" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin:6px 0 12px;">
+        <button id="log_prev" class="btn small" ${(typeof totalPages!=='undefined' && totalPages>1 && window.usersLogPage>1)?'':'disabled'}>Forrige</button>
+        <span class="mini-label">Side <strong>${(typeof totalPages!=='undefined') ? Math.min(window.usersLogPage||1,totalPages) : 1}</strong> / ${(typeof totalPages!=='undefined') ? totalPages : 1}</span>
+        <button id="log_next" class="btn small" ${(typeof totalPages!=='undefined' && (window.usersLogPage||1) < totalPages)?'':'disabled'}>Næste</button>
       </div>
       <!-- Create user modal -->
       <div id="nu_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
@@ -7699,9 +7717,12 @@ async function renderUsersPanel(){
               <option value="en">English</option>
             </select>
           </div>
-          <div class="actions" style="justify-content:flex-end;">
-            <button id="eu_cancel" class="btn">Annuller</button>
-            <button id="eu_save" class="btn primary">Gem</button>
+          <div class="actions" style="justify-content:space-between;gap:8px;">
+            <button id="eu_delete" class="btn danger">Slet bruger</button>
+            <div style="display:flex;gap:8px;">
+              <button id="eu_cancel" class="btn">Annuller</button>
+              <button id="eu_save" class="btn primary">Gem</button>
+            </div>
           </div>
         </div>
       </div>
@@ -8021,6 +8042,7 @@ async function renderUsersPanel(){
     editModal && editModal.addEventListener('click', (e)=>{ if(e.target === editModal) closeEdit(); });
 
     const editSaveBtn = document.getElementById('eu_save');
+    const editDeleteBtn = document.getElementById('eu_delete');
     if (editSaveBtn) {
       editSaveBtn.addEventListener('click', async () => {
         await withBtnLoading(editSaveBtn, async () => {
@@ -8042,6 +8064,48 @@ async function renderUsersPanel(){
         });
       });
     }
+
+    if (editDeleteBtn) {
+      editDeleteBtn.addEventListener('click', async () => {
+        if (!editingUserId) return;
+        if (!confirm(`${tr('users_confirm_delete')} #${editingUserId}?`)) return;
+        await withBtnLoading(editDeleteBtn, async () => {
+          const rr = await fetch('/api/admin/users/' + editingUserId, { method:'DELETE' });
+          const jj = await rr.json();
+          if (!rr.ok || !jj.ok) { showStatus(`${tr('users_status_delete_failed')} ${((jj && jj.error) || '')}`.trim(), 'err'); return; }
+          showStatus(tr('users_status_deleted'), 'ok');
+          closeEdit();
+          renderUsersPanel();
+        });
+      });
+    }
+
+    // Expand/collapse login log details
+    wrap.querySelectorAll('.log-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-target');
+        const row = document.getElementById(id);
+        if (!row) return;
+        const hidden = row.classList.toggle('hidden');
+        btn.textContent = hidden ? 'Vis mere' : 'Skjul';
+      });
+    });
+    // Pager handlers
+    const prevBtn = document.getElementById('log_prev');
+    const nextBtn = document.getElementById('log_next');
+    prevBtn && prevBtn.addEventListener('click', () => {
+      const p = parseInt(window.usersLogPage || '1', 10) || 1;
+      if (p <= 1) return;
+      window.usersLogPage = p - 1;
+      renderUsersPanel();
+    });
+    nextBtn && nextBtn.addEventListener('click', () => {
+      const p = parseInt(window.usersLogPage || '1', 10) || 1;
+      const total = Math.max(1, Math.ceil(((Array.isArray(loginAudit)?loginAudit.length:0)) / 4));
+      if (p >= total) return;
+      window.usersLogPage = p + 1;
+      renderUsersPanel();
+    });
 
     // small helper for button loading states
     const withBtnLoading = async (btn, fn) => {

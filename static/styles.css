@@ -1946,6 +1946,33 @@ body.compact-settings .settings-header { display: none !important; }
   .form-row { gap: 6px; margin-bottom: 8px; }
 }
 
+/* Users panel: mobile condensed table */
+@media (max-width: 760px) {
+  #usersPanelInner .data-table th.col-id,
+  #usersPanelInner .data-table td.col-id,
+  #usersPanelInner .data-table th.col-lang,
+  #usersPanelInner .data-table td.col-lang {
+    display: none;
+  }
+  #usersPanelInner .data-table td.col-actions .btn[data-acl],
+  #usersPanelInner .data-table td.col-actions .btn.danger {
+    display: none;
+  }
+  #usersPanelInner .data-table td.col-actions .btn[data-edit] {
+    display: inline-block;
+  }
+  #usersPanelInner .data-table td.col-user strong { font-weight: 700; }
+}
+
+/* Login log: details row visibility */
+.log-details.hidden { display: none; }
+.log-details td { background: var(--panel-2); }
+@media (max-width: 760px) {
+  #usersPanelInner .data-table thead th.col-time,
+  #usersPanelInner .data-table thead th.col-user,
+  #usersPanelInner .data-table thead th.col-status { white-space: nowrap; }
+}
+
 /* Panels and data tables */
 .panel { border:1px solid var(--border); background: var(--panel); border-radius:12px; padding:12px; }
 .data-table { border:1px solid var(--border); background: var(--panel); border-radius:12px; overflow:hidden; }
