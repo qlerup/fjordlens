@@ -2538,6 +2538,10 @@ def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: l
         # Ensure all ancestors are at least 'view' to allow navigating to this folder
         parent = path.rsplit("/", 1)[0] if "/" in path else ""
         while parent:
+            # Do NOT seed the absolute root 'uploads' with view, as that
+            # would unintentionally grant access to all sibling folders.
+            if parent == "uploads":
+                break
             if parent not in perm_map:
                 perm_map[parent] = "view"
             parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
@@ -2589,7 +2593,9 @@ def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Opt
         out: list[str] = []
         for it in items:
             p = _normalize_folder_acl_path((it or {}).get("folder_path")) if isinstance(it, dict) else _normalize_folder_acl_path(it)
-            if p:
+            # Ignore accidental or legacy entries that grant the root 'uploads'
+            # folder, which would make all subfolders visible.
+            if p and p != "uploads":
                 out.append(p)
         return out
 
