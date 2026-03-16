@@ -434,6 +434,12 @@ body.drawer-open .drawer-backdrop { display: block; }
   .mobile-upload-bar.hidden { display: none; }
 }
 
+/* Ensure mobile-only UI never shows on desktop widths */
+@media (min-width: 761px) {
+  .mobile-bottom-nav { display: none !important; }
+  #mobileUploadBar { display: none !important; }
+}
+
 /* Mobile nav badge for uploads counter */
 .mobile-nav-item { position: relative; }
 .nav-badge {
