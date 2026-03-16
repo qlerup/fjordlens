@@ -144,9 +144,6 @@ const els = {
   mobileUploadPct: document.getElementById("mobileUploadPct"),
   mobileUploadsBtn: document.getElementById("mobileUploadsBtn"),
   mobileUploadsBadge: document.getElementById("mobileUploadsBadge"),
-  function isSmallMobile(){
-    try { return window.matchMedia && window.matchMedia('(max-width: 760px)').matches; } catch { return false; }
-  }
   profileLink: document.getElementById("profileLink"),
   profileModal: document.getElementById("profileModal"),
   profileModalClose: document.getElementById("profileModalClose"),
@@ -228,6 +225,14 @@ const els = {
   uploadTopStatusLabel: document.getElementById("uploadTopStatusLabel"),
   uploadTopStatusBar: document.getElementById("uploadTopStatusBar"),
 };
+
+function isSmallMobile() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+  } catch (e) {
+    return false;
+  }
+}
 
 function ensureUploadOverlayRefs() {
   if (!els.uploadOverlay) els.uploadOverlay = document.getElementById("uploadOverlay");
