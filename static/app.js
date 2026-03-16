@@ -2764,6 +2764,7 @@ const uploadUiState = {
 
 let uploadOverlayHideTimer = null;
 let uploadMonitorHideTimer = null;
+let mobileUploadsHideTimer = null;
 
 function scheduleUploadMonitorAutoHide(delayMs = 10000) {
   try {
@@ -3071,9 +3072,25 @@ function renderUploadMonitor() {
         els.mobileUploadBarFill.style.width = `${activePct}%`;
       }
     }
+    // Button visibility: show while active, then linger 10s after done
+    const showBtnNow = showMini; // active upload or postprocess
+    if (els.mobileUploadsBtn) {
+      if (showBtnNow) {
+        if (mobileUploadsHideTimer) { window.clearTimeout(mobileUploadsHideTimer); mobileUploadsHideTimer = null; }
+        els.mobileUploadsBtn.classList.remove('hidden');
+      } else {
+        if (!mobileUploadsHideTimer) {
+          mobileUploadsHideTimer = window.setTimeout(() => {
+            try { if (els.mobileUploadsBtn) els.mobileUploadsBtn.classList.add('hidden'); } catch {}
+            mobileUploadsHideTimer = null;
+          }, 10000);
+        }
+      }
+    }
     if (els.mobileUploadsBadge) {
-      if (remaining > 0) {
-        els.mobileUploadsBadge.textContent = String(remaining);
+      const badgeCount = Math.max(0, remaining);
+      if (badgeCount > 0) {
+        els.mobileUploadsBadge.textContent = String(badgeCount);
         els.mobileUploadsBadge.classList.remove('hidden');
       } else {
         els.mobileUploadsBadge.classList.add('hidden');
