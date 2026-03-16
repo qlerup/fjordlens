@@ -413,11 +413,18 @@ body.drawer-open .drawer-backdrop { display: block; }
   align-items: center;
   gap: 10px;
 }
-.mobile-upload-info {
+.mobile-upload-badge {
   font-size: 12px;
-  font-weight: 600;
-  color: #e8eeff;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.35);
+  font-weight: 700;
+  color: #fff;
+  background: rgba(91,140,255,0.25);
+  border: 1px solid rgba(91,140,255,0.45);
+  border-radius: 999px;
+  padding: 2px 6px;
+  line-height: 1;
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  white-space: nowrap;
 }
 .mobile-upload-track {
   flex: 1 1 auto;
@@ -433,17 +440,6 @@ body.drawer-open .drawer-backdrop { display: block; }
   background: var(--accent);
   border-radius: 999px;
   transition: width .2s ease;
-}
-.mobile-upload-pct {
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  background: rgba(91,140,255,0.25);
-  border: 1px solid rgba(91,140,255,0.45);
-  border-radius: 999px;
-  padding: 2px 6px;
-  backdrop-filter: blur(2px);
-  pointer-events: none;
 }
 @media (max-width: 760px) {
   .mobile-upload-bar { display: block; }
