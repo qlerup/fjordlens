@@ -2705,8 +2705,21 @@ async function loadPhotos() {
   });
 
   const res = await fetch(`/api/photos?${qs.toString()}`);
-  const data = await res.json();
-  state.items = data.items || [];
+  let data;
+  try {
+    const ct = String(res.headers.get('content-type') || '');
+    data = ct.includes('application/json') ? await res.json() : null;
+  } catch (_) {
+    data = null;
+  }
+  if (!data) {
+    const text = await res.text().catch(()=> '');
+    console.warn('photos non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
+    showStatus('Kunne ikke hente billeder (server svarede ikke med JSON).', 'err');
+    state.items = [];
+  } else {
+    state.items = data.items || [];
+  }
 
   const labels = navLabels();
   const [title, subtitle] = labels[state.view] || ["FjordLens", ""];
@@ -2754,7 +2767,19 @@ async function fetchUploadDestinationConfig(destination = null) {
   let url = '/api/settings/upload-destination';
   if (destination) url += `?destination=${encodeURIComponent(destination)}`;
   const res = await fetch(url);
-  const data = await res.json();
+  let data;
+  try {
+    const ct = String(res.headers.get('content-type') || '');
+    data = ct.includes('application/json') ? await res.json() : null;
+  } catch (_) {
+    data = null;
+  }
+  if (!data) {
+    // Fald tilbage: undgå at crashe hvis backend sender HTML (fx login/fejlside)
+    const text = await res.text().catch(()=> '');
+    console.warn('upload-destination non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
+    data = { ok: false, error: 'invalid_json', note: 'non-json', status: res.status };
+  }
   return { res, data };
 }
 
