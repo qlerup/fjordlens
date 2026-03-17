@@ -1203,17 +1203,18 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   position: absolute;
   top: 8px;
   left: 8px;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: rgba(15, 17, 21, 0.78);
   color: var(--text);
   display: grid;
   place-items: center;
-  font-size: 0.82rem;
+  font-size: 1rem;
   font-weight: 700;
   pointer-events: none;
+  z-index: 5;
   transform: scale(0.92);
   transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
 }
