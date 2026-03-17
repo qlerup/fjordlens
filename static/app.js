@@ -339,7 +339,7 @@ function systemPrefersDark(){ try { return window.matchMedia && window.matchMedi
 function themeColors(){
   return {
     dark: '#0f1115',
-    light: '#f6f8ff',
+    light: '#f5f6f8',
   };
 }
 function applyTheme(mode){
