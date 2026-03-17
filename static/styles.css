@@ -1,6 +1,8 @@
 :root {
   --folder-overlay-h: 44px; /* fixed title bar height for folder tiles */
   --folder-tile: 230px;     /* fixed width/height for folder thumbnails */
+  /* Let native controls adapt when theme switches */
+  color-scheme: dark light;
 }
 /* Info icon overlay for photo cards */
 .info-icon-overlay {
@@ -26,6 +28,7 @@
   height: 20px;
   display: block;
 }
+/* Default = Dark theme variables */
 :root {
   --bg: #0f1115;
   --panel: #171a21;
@@ -38,6 +41,43 @@
   --accent-2: #7aa2ff;
   --danger: #ff6b6b;
   --ok: #34d399;
+}
+/* Light theme variables (forced) */
+:root[data-theme="light"] {
+  --bg: #f6f8ff;
+  --panel: #ffffff;
+  --panel-2: #f3f5fb;
+  --panel-3: #e9eef9;
+  --border: #d6dcee;
+  --text: #0d1016;
+  --muted: #596379;
+  --accent: #345dff;
+  --accent-2: #5b8cff;
+  --danger: #d91f4b;
+  --ok: #059669;
+  color-scheme: light;
+}
+/* Dark theme variables (forced) */
+:root[data-theme="dark"] {
+  /* same as defaults, but ensures correct color-scheme */
+  color-scheme: dark;
+}
+/* System preference: apply light vars when system is light and no dark override */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8ff;
+    --panel: #ffffff;
+    --panel-2: #f3f5fb;
+    --panel-3: #e9eef9;
+    --border: #d6dcee;
+    --text: #0d1016;
+    --muted: #596379;
+    --accent: #345dff;
+    --accent-2: #5b8cff;
+    --danger: #d91f4b;
+    --ok: #059669;
+    color-scheme: light;
+  }
 }
 
 * { box-sizing: border-box; }
