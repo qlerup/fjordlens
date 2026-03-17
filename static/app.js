@@ -1608,9 +1608,10 @@ function getSizeLabel(w, h) {
 function cardHTML(item) {
   const extRaw = String((item && (item.ext || item.filename || item.rel_path)) || '').toLowerCase();
   const isGif = extRaw.endsWith('.gif');
+  const selectBadge = `<span class="photo-select-badge">✓</span>`;
   const thumb = item.thumb_url
-    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt=""></div>`
-    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}</div>`;
+    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt="">${selectBadge}</div>`
+    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}${selectBadge}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
     : "";

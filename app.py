@@ -106,6 +106,17 @@ TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
         "error_prefix": "Error:",
     },
 }
+
+# Backwards-compat: ensure optional user columns exist
+def _ensure_users_theme_mode_column(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN theme_mode TEXT DEFAULT 'system'")
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
     UPLOAD_DEST_UPLOADS: "",
     UPLOAD_DEST_LIBRARY: "Photos",
@@ -390,18 +401,17 @@ def _get_secret_key() -> bytes:
         try:
             return env_key.encode("utf-8")
         except Exception:
-            pass
-    key_file = DATA_DIR / "secret.key"
+            return b"fjordlens-dev-secret-key"
+    # Persist a random key under DATA_DIR so all workers share the same secret
     try:
+        key_file = DATA_DIR / "secret.key"
         if key_file.exists():
             return key_file.read_bytes().strip()
-        # First run: create a persistent key so multiple workers share it
         key_file.parent.mkdir(parents=True, exist_ok=True)
         key = os.urandom(32)
         key_file.write_bytes(key)
         return key
     except Exception:
-        # Last-resort deterministic fallback to avoid per-process randomness
         return b"fjordlens-dev-secret-key"
 
 
@@ -9239,10 +9249,20 @@ def api_admin_user_folders(uid: int):
 def api_me():
     try:
         with closing(get_conn()) as conn:
-            row = conn.execute(
-                "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
-                (current_user.id,),
-            ).fetchone()
+            try:
+                row = conn.execute(
+                    "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
+                    (current_user.id,),
+                ).fetchone()
+            except sqlite3.OperationalError as e:
+                if 'no such column' in str(e).lower() and 'theme_mode' in str(e).lower():
+                    _ensure_users_theme_mode_column(conn)
+                    row = conn.execute(
+                        "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                        (current_user.id,),
+                    ).fetchone()
+                else:
+                    raise
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         return jsonify(
@@ -9254,7 +9274,7 @@ def api_me():
                     "role": (row["role"] or "user"),
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
-                    "theme_mode": (str((row["theme_mode"] or "system")).lower()),
+                    "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),
                 },
             }
         )
@@ -9270,30 +9290,56 @@ def api_me_profile():
     new_password = data.get("password") or ""
     ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
     search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+    theme_mode = str((data.get("theme_mode") or "system")).lower()
+    if theme_mode not in ("system", "light", "dark"):
+        theme_mode = "system"
 
     if not new_username:
         return jsonify({"ok": False, "error": "username_required"}), 400
 
     try:
         with closing(get_conn()) as conn:
-            if new_password:
-                conn.execute(
-                    "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
-                    (
-                        new_username,
-                        generate_password_hash(new_password),
-                        ui_language,
-                        search_language,
-                        theme_mode,
-                        current_user.id,
-                    ),
-                )
-            else:
-                conn.execute(
-                    "UPDATE users SET username=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
-                    (new_username, ui_language, search_language, theme_mode, current_user.id),
-                )
-            conn.commit()
+            try:
+                if new_password:
+                    conn.execute(
+                        "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
+                        (
+                            new_username,
+                            generate_password_hash(new_password),
+                            ui_language,
+                            search_language,
+                            theme_mode,
+                            current_user.id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE users SET username=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
+                        (new_username, ui_language, search_language, theme_mode, current_user.id),
+                    )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                if 'no such column' in str(e).lower() and 'theme_mode' in str(e).lower():
+                    _ensure_users_theme_mode_column(conn)
+                    if new_password:
+                        conn.execute(
+                            "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=? WHERE id=?",
+                            (
+                                new_username,
+                                generate_password_hash(new_password),
+                                ui_language,
+                                search_language,
+                                current_user.id,
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE users SET username=?, ui_language=?, search_language=? WHERE id=?",
+                            (new_username, ui_language, search_language, current_user.id),
+                        )
+                    conn.commit()
+                else:
+                    raise
 
         try:
             current_user.username = new_username

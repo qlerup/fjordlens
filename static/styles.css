@@ -1052,6 +1052,45 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.15);
 }
+.photo-select-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(15,17,21,0.78);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease, opacity .12s ease, box-shadow .18s ease;
+}
+.photo-card.active .photo-select-badge,
+.photo-card.selected .photo-select-badge {
+  opacity: 1;
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 3px rgba(91,140,255,0.20);
+  animation: selectPop .28s cubic-bezier(.2,.9,.2,1.1) both;
+}
+.photo-card.active .photo-select-badge::after,
+.photo-card.selected .photo-select-badge::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: selectRing .5s ease-out .06s both;
+}
 .card-thumb {
   background: #1b1f29;
   aspect-ratio: 1 / 1; /* more square thumbs */
