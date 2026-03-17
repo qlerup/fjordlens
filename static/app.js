@@ -2156,6 +2156,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
   card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
+  try { card.setAttribute('data-folder', folder); } catch {}
   // Randomize and select unique preview URLs (prefer folder's own items; arr includes subtree)
   const shuffled = (list) => {
     const a = list.slice();
@@ -4396,10 +4397,26 @@ function setMapperEditMode(enabled) {
 
 function toggleMapperFolderSelection(folderPath) {
   if (!state.mapperSelectedFolders) state.mapperSelectedFolders = new Set();
-  if (state.mapperSelectedFolders.has(folderPath)) state.mapperSelectedFolders.delete(folderPath);
-  else state.mapperSelectedFolders.add(folderPath);
-  renderMapperContext(state.mapperPath || '');
-  if (state.view === 'mapper') renderGrid();
+  const wasSelected = state.mapperSelectedFolders.has(folderPath);
+  if (wasSelected) state.mapperSelectedFolders.delete(folderPath); else state.mapperSelectedFolders.add(folderPath);
+  // Update only the affected card in DOM to avoid grid re-render/flicker
+  try {
+    const sel = `.folder-card[data-folder="${CSS.escape(folderPath)}"]`;
+    const card = document.querySelector(sel);
+    if (card) {
+      card.classList.toggle('selected', !wasSelected);
+      let badge = card.querySelector('.folder-select-badge');
+      if (!badge) {
+        const thumb = card.querySelector('.card-thumb');
+        badge = document.createElement('span');
+        badge.className = 'folder-select-badge';
+        if (thumb) thumb.appendChild(badge);
+      }
+      if (badge) badge.textContent = !wasSelected ? '✓' : '';
+    }
+  } catch {}
+  // Update header/context counters, but do not re-render grid
+  try { renderMapperContext(state.mapperPath || ''); } catch {}
 }
 
 async function deleteSelectedMapperFolders() {
