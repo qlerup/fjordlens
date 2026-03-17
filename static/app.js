@@ -5935,16 +5935,18 @@ if (els.mapperEditBtn) {
     if (Date.now() - _menuOpenedByTouchAt < 500) return;
     toggleMapperHeaderMenu();
   });
-  // Improve mobile tap support: open on touch/pointer without toggling twice
+  // Improve mobile tap support: open on touch without toggling twice
   els.mapperEditBtn.addEventListener('touchstart', (e) => {
     try { e.preventDefault(); e.stopPropagation(); } catch {}
     openMapperHeaderMenu();
     _menuOpenedByTouchAt = Date.now();
   }, { passive: false });
+  // Do not react on mouse pointerdown; rely on normal click to toggle
   els.mapperEditBtn.addEventListener('pointerdown', (e) => {
+    if (!e || e.pointerType !== 'touch') return;
     try { e.preventDefault(); e.stopPropagation(); } catch {}
     openMapperHeaderMenu();
-    if (e && e.pointerType === 'touch') _menuOpenedByTouchAt = Date.now();
+    _menuOpenedByTouchAt = Date.now();
   }, { passive: false });
 }
 // Prevent outside-click handler from immediately closing when interacting inside the menu

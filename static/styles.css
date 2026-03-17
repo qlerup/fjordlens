@@ -1175,6 +1175,34 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   font-size: 0.82rem;
   font-weight: 700;
   pointer-events: none;
+  transform: scale(0.92);
+  transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
+}
+.folder-card.selected .folder-select-badge {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 3px rgba(91,140,255,0.20);
+  animation: selectPop .28s cubic-bezier(.2,.9,.2,1.1) both;
+}
+.folder-card.selected .folder-select-badge::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: selectRing .5s ease-out .06s both;
+}
+@keyframes selectPop {
+  0%   { transform: scale(0.6); opacity: .25; }
+  60%  { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1.06); }
+}
+@keyframes selectRing {
+  0%   { transform: scale(0.85); opacity: .55; }
+  100% { transform: scale(1.35); opacity: 0; }
 }
 .card-thumb.placeholder {
   background: linear-gradient(135deg, #33415c, #1f2a3d);
