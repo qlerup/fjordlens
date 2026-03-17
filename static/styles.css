@@ -499,6 +499,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   position: relative;
   align-items: center;
   gap: 8px;
+  /* Keep search field and menu on the right side */
+  margin-left: auto;
 }
 .upload-top-status {
   min-width: 240px;
@@ -1191,6 +1193,17 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+}
+
+/* In the fixed mobile upload bar, badges should not be absolutely positioned.
+   Ensure left count stays on the left and percentage on the right. */
+.mobile-upload-bar .uploader-badge {
+  position: static;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  max-width: none;
 }
 
 .dns-share-actions {
