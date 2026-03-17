@@ -759,6 +759,12 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   padding: 10px 12px;
   cursor: pointer;
 }
+
+/* Light theme: make sidebar a touch darker than content for contrast */
+:root[data-theme="light"] .sidebar { background: #e6eaf2; }
+:root[data-theme="light"] .sidebar-card { background: #e1e6ef; }
+:root[data-theme="light"] .nav-item:hover { background: rgba(0,0,0,0.04); }
+:root[data-theme="light"] .sidebar .mapper-tree-caret:hover { background: rgba(0,0,0,0.06); }
 .btn.small { padding: 6px 10px; font-size: 0.9rem; }
 .btn:hover { filter: brightness(1.08); }
 .btn.primary {

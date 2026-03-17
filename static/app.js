@@ -361,7 +361,9 @@ function applyTheme(mode){
 function initThemeControls(){
   // Apply saved preference immediately
   let saved = 'system';
-  try { saved = localStorage.getItem(THEME_STORE_KEY) || 'system'; } catch {}
+  try {
+    saved = (window.APP_PROFILE && typeof window.APP_PROFILE === 'object' && window.APP_PROFILE.theme_mode) || localStorage.getItem(THEME_STORE_KEY) || 'system';
+  } catch {}
   applyTheme(saved);
   // Listen for system changes only when in system mode
   try {
@@ -577,6 +579,10 @@ const I18N = {
     profile_password_unchanged_placeholder: 'Tom = uændret',
     profile_ui_lang: 'UI-sprog',
     profile_search_lang: 'Søgesprog',
+    profile_theme: 'Tema',
+    theme_auto: 'Auto',
+    theme_light: 'Lys',
+    theme_dark: 'Mørk',
     profile_save: 'Gem profil',
     profile_saved: 'Profil opdateret',
     status_errors_label: 'fejl',
@@ -959,6 +965,10 @@ const I18N = {
     profile_password_unchanged_placeholder: 'Empty = unchanged',
     profile_ui_lang: 'UI language',
     profile_search_lang: 'Search language',
+    profile_theme: 'Theme',
+    theme_auto: 'Auto',
+    theme_light: 'Light',
+    theme_dark: 'Dark',
     profile_save: 'Save profile',
     profile_saved: 'Profile updated',
     status_errors_label: 'failures',
@@ -8433,6 +8443,13 @@ async function renderProfilePanel() {
             <option value="en">English</option>
           </select>
         </div>
+        <div class="form-row"><label for="pf_theme_mode">${tr('profile_theme')}</label>
+          <select id="pf_theme_mode" class="select">
+            <option value="system">${tr('theme_auto')}</option>
+            <option value="light">${tr('theme_light')}</option>
+            <option value="dark">${tr('theme_dark')}</option>
+          </select>
+        </div>
         <div class="actions" style="justify-content:flex-start;margin-bottom:8px;">
           <button id="pf_open_twofa" class="btn">${tr('profile_open_twofa')}</button>
         </div>
@@ -8447,6 +8464,8 @@ async function renderProfilePanel() {
     const searchSelect = document.getElementById('pf_search_language');
     if (uiSelect) uiSelect.value = me.ui_language || state.uiLanguage || 'da';
     if (searchSelect) searchSelect.value = me.search_language || state.searchLanguage || 'da';
+    const themeSelect = document.getElementById('pf_theme_mode');
+    if (themeSelect) themeSelect.value = (me.theme_mode || 'system');
 
     const openTwofaBtn = document.getElementById('pf_open_twofa');
     if (openTwofaBtn) {
@@ -8464,12 +8483,13 @@ async function renderProfilePanel() {
         const password2 = document.getElementById('pf_password2').value || '';
         const ui_language = document.getElementById('pf_ui_language').value || 'da';
         const search_language = document.getElementById('pf_search_language').value || 'da';
+        const theme_mode = (document.getElementById('pf_theme_mode').value || 'system');
         if (!username) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Username cannot be empty.' : 'Brugernavn må ikke være tomt.', 'err'); return; }
         if (password && password !== password2) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Passwords do not match.' : 'Password matcher ikke.', 'err'); return; }
 
         setProfileInlineStatus('', 'ok');
 
-        const payload = { username, ui_language, search_language };
+        const payload = { username, ui_language, search_language, theme_mode };
         if (password) payload.password = password;
 
         const rr = await fetch('/api/me/profile', {
@@ -8487,6 +8507,7 @@ async function renderProfilePanel() {
         state.uiLanguage = resolveUiLanguage(ui_language);
         state.searchLanguage = resolveUiLanguage(search_language);
         applyUiLanguage();
+        try { applyTheme(theme_mode); } catch {}
         await loadPhotos();
         setProfileInlineStatus(tr('profile_saved'), 'ok');
         const p1 = document.getElementById('pf_password');

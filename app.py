@@ -2124,6 +2124,7 @@ def init_db() -> None:
                 role TEXT,
                 ui_language TEXT DEFAULT 'da',
                 search_language TEXT DEFAULT 'da',
+                theme_mode TEXT DEFAULT 'system',
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
                 totp_setup_done INTEGER DEFAULT 0,
@@ -2253,6 +2254,10 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN search_language TEXT DEFAULT 'da'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN theme_mode TEXT DEFAULT 'system'")
         except Exception:
             pass
         try:
@@ -5942,7 +5947,7 @@ def index():
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
                 (current_user.id,),
             ).fetchone()
         role = row["role"] if row and row["role"] else getattr(current_user, "role", None)
@@ -5952,6 +5957,7 @@ def index():
             "role": (role or "user"),
             "ui_language": _normalize_language((row["ui_language"] if row else None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
+            "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
         }
     except Exception:
         role = None
@@ -5961,6 +5967,7 @@ def index():
             "role": (getattr(current_user, "role", None) or "user"),
             "ui_language": _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
+            "theme_mode": "system",
         }
     return render_template("index.html", user_role=(role or "user"), user_profile=profile)
 
@@ -8884,6 +8891,9 @@ def api_admin_users():
     role = (data.get("role") or "user").strip().lower()
     ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
     search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+    theme_mode = str((data.get("theme_mode") or "system")).lower()
+    if theme_mode not in ("system", "light", "dark"):
+        theme_mode = "system"
     raw_allowed = data.get("allowed_folders")
     allowed_folders = raw_allowed if isinstance(raw_allowed, list) else []
     if role not in {"admin", "user"}:
@@ -9230,7 +9240,7 @@ def api_me():
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
                 (current_user.id,),
             ).fetchone()
         if not row:
@@ -9244,6 +9254,7 @@ def api_me():
                     "role": (row["role"] or "user"),
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
+                    "theme_mode": (str((row["theme_mode"] or "system")).lower()),
                 },
             }
         )
@@ -9267,19 +9278,20 @@ def api_me_profile():
         with closing(get_conn()) as conn:
             if new_password:
                 conn.execute(
-                    "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=? WHERE id=?",
+                    "UPDATE users SET username=?, password_hash=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
                     (
                         new_username,
                         generate_password_hash(new_password),
                         ui_language,
                         search_language,
+                        theme_mode,
                         current_user.id,
                     ),
                 )
             else:
                 conn.execute(
-                    "UPDATE users SET username=?, ui_language=?, search_language=? WHERE id=?",
-                    (new_username, ui_language, search_language, current_user.id),
+                    "UPDATE users SET username=?, ui_language=?, search_language=?, theme_mode=? WHERE id=?",
+                    (new_username, ui_language, search_language, theme_mode, current_user.id),
                 )
             conn.commit()
 
@@ -9299,6 +9311,7 @@ def api_me_profile():
                     "role": getattr(current_user, "role", "user"),
                     "ui_language": ui_language,
                     "search_language": search_language,
+                    "theme_mode": theme_mode,
                 },
             }
         )
