@@ -2963,6 +2963,24 @@ def get_upload_destination() -> str:
     return v
 
 
+def _sanitize_folder_part_allow_spaces(part: str) -> str:
+    """Sanitize a single folder segment while preserving spaces.
+    - Disallow empty, '.' and '..'
+    - Collapse whitespace to single spaces
+    - Allow letters (incl. Danish ÆØÅæøå), digits, space, '-', '_', '.', '()', '[]', '&', '+', ',', ';', '@', '!', '~', "'", '`', '^', '='
+    - Strip trailing dot/space to avoid Windows quirks when developing locally
+    """
+    p = str(part or "").strip()
+    if not p or p in {".", ".."}:
+        raise ValueError("Ugyldig mappe")
+    p = re.sub(r"\s+", " ", p)
+    p = re.sub(r"[^0-9A-Za-zÆØÅæøå _\-\.\(\)\[\]&\+,;@!~'`^=]", "", p)
+    p = p.rstrip(" .")
+    if not p:
+        raise ValueError("Ugyldig mappe")
+    return p
+
+
 def _normalize_upload_subdir(raw: Optional[str]) -> str:
     value = (raw or "").strip().replace("\\", "/")
     value = value.strip("/")
@@ -2970,13 +2988,7 @@ def _normalize_upload_subdir(raw: Optional[str]) -> str:
         return ""
     safe_parts: list[str] = []
     for part in value.split("/"):
-        p = part.strip()
-        if not p or p in {".", ".."}:
-            raise ValueError("Ugyldig mappe")
-        safe = secure_filename(p)
-        if not safe:
-            raise ValueError("Ugyldig mappe")
-        safe_parts.append(safe)
+        safe_parts.append(_sanitize_folder_part_allow_spaces(part))
     return "/".join(safe_parts)
 
 
@@ -6330,6 +6342,8 @@ def api_share_upload(token: str):
 
     saved = []
     errors: list[str] = []
+    # Use a dedicated postprocess bucket per share to mirror mapper uploads
+    pp_bucket = f"share:{token}"
     for f in files:
         try:
             name = secure_filename(f.filename or "")
@@ -6358,10 +6372,250 @@ def api_share_upload(token: str):
             except Exception as e:
                 errors.append(f"Index fail: {target.name}: {e}")
             saved.append(target.name)
+
+            # Queue full postprocessing just like mapper uploads (metadata/thumbnails already de-duped)
+            try:
+                _queue_uploaded_rel(pp_bucket, rel)
+            except Exception as e:
+                try:
+                    log_event("error", rel_path=rel, error=f"share_queue: {e}")
+                except Exception:
+                    pass
         except Exception as e:
             errors.append(str(e))
 
+    # Ensure the postprocess worker runs for this share bucket
+    try:
+        _ensure_upload_postprocess_running(pp_bucket)
+    except Exception as e:
+        try:
+            log_event("error", error=f"share_postprocess_autostart: {e}")
+        except Exception:
+            pass
+
     return jsonify({"ok": True, "saved": saved, "errors": errors})
+
+
+# --- Share-link TUS endpoints (no login; token-based auth) ---
+@app.route("/api/share/<token>/upload/tus", methods=["OPTIONS"])
+@app.route("/api/share/<token>/upload/tus/<upload_id>", methods=["OPTIONS"])
+def api_share_tus_options(token: str, upload_id: Optional[str] = None):
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST, HEAD, PATCH"
+    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/share/<token>/upload/tus", methods=["POST"])
+def api_share_tus_create(token: str):
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404, _tus_headers()
+    if not _share_is_authorized(share):
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang kræves",
+        }), 401, _tus_headers()
+    if int(share["can_upload"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403, _tus_headers()
+
+    try:
+        TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        upload_length = int(str(request.headers.get("Upload-Length") or "0").strip())
+    except Exception:
+        upload_length = -1
+    if upload_length < 0:
+        return jsonify({"ok": False, "error": "Invalid Upload-Length"}), 400, _tus_headers()
+
+    meta = _parse_tus_metadata(str(request.headers.get("Upload-Metadata") or ""))
+    filename = str(meta.get("filename") or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "Missing filename"}), 400, _tus_headers()
+
+    # Determine target dir from share's primary folder
+    with closing(get_conn()) as conn:
+        folder_paths = _share_folder_paths(conn, share)
+    folder_path = folder_paths[0] if folder_paths else ""
+    try:
+        subdir = _normalize_upload_subdir(folder_path)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400, _tus_headers()
+    target_dir = (UPLOAD_DIR / subdir) if subdir else UPLOAD_DIR
+    rel_prefix = "uploads/"
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kan ikke oprette upload-destination: {e}"}), 500, _tus_headers()
+
+    upload_id = secrets.token_urlsafe(18)
+    data_path, _ = _tus_upload_paths(upload_id)
+    try:
+        with data_path.open("wb"):
+            pass
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Unable to create upload: {e}"}), 500, _tus_headers()
+
+    try:
+        last_modified_ms = int(str(meta.get("lastModified") or "0").strip() or "0")
+    except Exception:
+        last_modified_ms = 0
+
+    upload_meta: Dict[str, Any] = {
+        "id": upload_id,
+        "filename": filename,
+        "destination": UPLOAD_DEST_UPLOADS,
+        "subdir": subdir,
+        "upload_length": upload_length,
+        "upload_offset": 0,
+        "target_dir": str(target_dir),
+        "rel_prefix": rel_prefix,
+        "last_modified_ms": last_modified_ms,
+        # Use a dedicated bucket per share for postprocess grouping
+        "uploaded_by": f"share:{token}",
+        "created_at": now_iso(),
+    }
+    _tus_store_meta(upload_id, upload_meta)
+
+    try:
+        log_event("share_tus_created", upload_id=upload_id, filename=filename, subdir=subdir, upload_length=upload_length)
+    except Exception:
+        pass
+
+    resp = make_response("", 201)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Location"] = url_for("api_share_tus_file", token=token, upload_id=upload_id)
+    resp.headers["Upload-Offset"] = "0"
+    return resp
+
+
+@app.route("/api/share/<token>/upload/tus/<upload_id>", methods=["HEAD"])
+def api_share_tus_head(token: str, upload_id: str):
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+
+    meta = _tus_load_meta(upload_id)
+    if not meta:
+        return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    data_path, _ = _tus_upload_paths(upload_id)
+    offset = int(meta.get("upload_offset") or 0)
+    try:
+        if data_path.exists():
+            offset = int(data_path.stat().st_size)
+    except Exception:
+        pass
+
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Upload-Offset"] = str(max(0, offset))
+    resp.headers["Upload-Length"] = str(int(meta.get("upload_length") or 0))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/share/<token>/upload/tus/<upload_id>", methods=["PATCH"])
+def api_share_tus_file(token: str, upload_id: str):
+    fb = _tus_require_version()
+    if fb:
+        return jsonify(fb[0]), fb[1], _tus_headers()
+    if str(request.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower() != "application/offset+octet-stream":
+        return jsonify({"ok": False, "error": "Invalid Content-Type"}), 415, _tus_headers()
+
+    meta = _tus_load_meta(upload_id)
+    if not meta:
+        return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    data_path, meta_path = _tus_upload_paths(upload_id)
+    if not data_path.exists():
+        return jsonify({"ok": False, "error": "Upload data missing"}), 410, _tus_headers()
+
+    try:
+        req_offset = int(str(request.headers.get("Upload-Offset") or "0").strip())
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid Upload-Offset"}), 400, _tus_headers()
+
+    current_size = int(data_path.stat().st_size)
+    if req_offset != current_size:
+        resp = make_response("", 409)
+        for k, v in _tus_headers().items():
+            resp.headers[k] = v
+        resp.headers["Upload-Offset"] = str(current_size)
+        return resp
+
+    body = request.get_data(cache=False, as_text=False) or b""
+    try:
+        with data_path.open("ab") as fh:
+            if body:
+                fh.write(body)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Unable to write upload chunk: {e}"}), 500, _tus_headers()
+
+    new_offset = int(data_path.stat().st_size)
+    total_length = int(meta.get("upload_length") or 0)
+    meta["upload_offset"] = new_offset
+    _tus_store_meta(upload_id, meta)
+
+    if total_length > 0 and new_offset >= total_length:
+        target_dir = Path(str(meta.get("target_dir") or ""))
+        rel_prefix = str(meta.get("rel_prefix") or "uploads/")
+        subdir = str(meta.get("subdir") or "")
+        filename = str(meta.get("filename") or "")
+        uploaded_by = str(meta.get("uploaded_by") or f"share:{token}")
+        try:
+            last_modified_ms = int(meta.get("last_modified_ms") or 0)
+        except Exception:
+            last_modified_ms = 0
+
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            ok, saved_name, err = _commit_uploaded_file(
+                target_dir=target_dir,
+                rel_prefix=rel_prefix,
+                subdir=subdir,
+                source_path=data_path,
+                original_name=filename,
+                last_modified_ms=last_modified_ms,
+                uploaded_by=uploaded_by,
+            )
+            try:
+                meta_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if ok:
+                try:
+                    log_event("share_tus_done", saved=1, errors=0)
+                except Exception:
+                    pass
+            else:
+                try:
+                    log_event("error", filename=filename, error=err)
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": err or "Upload finalize failed"}), 500, _tus_headers({"Upload-Offset": str(new_offset)})
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Upload finalize failed: {e}"}), 500, _tus_headers({"Upload-Offset": str(new_offset)})
+
+    resp = make_response("", 204)
+    for k, v in _tus_headers().items():
+        resp.headers[k] = v
+    resp.headers["Upload-Offset"] = str(new_offset)
+    return resp
 
 
 @app.route("/api/share/<token>/delete", methods=["POST"])

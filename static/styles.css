@@ -1162,7 +1162,11 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   font-weight: 700;
   font-size: 0.95rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  position: relative;
 }
+.folder-name-overlay .folder-name .scroll { display: inline-block; white-space: nowrap; will-change: transform; }
+.folder-name-overlay .folder-name.marquee .scroll { animation: fl-foldername-marquee 6s linear 1; }
+@keyframes fl-foldername-marquee { from { transform: translateX(0); } to { transform: translateX(var(--fl-shift, -60px)); } }
 .folder-name-overlay .folder-count {
   font-size: 0.78rem;
   color: var(--muted);

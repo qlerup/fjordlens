@@ -225,10 +225,31 @@ function renderGrid() {
     }
     const thumbs = useUrls.map(u => `<img src="${u}" alt="">`).join("");
     const count = Number(folderCounts.get(fk) || 0);
+    const title = (fk.split('/').pop() || fk);
     card.innerHTML = `
       <div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${thumbs}</div></div>
-      <div class="folder-name-overlay"><span class="folder-name">${(fk.split('/').pop() || fk)}</span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
+      <div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${title}</span></span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
     `;
+    // Hover marquee for long folder names
+    try {
+      const nameEl = card.querySelector('.folder-name');
+      const inner = nameEl ? nameEl.querySelector('.scroll') : null;
+      if (nameEl && inner) {
+        nameEl.setAttribute('title', String(title||''));
+        const onEnter = () => {
+          try {
+            const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
+            if (delta > 4) {
+              nameEl.style.setProperty('--fl-shift', `-${delta}px`);
+              nameEl.classList.add('marquee');
+            }
+          } catch {}
+        };
+        const onLeave = () => { nameEl.classList.remove('marquee'); };
+        card.addEventListener('mouseenter', onEnter);
+        card.addEventListener('mouseleave', onLeave);
+      }
+    } catch {}
     card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });
     els.grid.appendChild(card);
   }
@@ -351,20 +372,43 @@ async function runAuth() {
 
 async function runUpload() {
   const files = (els.fileInput && els.fileInput.files) ? Array.from(els.fileInput.files) : [];
-  if (!files.length) {
-    showStatus(t('no_files'), 'err');
-    return;
+  if (!files.length) { showStatus(t('no_files'), 'err'); return; }
+
+  function hasTusClient(){ return !!(window.tus && typeof window.tus.Upload === 'function'); }
+  async function uploadTus(file){
+    return new Promise((resolve)=>{
+      if (!hasTusClient()) { resolve({ ok:false, error:'TUS client unavailable' }); return; }
+      const meta = {
+        filename: String(file && file.name || 'file'),
+        lastModified: String(Number(file && file.lastModified ? file.lastModified : 0)),
+      };
+      const upload = new window.tus.Upload(file, {
+        endpoint: `/api/share/${encodeURIComponent(state.token)}/upload/tus`,
+        metadata: meta,
+        uploadDataDuringCreation: false,
+        chunkSize: 2 * 1024 * 1024,
+        parallelUploads: 1,
+        retryDelays: [0, 1000, 2500, 5000],
+        removeFingerprintOnSuccess: true,
+        onProgress(bytesUploaded, bytesTotal){
+          const pct = bytesTotal > 0 ? Math.round((bytesUploaded/bytesTotal)*100) : 0;
+          showStatus(`${t('upload_run')}: ${file.name} · ${pct}%`, 'ok');
+        },
+        onError(err){ resolve({ ok:false, error: (err && err.message) || 'Upload failed' }); },
+        onSuccess(){ resolve({ ok:true }); },
+      });
+      upload.findPreviousUploads().then((prev)=>{ if (Array.isArray(prev) && prev.length) upload.resumeFromPreviousUpload(prev[0]); upload.start(); }).catch(()=> upload.start());
+    });
   }
-  const fd = new FormData();
-  files.forEach((f) => fd.append('files', f));
-  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/upload`, { method: 'POST', body: fd });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data || data.ok === false) {
-    showStatus((data && data.error) || t('upload_failed'), 'err');
-    return;
+
+  let saved=0, failed=0;
+  for (const f of files){
+    const r = await uploadTus(f);
+    if (r && r.ok) saved+=1; else failed+=1;
   }
-  showStatus(t('upload_done'), 'ok');
   if (els.fileInput) els.fileInput.value = '';
+  if (failed>0){ showStatus(`${t('upload_done')} · ${saved} ok · ${failed} fejl`, 'err'); }
+  else { showStatus(t('upload_done'), 'ok'); }
   await loadPhotos();
 }
 

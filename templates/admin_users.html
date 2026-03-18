@@ -26,9 +26,10 @@
             <div class="mini-label">{{ 'Username' if en else 'Brugernavn' }}</div>
             <input name="username" placeholder="{{ 'Username' if en else 'Brugernavn' }}" required class="input-number" style="width:100%;">
           </label>
-          <label>
+          <label style="position:relative;">
             <div class="mini-label">{{ 'Password' if en else 'Adgangskode' }}</div>
-            <input name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required class="input-number" style="width:100%;" type="password">
+            <input id="createPassword" name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required class="input-number" style="width:100%;padding-right:84px;" type="password" autocomplete="new-password">
+            <button id="toggleCreatePassword" type="button" class="btn small" style="position:absolute; right:8px; top:34px; height:28px; line-height:26px; padding:0 10px;">{{ 'Show' if en else 'Vis' }}</button>
           </label>
           <label>
             <div class="mini-label">{{ 'Role' if en else 'Rolle' }}</div>
@@ -118,6 +119,18 @@
     // Close on backdrop click
     modal && modal.addEventListener('click', (e)=>{ if(e.target === modal) close(); });
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
+
+    // Password reveal
+    const pw = document.getElementById('createPassword');
+    const toggle = document.getElementById('toggleCreatePassword');
+    const da = { show: 'Vis', hide: 'Skjul' };
+    const en = { show: 'Show', hide: 'Hide' };
+    const L = (document.documentElement.lang||'da').toLowerCase().startsWith('en') ? en : da;
+    function syncLabel(){ if(toggle){ toggle.textContent = (pw && pw.type === 'password') ? L.show : L.hide; } }
+    if(toggle){
+      toggle.addEventListener('click', ()=>{ if(!pw) return; pw.type = (pw.type === 'password') ? 'text' : 'password'; syncLabel(); pw.focus(); });
+      syncLabel();
+    }
   })();
   </script>
 {% endblock %}

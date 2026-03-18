@@ -2231,7 +2231,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
   const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
-  const overlay = `<div class="folder-name-overlay"><span class="folder-name">${folderTitle}</span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
+  const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
   const thumbHtml = (useUrls && useUrls.length)
     ? `<div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${cells}</div>${selBadge}${overlay}</div>`
     : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
@@ -2421,6 +2421,29 @@ function openPersonRenameMenu(anchorBtn, person) {
     <div class="person-rename-divider"></div>
     <div class="person-rename-list"></div>
   `;
+  // Enable hover marquee for long folder names in overlay
+  try {
+    const nameEl = card.querySelector('.folder-name');
+    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
+    if (nameEl && inner) {
+      const full = String(title || folder || '');
+      nameEl.setAttribute('title', full);
+      const onEnter = () => {
+        try {
+          const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
+          if (delta > 4) {
+            nameEl.style.setProperty('--fl-shift', `-${delta}px`);
+            nameEl.classList.add('marquee');
+          }
+        } catch {}
+      };
+      const onLeave = () => {
+        nameEl.classList.remove('marquee');
+      };
+      card.addEventListener('mouseenter', onEnter);
+      card.addEventListener('mouseleave', onLeave);
+    }
+  } catch {}
 
   const listEl = menu.querySelector('.person-rename-list');
   // Exclude auto-generated unknown buckets like "Ukendt-10" from merge targets
@@ -6913,13 +6936,21 @@ if (els.mapperDropZone) {
 }
 
 if (els.mapperUploadInput) {
-  els.mapperUploadInput.addEventListener('change', async () => {
-    const files = els.mapperUploadInput && els.mapperUploadInput.files ? els.mapperUploadInput.files : null;
-    if (!files || !files.length) return;
+  els.mapperUploadInput.addEventListener('change', () => {
+    const list = (els.mapperUploadInput && els.mapperUploadInput.files) ? els.mapperUploadInput.files : null;
+    if (!list || !list.length) return;
     const targetSubdir = String(state.mapperPath || '');
-    await uploadFiles(files, { destination: 'uploads', subdir: targetSubdir });
-    await loadMapperTools(targetSubdir);
-    await loadPhotos();
+    // Clone FileList immediately; iOS may keep the picker open until the handler returns.
+    // Defer heavy work so the system UI can dismiss smoothly.
+    const files = Array.from(list);
+    window.setTimeout(() => {
+      try {
+        uploadFiles(files, { destination: 'uploads', subdir: targetSubdir });
+      } catch (e) {
+        console.error(e);
+      }
+    }, 50);
+    // Clear value so the same files can be picked again later if needed
     els.mapperUploadInput.value = '';
   });
 }
