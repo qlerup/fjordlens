@@ -31,9 +31,12 @@
         <label for="authName" id="authNameLabel">Dit navn</label>
         <input id="authName" class="mapper-input" type="text" placeholder="Skriv dit navn" />
       </div>
-      <div class="form-row">
+      <div class="form-row reveal-wrap">
         <label for="authPassword" id="authLabel">Indtast adgangskode</label>
-        <input id="authPassword" class="mapper-input" type="password" placeholder="Adgangskode" />
+        <input id="authPassword" class="mapper-input" type="password" placeholder="Adgangskode" style="padding-right:42px;" />
+        <button id="authPwReveal" type="button" class="reveal-btn" aria-label="Vis adgangskode">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c4.5 0 8.4 2.9 10 7-1.6 4.1-5.5 7-10 7s-8.4-2.9-10-7c1.6-4.1 5.5-7 10-7zm0 2c-3.3 0-6.3 2.1-7.6 5 1.3 2.9 4.3 5 7.6 5s6.3-2.1 7.6-5c-1.3-2.9-4.3-5-7.6-5zm0 2.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>
+        </button>
       </div>
       <div class="actions" style="justify-content:flex-end;">
         <button id="authBtn" class="btn primary">Fortsæt</button>
@@ -60,6 +63,13 @@
 
   <script>
     window.SHARE_TOKEN = {{ share_token|tojson }};
+  </script>
+  <script>
+    (function(){
+      const i=document.getElementById('authPassword');
+      const b=document.getElementById('authPwReveal');
+      if(b){ b.addEventListener('click',()=>{ if(!i) return; i.type=(i.type==='password')?'text':'password'; i.focus({preventScroll:true}); }); }
+    })();
   </script>
   <script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='shared.js') }}?v={{ app_build }}"></script>

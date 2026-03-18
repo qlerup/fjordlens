@@ -230,22 +230,37 @@ function renderGrid() {
       <div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${thumbs}</div></div>
       <div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${title}</span></span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
     `;
-    // Hover marquee for long folder names
+    // Hover marquee for long folder names (same logic as app.js)
     try {
       const nameEl = card.querySelector('.folder-name');
       const inner = nameEl ? nameEl.querySelector('.scroll') : null;
       if (nameEl && inner) {
         nameEl.setAttribute('title', String(title||''));
-        const onEnter = () => {
+        const startMarquee = () => {
           try {
             const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
-            if (delta > 4) {
-              nameEl.style.setProperty('--fl-shift', `-${delta}px`);
-              nameEl.classList.add('marquee');
-            }
+            if (delta <= 4) return;
+            nameEl.classList.add('marquee');
+            let x = 0; let lastTs = 0; const speed = 60;
+            const step = (ts) => {
+              if (!nameEl.classList.contains('marquee')) return;
+              if (!lastTs) { lastTs = ts; }
+              const dt = Math.max(0, (ts - lastTs)/1000); lastTs = ts;
+              x -= speed * dt; if (-x >= delta) x = 0;
+              inner.style.transform = `translateX(${x}px)`;
+              nameEl.__raf = window.requestAnimationFrame(step);
+            };
+            cancelMarquee();
+            nameEl.__raf = window.requestAnimationFrame(step);
           } catch {}
         };
-        const onLeave = () => { nameEl.classList.remove('marquee'); };
+        const cancelMarquee = () => {
+          try { if (nameEl.__raf) { window.cancelAnimationFrame(nameEl.__raf); nameEl.__raf = null; } } catch {}
+          try { inner.style.transform = ''; } catch {}
+          nameEl.classList.remove('marquee');
+        };
+        const onEnter = () => startMarquee();
+        const onLeave = () => cancelMarquee();
         card.addEventListener('mouseenter', onEnter);
         card.addEventListener('mouseleave', onLeave);
       }

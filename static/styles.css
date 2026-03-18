@@ -141,6 +141,25 @@ body {
   margin-top: 12px;
 }
 
+/* Password reveal icon inside inputs */
+.reveal-wrap { position: relative; }
+.reveal-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px; height: 30px;
+  min-width: 30px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.reveal-btn:hover { background: var(--panel-3); color: var(--text); }
+.reveal-btn svg { width: 18px; height: 18px; display:block; }
+
 .btn.danger { background: linear-gradient(135deg, #ff6b6b, #e85a5a); color: #fff; border-color: transparent; }
 .btn:disabled, .btn[disabled] { opacity: .6; cursor: not-allowed; filter: none; }
 /* Form structure helpers */
@@ -1164,9 +1183,10 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   position: relative;
 }
-.folder-name-overlay .folder-name .scroll { display: inline-block; white-space: nowrap; will-change: transform; }
-.folder-name-overlay .folder-name.marquee .scroll { animation: fl-foldername-marquee 6s linear 1; }
-@keyframes fl-foldername-marquee { from { transform: translateX(0); } to { transform: translateX(var(--fl-shift, -60px)); } }
+.folder-name-overlay .folder-name .scroll { display: inline; white-space: nowrap; }
+/* When marquee is active, we switch to inline-block so transform works, and remove ellipsis */
+.folder-name-overlay .folder-name.marquee { text-overflow: clip; }
+.folder-name-overlay .folder-name.marquee .scroll { display: inline-block; will-change: transform; }
 .folder-name-overlay .folder-count {
   font-size: 0.78rem;
   color: var(--muted);

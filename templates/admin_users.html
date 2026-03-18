@@ -26,10 +26,12 @@
             <div class="mini-label">{{ 'Username' if en else 'Brugernavn' }}</div>
             <input name="username" placeholder="{{ 'Username' if en else 'Brugernavn' }}" required class="input-number" style="width:100%;">
           </label>
-          <label style="position:relative;">
+          <label class="reveal-wrap">
             <div class="mini-label">{{ 'Password' if en else 'Adgangskode' }}</div>
-            <input id="createPassword" name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required class="input-number" style="width:100%;padding-right:84px;" type="password" autocomplete="new-password">
-            <button id="toggleCreatePassword" type="button" class="btn small" style="position:absolute; right:8px; top:34px; height:28px; line-height:26px; padding:0 10px;">{{ 'Show' if en else 'Vis' }}</button>
+            <input id="createPassword" name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required class="input-number" style="width:100%;padding-right:42px;" type="password" autocomplete="new-password">
+            <button id="toggleCreatePassword" type="button" class="reveal-btn" aria-label="{{ 'Show password' if en else 'Vis adgangskode' }}">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 5c4.5 0 8.4 2.9 10 7-1.6 4.1-5.5 7-10 7s-8.4-2.9-10-7c1.6-4.1 5.5-7 10-7zm0 2c-3.3 0-6.3 2.1-7.6 5 1.3 2.9 4.3 5 7.6 5s6.3-2.1 7.6-5c-1.3-2.9-4.3-5-7.6-5zm0 2.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>
+            </button>
           </label>
           <label>
             <div class="mini-label">{{ 'Role' if en else 'Rolle' }}</div>
@@ -123,14 +125,7 @@
     // Password reveal
     const pw = document.getElementById('createPassword');
     const toggle = document.getElementById('toggleCreatePassword');
-    const da = { show: 'Vis', hide: 'Skjul' };
-    const en = { show: 'Show', hide: 'Hide' };
-    const L = (document.documentElement.lang||'da').toLowerCase().startsWith('en') ? en : da;
-    function syncLabel(){ if(toggle){ toggle.textContent = (pw && pw.type === 'password') ? L.show : L.hide; } }
-    if(toggle){
-      toggle.addEventListener('click', ()=>{ if(!pw) return; pw.type = (pw.type === 'password') ? 'text' : 'password'; syncLabel(); pw.focus(); });
-      syncLabel();
-    }
+    if(toggle){ toggle.addEventListener('click', ()=>{ if(!pw) return; pw.type = (pw.type === 'password') ? 'text' : 'password'; pw.focus({preventScroll:true}); }); }
   })();
   </script>
 {% endblock %}

@@ -2428,18 +2428,33 @@ function openPersonRenameMenu(anchorBtn, person) {
     if (nameEl && inner) {
       const full = String(title || folder || '');
       nameEl.setAttribute('title', full);
-      const onEnter = () => {
+      const startMarquee = () => {
         try {
           const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
-          if (delta > 4) {
-            nameEl.style.setProperty('--fl-shift', `-${delta}px`);
-            nameEl.classList.add('marquee');
-          }
+          if (delta <= 4) return;
+          nameEl.classList.add('marquee');
+          let x = 0; let lastTs = 0; const speed = 60; // px/sec
+          const step = (ts) => {
+            if (!nameEl.classList.contains('marquee')) return; // cancelled
+            if (!lastTs) { lastTs = ts; }
+            const dt = Math.max(0, (ts - lastTs) / 1000);
+            lastTs = ts;
+            x -= speed * dt;
+            if (-x >= delta) { x = 0; }
+            inner.style.transform = `translateX(${x}px)`;
+            nameEl.__raf = window.requestAnimationFrame(step);
+          };
+          cancelMarquee();
+          nameEl.__raf = window.requestAnimationFrame(step);
         } catch {}
       };
-      const onLeave = () => {
+      const cancelMarquee = () => {
+        try { if (nameEl.__raf) { window.cancelAnimationFrame(nameEl.__raf); nameEl.__raf = null; } } catch {}
+        try { inner.style.transform = ''; } catch {}
         nameEl.classList.remove('marquee');
       };
+      const onEnter = () => startMarquee();
+      const onLeave = () => cancelMarquee();
       card.addEventListener('mouseenter', onEnter);
       card.addEventListener('mouseleave', onLeave);
     }
