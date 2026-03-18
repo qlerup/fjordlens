@@ -2071,6 +2071,39 @@ function appendCardTo(item, container) {
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
+  // Hover marquee for long folder names (desktop)
+  try {
+    const nameEl = card.querySelector('.folder-name');
+    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
+    if (nameEl && inner) {
+      const full = String(title || folder || '');
+      nameEl.setAttribute('title', full);
+      const startMarquee = () => {
+        try {
+          inner.style.display = 'inline-block';
+          const avail = nameEl.getBoundingClientRect().width;
+          const req = Math.max(inner.scrollWidth || 0, inner.getBoundingClientRect().width || 0);
+          const delta = Math.ceil(req - avail);
+          if (delta <= 4) { inner.style.display = ''; return; }
+          nameEl.classList.add('marquee');
+          let x = 0; let last = 0; const speed = 60;
+          const step = (ts) => {
+            if (!nameEl.classList.contains('marquee')) return;
+            if (!last) last = ts;
+            const dt = Math.max(0, (ts - last)/1000); last = ts;
+            x -= speed * dt; if (-x >= delta) x = 0;
+            inner.style.transform = `translateX(${x}px)`;
+            nameEl.__raf = window.requestAnimationFrame(step);
+          };
+          if (nameEl.__raf) cancelAnimationFrame(nameEl.__raf);
+          nameEl.__raf = window.requestAnimationFrame(step);
+        } catch {}
+      };
+      const cancelMarquee = () => { try { if (nameEl.__raf) cancelAnimationFrame(nameEl.__raf); } catch {}; try { inner.style.transform = ''; inner.style.display=''; } catch {}; nameEl.classList.remove('marquee'); };
+      card.addEventListener('mouseenter', startMarquee);
+      card.addEventListener('mouseleave', cancelMarquee);
+    }
+  } catch {}
 
   // Add Info icon overlay (top-left, on red dot) on mouseover
   const thumb = card.querySelector('.card-thumb');

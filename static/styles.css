@@ -144,6 +144,7 @@ body {
 /* Password reveal icon inside inputs */
 .reveal-wrap { position: relative; }
 .pwd-field { position: relative; }
+.pwd-field > input { width: 100%; display: block; }
 .reveal-btn {
   position: absolute;
   right: 8px;
