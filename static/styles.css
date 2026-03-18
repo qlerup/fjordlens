@@ -1208,6 +1208,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 /* When marquee is active, we switch to inline-block so transform works, and remove ellipsis */
 .folder-name-overlay .folder-name.marquee { text-overflow: clip; }
 .folder-name-overlay .folder-name.marquee .scroll { display: inline-block; will-change: transform; }
+.folder-name-overlay .folder-name.marquee-run .scroll { display:inline-block; animation: fl-foldername-marquee 6s linear infinite; will-change: transform; }
+@keyframes fl-foldername-marquee { from { transform: translateX(0); } to { transform: translateX(var(--fl-shift, -80px)); } }
 .folder-name-overlay .folder-count { flex: 0 0 auto; white-space: nowrap; margin-left: 8px; }
 .folder-name-overlay .folder-count {
   font-size: 0.78rem;

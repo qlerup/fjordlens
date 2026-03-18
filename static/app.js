@@ -2081,25 +2081,15 @@ function appendCardTo(item, container) {
       const startMarquee = () => {
         try {
           inner.style.display = 'inline-block';
-          const avail = nameEl.getBoundingClientRect().width;
-          const req = Math.max(inner.scrollWidth || 0, inner.getBoundingClientRect().width || 0);
-          const delta = Math.ceil(req - avail);
+          const avail = Math.floor(nameEl.clientWidth || nameEl.getBoundingClientRect().width || 0);
+          const req = Math.floor(inner.scrollWidth || inner.getBoundingClientRect().width || 0);
+          const delta = Math.max(0, req - avail);
           if (delta <= 4) { inner.style.display = ''; return; }
-          nameEl.classList.add('marquee');
-          let x = 0; let last = 0; const speed = 60;
-          const step = (ts) => {
-            if (!nameEl.classList.contains('marquee')) return;
-            if (!last) last = ts;
-            const dt = Math.max(0, (ts - last)/1000); last = ts;
-            x -= speed * dt; if (-x >= delta) x = 0;
-            inner.style.transform = `translateX(${x}px)`;
-            nameEl.__raf = window.requestAnimationFrame(step);
-          };
-          if (nameEl.__raf) cancelAnimationFrame(nameEl.__raf);
-          nameEl.__raf = window.requestAnimationFrame(step);
+          nameEl.style.setProperty('--fl-shift', `-${delta}px`);
+          nameEl.classList.add('marquee-run');
         } catch {}
       };
-      const cancelMarquee = () => { try { if (nameEl.__raf) cancelAnimationFrame(nameEl.__raf); } catch {}; try { inner.style.transform = ''; inner.style.display=''; } catch {}; nameEl.classList.remove('marquee'); };
+      const cancelMarquee = () => { try { inner.style.display=''; } catch {}; nameEl.classList.remove('marquee-run','marquee'); };
       card.addEventListener('mouseenter', startMarquee);
       card.addEventListener('mouseleave', cancelMarquee);
     }
