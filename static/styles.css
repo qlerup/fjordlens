@@ -149,17 +149,17 @@ body {
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 30px; height: 30px;
-  min-width: 30px;
+  width: 28px; height: 28px;
+  min-width: 28px;
   display: grid; place-items: center;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
+  border: none;
+  background: transparent; /* visually inside input */
   color: var(--muted);
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   z-index: 10;
 }
-.reveal-btn:hover { background: var(--panel-3); color: var(--text); }
+.reveal-btn:hover { color: var(--text); }
 .reveal-btn svg { width: 18px; height: 18px; display:block; }
 
 .btn.danger { background: linear-gradient(135deg, #ff6b6b, #e85a5a); color: #fff; border-color: transparent; }

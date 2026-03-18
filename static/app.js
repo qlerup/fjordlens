@@ -2456,14 +2456,12 @@ function openPersonRenameMenu(anchorBtn, person) {
         try { inner.style.display = ''; } catch {}
         nameEl.classList.remove('marquee');
       };
-      // Only enable marquee on desktop/hover-capable devices
-      const canHover = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-      if (canHover) {
-        const onEnter = () => startMarquee();
-        const onLeave = () => cancelMarquee();
-        card.addEventListener('mouseenter', onEnter);
-        card.addEventListener('mouseleave', onLeave);
-      }
+      // Start marquee on hover of card (and overlay descendants)
+      const onEnter = () => startMarquee();
+      const onLeave = () => cancelMarquee();
+      card.addEventListener('mouseenter', onEnter);
+      card.addEventListener('mouseleave', onLeave);
+      card.addEventListener('mouseover', onEnter, { passive: true });
     }
   } catch {}
 
