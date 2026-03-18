@@ -238,6 +238,8 @@ function renderGrid() {
         nameEl.setAttribute('title', String(title||''));
         const startMarquee = () => {
           try {
+            const prev = inner.style.display;
+            inner.style.display = 'inline-block';
             const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
             if (delta <= 4) return;
             nameEl.classList.add('marquee');
@@ -257,6 +259,7 @@ function renderGrid() {
         const cancelMarquee = () => {
           try { if (nameEl.__raf) { window.cancelAnimationFrame(nameEl.__raf); nameEl.__raf = null; } } catch {}
           try { inner.style.transform = ''; } catch {}
+          try { inner.style.display = ''; } catch {}
           nameEl.classList.remove('marquee');
         };
         const onEnter = () => startMarquee();

@@ -26,6 +26,9 @@
             <div class="mini-label">{{ 'Username' if en else 'Brugernavn' }}</div>
             <input name="username" placeholder="{{ 'Username' if en else 'Brugernavn' }}" required class="input-number" style="width:100%;">
           </label>
+          <div style="display:flex;justify-content:flex-end;margin-top:-6px;">
+            <button id="toggleCreatePasswordAlt" type="button" class="btn small">{{ 'Show' if en else 'Vis' }}</button>
+          </div>
           <label class="reveal-wrap">
             <div class="mini-label">{{ 'Password' if en else 'Adgangskode' }}</div>
             <input id="createPassword" name="password" placeholder="{{ 'Password' if en else 'Adgangskode' }}" required class="input-number" style="width:100%;padding-right:42px;" type="password" autocomplete="new-password">
@@ -125,7 +128,10 @@
     // Password reveal
     const pw = document.getElementById('createPassword');
     const toggle = document.getElementById('toggleCreatePassword');
-    if(toggle){ toggle.addEventListener('click', ()=>{ if(!pw) return; pw.type = (pw.type === 'password') ? 'text' : 'password'; pw.focus({preventScroll:true}); }); }
+    function togglePw(){ if(!pw) return; pw.type = (pw.type === 'password') ? 'text' : 'password'; pw.focus({preventScroll:true}); }
+    if(toggle){ toggle.addEventListener('click', togglePw); }
+    const toggleAlt = document.getElementById('toggleCreatePasswordAlt');
+    if(toggleAlt){ toggleAlt.addEventListener('click', togglePw); }
   })();
   </script>
 {% endblock %}
