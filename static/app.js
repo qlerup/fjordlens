@@ -2456,10 +2456,14 @@ function openPersonRenameMenu(anchorBtn, person) {
         try { inner.style.display = ''; } catch {}
         nameEl.classList.remove('marquee');
       };
-      const onEnter = () => startMarquee();
-      const onLeave = () => cancelMarquee();
-      card.addEventListener('mouseenter', onEnter);
-      card.addEventListener('mouseleave', onLeave);
+      // Only enable marquee on desktop/hover-capable devices
+      const canHover = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+      if (canHover) {
+        const onEnter = () => startMarquee();
+        const onLeave = () => cancelMarquee();
+        card.addEventListener('mouseenter', onEnter);
+        card.addEventListener('mouseleave', onLeave);
+      }
     }
   } catch {}
 
@@ -7955,14 +7959,14 @@ async function renderUsersPanel(){
 
       <!-- Folder access modal -->
       <div id="ua_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
-        <div style="width:700px;max-width:95vw;max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div class="ua-box" style="width:700px;max-width:95vw;max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;">
             <h3 style="margin:0;">${escapeHtml(tr('users_folders_title'))}</h3>
             <button id="ua_close" class="btn">${escapeHtml(tr('users_close'))}</button>
           </div>
           <div id="ua_user" class="mini-label" style="margin-bottom:8px;"></div>
           <div id="ua_hint" class="mini-label" style="margin-bottom:8px;">${escapeHtml(tr('users_folders_hint'))}</div>
-          <div id="ua_folder_access" style="max-height:55vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
+          <div id="ua_folder_access" class="ua-list" style="max-height:55vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
           <div class="actions" style="justify-content:flex-end;margin-top:10px;">
             <button id="ua_clear_all" class="btn">${escapeHtml(tr('users_clear_all'))}</button>
             <button id="ua_cancel" class="btn">${escapeHtml(tr('users_cancel'))}</button>
@@ -8037,6 +8041,7 @@ async function renderUsersPanel(){
             <label class="ua-dot" data-level="${val}" title="${escapeHtml(txt||'')}">
               <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
               <span class="dot" aria-hidden="true"></span>
+              <span class="ua-cap">${escapeHtml(txt||'')}</span>
             </label>`;
           const caret = hasChildren.has(folder)
             ? `<button class=\"ua-caret\" type=\"button\" aria-label=\"Fold\"></button>`

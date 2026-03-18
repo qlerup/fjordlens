@@ -262,10 +262,13 @@ function renderGrid() {
           try { inner.style.display = ''; } catch {}
           nameEl.classList.remove('marquee');
         };
-        const onEnter = () => startMarquee();
-        const onLeave = () => cancelMarquee();
-        card.addEventListener('mouseenter', onEnter);
-        card.addEventListener('mouseleave', onLeave);
+        const canHover = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        if (canHover) {
+          const onEnter = () => startMarquee();
+          const onLeave = () => cancelMarquee();
+          card.addEventListener('mouseenter', onEnter);
+          card.addEventListener('mouseleave', onLeave);
+        }
       }
     } catch {}
     card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });
