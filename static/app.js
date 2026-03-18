@@ -2161,10 +2161,19 @@ function appendCardTo(item, container) {
       }
     }
   } catch {}
-  // Single-click opens viewer directly (unless clicking info icon)
+  // Single-click opens viewer directly (unless clicking info icon or in select/edit mode)
   card.addEventListener("click", (ev) => {
     // If click was on info icon, ignore (handled above)
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
+    // When in selection mode (mapper edit), clicking should toggle selection instead of opening
+    try {
+      if (state && state.mapperEditMode) {
+        card.classList.toggle('selected');
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    } catch {}
     try { document.body.classList.remove('detail-open'); } catch {}
     state.selectedId = item.id;
     const idx = state.items.findIndex(i => i.id === item.id);
