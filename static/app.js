@@ -7886,7 +7886,14 @@ async function renderUsersPanel(){
             <button id="nu_close" class="btn">Luk</button>
           </div>
           <div class="form-row"><label for="nu_username">Brugernavn</label><input id="nu_username" placeholder="Brugernavn"></div>
-          <div class="form-row"><label for="nu_password">Adgangskode</label><input id="nu_password" placeholder="Adgangskode" type="password"></div>
+          <div class="form-row reveal-wrap"><label for="nu_password">Adgangskode</label>
+            <div class="pwd-field">
+              <input id="nu_password" placeholder="Adgangskode" type="password" style="padding-right:42px;">
+              <button id="nu_pw_toggle" type="button" class="reveal-btn" aria-label="Vis adgangskode">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c4.5 0 8.4 2.9 10 7-1.6 4.1-5.5 7-10 7s-8.4-2.9-10-7c1.6-4.1 5.5-7 10-7zm0 2c-3.3 0-6.3 2.1-7.6 5 1.3 2.9 4.3 5 7.6 5s6.3-2.1 7.6-5c-1.3-2.9-4.3-5-7.6-5zm0 2.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>
+              </button>
+            </div>
+          </div>
           <div class="form-row"><label for="nu_role">Rolle</label>
             <select id="nu_role" class="select">
               <option value="user">Bruger</option>
@@ -8382,6 +8389,16 @@ async function renderUsersPanel(){
     closeBtn && closeBtn.addEventListener('click', close);
     cancelBtn && cancelBtn.addEventListener('click', close);
     modal && modal.addEventListener('click', (e)=>{ if(e.target === modal) close(); });
+
+    // Password reveal in create-user modal
+    const nuPwToggle = document.getElementById('nu_pw_toggle');
+    const nuPwInput = document.getElementById('nu_password');
+    if (nuPwToggle && nuPwInput) {
+      nuPwToggle.addEventListener('click', () => {
+        nuPwInput.type = (nuPwInput.type === 'password') ? 'text' : 'password';
+        try { nuPwInput.focus({ preventScroll: true }); } catch {}
+      });
+    }
 
     // Open ACL modal for new user
     nuAclBtn && nuAclBtn.addEventListener('click', () => {

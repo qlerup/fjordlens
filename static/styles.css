@@ -143,6 +143,7 @@ body {
 
 /* Password reveal icon inside inputs */
 .reveal-wrap { position: relative; }
+.pwd-field { position: relative; }
 .reveal-btn {
   position: absolute;
   right: 8px;
@@ -1199,11 +1200,14 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   font-size: 0.95rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   position: relative;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .folder-name-overlay .folder-name .scroll { display: inline; white-space: nowrap; }
 /* When marquee is active, we switch to inline-block so transform works, and remove ellipsis */
 .folder-name-overlay .folder-name.marquee { text-overflow: clip; }
 .folder-name-overlay .folder-name.marquee .scroll { display: inline-block; will-change: transform; }
+.folder-name-overlay .folder-count { flex: 0 0 auto; white-space: nowrap; margin-left: 8px; }
 .folder-name-overlay .folder-count {
   font-size: 0.78rem;
   color: var(--muted);
