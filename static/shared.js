@@ -392,6 +392,20 @@ async function runAuth() {
 async function runUpload() {
   const files = (els.fileInput && els.fileInput.files) ? Array.from(els.fileInput.files) : [];
   if (!files.length) { showStatus(t('no_files'), 'err'); return; }
+  // Ensure we are authorized just before starting (handles expired session)
+  try {
+    const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/info`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      applyAuthRequirements(data || {});
+      showStatus(t('auth_required'), 'err');
+      return; // Wait for user to authorize
+    }
+    if (!res.ok || !data || !data.ok || !data.can_upload) {
+      showStatus((data && data.error) || 'Upload ikke tilladt', 'err');
+      return;
+    }
+  } catch {}
 
   function hasTusClient(){ return !!(window.tus && typeof window.tus.Upload === 'function'); }
   async function uploadTus(file){
@@ -405,6 +419,7 @@ async function runUpload() {
         endpoint: `/api/share/${encodeURIComponent(state.token)}/upload/tus`,
         metadata: meta,
         uploadDataDuringCreation: false,
+        withCredentials: true,
         overridePatchMethod: true,
         chunkSize: 2 * 1024 * 1024,
         parallelUploads: 1,
