@@ -1113,6 +1113,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   border: 1px solid var(--border);
   color: var(--muted);
   font-size: 44px; line-height: 0; font-weight: 800;
+  /* Optical centering tweak: many fonts render '+' a touch low */
+  transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(0,0,0,0.25);
 }
 .upload-card:hover .upload-plus { color: var(--text); border-color: var(--accent); box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
