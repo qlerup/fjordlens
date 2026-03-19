@@ -6346,7 +6346,6 @@ def api_share_upload(token: str):
     # Use the same commit + postprocess flow as user uploads
     rel_prefix = "uploads/originals/"
     uploaded_by = uploader_label
-    pp_bucket = f"share:{token}"
     for f in files:
         try:
             name = secure_filename(f.filename or "")
@@ -6370,7 +6369,7 @@ def api_share_upload(token: str):
                 source_path=tmp_path,
                 original_name=name,
                 last_modified_ms=None,
-                uploaded_by=pp_bucket,
+                uploaded_by=uploaded_by,
             )
             if ok:
                 saved.append(saved_name)
@@ -6379,9 +6378,9 @@ def api_share_upload(token: str):
         except Exception as e:
             errors.append(str(e))
 
-    # Ensure the postprocess worker runs for this share bucket
+    # Ensure the postprocess worker runs for this uploader label
     try:
-        _ensure_upload_postprocess_running(pp_bucket)
+        _ensure_upload_postprocess_running(uploaded_by)
     except Exception as e:
         try:
             log_event("error", error=f"share_postprocess_autostart: {e}")
@@ -6469,6 +6468,7 @@ def api_share_tus_create(token: str):
     except Exception:
         last_modified_ms = 0
 
+    uploader_label = _share_get_visitor_name(share) or "Share-bruger"
     upload_meta: Dict[str, Any] = {
         "id": upload_id,
         "filename": filename,
@@ -6479,8 +6479,8 @@ def api_share_tus_create(token: str):
         "target_dir": str(target_dir),
         "rel_prefix": rel_prefix,
         "last_modified_ms": last_modified_ms,
-        # Use a dedicated bucket per share for postprocess grouping
-        "uploaded_by": f"share:{token}",
+        # Label uploaded_by with visitor name for UI chips
+        "uploaded_by": uploader_label,
         "created_at": now_iso(),
     }
     _tus_store_meta(upload_id, upload_meta)
