@@ -1102,7 +1102,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   align-items: center;
   justify-content: center;
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  /* Remove inner border to avoid clipping at rounded corners */
+  border: none;
 }
 .upload-card:hover .card-thumb { border-color: var(--accent); }
 .upload-plus {
