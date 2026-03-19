@@ -335,6 +335,8 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 
 /* Small form bits */
 .mini-label { color: var(--muted); font-size: 0.82rem; }
+.mini-label .meta-folder { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.mini-label .meta-perms { color: var(--muted); }
 .ai-toggle-row {
   display: inline-flex;
   align-items: center;

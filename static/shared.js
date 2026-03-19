@@ -61,6 +61,10 @@ function t(key) {
     auth_name_missing: 'Navn er påkrævet',
     auth_continue: 'Fortsæt',
     upload_pick: 'Upload',
+    perms_label: 'Tilladelser',
+    perms_view: 'Se',
+    perms_view_upload: 'Se og upload',
+    perms_view_upload_delete: 'Se, upload og slet',
     upload_run: 'Upload',
     delete_selected: 'Slet valgte',
     no_files: 'Ingen filer valgt',
@@ -84,6 +88,10 @@ function t(key) {
     auth_name_missing: 'Name is required',
     auth_continue: 'Continue',
     upload_pick: 'Upload',
+    perms_label: 'Permissions',
+    perms_view: 'View',
+    perms_view_upload: 'View and upload',
+    perms_view_upload_delete: 'View, upload and delete',
     upload_run: 'Upload',
     delete_selected: 'Delete selected',
     no_files: 'No files selected',
@@ -361,11 +369,12 @@ async function loadInfo() {
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
     const perms = data.can_delete ? 'view+upload+delete' : (data.can_upload ? 'view+upload' : 'view');
+    const permsText = data.can_delete ? t('perms_view_upload_delete') : (data.can_upload ? t('perms_view_upload') : t('perms_view'));
     const folderNames = Array.isArray(data.folder_paths) ? data.folder_paths.map(p => String(p||'').split('/').filter(Boolean).pop() || '').filter(Boolean) : [];
     const baseTitle = (folderNames.length === 1)
       ? folderNames[0]
       : (String(data.share_name || '').trim() || String(data.folder_label || '').replace(/^uploads\//,'').trim());
-    els.meta.textContent = `${baseTitle} · ${perms}`;
+    els.meta.innerHTML = `<div class="meta-folder">${baseTitle}</div><div class="meta-perms">${t('perms_label')}: ${permsText}</div>`;
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';
