@@ -72,6 +72,12 @@
     })();
   </script>
   <script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
+  <script>
+    // Fallback: load tus-js-client from CDN if local bundle is missing
+    if (!(window.tus && typeof window.tus.Upload === 'function')) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
+    }
+  </script>
   <script src="{{ url_for('static', filename='shared.js') }}?v={{ app_build }}"></script>
 </body>
 </html>

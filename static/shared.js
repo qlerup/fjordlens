@@ -394,6 +394,23 @@ async function runUpload() {
   if (!files.length) { showStatus(t('no_files'), 'err'); return; }
 
   function hasTusClient(){ return !!(window.tus && typeof window.tus.Upload === 'function'); }
+  async function uploadLegacyBatch(fileList){
+    try {
+      const fd = new FormData();
+      for (const f of fileList) { if (f && f.name) fd.append('files', f, f.name); }
+      const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/upload`, { method: 'POST', body: fd });
+      const data = await res.json().catch(()=>({}));
+      if (!res.ok || !data || !data.ok) {
+        const err = (data && (data.error || (Array.isArray(data.errors) && data.errors[0]))) || 'Upload fejlede';
+        return { ok:false, saved:0, failed: fileList.length, error: String(err) };
+      }
+      const saved = Array.isArray(data.saved) ? data.saved.length : 0;
+      const failed = Array.isArray(data.errors) ? data.errors.length : Math.max(0, fileList.length - saved);
+      return { ok: failed === 0, saved, failed };
+    } catch (e) {
+      return { ok:false, saved:0, failed:fileList.length, error: (e && e.message) || 'Netværksfejl' };
+    }
+  }
   async function uploadTus(file){
     return new Promise((resolve)=>{
       if (!hasTusClient()) { resolve({ ok:false, error:'TUS client unavailable' }); return; }
@@ -421,9 +438,16 @@ async function runUpload() {
   }
 
   let saved=0, failed=0;
-  for (const f of files){
-    const r = await uploadTus(f);
-    if (r && r.ok) saved+=1; else failed+=1;
+  if (!hasTusClient()) {
+    showStatus(`${t('upload_run')}: ${files.length} fil(er)…`, 'ok');
+    const r = await uploadLegacyBatch(files);
+    saved = Number(r && r.saved || 0);
+    failed = Number(r && r.failed || Math.max(0, files.length - saved));
+  } else {
+    for (const f of files){
+      const r = await uploadTus(f);
+      if (r && r.ok) saved+=1; else failed+=1;
+    }
   }
   if (els.fileInput) els.fileInput.value = '';
   if (failed>0){ showStatus(`${t('upload_done')} · ${saved} ok · ${failed} fejl`, 'err'); }
