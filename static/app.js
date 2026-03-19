@@ -3607,6 +3607,7 @@ function uploadSingleFileTus(file, options = {}, onProgress = null) {
       endpoint: '/api/upload/tus',
       metadata,
       uploadDataDuringCreation: false,
+      overridePatchMethod: true,
       chunkSize: 2 * 1024 * 1024,
       parallelUploads: 1,
       retryDelays: [0, 1000, 2500, 5000],

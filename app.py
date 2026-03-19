@@ -6330,7 +6330,8 @@ def api_share_upload(token: str):
         return jsonify({"ok": False, "name_required": True, "error": "Navn er påkrævet"}), 401
     uploader_label = uploader_name or "Share-bruger"
 
-    target_dir = (UPLOAD_DIR / folder_path)
+    # Store physical files under internal originals root, mirroring user uploads
+    target_dir = (UPLOAD_DIR / "originals" / folder_path)
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -6342,7 +6343,9 @@ def api_share_upload(token: str):
 
     saved = []
     errors: list[str] = []
-    # Use a dedicated postprocess bucket per share to mirror mapper uploads
+    # Use the same commit + postprocess flow as user uploads
+    rel_prefix = "uploads/originals/"
+    uploaded_by = uploader_label
     pp_bucket = f"share:{token}"
     for f in files:
         try:
@@ -6354,33 +6357,25 @@ def api_share_upload(token: str):
                 errors.append(f"Unsupported: {name}")
                 continue
 
-            target = target_dir / name
-            stem = Path(name).stem
-            suffix = Path(name).suffix
-            i = 1
-            while target.exists():
-                target = target_dir / f"{stem}_{i}{suffix}"
-                i += 1
-            f.save(str(target))
+            # Write to a temporary file first to reuse _commit_uploaded_file semantics
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                f.stream.seek(0)
+                shutil.copyfileobj(f.stream, tmp)
+                tmp_path = Path(tmp.name)
 
-            rel_leaf = f"{folder_path}/{target.name}" if folder_path else target.name
-            rel = f"uploads/{rel_leaf}" if rel_leaf else "uploads"
-            try:
-                meta = extract_metadata(target, rel)
-                meta["uploaded_by"] = uploader_label
-                upsert_photo(meta)
-            except Exception as e:
-                errors.append(f"Index fail: {target.name}: {e}")
-            saved.append(target.name)
-
-            # Queue full postprocessing just like mapper uploads (metadata/thumbnails already de-duped)
-            try:
-                _queue_uploaded_rel(pp_bucket, rel)
-            except Exception as e:
-                try:
-                    log_event("error", rel_path=rel, error=f"share_queue: {e}")
-                except Exception:
-                    pass
+            ok, saved_name, err = _commit_uploaded_file(
+                target_dir=target_dir,
+                rel_prefix=rel_prefix,
+                subdir=folder_path,
+                source_path=tmp_path,
+                original_name=name,
+                last_modified_ms=None,
+                uploaded_by=pp_bucket,
+            )
+            if ok:
+                saved.append(saved_name)
+            else:
+                errors.append(err or f"Commit failed: {name}")
         except Exception as e:
             errors.append(str(e))
 
@@ -6404,7 +6399,7 @@ def api_share_tus_options(token: str, upload_id: Optional[str] = None):
     for k, v in _tus_headers().items():
         resp.headers[k] = v
     resp.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST, HEAD, PATCH"
-    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type"
+    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type, X-HTTP-Method-Override"
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -6452,8 +6447,9 @@ def api_share_tus_create(token: str):
         subdir = _normalize_upload_subdir(folder_path)
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400, _tus_headers()
-    target_dir = (UPLOAD_DIR / subdir) if subdir else UPLOAD_DIR
-    rel_prefix = "uploads/"
+    # Store physical files under internal originals root to mirror user uploads
+    target_dir = (UPLOAD_DIR / "originals" / subdir) if subdir else (UPLOAD_DIR / "originals")
+    rel_prefix = "uploads/originals/"
 
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -6615,7 +6611,16 @@ def api_share_tus_file(token: str, upload_id: str):
     for k, v in _tus_headers().items():
         resp.headers[k] = v
     resp.headers["Upload-Offset"] = str(new_offset)
+    resp.headers["Cache-Control"] = "no-store"
     return resp
+
+# Allow proxies that block PATCH to use POST + X-HTTP-Method-Override: PATCH
+@app.route("/api/share/<token>/upload/tus/<upload_id>", methods=["POST"])
+def api_share_tus_file_override(token: str, upload_id: str):
+    method_override = str(request.headers.get("X-HTTP-Method-Override") or "").strip().upper()
+    if method_override == "PATCH":
+        return api_share_tus_file(token, upload_id)
+    return jsonify({"ok": False, "error": "Unsupported method"}), 405, _tus_headers()
 
 
 @app.route("/api/share/<token>/delete", methods=["POST"])
@@ -8398,7 +8403,7 @@ def api_upload_tus_options(upload_id: Optional[str] = None):
     for k, v in _tus_headers().items():
         resp.headers[k] = v
     resp.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST, HEAD, PATCH"
-    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type"
+    resp.headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata, Content-Type, X-HTTP-Method-Override"
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -8612,7 +8617,17 @@ def api_upload_tus_file(upload_id: str):
     for k, v in _tus_headers().items():
         resp.headers[k] = v
     resp.headers["Upload-Offset"] = str(new_offset)
+    resp.headers["Cache-Control"] = "no-store"
     return resp
+
+# Allow proxies that block PATCH to use POST + X-HTTP-Method-Override: PATCH
+@app.route("/api/upload/tus/<upload_id>", methods=["POST"])
+@login_required
+def api_upload_tus_file_override(upload_id: str):
+    method_override = str(request.headers.get("X-HTTP-Method-Override") or "").strip().upper()
+    if method_override == "PATCH":
+        return api_upload_tus_file(upload_id)
+    return jsonify({"ok": False, "error": "Unsupported method"}), 405, _tus_headers()
 
 
 @app.route("/api/upload", methods=["POST"])
