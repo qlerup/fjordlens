@@ -298,7 +298,9 @@ function renderGrid() {
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
-    card.innerHTML = `${thumb}`;
+    const uploader = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
+    const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">👤 ${uploader}</div>` : '';
+    card.innerHTML = `${thumb}${uploaderTag}`;
     card.addEventListener('click', () => openShareViewer(idx));
     els.grid.appendChild(card);
   });
