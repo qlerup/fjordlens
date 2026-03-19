@@ -1230,6 +1230,7 @@ let state = {
   mapperFolders: [],
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
+  mapperSelectedPhotoIds: new Set(),
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
   currentUser: {
@@ -2167,8 +2168,12 @@ function appendCardTo(item, container) {
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
     // When in selection mode (mapper edit), clicking should toggle selection instead of opening
     try {
-      if (state && state.mapperEditMode) {
-        card.classList.toggle('selected');
+      if (state && state.view === 'mapper' && state.mapperEditMode) {
+        if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+        const isSel = state.mapperSelectedPhotoIds.has(item.id);
+        if (isSel) state.mapperSelectedPhotoIds.delete(item.id); else state.mapperSelectedPhotoIds.add(item.id);
+        card.classList.toggle('selected', !isSel);
+        try { renderMapperContext(state.mapperPath || ''); } catch {}
         ev.preventDefault();
         ev.stopPropagation();
         return;
@@ -3937,7 +3942,9 @@ async function uploadFiles(fileList, options = {}) {
 
 function renderMapperContext(path = '') {
   const p = String(path || '');
-  const selectedCount = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
+  const selFolders = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
+  const selPhotos = state.mapperSelectedPhotoIds ? state.mapperSelectedPhotoIds.size : 0;
+  const selectedCount = selFolders + selPhotos;
   if (els.mapperCurrentPath) {
     els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p ? `uploads/${p}` : tr('mapper_root_folder')}`;
     // On mobile, hide the current-path label while in selection mode to make room for buttons
@@ -3967,7 +3974,8 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperHeaderShareAction) {
     els.mapperHeaderShareAction.textContent = tr('mapper_menu_share');
-    const canShare = !!state.mapperEditMode && selectedCount >= 1;
+    // Sharing operates on folders only
+    const canShare = !!state.mapperEditMode && selFolders >= 1;
     els.mapperHeaderShareAction.disabled = !canShare;
     els.mapperHeaderShareAction.title = canShare ? tr('mapper_menu_share') : tr('mapper_share_select_one');
   }
@@ -4466,6 +4474,7 @@ function setMapperEditMode(enabled) {
   state.mapperEditMode = !!enabled;
   if (!state.mapperEditMode) {
     state.mapperSelectedFolders = new Set();
+    state.mapperSelectedPhotoIds = new Set();
   }
   renderMapperContext(state.mapperPath || '');
   if (state.view === 'mapper') renderGrid();
@@ -4542,6 +4551,44 @@ async function deleteSelectedMapperFolders() {
     }
     renderMapperContext(state.mapperPath || '');
   }
+}
+
+async function deleteSelectedMapperPhotos() {
+  const selected = Array.from(state.mapperSelectedPhotoIds || []);
+  if (!selected.length) {
+    showStatus(tr('mapper_select_delete_none'), 'err');
+    return;
+  }
+  const ok = confirm(tr('mapper_delete_confirm').replace('{count}', String(selected.length)));
+  if (!ok) return;
+  const deleteBtn = els.mapperDeleteBtn;
+  const originalLabel = deleteBtn ? deleteBtn.textContent : 'Slet valgte';
+  try {
+    if (deleteBtn) {
+      deleteBtn.disabled = true; deleteBtn.classList.add('loading'); deleteBtn.textContent = tr('mapper_delete_pending');
+    }
+    const res = await fetch('/api/photos/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photo_ids: selected }) });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok || !data || !data.ok) { showStatus((data && data.error) || tr('mapper_delete_failed'), 'err'); return; }
+    state.mapperSelectedPhotoIds = new Set();
+    setMapperEditMode(false);
+    await loadPhotos();
+    const removed = Number((data.removed && data.removed.photos) || selected.length);
+    showStatus(tr('mapper_delete_success').replace('{count}', String(removed)).replace('{removed}', String(removed)), 'ok');
+  } catch {
+    showStatus(tr('mapper_delete_error'), 'err');
+  } finally {
+    if (deleteBtn) { deleteBtn.classList.remove('loading'); deleteBtn.textContent = originalLabel || 'Slet valgte'; }
+    renderMapperContext(state.mapperPath || '');
+  }
+}
+
+async function deleteSelectedInMapper() {
+  const photoCount = state.mapperSelectedPhotoIds ? state.mapperSelectedPhotoIds.size : 0;
+  const folderCount = state.mapperSelectedFolders ? state.mapperSelectedFolders.size : 0;
+  if (photoCount > 0) return deleteSelectedMapperPhotos();
+  if (folderCount > 0) return deleteSelectedMapperFolders();
+  showStatus(tr('mapper_select_delete_none'), 'err');
 }
 
 // --- Drag & drop: collect files with relative paths (supports folders) ---
@@ -6951,7 +6998,7 @@ if (els.sharedLinksList) {
   });
 }
 
-els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedMapperFolders);
+els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedInMapper);
 els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');

@@ -7564,6 +7564,34 @@ def api_toggle_favorite(photo_id: int):
     return jsonify({"ok": True, "favorite": bool(new_val)})
 
 
+@app.route("/api/photos/delete", methods=["POST"])
+@login_required
+def api_delete_photos():
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("photo_ids")
+        if not isinstance(raw_ids, list):
+            return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
+        ids = [int(pid) for pid in raw_ids if str(pid).isdigit()]
+        if not ids:
+            return jsonify({"ok": False, "error": "Ingen billeder valgt"}), 400
+        allowed: list[int] = []
+        with closing(get_conn()) as conn:
+            ph = ",".join(["?"] * len(ids))
+            rows = conn.execute(f"SELECT id, rel_path FROM photos WHERE id IN ({ph})", ids).fetchall()
+            for r in rows:
+                rel = str(r[1] or "")
+                # Require edit permission on the containing folder
+                if _perm_allows(_current_user_folder_permission_for_rel(rel, conn), "edit"):
+                    allowed.append(int(r[0]))
+        if not allowed:
+            return jsonify({"ok": False, "error": "Ingen slette-adgang"}), 403
+        removed = _delete_indexed_photos_by_ids(allowed)
+        return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/filters")
 def api_filters():
     with closing(get_conn()) as conn:

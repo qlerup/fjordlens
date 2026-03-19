@@ -414,7 +414,18 @@ async function runUpload() {
           const pct = bytesTotal > 0 ? Math.round((bytesUploaded/bytesTotal)*100) : 0;
           showStatus(`${t('upload_run')}: ${file.name} · ${pct}%`, 'ok');
         },
-        onError(err){ resolve({ ok:false, error: (err && err.message) || 'Upload failed' }); },
+        onError(err){
+          try {
+            const resp = err && err.originalResponse;
+            const status = resp && typeof resp.getStatus === 'function' ? Number(resp.getStatus()) : 0;
+            if (status === 401) {
+              showStatus(t('auth_required'), 'err');
+              // Refresh share info to reveal auth box (password/name)
+              loadInfo();
+            }
+          } catch {}
+          resolve({ ok:false, error: (err && err.message) || 'Upload failed' });
+        },
         onSuccess(){ resolve({ ok:true }); },
       });
       upload.findPreviousUploads().then((prev)=>{ if (Array.isArray(prev) && prev.length) upload.resumeFromPreviousUpload(prev[0]); upload.start(); }).catch(()=> upload.start());
