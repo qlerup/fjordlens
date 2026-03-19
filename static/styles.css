@@ -1098,20 +1098,21 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 }
 .upload-card { box-shadow: none; }
 .upload-card .card-thumb {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--panel-2);
-  border: 2px dashed var(--border);
+  border: 1px solid var(--border);
 }
 .upload-card:hover .card-thumb { border-color: var(--accent); }
 .upload-plus {
   width: 64px; height: 64px;
   border-radius: 14px;
-  display: grid; place-items: center;
+  display: inline-flex; align-items: center; justify-content: center;
   background: var(--panel);
   border: 1px solid var(--border);
   color: var(--muted);
-  font-size: 38px; line-height: 1; font-weight: 700;
+  font-size: 44px; line-height: 0; font-weight: 800;
   box-shadow: 0 4px 14px rgba(0,0,0,0.25);
 }
 .upload-card:hover .upload-plus { color: var(--text); border-color: var(--accent); box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
