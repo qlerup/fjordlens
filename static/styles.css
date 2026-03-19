@@ -1112,11 +1112,21 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   background: var(--panel);
   border: 1px solid var(--border);
   color: var(--muted);
-  font-size: 44px; line-height: 0; font-weight: 800;
-  /* Optical centering tweak: many fonts render '+' a touch low */
-  transform: translateY(-2px);
+  /* Use pseudo-elements for a perfectly centered plus; hide glyph */
+  font-size: 0; line-height: 0; font-weight: 800; position: relative;
   box-shadow: 0 4px 14px rgba(0,0,0,0.25);
 }
+.upload-plus::before,
+.upload-plus::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  background: currentColor;
+  border-radius: 2px;
+}
+.upload-plus::before { width: 28px; height: 4px; }
+.upload-plus::after  { width: 4px;  height: 28px; }
 .upload-card:hover .upload-plus { color: var(--text); border-color: var(--accent); box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
 .photo-card.active {
   border-color: var(--accent);
