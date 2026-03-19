@@ -2806,6 +2806,7 @@ def enforce_login_for_app():
         "api_share_tus_create",
         "api_share_tus_head",
         "api_share_tus_file",
+        "api_share_tus_file_override",
         "api_share_delete",
     }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
