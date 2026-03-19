@@ -6547,6 +6547,10 @@ def api_share_tus_file(token: str, upload_id: str):
         return jsonify({"ok": False, "error": "Invalid Upload-Offset"}), 400, _tus_headers()
 
     current_size = int(data_path.stat().st_size)
+    try:
+        log_event("share_tus_patch", upload_id=upload_id, req_offset=req_offset, current_size=current_size)
+    except Exception:
+        pass
     if req_offset != current_size:
         resp = make_response("", 409)
         for k, v in _tus_headers().items():

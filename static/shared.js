@@ -461,7 +461,7 @@ async function boot() {
   if (els.authPassword) els.authPassword.placeholder = t('auth_password_placeholder');
   if (els.authBtn) els.authBtn.textContent = t('auth_continue');
   if (els.uploadLabel) els.uploadLabel.textContent = t('upload_pick');
-  if (els.uploadBtn) els.uploadBtn.textContent = t('upload_run');
+  // No separate upload button; auto-start on file pick
   if (els.deleteBtn) els.deleteBtn.textContent = t('delete_selected');
 
   const ok = await loadInfo();
@@ -486,7 +486,7 @@ if (els.authName) {
     }
   });
 }
-if (els.uploadBtn) els.uploadBtn.addEventListener('click', runUpload);
+if (els.fileInput) els.fileInput.addEventListener('change', () => { if (els.fileInput && els.fileInput.files && els.fileInput.files.length) runUpload(); });
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
 
 window.addEventListener('resize', () => {
