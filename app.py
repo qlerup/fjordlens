@@ -2801,6 +2801,11 @@ def enforce_login_for_app():
         "api_share_original",
         "api_share_auth",
         "api_share_upload",
+        # Share-link TUS endpoints must bypass normal login
+        "api_share_tus_options",
+        "api_share_tus_create",
+        "api_share_tus_head",
+        "api_share_tus_file",
         "api_share_delete",
     }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
