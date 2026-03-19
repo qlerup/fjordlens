@@ -60,7 +60,7 @@ function t(key) {
     auth_password_placeholder: 'Adgangskode',
     auth_name_missing: 'Navn er påkrævet',
     auth_continue: 'Fortsæt',
-    upload_pick: 'Vælg filer',
+    upload_pick: 'Upload',
     upload_run: 'Upload',
     delete_selected: 'Slet valgte',
     no_files: 'Ingen filer valgt',
@@ -83,7 +83,7 @@ function t(key) {
     auth_password_placeholder: 'Password',
     auth_name_missing: 'Name is required',
     auth_continue: 'Continue',
-    upload_pick: 'Choose files',
+    upload_pick: 'Upload',
     upload_run: 'Upload',
     delete_selected: 'Delete selected',
     no_files: 'No files selected',
@@ -186,6 +186,23 @@ function renderGrid() {
       renderGrid();
     });
   }
+
+  // Upload tile (always visible when share allows upload)
+  try {
+    if (state.info && state.info.can_upload) {
+      const up = document.createElement('article');
+      up.className = 'photo-card upload-card';
+      up.innerHTML = `<div class="card-thumb"><div class="upload-plus" aria-label="${t('upload_pick')}">+</div></div>`;
+      const openPicker = () => {
+        if (els.fileInput) {
+          try { if (typeof els.fileInput.showPicker === 'function') { els.fileInput.showPicker(); return; } } catch {}
+          try { els.fileInput.click(); } catch {}
+        }
+      };
+      up.addEventListener('click', openPicker);
+      els.grid.appendChild(up);
+    }
+  } catch {}
 
   // Folder cards
   const folderKeys = Array.from(byFolder.keys()).sort((a,b)=>a.localeCompare(b,'da-DK'));
@@ -342,8 +359,11 @@ async function loadInfo() {
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
     const perms = data.can_delete ? 'view+upload+delete' : (data.can_upload ? 'view+upload' : 'view');
-    const title = String(data.share_name || data.folder_label || '');
-    els.meta.textContent = `${title} · ${perms}`;
+    const folderNames = Array.isArray(data.folder_paths) ? data.folder_paths.map(p => String(p||'').split('/').filter(Boolean).pop() || '').filter(Boolean) : [];
+    const baseTitle = (folderNames.length === 1)
+      ? folderNames[0]
+      : (String(data.share_name || '').trim() || String(data.folder_label || '').replace(/^uploads\//,'').trim());
+    els.meta.textContent = `${baseTitle} · ${perms}`;
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';

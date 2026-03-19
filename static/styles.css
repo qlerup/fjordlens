@@ -1096,6 +1096,25 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   border-color: rgba(91, 140, 255, 0.55);
   box-shadow: 0 6px 18px rgba(0,0,0,0.28);
 }
+.upload-card { box-shadow: none; }
+.upload-card .card-thumb {
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  border: 2px dashed var(--border);
+}
+.upload-card:hover .card-thumb { border-color: var(--accent); }
+.upload-plus {
+  width: 64px; height: 64px;
+  border-radius: 14px;
+  display: grid; place-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 38px; line-height: 1; font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+.upload-card:hover .upload-plus { color: var(--text); border-color: var(--accent); box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
 .photo-card.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.15);
