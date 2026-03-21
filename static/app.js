@@ -1791,12 +1791,13 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     if (!src) { loadNextImg(); return; }
     const pollFaceReady = (imgEl) => {
       try {
+        const attrFid = String((imgEl && imgEl.getAttribute('data-face-id')) || '').trim();
         const u = String((imgEl && (imgEl.currentSrc || imgEl.src)) || '').trim();
         const m = u.match(/\/api\/face-thumb\/(\d+)/) || String(imgEl.getAttribute('data-src') || '').match(/\/api\/face-thumb\/(\d+)/);
-        if (!m) return;
-        const fid = m[1];
+        const fid = attrFid || (m && m[1]) || '';
+        if (!fid) return;
         let tries = 0;
-        const maxTries = 25;
+        const maxTries = 120;
         const startTick = () => {
           if (currentEpoch !== peopleRenderEpoch) return; // view changed
           if (!document.body.contains(imgEl)) return; // removed from DOM
@@ -1816,7 +1817,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
             }
           } catch {}
           if (tries < maxTries && currentEpoch === peopleRenderEpoch && document.body.contains(imgEl)) {
-            const delay = Math.min(1500, 150 + tries * 100);
+            const delay = Math.min(2000, 180 + tries * 120);
             setTimeout(tick, delay);
           } else {
             activeFacePolls = Math.max(0, activeFacePolls - 1);
@@ -1877,8 +1878,10 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const card = document.createElement('article');
       card.className = 'photo-card';
       card.setAttribute('data-person-id', String(p.id));
+      const faceMatch = String(p.thumb_url || '').match(/\/api\/face-thumb\/(\d+)/);
+      const faceAttr = faceMatch ? ` data-face-id="${faceMatch[1]}"` : '';
       const imgHtml = p.thumb_url
-        ? `<img data-src="${p.thumb_url}" alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
+        ? `<img data-src="${p.thumb_url}"${faceAttr} alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
         : `<div class="card-thumb placeholder">🙂</div>`;
       card.innerHTML = `
         <div class="card-thumb">${imgHtml}</div>

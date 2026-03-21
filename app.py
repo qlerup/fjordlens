@@ -207,6 +207,7 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
+FACE_THUMB_VERSION = 2
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -4903,7 +4904,18 @@ def api_people_list():
             if acl_prefixes is None:
                 cnt_row = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE person_id=?", (pid,)).fetchone()
                 cnt = int(cnt_row["c"] or 0) if cnt_row else 0
-                face_row = conn.execute("SELECT id FROM faces WHERE person_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+                face_row = conn.execute(
+                    """
+                    SELECT id
+                    FROM faces
+                    WHERE person_id=?
+                    ORDER BY COALESCE(confidence, 0) DESC,
+                             (COALESCE(bbox_w, 0) * COALESCE(bbox_h, 0)) DESC,
+                             id DESC
+                    LIMIT 1
+                    """,
+                    (pid,),
+                ).fetchone()
             else:
                 clauses = []
                 params: list[Any] = [pid]
@@ -4927,7 +4939,9 @@ def api_people_list():
                     FROM faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
-                    ORDER BY f.id DESC
+                    ORDER BY COALESCE(f.confidence, 0) DESC,
+                             (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
+                             f.id DESC
                     LIMIT 1
                     """,
                     params,
@@ -4943,7 +4957,15 @@ def api_people_list():
             ).fetchone()
             unk_count = int(unk["c"] or 0) if unk else 0
             frow = conn.execute(
-                "SELECT id FROM faces WHERE person_id IS NULL ORDER BY id DESC LIMIT 1"
+                """
+                SELECT id
+                FROM faces
+                WHERE person_id IS NULL
+                ORDER BY COALESCE(confidence, 0) DESC,
+                         (COALESCE(bbox_w, 0) * COALESCE(bbox_h, 0)) DESC,
+                         id DESC
+                LIMIT 1
+                """
             ).fetchone()
         else:
             clauses = []
@@ -4968,7 +4990,9 @@ def api_people_list():
                 FROM faces f
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
-                ORDER BY f.id DESC
+                ORDER BY COALESCE(f.confidence, 0) DESC,
+                         (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
+                         f.id DESC
                 LIMIT 1
                 """,
                 params2,
@@ -5170,7 +5194,7 @@ def api_face_thumb(face_id: int):
         if not _is_rel_path_allowed_for_current_user(src_rel):
             return ("Forbidden", 403)
 
-        out_name = f"face_{face_id}.jpg"
+        out_name = _face_thumb_name(face_id)
         out_path = THUMB_DIR / out_name
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -5229,6 +5253,10 @@ last_heic_convert_result: Optional[Dict[str, Any]] = None
 heic_convert_progress: Dict[str, Any] = {"total": 0, "processed": 0, "errors": 0}
 
 
+def _face_thumb_name(face_id: int) -> str:
+    return f"face_{int(face_id)}_v{int(FACE_THUMB_VERSION)}.jpg"
+
+
 def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
@@ -5242,7 +5270,7 @@ def _build_face_thumb(face_id: int) -> bool:
         src_path = (UPLOAD_DIR / src_rel.split("/", 1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
         view_path = ensure_viewable_copy(src_path, src_rel)
 
-        out_name = f"face_{face_id}.jpg"
+        out_name = _face_thumb_name(face_id)
         out_path = THUMB_DIR / out_name
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -5256,20 +5284,43 @@ def _build_face_thumb(face_id: int) -> bool:
             return True
 
         with Image.open(view_path) as im:
-            try:
-                im = ImageOps.exif_transpose(im)
-            except Exception:
-                pass
-            x = max(0, int(r["bbox_x"] or 0))
-            y = max(0, int(r["bbox_y"] or 0))
+            # IMPORTANT:
+            # Face bbox coordinates are produced by ai_service/app.py using
+            # Image.open(...).convert("RGB") without EXIF transpose.
+            # So crop in the same pixel space (no exif_transpose here), otherwise
+            # some rotated images get wrong crops.
+            im = im.convert("RGB")
+
+            iw = max(1, int(im.width))
+            ih = max(1, int(im.height))
+            x = int(r["bbox_x"] or 0)
+            y = int(r["bbox_y"] or 0)
             w = max(1, int(r["bbox_w"] or 1))
             h = max(1, int(r["bbox_h"] or 1))
-            pad = int(max(w, h) * 0.25)
-            cx1 = max(0, x - pad)
-            cy1 = max(0, y - pad)
-            cx2 = min(im.width, x + w + pad)
-            cy2 = min(im.height, y + h + pad)
-            crop = im.crop((cx1, cy1, cx2, cy2)).convert("RGB")
+
+            # Clamp bbox to image bounds first.
+            x1 = max(0, min(iw - 1, x))
+            y1 = max(0, min(ih - 1, y))
+            x2 = max(x1 + 1, min(iw, x1 + w))
+            y2 = max(y1 + 1, min(ih, y1 + h))
+
+            # Expand around face center with context while staying inside bounds.
+            fw = max(1, x2 - x1)
+            fh = max(1, y2 - y1)
+            pad = int(max(fw, fh) * 0.30)
+            cx1 = max(0, x1 - pad)
+            cy1 = max(0, y1 - pad)
+            cx2 = min(iw, x2 + pad)
+            cy2 = min(ih, y2 + pad)
+
+            if cx2 <= cx1 or cy2 <= cy1:
+                # Extreme edge-case fallback: center crop to avoid total failure.
+                side = max(1, min(iw, ih))
+                left = max(0, (iw - side) // 2)
+                top = max(0, (ih - side) // 2)
+                cx1, cy1, cx2, cy2 = left, top, min(iw, left + side), min(ih, top + side)
+
+            crop = im.crop((cx1, cy1, cx2, cy2))
             crop.thumbnail((300, 300))
             crop.save(out_path, format="JPEG", quality=90, optimize=True)
         return True
@@ -5333,7 +5384,7 @@ def api_face_thumb_status(face_id: int):
         if not _is_rel_path_allowed_for_current_user(src_rel):
             return jsonify({"ok": False, "ready": False, "error": "forbidden"}), 403
 
-        out_name = f"face_{face_id}.jpg"
+        out_name = _face_thumb_name(face_id)
         out_path = THUMB_DIR / out_name
         src_path = (UPLOAD_DIR / src_rel.split("/", 1)[1]) if src_rel.startswith("uploads/") else (PHOTO_DIR / src_rel)
         view_path = ensure_viewable_copy(src_path, src_rel)

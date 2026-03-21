@@ -560,12 +560,15 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   box-shadow: 0 0 0 2px rgba(91,140,255,0.12);
 }
 .mapper-header-actions {
-  display: flex;
+  display: none;
   position: relative;
   align-items: center;
   gap: 8px;
   /* Keep search field and menu on the right side */
   margin-left: auto;
+}
+body.view-mapper .mapper-header-actions {
+  display: flex;
 }
 .upload-top-status {
   min-width: 240px;
