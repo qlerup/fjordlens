@@ -336,6 +336,21 @@ try {
   }
 } catch {}
 
+// Initialize globals from bootstrap element if not already present
+(() => {
+  try {
+    if (!window.APP_PROFILE || !window.APP_ROLE) {
+      const el = document.getElementById('bootstrapData');
+      if (el) {
+        const p = el.getAttribute('data-profile') || '{}';
+        const r = el.getAttribute('data-role') || '"user"';
+        if (!window.APP_PROFILE) window.APP_PROFILE = JSON.parse(p);
+        if (!window.APP_ROLE) window.APP_ROLE = JSON.parse(r);
+      }
+    }
+  } catch {}
+})();
+
 const APP_PROFILE = (window.APP_PROFILE && typeof window.APP_PROFILE === 'object') ? window.APP_PROFILE : {};
 const UI_LANGUAGES = new Set(['da', 'en']);
 

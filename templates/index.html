@@ -690,10 +690,10 @@
       </div>
     </div>
   </div>
-  <script>
-    window.APP_PROFILE = {{ (user_profile or {})|tojson }};
-    window.APP_ROLE = {{ (user_role or 'user')|tojson }};
-  </script>
+  <!-- Bootstrap data (avoids inline JS parse issues) -->
+  <div id="bootstrapData"
+       data-profile='{{ (user_profile or {})|tojson }}'
+       data-role='{{ (user_role or "user")|tojson }}'></div>
   <script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
   <script>
     // Fallback: load tus-js-client from CDN if local bundle is missing
