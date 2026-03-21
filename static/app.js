@@ -1181,6 +1181,30 @@ function resolveUiLanguage(lang) {
   return UI_LANGUAGES.has(lang) ? lang : 'da';
 }
 
+// --- Utilities: dynamic script loader (for MapLibre) ---
+let _maplibrePromise = null;
+function loadScriptOnce(url){
+  return new Promise((resolve, reject)=>{
+    try {
+      const prev = Array.from(document.getElementsByTagName('script')).some(s=> s && s.src === url);
+      if (prev) { resolve(true); return; }
+      const el = document.createElement('script');
+      el.src = url; el.async = true; el.defer = true; el.crossOrigin = 'anonymous';
+      el.onload = ()=> resolve(true);
+      el.onerror = ()=> reject(new Error('Script load failed: '+url));
+      document.head.appendChild(el);
+    } catch (e){ reject(e); }
+  });
+}
+async function ensureMaplibre(){
+  if (typeof window.maplibregl !== 'undefined') return true;
+  if (!_maplibrePromise){
+    _maplibrePromise = loadScriptOnce('https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js')
+      .catch(()=> false);
+  }
+  try { const ok = await _maplibrePromise; return !!(ok && window.maplibregl); } catch { return false; }
+}
+
 function tr(key) {
   const lang = resolveUiLanguage(state.uiLanguage || 'da');
   const dict = I18N[lang] || I18N.da;
@@ -4982,6 +5006,11 @@ function buildPlacesGeoJSON(items) {
 function initOrUpdatePlacesMap() {
   if (!els.placesMapEl) return;
   // Lazy init map
+  if (typeof window.maplibregl === 'undefined') {
+    // Try to load on demand; then re-enter
+    ensureMaplibre().then((ok)=>{ if (ok) initOrUpdatePlacesMap(); else showStatus('Kortkode kunne ikke indlæses (MapLibre blokeret).', 'err'); });
+    return;
+  }
   if (!placesMap) {
     placesMap = new maplibregl.Map({
       container: els.placesMapEl,
