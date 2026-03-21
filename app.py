@@ -5287,7 +5287,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name, p.width, p.height FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -5309,47 +5309,99 @@ def _build_face_thumb(face_id: int) -> bool:
         if not needs_build:
             return True
 
-        with Image.open(view_path) as im:
+        def _crop_and_save(img: Image.Image, bx: int, by: int, bw: int, bh: int) -> bool:
+            try:
+                im = img.convert("RGB")
+                iw = max(1, int(im.width))
+                ih = max(1, int(im.height))
+
+                x = int(bx or 0)
+                y = int(by or 0)
+                w = max(1, int(bw or 1))
+                h = max(1, int(bh or 1))
+
+                # Clamp bbox to image bounds first.
+                x1 = max(0, min(iw - 1, x))
+                y1 = max(0, min(ih - 1, y))
+                x2 = max(x1 + 1, min(iw, x1 + w))
+                y2 = max(y1 + 1, min(ih, y1 + h))
+
+                # Expand around face center with context while staying inside bounds.
+                fw = max(1, x2 - x1)
+                fh = max(1, y2 - y1)
+                pad = int(max(fw, fh) * 0.30)
+                cx1 = max(0, x1 - pad)
+                cy1 = max(0, y1 - pad)
+                cx2 = min(iw, x2 + pad)
+                cy2 = min(ih, y2 + pad)
+
+                if cx2 <= cx1 or cy2 <= cy1:
+                    side = max(1, min(iw, ih))
+                    left = max(0, (iw - side) // 2)
+                    top = max(0, (ih - side) // 2)
+                    cx1, cy1, cx2, cy2 = left, top, min(iw, left + side), min(ih, top + side)
+
+                crop = im.crop((cx1, cy1, cx2, cy2))
+                crop.thumbnail((300, 300))
+                crop.save(out_path, format="JPEG", quality=90, optimize=True)
+                return True
+            except Exception:
+                return False
+
+        # First attempt: crop from original/viewable source.
+        try:
             # IMPORTANT:
             # Face bbox coordinates are produced by ai_service/app.py using
             # Image.open(...).convert("RGB") without EXIF transpose.
             # So crop in the same pixel space (no exif_transpose here), otherwise
             # some rotated images get wrong crops.
-            im = im.convert("RGB")
+            with Image.open(view_path) as im_src:
+                if _crop_and_save(
+                    im_src,
+                    int(r["bbox_x"] or 0),
+                    int(r["bbox_y"] or 0),
+                    int(r["bbox_w"] or 1),
+                    int(r["bbox_h"] or 1),
+                ):
+                    return True
+        except Exception:
+            pass
 
-            iw = max(1, int(im.width))
-            ih = max(1, int(im.height))
-            x = int(r["bbox_x"] or 0)
-            y = int(r["bbox_y"] or 0)
-            w = max(1, int(r["bbox_w"] or 1))
-            h = max(1, int(r["bbox_h"] or 1))
+        # Fallback: if original cannot be read, crop from existing photo thumb
+        # by scaling bbox from photo dimensions to thumb dimensions.
+        thumb_name = str(r["thumb_name"] or "").strip()
+        thumb_path = THUMB_DIR / thumb_name if thumb_name else None
+        if thumb_path and thumb_path.exists():
+            try:
+                pw = float(r["width"] or 0) or 0.0
+                ph = float(r["height"] or 0) or 0.0
+                bx = float(r["bbox_x"] or 0)
+                by = float(r["bbox_y"] or 0)
+                bw = float(r["bbox_w"] or 1)
+                bh = float(r["bbox_h"] or 1)
+            except Exception:
+                pw = ph = 0.0
+                bx = by = 0.0
+                bw = bh = 1.0
+            try:
+                with Image.open(thumb_path) as im_thumb:
+                    tw = max(1, int(im_thumb.width))
+                    th = max(1, int(im_thumb.height))
+                    # If source dimensions are unknown, assume bbox is already in thumb space.
+                    sx = (tw / pw) if pw > 0 else 1.0
+                    sy = (th / ph) if ph > 0 else 1.0
+                    if _crop_and_save(
+                        im_thumb,
+                        int(round(bx * sx)),
+                        int(round(by * sy)),
+                        int(round(max(1.0, bw * sx))),
+                        int(round(max(1.0, bh * sy))),
+                    ):
+                        return True
+            except Exception:
+                pass
 
-            # Clamp bbox to image bounds first.
-            x1 = max(0, min(iw - 1, x))
-            y1 = max(0, min(ih - 1, y))
-            x2 = max(x1 + 1, min(iw, x1 + w))
-            y2 = max(y1 + 1, min(ih, y1 + h))
-
-            # Expand around face center with context while staying inside bounds.
-            fw = max(1, x2 - x1)
-            fh = max(1, y2 - y1)
-            pad = int(max(fw, fh) * 0.30)
-            cx1 = max(0, x1 - pad)
-            cy1 = max(0, y1 - pad)
-            cx2 = min(iw, x2 + pad)
-            cy2 = min(ih, y2 + pad)
-
-            if cx2 <= cx1 or cy2 <= cy1:
-                # Extreme edge-case fallback: center crop to avoid total failure.
-                side = max(1, min(iw, ih))
-                left = max(0, (iw - side) // 2)
-                top = max(0, (ih - side) // 2)
-                cx1, cy1, cx2, cy2 = left, top, min(iw, left + side), min(ih, top + side)
-
-            crop = im.crop((cx1, cy1, cx2, cy2))
-            crop.thumbnail((300, 300))
-            crop.save(out_path, format="JPEG", quality=90, optimize=True)
-        return True
+        return False
     except Exception as e:
         try:
             log_event("error", error=f"face_thumb_bg: {e}", face_id=face_id)
