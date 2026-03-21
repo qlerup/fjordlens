@@ -1784,6 +1784,17 @@ body.detail-open .detail-panel {
 .modal .modal-body {
   padding: 0 14px 14px;
 }
+.modal .modal-dialog {
+  opacity: 1;
+}
+
+/* Download modal: use container backdrop to avoid any stacking ambiguity */
+#mapperDownloadModal {
+  background: rgba(0,0,0,0.6);
+}
+#mapperDownloadModal .modal-backdrop {
+  display: none !important;
+}
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display:none; align-items:center; justify-content:center; pointer-events: none; }
 .modal-backdrop.active { display:flex; pointer-events: auto; }
 .gps-modal { position: relative; z-index: 10000; width: min(900px, 92vw); background: var(--panel); border:1px solid var(--border); box-shadow: 0 18px 40px rgba(0,0,0,0.55); border-radius: 12px; padding: 12px; }

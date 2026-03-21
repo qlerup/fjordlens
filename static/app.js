@@ -2301,6 +2301,49 @@ function appendCardTo(item, container) {
 
 function appendCard(item){ return appendCardTo(item, els.grid); }
 
+function bindFolderNameMarquee(card, fullText) {
+  try {
+    if (!card || !window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    const nameEl = card.querySelector('.folder-name');
+    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
+    if (!nameEl || !inner) return;
+    const full = String(fullText || inner.textContent || '');
+    nameEl.setAttribute('title', full);
+
+    const stop = () => {
+      try {
+        nameEl.classList.remove('marquee-run');
+        nameEl.classList.remove('marquee');
+        nameEl.style.removeProperty('--fl-shift');
+        inner.style.transform = '';
+      } catch {}
+    };
+    const start = () => {
+      try {
+        const prev = inner.style.display;
+        inner.style.display = 'inline-block';
+        const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
+        inner.style.display = prev;
+        if (delta <= 4) {
+          stop();
+          return;
+        }
+        nameEl.style.setProperty('--fl-shift', `-${Math.ceil(delta)}px`);
+        nameEl.classList.add('marquee');
+        // Restart animation cleanly each hover.
+        nameEl.classList.remove('marquee-run');
+        void nameEl.offsetWidth;
+        nameEl.classList.add('marquee-run');
+      } catch {
+        stop();
+      }
+    };
+
+    card.addEventListener('mouseenter', start);
+    card.addEventListener('mouseleave', stop);
+  } catch {}
+}
+
 function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
@@ -2392,7 +2435,8 @@ function appendFolderCard(folder, arr, opts = {}) {
         <span>${arr.length} elementer</span>
         <span>Mapper</span>
       </div>
-    </div>`;
+      </div>`;
+  bindFolderNameMarquee(card, title || folder || '');
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
@@ -2443,33 +2487,38 @@ function appendFolderCard(folder, arr, opts = {}) {
         grid.classList.add(v);
         grid.innerHTML = urls.map(u => `<img src="${u}" alt="">`).join("");
       };
+      const persistPreviews = async (urls) => {
+        if (!Array.isArray(urls) || !urls.length) return;
+        try {
+          await fetch('/api/folder-previews', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder, previews: urls }),
+          });
+        } catch {}
+      };
       // Determine desired preview count based on available unique URLs
       const desiredCount = (uniqUrls.length === 1) ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
       const desiredVariant = (desiredCount === 1 ? 'v1' : (desiredCount === 2 ? 'v2' : 'v4'));
       if (Array.isArray(saved) && saved.length) {
-        const savedVariant = (saved.length === 1 ? 'v1' : (saved.length === 2 ? 'v2' : 'v4'));
-        // If server-saved previews are fewer than desired (folder has grown), prefer fresh selection
-        if (saved.length < desiredCount) {
+        // Keep only previews that still exist in this folder/subtree, then enforce desired count.
+        const normalizedSaved = saved.filter((u) => uniqUrls.includes(u)).slice(0, desiredCount);
+        if (normalizedSaved.length < desiredCount) {
           const fresh = uniqUrls.slice(0, desiredCount);
           if (fresh.length) {
             updateGrid(fresh, desiredVariant);
-            try {
-              await fetch('/api/folder-previews', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ folder, previews: fresh })
-              });
-            } catch {}
+            await persistPreviews(fresh);
           }
         } else {
+          const savedVariant = (normalizedSaved.length === 1 ? 'v1' : (normalizedSaved.length === 2 ? 'v2' : 'v4'));
           // Only update if different from what we rendered
-          const same = Array.isArray(useUrls) && useUrls.length === saved.length && useUrls.every((u,i)=>u===saved[i]);
-          if (!same) updateGrid(saved, savedVariant);
+          const same = Array.isArray(useUrls) && useUrls.length === normalizedSaved.length && useUrls.every((u,i)=>u===normalizedSaved[i]);
+          if (!same) updateGrid(normalizedSaved, savedVariant);
+          const changed = normalizedSaved.length !== saved.length || normalizedSaved.some((u, i) => u !== saved[i]);
+          if (changed) await persistPreviews(normalizedSaved);
         }
       } else if (useUrls && useUrls.length) {
-        await fetch('/api/folder-previews', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folder, previews: useUrls })
-        });
+        await persistPreviews(useUrls);
       }
     } catch {}
   })();
@@ -2587,49 +2636,6 @@ function openPersonRenameMenu(anchorBtn, person) {
     <div class="person-rename-divider"></div>
     <div class="person-rename-list"></div>
   `;
-  // Enable hover marquee for long folder names in overlay
-  try {
-    const nameEl = card.querySelector('.folder-name');
-    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
-    if (nameEl && inner) {
-      const full = String(title || folder || '');
-      nameEl.setAttribute('title', full);
-      const startMarquee = () => {
-        try {
-          const prev = inner.style.display;
-          inner.style.display = 'inline-block';
-          const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
-          if (delta <= 4) return;
-          nameEl.classList.add('marquee');
-          let x = 0; let lastTs = 0; const speed = 60; // px/sec
-          const step = (ts) => {
-            if (!nameEl.classList.contains('marquee')) return; // cancelled
-            if (!lastTs) { lastTs = ts; }
-            const dt = Math.max(0, (ts - lastTs) / 1000);
-            lastTs = ts;
-            x -= speed * dt;
-            if (-x >= delta) { x = 0; }
-            inner.style.transform = `translateX(${x}px)`;
-            nameEl.__raf = window.requestAnimationFrame(step);
-          };
-          cancelMarquee();
-          nameEl.__raf = window.requestAnimationFrame(step);
-        } catch {}
-      };
-      const cancelMarquee = () => {
-        try { if (nameEl.__raf) { window.cancelAnimationFrame(nameEl.__raf); nameEl.__raf = null; } } catch {}
-        try { inner.style.transform = ''; } catch {}
-        try { inner.style.display = ''; } catch {}
-        nameEl.classList.remove('marquee');
-      };
-      // Start marquee on hover of card (and overlay descendants)
-      const onEnter = () => startMarquee();
-      const onLeave = () => cancelMarquee();
-      card.addEventListener('mouseenter', onEnter);
-      card.addEventListener('mouseleave', onLeave);
-      card.addEventListener('mouseover', onEnter, { passive: true });
-    }
-  } catch {}
 
   const listEl = menu.querySelector('.person-rename-list');
   // Exclude auto-generated unknown buckets like "Ukendt-10" from merge targets

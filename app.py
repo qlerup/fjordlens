@@ -8102,6 +8102,15 @@ def api_settings_upload_folder_delete():
             safe = _normalize_upload_subdir(str(rp or ""))
         except Exception:
             return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+        if destination == UPLOAD_DEST_UPLOADS:
+            # Canonicalize internal storage prefixes to logical mapper path
+            # so deleting "foo/bar" always targets both originals/ and converted/.
+            if safe == "originals" or safe == "converted":
+                safe = ""
+            elif safe.startswith("originals/"):
+                safe = safe[len("originals/"):]
+            elif safe.startswith("converted/"):
+                safe = safe[len("converted/"):]
         if safe:
             normalized.append(safe)
     if not normalized:
@@ -8118,6 +8127,23 @@ def api_settings_upload_folder_delete():
     target_root, rel_prefix = _upload_target_for_destination(destination)
     try:
         base = target_root.resolve()
+        mirror_root: Optional[Path] = None
+        mirror_base: Optional[Path] = None
+        legacy_root: Optional[Path] = None
+        legacy_base: Optional[Path] = None
+        if destination == UPLOAD_DEST_UPLOADS:
+            try:
+                mirror_root = (UPLOAD_DIR / "converted")
+                mirror_base = mirror_root.resolve()
+            except Exception:
+                mirror_root = None
+                mirror_base = None
+            try:
+                legacy_root = UPLOAD_DIR
+                legacy_base = legacy_root.resolve()
+            except Exception:
+                legacy_root = None
+                legacy_base = None
     except Exception:
         return jsonify({"ok": False, "error": "Upload-rodmappe kunne ikke læses"}), 500
 
@@ -8129,28 +8155,73 @@ def api_settings_upload_folder_delete():
         perm = _current_user_folder_permission_for_rel(base_rel)
         if not _perm_allows(perm, "edit"):
             return jsonify({"ok": False, "error": f"Ingen slette-adgang til '{subdir}'"}), 403
+        deleted_any = False
         try:
             target = (target_root / subdir).resolve()
             target.relative_to(base)
         except Exception:
             return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
 
-        if not target.exists() or not target.is_dir():
-            missing.append(subdir)
-            continue
-        try:
-            shutil.rmtree(target)
+        if target.exists() and target.is_dir():
+            try:
+                shutil.rmtree(target)
+                deleted_any = True
+            except Exception as e:
+                return jsonify({"ok": False, "error": f"Kunne ikke slette mappe '{subdir}': {e}"}), 400
+
+        if mirror_root is not None and mirror_base is not None:
+            try:
+                mirror_target = (mirror_root / subdir).resolve()
+                mirror_target.relative_to(mirror_base)
+            except Exception:
+                return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+            if mirror_target.exists() and mirror_target.is_dir():
+                try:
+                    shutil.rmtree(mirror_target)
+                    deleted_any = True
+                except Exception as e:
+                    return jsonify({"ok": False, "error": f"Kunne ikke slette konverteret mappe '{subdir}': {e}"}), 400
+
+        if legacy_root is not None and legacy_base is not None:
+            try:
+                legacy_target = (legacy_root / subdir).resolve()
+                legacy_target.relative_to(legacy_base)
+            except Exception:
+                return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+            if legacy_target.exists() and legacy_target.is_dir():
+                try:
+                    shutil.rmtree(legacy_target)
+                    deleted_any = True
+                except Exception as e:
+                    return jsonify({"ok": False, "error": f"Kunne ikke slette legacy mappe '{subdir}': {e}"}), 400
+
+        if deleted_any:
             deleted.append(subdir)
-        except Exception as e:
-            return jsonify({"ok": False, "error": f"Kunne ikke slette mappe '{subdir}': {e}"}), 400
+        else:
+            missing.append(subdir)
 
     # Clean stale selected subdir setting if deleted
     current_subdir = get_upload_subdir(destination)
     if current_subdir and any(current_subdir == d or current_subdir.startswith(d + "/") for d in deleted):
         _set_upload_subdir(destination, "")
 
-    rel_prefixes = [f"{rel_prefix}{d}" if rel_prefix else d for d in deleted]
+    # Purge index rows for folders we deleted and for stale DB-only folders that no longer exist on disk.
+    cleanup_folders = sorted(set(deleted + missing), key=lambda x: (x.count("/"), x.lower()))
+    rel_prefixes = [f"{rel_prefix}{d}" if rel_prefix else d for d in cleanup_folders]
+    if destination == UPLOAD_DEST_UPLOADS:
+        rel_prefixes.extend([f"uploads/converted/{d}" for d in cleanup_folders])
+        rel_prefixes.extend([f"uploads/{d}" for d in cleanup_folders])
     removed = _delete_indexed_photos_for_prefixes(rel_prefixes)
+    try:
+        with closing(get_conn()) as conn:
+            for folder in cleanup_folders:
+                conn.execute(
+                    "DELETE FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
+                    (folder, folder + "/%"),
+                )
+            conn.commit()
+    except Exception:
+        pass
 
     payload = _upload_settings_payload(destination)
     payload["deleted"] = deleted
