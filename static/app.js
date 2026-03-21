@@ -54,6 +54,13 @@ const els = {
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
+  mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
+  mapperSelectAllBtn: document.getElementById("mapperSelectAllBtn"),
+  mapperClearBtn: document.getElementById("mapperClearBtn"),
+  mapperDownloadModal: document.getElementById('mapperDownloadModal'),
+  mapperDownloadModalClose: document.getElementById('mapperDownloadModalClose'),
+  downloadConvertedBtn: document.getElementById('downloadConvertedBtn'),
+  downloadOriginalBtn: document.getElementById('downloadOriginalBtn'),
   mapperCancelBtn: document.getElementById("mapperCancelBtn"),
   mapperNavMenu: document.getElementById("mapperNavMenu"),
   mapperTreeNav: document.getElementById("mapperTreeNav"),
@@ -388,6 +395,7 @@ const I18N = {
     nav_favorites: '⭐ Favoritter',
     nav_places: '📍 Steder',
     nav_cameras: '📸 Kameraer',
+        try { card.classList.toggle('selected', !isSel); } catch {}
     nav_folders: '🗂️ Mapper',
     nav_people: '🙂 Personer',
     nav_settings: '⚙️ Indstillinger',
@@ -532,6 +540,11 @@ const I18N = {
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
     mapper_delete_selected: 'Slet valgte',
+    mapper_download: 'Download',
+    mapper_download_converted: 'Download konverterede',
+    mapper_download_original: 'Download originale',
+    mapper_select_all: 'Vælg alle',
+    mapper_clear_selection: 'Fjern valgte',
     mapper_cancel: 'Annuller',
     mapper_create_name_required: 'Skriv mappenavn først.',
     mapper_create_failed: 'Kunne ikke oprette mappe',
@@ -918,6 +931,11 @@ const I18N = {
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
     mapper_delete_selected: 'Delete selected',
+    mapper_download: 'Download',
+    mapper_download_converted: 'Download converted',
+    mapper_download_original: 'Download originals',
+    mapper_select_all: 'Select all',
+    mapper_clear_selection: 'Clear selection',
     mapper_cancel: 'Cancel',
     mapper_create_name_required: 'Enter a folder name first.',
     mapper_create_failed: 'Could not create folder',
@@ -2098,7 +2116,9 @@ function appendCardTo(item, container) {
 
   // Add Info icon overlay (top-left, on red dot) on mouseover
   const thumb = card.querySelector('.card-thumb');
-  if (thumb) {
+  // Hide info overlay in mapper selection mode
+  const allowInfoOverlay = !(state && state.view === 'mapper' && state.mapperEditMode);
+  if (thumb && allowInfoOverlay) {
     // Create info icon
     const infoIcon = document.createElement('div');
     infoIcon.className = 'info-icon-overlay';
@@ -2331,11 +2351,28 @@ function appendFolderCard(folder, arr, opts = {}) {
         grid.classList.add(v);
         grid.innerHTML = urls.map(u => `<img src="${u}" alt="">`).join("");
       };
+      // Determine desired preview count based on available unique URLs
+      const desiredCount = (uniqUrls.length === 1) ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
+      const desiredVariant = (desiredCount === 1 ? 'v1' : (desiredCount === 2 ? 'v2' : 'v4'));
       if (Array.isArray(saved) && saved.length) {
-        const v = (saved.length === 1 ? 'v1' : (saved.length === 2 ? 'v2' : 'v4'));
-        // Only update if different from what we rendered
-        const same = Array.isArray(useUrls) && useUrls.length === saved.length && useUrls.every((u,i)=>u===saved[i]);
-        if (!same) updateGrid(saved, v);
+        const savedVariant = (saved.length === 1 ? 'v1' : (saved.length === 2 ? 'v2' : 'v4'));
+        // If server-saved previews are fewer than desired (folder has grown), prefer fresh selection
+        if (saved.length < desiredCount) {
+          const fresh = uniqUrls.slice(0, desiredCount);
+          if (fresh.length) {
+            updateGrid(fresh, desiredVariant);
+            try {
+              await fetch('/api/folder-previews', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder, previews: fresh })
+              });
+            } catch {}
+          }
+        } else {
+          // Only update if different from what we rendered
+          const same = Array.isArray(useUrls) && useUrls.length === saved.length && useUrls.every((u,i)=>u===saved[i]);
+          if (!same) updateGrid(saved, savedVariant);
+        }
       } else if (useUrls && useUrls.length) {
         await fetch('/api/folder-previews', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3998,12 +4035,73 @@ function renderMapperContext(path = '') {
       ? `${tr('mapper_delete_selected')} (${selectedCount})`
       : tr('mapper_delete_selected');
   }
+  if (els.mapperDownloadBtn) {
+    const show = !!state.mapperEditMode;
+    const canDownload = show && (selPhotos > 0);
+    els.mapperDownloadBtn.classList.toggle('hidden', !show);
+    els.mapperDownloadBtn.disabled = !canDownload;
+    els.mapperDownloadBtn.textContent = tr('mapper_download');
+  }
+  if (els.mapperSelectAllBtn) {
+    const show = !!state.mapperEditMode;
+    els.mapperSelectAllBtn.classList.toggle('hidden', !show);
+    els.mapperSelectAllBtn.textContent = tr('mapper_select_all');
+    // Enable when there are any selectable items visible
+    try {
+      const hasTargets = !!document.querySelector('.gallery-grid .folder-card, .gallery-grid .photo-card:not(.folder-card):not(.upload-card)');
+      els.mapperSelectAllBtn.disabled = !hasTargets;
+    } catch { els.mapperSelectAllBtn.disabled = false; }
+  }
+  if (els.mapperClearBtn) {
+    const show = !!state.mapperEditMode;
+    els.mapperClearBtn.classList.toggle('hidden', !show);
+    els.mapperClearBtn.textContent = tr('mapper_clear_selection');
+    els.mapperClearBtn.disabled = !(selectedCount > 0);
+  }
   if (els.mapperCancelBtn) {
     const show = !!state.mapperEditMode;
     els.mapperCancelBtn.classList.toggle('hidden', !show);
     els.mapperCancelBtn.textContent = tr('mapper_cancel');
   }
   renderMapperTree();
+}
+
+function openDownloadModal(){
+  if (!els.mapperDownloadModal) return;
+  els.mapperDownloadModal.classList.remove('hidden');
+}
+function closeDownloadModal(){ if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden'); }
+
+async function runMapperDownload(mode){
+  const ids = Array.from(state.mapperSelectedPhotoIds || []);
+  if (!ids.length) { showStatus(tr('mapper_select_delete_none'), 'err'); return; }
+  try {
+    // Multiple -> ZIP; Single -> direct
+    if (ids.length === 1) {
+      const url = `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(mode)}`;
+      window.location.href = url; // triggers attachment download
+      return;
+    }
+    const res = await fetch('/api/photos/download-zip', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_ids: ids, mode })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      showStatus((err && err.error) || 'Download fejlede', 'err');
+      return;
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = `fjordlens_download_${ids.length}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1000);
+  } catch {
+    showStatus('Download fejlede', 'err');
+  }
 }
 
 function showDnsStatus(message, kind = 'ok') {
@@ -4478,6 +4576,12 @@ function setMapperEditMode(enabled) {
   }
   renderMapperContext(state.mapperPath || '');
   if (state.view === 'mapper') renderGrid();
+  // Hide or show any existing info overlays depending on mode
+  try {
+    document.querySelectorAll('.info-icon-overlay').forEach(el=>{
+      el.style.display = state.mapperEditMode ? 'none' : '';
+    });
+  } catch {}
 }
 
 function toggleMapperFolderSelection(folderPath) {
@@ -4589,6 +4693,52 @@ async function deleteSelectedInMapper() {
   if (photoCount > 0) return deleteSelectedMapperPhotos();
   if (folderCount > 0) return deleteSelectedMapperFolders();
   showStatus(tr('mapper_select_delete_none'), 'err');
+}
+
+// Select all visible items in Mapper (prefer photos in current folder; else folders)
+function mapperSelectAll() {
+  try { if (!state.mapperEditMode) setMapperEditMode(true); } catch {}
+  // Attempt to select all visible photo cards in current folder
+  const current = String(state.mapperPath || '');
+  const items = Array.isArray(state.items) ? state.items.slice() : [];
+  // Normalize rel_path → folder path like in renderGrid()
+  const folderOf = (rel) => {
+    let f = String(rel || '');
+    f = f.includes('/') ? f.split('/').slice(0, -1).join('/') : '';
+    if (f === 'uploads') f = '';
+    else if (f.startsWith('uploads/')) f = f.slice('uploads/'.length);
+    if (f.startsWith('converted/')) f = f.slice('converted/'.length);
+    if (f.startsWith('originals/')) f = f.slice('originals/'.length);
+    return f;
+  };
+  const direct = items.filter(it => folderOf(String(it.rel_path || '')) === current);
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  if (direct.length > 0) {
+    for (const it of direct) state.mapperSelectedPhotoIds.add(it.id);
+    try { document.querySelectorAll('.gallery-grid .photo-card:not(.folder-card):not(.upload-card)').forEach(el=> el.classList.add('selected')); } catch {}
+  } else {
+    // No direct photos; select all child folders
+    if (!state.mapperSelectedFolders) state.mapperSelectedFolders = new Set();
+    try {
+      document.querySelectorAll('.gallery-grid .folder-card').forEach(card => {
+        const f = card.getAttribute('data-folder') || '';
+        if (f) state.mapperSelectedFolders.add(f);
+        card.classList.add('selected');
+        let badge = card.querySelector('.folder-select-badge');
+        if (!badge) { const t = card.querySelector('.card-thumb'); badge = document.createElement('span'); badge.className = 'folder-select-badge'; if (t) t.appendChild(badge); }
+        if (badge) badge.textContent = '✓';
+      });
+    } catch {}
+  }
+  renderMapperContext(state.mapperPath || '');
+}
+
+function mapperClearSelection() {
+  state.mapperSelectedPhotoIds = new Set();
+  state.mapperSelectedFolders = new Set();
+  try { document.querySelectorAll('.gallery-grid .photo-card.selected, .gallery-grid .folder-card.selected').forEach(el=> el.classList.remove('selected')); } catch {}
+  try { document.querySelectorAll('.gallery-grid .folder-card .folder-select-badge').forEach(b=> b.textContent=''); } catch {}
+  renderMapperContext(state.mapperPath || '');
 }
 
 // --- Drag & drop: collect files with relative paths (supports folders) ---
@@ -6999,6 +7149,12 @@ if (els.sharedLinksList) {
 }
 
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedInMapper);
+els.mapperSelectAllBtn && els.mapperSelectAllBtn.addEventListener('click', mapperSelectAll);
+els.mapperClearBtn && els.mapperClearBtn.addEventListener('click', mapperClearSelection);
+els.mapperDownloadBtn && els.mapperDownloadBtn.addEventListener('click', openDownloadModal);
+els.mapperDownloadModalClose && els.mapperDownloadModalClose.addEventListener('click', closeDownloadModal);
+els.downloadConvertedBtn && els.downloadConvertedBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('converted'); });
+els.downloadOriginalBtn && els.downloadOriginalBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('original'); });
 els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');

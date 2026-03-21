@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session
+from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session, send_file
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 )
@@ -7766,6 +7766,97 @@ def api_viewable(rel_path: str):
         return resp
     except Exception as e:
         return (str(e), 500)
+
+
+@app.route("/api/photos/download/<int:photo_id>")
+def api_photo_download(photo_id: int):
+    """Download a single photo as attachment.
+    Query param mode=converted|original. Converted prefers a browser-friendly copy
+    if available, otherwise falls back to the original.
+    """
+    mode = str(request.args.get("mode") or "converted").strip().lower()
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return ("Not found", 404)
+    rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    if not rel or not _is_rel_path_allowed_for_current_user(rel):
+        return ("Forbidden", 403)
+
+    # Resolve physical file path
+    src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
+    use_path = ensure_viewable_copy(src, rel) if mode == "converted" else src
+    if not use_path.exists():
+        return ("Not found", 404)
+
+    filename = use_path.name
+    try:
+        return send_file(str(use_path), as_attachment=True, download_name=filename)
+    except TypeError:
+        return send_file(str(use_path), as_attachment=True)
+
+
+@app.route("/api/photos/download-zip", methods=["POST"])
+def api_photos_download_zip():
+    """Zip and download multiple photos.
+    Body: { photo_ids: [int], mode: 'converted'|'original' }
+    """
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("photo_ids")
+    mode = str(body.get("mode") or "converted").strip().lower()
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
+    ids = [int(pid) for pid in raw_ids if str(pid).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM photos WHERE id IN ({','.join(['?']*len(ids))})",
+            tuple(ids),
+        ).fetchall()
+
+    files = []  # list[(Path, name)]
+    for r in rows:
+        try:
+            rel = str(r["rel_path"] or "").replace("..", "").lstrip("/")
+            if not rel or not _is_rel_path_allowed_for_current_user(rel):
+                continue
+            src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
+            use_path = ensure_viewable_copy(src, rel) if mode == "converted" else src
+            if not use_path.exists():
+                continue
+            files.append((use_path, use_path.name))
+        except Exception:
+            continue
+    if not files:
+        return ("Not found", 404)
+
+    import tempfile, zipfile
+    tmp = tempfile.TemporaryFile()
+    with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        used = set()
+        for p, name in files:
+            base = name
+            if base in used:
+                stem = Path(base).stem
+                suff = Path(base).suffix
+                i = 2
+                while f"{stem}_{i}{suff}" in used:
+                    i += 1
+                base = f"{stem}_{i}{suff}"
+            used.add(base)
+            try:
+                zf.write(p, arcname=base)
+            except Exception:
+                continue
+    try:
+        tmp.seek(0)
+        fname = f"fjordlens_download_{len(files)}.zip"
+        return send_file(tmp, mimetype="application/zip", as_attachment=True, download_name=fname)
+    except TypeError:
+        tmp.seek(0)
+        return send_file(tmp, mimetype="application/zip", as_attachment=True)
 
 
 @app.route("/api/debug/sample")

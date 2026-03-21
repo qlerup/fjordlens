@@ -129,7 +129,13 @@ function updateDeleteButton() {
 function renderGrid() {
   if (!els.grid) return;
   // Build folder cards and photo cards based on currentPath
-  const root = (Array.isArray(state.info && state.info.folder_paths) && state.info.folder_paths[0]) ? String(state.info.folder_paths[0] || '') : '';
+  // If multiple folders are shared, treat a virtual root so we only show folders at top-level
+  let root = '';
+  try {
+    const fps = (state.info && Array.isArray(state.info.folder_paths)) ? state.info.folder_paths : [];
+    const count = Number((state.info && (state.info.folder_count != null ? state.info.folder_count : fps.length)) || 0);
+    root = (count <= 1 && fps.length) ? String(fps[0] || '') : '';
+  } catch { root = ''; }
   const norm = (rel) => {
     // Map uploads/originals|converted/<path>/<file> → <path>
     let p = String(rel || '').replace(/\\/g, '/');
@@ -185,7 +191,8 @@ function renderGrid() {
     const back = document.createElement('div');
     back.className = 'mini-label';
     back.style.margin = '4px 0 6px 2px';
-    back.innerHTML = `<button class="btn small" id="sharePathBack">Tilbage</button> <span style="opacity:.8">${root}/${current}</span>`;
+    const labelPath = root ? `${root}/${current}` : current;
+    back.innerHTML = `<button class="btn small" id="sharePathBack">Tilbage</button> <span style="opacity:.8">${labelPath}</span>`;
     els.grid.appendChild(back);
     const btn = back.querySelector('#sharePathBack');
     if (btn) btn.addEventListener('click', () => {

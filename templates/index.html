@@ -137,6 +137,9 @@
           <span id="mapperCurrentPath" class="mini-label">Aktuel mappe: uploads</span>
           <button id="mapperUpBtn" class="btn">Tilbage</button>
           <button id="mapperCancelBtn" class="btn ghost hidden">Annuller</button>
+          <button id="mapperDownloadBtn" class="btn hidden" disabled>Download</button>
+          <button id="mapperSelectAllBtn" class="btn hidden">Vælg alle</button>
+          <button id="mapperClearBtn" class="btn hidden" disabled>Fjern valgte</button>
           <button id="mapperDeleteBtn" class="btn danger hidden" disabled>Slet valgte</button>
         </div>
         <div id="mapperDropZone" class="mapper-dropzone">Slip filer eller mapper her for at uploade direkte til valgt mappe</div>
@@ -146,6 +149,25 @@
       <section id="statusBar" class="status hidden"></section>
       <section id="emptyState" class="empty hidden"></section>
       <section id="galleryGrid" class="gallery-grid"></section>
+
+      <!-- Download modal -->
+      <div id="mapperDownloadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mapperDownloadModalTitle">
+        <div class="modal-backdrop"></div>
+        <div class="modal-dialog" style="max-width:460px;">
+          <div class="modal-header">
+            <h3 id="mapperDownloadModalTitle">Download</h3>
+            <button id="mapperDownloadModalClose" class="btn ghost" aria-label="Luk">✕</button>
+          </div>
+          <div class="modal-body">
+            <p>Vælg hvad der skal hentes:</p>
+            <div class="toolbar" style="gap:8px;flex-wrap:wrap;">
+              <button id="downloadConvertedBtn" class="btn primary">Download konverterede</button>
+              <button id="downloadOriginalBtn" class="btn">Download originale</button>
+            </div>
+            <p class="mini-label" style="margin-top:8px;opacity:.8;">Ved flere valg pakkes de som ZIP.</p>
+          </div>
+        </div>
+      </div>
 
       <!-- Steder: interaktivt kort med clustering -->
       <section id="placesMapWrap" class="hidden" style="position:relative;">
