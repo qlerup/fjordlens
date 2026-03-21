@@ -7737,17 +7737,6 @@ window.addEventListener('resize', ()=>{
     const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
     const r = mediaEl.getBoundingClientRect();
 
-// --- Safety: ensure no stray full-screen overlays block clicks on first load
-(() => {
-  try {
-    document.body.classList.remove('drawer-open');
-    const d = document.getElementById('drawerBackdrop');
-    if (d) { d.style.display = 'none'; d.classList.remove('active'); }
-    document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); el.style.display='none'; });
-    const up = document.getElementById('uploadOverlay');
-    if (up) up.classList.add('hidden');
-  } catch {}
-})();
     const w = vi.offsetWidth || 360;
     const underOffset = 8;
     vi.style.left = `${Math.round(r.right - w - underOffset)}px`;
