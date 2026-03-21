@@ -7768,6 +7768,78 @@ def api_viewable(rel_path: str):
         return (str(e), 500)
 
 
+def _find_existing_converted_for_upload_rel(rel_path: str) -> Optional[Path]:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("uploads/originals/"):
+        tail = rel[len("uploads/originals/"):]
+    elif rel.startswith("uploads/converted/"):
+        tail = rel[len("uploads/converted/"):]
+    elif rel.startswith("uploads/"):
+        tail = rel[len("uploads/"):]
+    else:
+        return None
+    base = Path(tail).with_suffix("")
+    parent = base.parent
+    stem = base.name
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        cand = UPLOAD_DIR / "converted" / parent / f"{stem}{ext}"
+        if cand.exists() and cand.is_file():
+            return cand
+    return None
+
+
+def _find_existing_original_for_converted_rel(rel_path: str) -> Optional[Path]:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("uploads/converted/"):
+        tail = rel[len("uploads/converted/"):]
+    else:
+        return None
+    base = Path(tail).with_suffix("")
+    orig_dir = UPLOAD_DIR / "originals" / base.parent
+    if not orig_dir.exists() or not orig_dir.is_dir():
+        return None
+    try:
+        candidates = sorted(orig_dir.glob(f"{base.name}.*"))
+    except Exception:
+        candidates = []
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            return cand
+    return None
+
+
+def _resolve_download_path(src: Path, rel_path: str, mode: str) -> Path:
+    """Resolve download file for requested mode.
+    - original: use original path (if row points at converted, try mirrored original first)
+    - converted: for uploads/*, ONLY use existing mirrored converted file by filename;
+      otherwise fall back to original. No ad-hoc conversion for uploads during download.
+      For library files outside uploads/*, keep existing viewable fallback behavior.
+    """
+    mode_norm = str(mode or "converted").strip().lower()
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+
+    if mode_norm == "original":
+        if rel.startswith("uploads/converted/"):
+            orig = _find_existing_original_for_converted_rel(rel)
+            if orig is not None and orig.exists():
+                return orig
+        return src
+
+    # converted
+    if rel.startswith("uploads/"):
+        converted = _find_existing_converted_for_upload_rel(rel)
+        if converted is not None and converted.exists():
+            return converted
+        if rel.startswith("uploads/converted/"):
+            orig = _find_existing_original_for_converted_rel(rel)
+            if orig is not None and orig.exists():
+                return orig
+        return src
+
+    # Non-upload/library paths: keep previous behavior
+    return ensure_viewable_copy(src, rel)
+
+
 @app.route("/api/photos/download/<int:photo_id>")
 def api_photo_download(photo_id: int):
     """Download a single photo as attachment.
@@ -7785,7 +7857,7 @@ def api_photo_download(photo_id: int):
 
     # Resolve physical file path
     src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
-    use_path = ensure_viewable_copy(src, rel) if mode == "converted" else src
+    use_path = _resolve_download_path(src, rel, mode)
     if not use_path.exists():
         return ("Not found", 404)
 
@@ -7823,7 +7895,7 @@ def api_photos_download_zip():
             if not rel or not _is_rel_path_allowed_for_current_user(rel):
                 continue
             src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
-            use_path = ensure_viewable_copy(src, rel) if mode == "converted" else src
+            use_path = _resolve_download_path(src, rel, mode)
             if not use_path.exists():
                 continue
             files.append((use_path, use_path.name))

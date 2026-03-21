@@ -235,6 +235,7 @@ const els = {
   downloadTopStatus: document.getElementById("downloadTopStatus"),
   downloadTopStatusLabel: document.getElementById("downloadTopStatusLabel"),
   downloadTopStatusBar: document.getElementById("downloadTopStatusBar"),
+  downloadTopStatusCancel: document.getElementById("downloadTopStatusCancel"),
 };
 
 function isSmallMobile() {
@@ -271,6 +272,17 @@ function ensureDownloadTopStatusRefs() {
   if (!els.downloadTopStatus) els.downloadTopStatus = document.getElementById("downloadTopStatus");
   if (!els.downloadTopStatusLabel) els.downloadTopStatusLabel = document.getElementById("downloadTopStatusLabel");
   if (!els.downloadTopStatusBar) els.downloadTopStatusBar = document.getElementById("downloadTopStatusBar");
+  if (!els.downloadTopStatusCancel) els.downloadTopStatusCancel = document.getElementById("downloadTopStatusCancel");
+}
+
+function setDownloadTopStatusCancelable(on = false) {
+  ensureDownloadTopStatusRefs();
+  if (els.downloadTopStatus) els.downloadTopStatus.classList.toggle('download-cancelable', !!on);
+  if (els.downloadTopStatusCancel) {
+    els.downloadTopStatusCancel.disabled = !on;
+    els.downloadTopStatusCancel.title = tr('download_status_cancel_title');
+    els.downloadTopStatusCancel.setAttribute('aria-label', tr('download_status_cancel_title'));
+  }
 }
 
 // Generic top status helpers so we can reuse the same bar
@@ -318,9 +330,13 @@ function showDownloadTopStatusMessage(label, pct = null) {
 function hideDownloadTopStatusMessage() {
   ensureDownloadTopStatusRefs();
   if (!els.downloadTopStatus) return;
+  setDownloadTopStatusCancelable(false);
   els.downloadTopStatus.classList.add('hidden');
   if (els.downloadTopStatusLabel) els.downloadTopStatusLabel.textContent = tr('download_status_ready');
-  if (els.downloadTopStatusBar) els.downloadTopStatusBar.style.width = '0%';
+  if (els.downloadTopStatusBar) {
+    els.downloadTopStatusBar.style.width = '0%';
+    els.downloadTopStatusBar.classList.remove('indeterminate');
+  }
 }
 
 function setDownloadTopStatusIndeterminate(on = true) {
@@ -602,6 +618,9 @@ const I18N = {
     download_status_receiving: 'Henter fil... {pct}%',
     download_status_done: 'Download klar',
     download_status_failed: 'Download fejlede',
+    download_status_cancel_title: 'Stop download',
+    download_status_cancelled: 'Download annulleret',
+    download_status_already_running: 'Der kører allerede en download.',
     mapper_select_all: 'Vælg alle',
     mapper_clear_selection: 'Fjern valgte',
     mapper_cancel: 'Annuller',
@@ -1001,6 +1020,9 @@ const I18N = {
     download_status_receiving: 'Receiving file... {pct}%',
     download_status_done: 'Download complete',
     download_status_failed: 'Download failed',
+    download_status_cancel_title: 'Stop download',
+    download_status_cancelled: 'Download cancelled',
+    download_status_already_running: 'A download is already running.',
     mapper_select_all: 'Select all',
     mapper_clear_selection: 'Clear selection',
     mapper_cancel: 'Cancel',
@@ -4143,12 +4165,20 @@ function openDownloadModal(){
 function closeDownloadModal(){ if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden'); }
 
 let _downloadStatusTimer = null;
+let _activeDownloadController = null;
+let _downloadInProgress = false;
 function _scheduleDownloadStatusHide(ms = 4200) {
   try { if (_downloadStatusTimer) clearTimeout(_downloadStatusTimer); } catch {}
   _downloadStatusTimer = setTimeout(() => {
     hideDownloadTopStatusMessage();
     _downloadStatusTimer = null;
   }, Math.max(0, Number(ms || 0)));
+}
+
+function cancelActiveMapperDownload() {
+  if (!_activeDownloadController || !_downloadInProgress) return false;
+  try { _activeDownloadController.abort(); } catch {}
+  return true;
 }
 
 function _formatByteSize(bytes) {
@@ -4245,21 +4275,29 @@ async function _fetchBlobWithProgress(url, options, onProgress) {
 async function runMapperDownload(mode){
   const ids = Array.from(state.mapperSelectedPhotoIds || []);
   if (!ids.length) { showStatus(tr('mapper_select_download_none'), 'err'); return; }
+  if (_downloadInProgress) {
+    showStatus(tr('download_status_already_running'), 'err');
+    return;
+  }
   try { if (_downloadStatusTimer) clearTimeout(_downloadStatusTimer); } catch {}
+  _downloadInProgress = true;
+  _activeDownloadController = new AbortController();
   const isSingle = ids.length === 1;
   const fallbackName = isSingle ? `photo_${ids[0]}` : `fjordlens_download_${ids.length}.zip`;
   showDownloadTopStatusMessage(tr('download_status_preparing'));
   setDownloadTopStatusIndeterminate(true);
+  setDownloadTopStatusCancelable(true);
   try {
     const url = isSingle
       ? `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(mode)}`
       : '/api/photos/download-zip';
     const init = isSingle
-      ? { method: 'GET' }
+      ? { method: 'GET', signal: _activeDownloadController.signal }
       : {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photo_ids: ids, mode }),
+          signal: _activeDownloadController.signal,
         };
     showDownloadTopStatusMessage(tr(isSingle ? 'download_status_fetching_one' : 'download_status_zipping'));
     const result = await _fetchBlobWithProgress(url, init, (received, total, pct, hasPct) => {
@@ -4286,10 +4324,22 @@ async function runMapperDownload(mode){
     _scheduleDownloadStatusHide();
   } catch (err) {
     setDownloadTopStatusIndeterminate(false);
+    const isAbort = !!(err && (err.name === 'AbortError' || String(err.message || '').toLowerCase().includes('aborted')));
+    if (isAbort) {
+      const msg = tr('download_status_cancelled');
+      showDownloadTopStatusMessage(msg);
+      showStatus(msg, 'ok');
+      _scheduleDownloadStatusHide(2600);
+      return;
+    }
     const msg = `${tr('download_status_failed')}${err && err.message ? `: ${String(err.message)}` : ''}`;
     showDownloadTopStatusMessage(msg);
     showStatus(msg, 'err');
     _scheduleDownloadStatusHide(7000);
+  } finally {
+    _downloadInProgress = false;
+    _activeDownloadController = null;
+    setDownloadTopStatusCancelable(false);
   }
 }
 
@@ -7354,6 +7404,13 @@ els.mapperDownloadBtn && els.mapperDownloadBtn.addEventListener('click', openDow
 els.mapperDownloadModalClose && els.mapperDownloadModalClose.addEventListener('click', closeDownloadModal);
 els.downloadConvertedBtn && els.downloadConvertedBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('converted'); });
 els.downloadOriginalBtn && els.downloadOriginalBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('original'); });
+if (els.downloadTopStatusCancel) {
+  els.downloadTopStatusCancel.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cancelActiveMapperDownload();
+  });
+}
 if (els.mapperDownloadModal) {
   els.mapperDownloadModal.addEventListener('click', (e) => {
     const t = e && e.target;

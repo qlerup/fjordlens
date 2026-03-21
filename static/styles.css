@@ -584,6 +584,44 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 .download-top-status .upload-top-status-bar {
   background: linear-gradient(90deg, #5b8cff, #7ab0ff);
 }
+.download-top-status {
+  position: relative;
+  padding-right: 34px;
+}
+.download-top-status-cancel {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, background .16s ease, border-color .16s ease, color .16s ease;
+}
+.download-top-status.download-cancelable:hover .download-top-status-cancel,
+.download-top-status.download-cancelable:focus-within .download-top-status-cancel {
+  opacity: 1;
+  pointer-events: auto;
+}
+.download-top-status-cancel:hover {
+  border-color: var(--border);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+}
+.download-top-status-cancel:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
 .upload-top-status-label {
   font-size: 0.76rem;
   color: var(--muted);
@@ -1710,6 +1748,7 @@ body.detail-open .detail-panel {
   display: grid;
   place-items: center;
   padding: 16px;
+  isolation: isolate;
 }
 .modal.hidden {
   display: none !important;
@@ -1719,6 +1758,8 @@ body.detail-open .detail-panel {
   inset: 0;
   background: rgba(0,0,0,0.6);
   display: block;
+  z-index: 0;
+  pointer-events: auto;
 }
 .modal .modal-dialog {
   position: relative;
