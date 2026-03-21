@@ -581,6 +581,9 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 .upload-top-status.hidden {
   display: none !important;
 }
+.download-top-status .upload-top-status-bar {
+  background: linear-gradient(90deg, #5b8cff, #7ab0ff);
+}
 .upload-top-status-label {
   font-size: 0.76rem;
   color: var(--muted);
@@ -1700,6 +1703,46 @@ body.detail-open .detail-panel {
 .date-popover.floating { position: fixed; right: auto; top: auto; }
 
 /* GPS centered modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.modal.hidden {
+  display: none !important;
+}
+.modal .modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: block;
+}
+.modal .modal-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(460px, calc(100vw - 24px));
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+  overflow: hidden;
+}
+.modal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 8px;
+}
+.modal .modal-header h3 {
+  margin: 0;
+}
+.modal .modal-body {
+  padding: 0 14px 14px;
+}
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display:none; align-items:center; justify-content:center; pointer-events: none; }
 .modal-backdrop.active { display:flex; pointer-events: auto; }
 .gps-modal { position: relative; z-index: 10000; width: min(900px, 92vw); background: var(--panel); border:1px solid var(--border); box-shadow: 0 18px 40px rgba(0,0,0,0.55); border-radius: 12px; padding: 12px; }

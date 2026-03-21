@@ -232,6 +232,9 @@ const els = {
   uploadTopStatus: document.getElementById("uploadTopStatus"),
   uploadTopStatusLabel: document.getElementById("uploadTopStatusLabel"),
   uploadTopStatusBar: document.getElementById("uploadTopStatusBar"),
+  downloadTopStatus: document.getElementById("downloadTopStatus"),
+  downloadTopStatusLabel: document.getElementById("downloadTopStatusLabel"),
+  downloadTopStatusBar: document.getElementById("downloadTopStatusBar"),
 };
 
 function isSmallMobile() {
@@ -262,6 +265,12 @@ function ensureUploadTopStatusRefs() {
   if (!els.uploadTopStatus) els.uploadTopStatus = document.getElementById("uploadTopStatus");
   if (!els.uploadTopStatusLabel) els.uploadTopStatusLabel = document.getElementById("uploadTopStatusLabel");
   if (!els.uploadTopStatusBar) els.uploadTopStatusBar = document.getElementById("uploadTopStatusBar");
+}
+
+function ensureDownloadTopStatusRefs() {
+  if (!els.downloadTopStatus) els.downloadTopStatus = document.getElementById("downloadTopStatus");
+  if (!els.downloadTopStatusLabel) els.downloadTopStatusLabel = document.getElementById("downloadTopStatusLabel");
+  if (!els.downloadTopStatusBar) els.downloadTopStatusBar = document.getElementById("downloadTopStatusBar");
 }
 
 // Generic top status helpers so we can reuse the same bar
@@ -295,6 +304,35 @@ function setTopStatusIndeterminate(on = true) {
   }
 }
 
+function showDownloadTopStatusMessage(label, pct = null) {
+  ensureDownloadTopStatusRefs();
+  if (!els.downloadTopStatus) return;
+  els.downloadTopStatus.classList.remove('hidden');
+  if (els.downloadTopStatusLabel) els.downloadTopStatusLabel.textContent = String(label || '');
+  if (els.downloadTopStatusBar) {
+    const v = pct == null ? null : Math.max(0, Math.min(100, Number(pct || 0)));
+    els.downloadTopStatusBar.style.width = (v == null) ? '0%' : `${v}%`;
+  }
+}
+
+function hideDownloadTopStatusMessage() {
+  ensureDownloadTopStatusRefs();
+  if (!els.downloadTopStatus) return;
+  els.downloadTopStatus.classList.add('hidden');
+  if (els.downloadTopStatusLabel) els.downloadTopStatusLabel.textContent = tr('download_status_ready');
+  if (els.downloadTopStatusBar) els.downloadTopStatusBar.style.width = '0%';
+}
+
+function setDownloadTopStatusIndeterminate(on = true) {
+  ensureDownloadTopStatusRefs();
+  if (!els.downloadTopStatus || !els.downloadTopStatusBar) return;
+  els.downloadTopStatus.classList.remove('hidden');
+  els.downloadTopStatusBar.classList.toggle('indeterminate', !!on);
+  if (!on) {
+    els.downloadTopStatusBar.style.width = '0%';
+  }
+}
+
 let uploadMonitorDomEventsBound = false;
 function bindUploadMonitorDomEvents() {
   if (uploadMonitorDomEventsBound) return;
@@ -317,11 +355,11 @@ function bindUploadMonitorDomEvents() {
 
 // Immediate emergency cleanup in case an overlay/backdrop was left in DOM
 (function immediateCleanup(){
-  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.add('hidden')); } catch{}
 })();
 try { window.addEventListener('DOMContentLoaded', ()=>{
-  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ el.classList.remove('active'); if (el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.add('hidden')); } catch{}
   try { initThemeControls(); } catch{}
 }); } catch{}
@@ -557,6 +595,13 @@ const I18N = {
     mapper_download: 'Download',
     mapper_download_converted: 'Download konverterede',
     mapper_download_original: 'Download originale',
+    download_status_ready: 'Download: Klar',
+    download_status_preparing: 'Download: Forbereder...',
+    download_status_fetching_one: 'Downloader billede...',
+    download_status_zipping: 'Pakker ZIP på server...',
+    download_status_receiving: 'Henter fil... {pct}%',
+    download_status_done: 'Download klar',
+    download_status_failed: 'Download fejlede',
     mapper_select_all: 'Vælg alle',
     mapper_clear_selection: 'Fjern valgte',
     mapper_cancel: 'Annuller',
@@ -565,6 +610,7 @@ const I18N = {
     mapper_create_error: 'Fejl ved oprettelse af mappe.',
     mapper_created_status: 'Mappe oprettet',
     mapper_select_delete_none: 'Vælg mindst én mappe at slette.',
+    mapper_select_download_none: 'Vælg mindst ét billede at downloade.',
     mapper_delete_confirm: 'Slet {count} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.',
     mapper_delete_pending: 'Sletter...',
     mapper_delete_failed: 'Kunne ikke slette mapper',
@@ -948,6 +994,13 @@ const I18N = {
     mapper_download: 'Download',
     mapper_download_converted: 'Download converted',
     mapper_download_original: 'Download originals',
+    download_status_ready: 'Download: Ready',
+    download_status_preparing: 'Download: Preparing...',
+    download_status_fetching_one: 'Downloading image...',
+    download_status_zipping: 'Creating ZIP on server...',
+    download_status_receiving: 'Receiving file... {pct}%',
+    download_status_done: 'Download complete',
+    download_status_failed: 'Download failed',
     mapper_select_all: 'Select all',
     mapper_clear_selection: 'Clear selection',
     mapper_cancel: 'Cancel',
@@ -956,6 +1009,7 @@ const I18N = {
     mapper_create_error: 'Error while creating folder.',
     mapper_created_status: 'Folder created',
     mapper_select_delete_none: 'Select at least one folder to delete.',
+    mapper_select_download_none: 'Select at least one photo to download.',
     mapper_delete_confirm: 'Delete {count} folder(s) including all content? This cannot be undone.',
     mapper_delete_pending: 'Deleting...',
     mapper_delete_failed: 'Could not delete folders',
@@ -4088,35 +4142,154 @@ function openDownloadModal(){
 }
 function closeDownloadModal(){ if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden'); }
 
+let _downloadStatusTimer = null;
+function _scheduleDownloadStatusHide(ms = 4200) {
+  try { if (_downloadStatusTimer) clearTimeout(_downloadStatusTimer); } catch {}
+  _downloadStatusTimer = setTimeout(() => {
+    hideDownloadTopStatusMessage();
+    _downloadStatusTimer = null;
+  }, Math.max(0, Number(ms || 0)));
+}
+
+function _formatByteSize(bytes) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = n;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  const decimals = (value >= 100 || idx === 0) ? 0 : 1;
+  return `${value.toFixed(decimals)} ${units[idx]}`;
+}
+
+function _extractFilenameFromDisposition(disposition, fallbackName) {
+  const raw = String(disposition || '').trim();
+  if (!raw) return String(fallbackName || 'download.bin');
+  const star = raw.match(/filename\*=([^;]+)/i);
+  if (star && star[1]) {
+    let value = String(star[1]).trim().replace(/^UTF-8''/i, '');
+    value = value.replace(/^"(.*)"$/, '$1');
+    try {
+      return decodeURIComponent(value) || String(fallbackName || 'download.bin');
+    } catch {
+      return value || String(fallbackName || 'download.bin');
+    }
+  }
+  const plain = raw.match(/filename="?([^";]+)"?/i);
+  if (plain && plain[1]) return String(plain[1]).trim();
+  return String(fallbackName || 'download.bin');
+}
+
+function _downloadFileFromBlob(blob, filename) {
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = String(filename || 'download.bin');
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 1000);
+}
+
+async function _extractDownloadErrorMessage(res) {
+  const fallback = `${tr('download_status_failed')} (HTTP ${Number(res && res.status || 0) || '?'})`;
+  if (!res) return fallback;
+  try {
+    const ct = String(res.headers && res.headers.get && res.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('application/json')) {
+      const payload = await res.json().catch(() => null);
+      const msg = payload && (payload.error || payload.message);
+      return String(msg || fallback);
+    }
+    const txt = await res.text().catch(() => '');
+    const cleaned = String(txt || '').trim();
+    return cleaned || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function _fetchBlobWithProgress(url, options, onProgress) {
+  const res = await fetch(url, options);
+  if (!res.ok) return { ok: false, res };
+  const totalRaw = Number(res.headers.get('content-length') || 0);
+  const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : 0;
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const blob = await res.blob();
+    if (typeof onProgress === 'function') onProgress(blob.size, total || blob.size, 100, true);
+    return { ok: true, res, blob };
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (chunk.value && chunk.value.byteLength) {
+      chunks.push(chunk.value);
+      received += chunk.value.byteLength;
+      const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : null;
+      if (typeof onProgress === 'function') onProgress(received, total, pct, total > 0);
+    }
+  }
+  const blob = new Blob(chunks, { type: res.headers.get('content-type') || 'application/octet-stream' });
+  if (typeof onProgress === 'function' && total <= 0) onProgress(received, Math.max(received, 1), 100, true);
+  return { ok: true, res, blob };
+}
+
 async function runMapperDownload(mode){
   const ids = Array.from(state.mapperSelectedPhotoIds || []);
-  if (!ids.length) { showStatus(tr('mapper_select_delete_none'), 'err'); return; }
+  if (!ids.length) { showStatus(tr('mapper_select_download_none'), 'err'); return; }
+  try { if (_downloadStatusTimer) clearTimeout(_downloadStatusTimer); } catch {}
+  const isSingle = ids.length === 1;
+  const fallbackName = isSingle ? `photo_${ids[0]}` : `fjordlens_download_${ids.length}.zip`;
+  showDownloadTopStatusMessage(tr('download_status_preparing'));
+  setDownloadTopStatusIndeterminate(true);
   try {
-    // Multiple -> ZIP; Single -> direct
-    if (ids.length === 1) {
-      const url = `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(mode)}`;
-      window.location.href = url; // triggers attachment download
-      return;
-    }
-    const res = await fetch('/api/photos/download-zip', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photo_ids: ids, mode })
+    const url = isSingle
+      ? `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(mode)}`
+      : '/api/photos/download-zip';
+    const init = isSingle
+      ? { method: 'GET' }
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photo_ids: ids, mode }),
+        };
+    showDownloadTopStatusMessage(tr(isSingle ? 'download_status_fetching_one' : 'download_status_zipping'));
+    const result = await _fetchBlobWithProgress(url, init, (received, total, pct, hasPct) => {
+      if (hasPct && pct != null) {
+        setDownloadTopStatusIndeterminate(false);
+        showDownloadTopStatusMessage(tr('download_status_receiving').replace('{pct}', String(pct)), pct);
+        return;
+      }
+      const labelKey = isSingle ? 'download_status_fetching_one' : 'download_status_zipping';
+      showDownloadTopStatusMessage(`${tr(labelKey)} (${_formatByteSize(received)})`);
     });
-    if (!res.ok) {
-      const err = await res.json().catch(()=>({}));
-      showStatus((err && err.error) || 'Download fejlede', 'err');
+    if (!result.ok) {
+      setDownloadTopStatusIndeterminate(false);
+      const msg = await _extractDownloadErrorMessage(result.res);
+      showDownloadTopStatusMessage(`${tr('download_status_failed')}: ${msg}`);
+      showStatus(msg, 'err');
+      _scheduleDownloadStatusHide(7000);
       return;
     }
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = `fjordlens_download_${ids.length}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1000);
-  } catch {
-    showStatus('Download fejlede', 'err');
+    const fileName = _extractFilenameFromDisposition(result.res.headers.get('content-disposition'), fallbackName);
+    _downloadFileFromBlob(result.blob, fileName);
+    setDownloadTopStatusIndeterminate(false);
+    showDownloadTopStatusMessage(`${tr('download_status_done')}: ${fileName}`, 100);
+    _scheduleDownloadStatusHide();
+  } catch (err) {
+    setDownloadTopStatusIndeterminate(false);
+    const msg = `${tr('download_status_failed')}${err && err.message ? `: ${String(err.message)}` : ''}`;
+    showDownloadTopStatusMessage(msg);
+    showStatus(msg, 'err');
+    _scheduleDownloadStatusHide(7000);
   }
 }
 
@@ -6765,11 +6938,16 @@ function setGpsPoint(lon, lat, opts={}){
 if (els.editGpsBtn) {
   els.editGpsBtn.addEventListener('click', () => {
     // Safety: remove any stray backdrops before opening
-    try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+    try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
     if (els.gpsEditWrap) {
       // Reparent to body and show centered modal with backdrop
       try { gpsPrevParent = els.gpsEditWrap.parentElement; gpsPrevNext = els.gpsEditWrap.nextElementSibling; document.body.appendChild(els.gpsEditWrap); } catch {}
-      if (!gpsBackdrop) { gpsBackdrop = document.createElement('div'); gpsBackdrop.className='modal-backdrop'; gpsBackdrop.addEventListener('click', (e)=> { if (e.target === gpsBackdrop && els.gpsCancelBtn) els.gpsCancelBtn.click(); }); }
+      if (!gpsBackdrop) {
+        gpsBackdrop = document.createElement('div');
+        gpsBackdrop.className = 'modal-backdrop';
+        gpsBackdrop.setAttribute('data-ephemeral', '1');
+        gpsBackdrop.addEventListener('click', (e)=> { if (e.target === gpsBackdrop && els.gpsCancelBtn) els.gpsCancelBtn.click(); });
+      }
       document.body.appendChild(gpsBackdrop);
       // place modal inside backdrop (centered via flex)
       gpsBackdrop.appendChild(els.gpsEditWrap);
@@ -7176,6 +7354,17 @@ els.mapperDownloadBtn && els.mapperDownloadBtn.addEventListener('click', openDow
 els.mapperDownloadModalClose && els.mapperDownloadModalClose.addEventListener('click', closeDownloadModal);
 els.downloadConvertedBtn && els.downloadConvertedBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('converted'); });
 els.downloadOriginalBtn && els.downloadOriginalBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('original'); });
+if (els.mapperDownloadModal) {
+  els.mapperDownloadModal.addEventListener('click', (e) => {
+    const t = e && e.target;
+    if (t === els.mapperDownloadModal) { closeDownloadModal(); return; }
+    if (t && t.classList && t.classList.contains('modal-backdrop')) closeDownloadModal();
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (!e || e.key !== 'Escape') return;
+  if (els.mapperDownloadModal && !els.mapperDownloadModal.classList.contains('hidden')) closeDownloadModal();
+});
 els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
 els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const cur = String(state.mapperPath || '');
@@ -7893,12 +8082,12 @@ setView(state.view, { syncUrl: false }).then(async () => {
   // Resume upload postprocess monitor/state if page was refreshed mid-run.
   resumeUploadPostprocessAfterRefresh().catch(() => {});
   // Safety: remove any stray backdrops/overlays that might block UI after reload
-  try { document.querySelectorAll('.modal-backdrop').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
+  try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}
   // Watchdog: every 5s remove any backdrop with no visible modal child
   setInterval(()=>{
     try {
-      document.querySelectorAll('.modal-backdrop').forEach(el=>{
+      document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{
         const hasModal = !!el.querySelector('.gps-modal:not(.hidden)');
         if (!hasModal) { if (el.parentElement) el.parentElement.removeChild(el); }
       });
