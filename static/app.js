@@ -2090,29 +2090,7 @@ function appendCardTo(item, container) {
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
-  // Hover marquee for long folder names (desktop)
-  try {
-    const nameEl = card.querySelector('.folder-name');
-    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
-    if (nameEl && inner) {
-      const full = String(title || folder || '');
-      nameEl.setAttribute('title', full);
-      const startMarquee = () => {
-        try {
-          inner.style.display = 'inline-block';
-          const avail = Math.floor(nameEl.clientWidth || nameEl.getBoundingClientRect().width || 0);
-          const req = Math.floor(inner.scrollWidth || inner.getBoundingClientRect().width || 0);
-          const delta = Math.max(0, req - avail);
-          if (delta <= 4) { inner.style.display = ''; return; }
-          nameEl.style.setProperty('--fl-shift', `-${delta}px`);
-          nameEl.classList.add('marquee-run');
-        } catch {}
-      };
-      const cancelMarquee = () => { try { inner.style.display=''; } catch {}; nameEl.classList.remove('marquee-run','marquee'); };
-      card.addEventListener('mouseenter', startMarquee);
-      card.addEventListener('mouseleave', cancelMarquee);
-    }
-  } catch {}
+  // Note: photo cards have no folder-name marquee
 
   // Add Info icon overlay (top-left, on red dot) on mouseover
   const thumb = card.querySelector('.card-thumb');
