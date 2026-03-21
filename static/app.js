@@ -410,7 +410,6 @@ const I18N = {
     nav_favorites: '⭐ Favoritter',
     nav_places: '📍 Steder',
     nav_cameras: '📸 Kameraer',
-        try { card.classList.toggle('selected', !isSel); } catch {}
     nav_folders: '🗂️ Mapper',
     nav_people: '🙂 Personer',
     nav_settings: '⚙️ Indstillinger',
