@@ -4906,12 +4906,18 @@ def api_people_list():
                 cnt = int(cnt_row["c"] or 0) if cnt_row else 0
                 face_row = conn.execute(
                     """
-                    SELECT id
-                    FROM faces
-                    WHERE person_id=?
-                    ORDER BY COALESCE(confidence, 0) DESC,
-                             (COALESCE(bbox_w, 0) * COALESCE(bbox_h, 0)) DESC,
-                             id DESC
+                    SELECT f.id
+                    FROM faces f
+                    LEFT JOIN photos ph ON ph.id = f.photo_id
+                    WHERE f.person_id=?
+                    ORDER BY COALESCE(f.confidence, 0) DESC,
+                             CASE
+                               WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
+                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                               THEN 1 ELSE 0
+                             END DESC,
+                             (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
+                             f.id DESC
                     LIMIT 1
                     """,
                     (pid,),
@@ -4940,6 +4946,11 @@ def api_people_list():
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
                     ORDER BY COALESCE(f.confidence, 0) DESC,
+                             CASE
+                               WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
+                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                               THEN 1 ELSE 0
+                             END DESC,
                              (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                              f.id DESC
                     LIMIT 1
@@ -4948,6 +4959,11 @@ def api_people_list():
                 ).fetchone()
 
             thumb_url = f"/api/face-thumb/{int(face_row['id'])}" if face_row else None
+            if face_row:
+                try:
+                    _enqueue_face_thumb_generation(int(face_row["id"]))
+                except Exception:
+                    pass
             if cnt > 0:
                 people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url, "hidden": hidden})
 
@@ -4958,12 +4974,18 @@ def api_people_list():
             unk_count = int(unk["c"] or 0) if unk else 0
             frow = conn.execute(
                 """
-                SELECT id
-                FROM faces
-                WHERE person_id IS NULL
-                ORDER BY COALESCE(confidence, 0) DESC,
-                         (COALESCE(bbox_w, 0) * COALESCE(bbox_h, 0)) DESC,
-                         id DESC
+                SELECT f.id
+                FROM faces f
+                LEFT JOIN photos ph ON ph.id = f.photo_id
+                WHERE f.person_id IS NULL
+                ORDER BY COALESCE(f.confidence, 0) DESC,
+                         CASE
+                           WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
+                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                           THEN 1 ELSE 0
+                         END DESC,
+                         (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
+                         f.id DESC
                 LIMIT 1
                 """
             ).fetchone()
@@ -4991,6 +5013,11 @@ def api_people_list():
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
                 ORDER BY COALESCE(f.confidence, 0) DESC,
+                         CASE
+                           WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
+                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                           THEN 1 ELSE 0
+                         END DESC,
                          (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                          f.id DESC
                 LIMIT 1
@@ -5000,6 +5027,11 @@ def api_people_list():
 
         if unk_count > 0:
             thumb_url = f"/api/face-thumb/{int(frow['id'])}" if frow else None
+            if frow:
+                try:
+                    _enqueue_face_thumb_generation(int(frow["id"]))
+                except Exception:
+                    pass
             # Place aggregated unknowns at the end so named people come first
             people.append({"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
     return jsonify({"ok": True, "items": people})
@@ -5181,7 +5213,7 @@ def api_people_unknown_photos_faces():
 
 @app.route("/api/face-thumb/<int:face_id>")
 def api_face_thumb(face_id: int):
-    # Serve cached face thumbnail; if missing/stale, queue background generation and return fallback quickly.
+    # Serve cached face thumbnail; if missing/stale, queue background generation and return a lightweight placeholder.
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
@@ -5218,12 +5250,6 @@ def api_face_thumb(face_id: int):
             return resp
 
         _enqueue_face_thumb_generation(face_id)
-
-        fallback_name = str(r["thumb_name"] or "").strip()
-        if fallback_name and (THUMB_DIR / fallback_name).exists():
-            resp = send_from_directory(str(THUMB_DIR), fallback_name)
-            resp.headers["Cache-Control"] = "no-store"
-            return resp
 
         # Never build synchronously here: many concurrent requests can spike memory/CPU.
         # Background worker will create the face thumb; until then return a tiny placeholder.
