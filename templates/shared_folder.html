@@ -11,14 +11,21 @@
     <header class="topbar" style="justify-content:space-between;">
       <div>
         <h2 id="shareTitle" style="margin:0;">Delt mappe</h2>
-        <div id="shareMeta" class="mini-label">Indlæser…</div>
+        <div id="shareMeta" class="mini-label">Indlaeser...</div>
       </div>
-      <div id="shareActions" class="toolbar" style="gap:8px;">
+      <div id="shareActions" class="toolbar" style="gap:8px;position:relative;">
         <label id="uploadWrap" class="btn" style="display:none;">
           <input id="shareFileInput" type="file" accept="image/*,video/*,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef" multiple style="display:none;" />
-          <span id="uploadLabel">Vælg filer</span>
+          <span id="uploadLabel">Vaelg filer</span>
         </label>
         <button id="deleteBtn" class="btn danger" style="display:none;" disabled>Slet valgte</button>
+        <button id="shareMoreBtn" class="btn" type="button" style="display:none;" title="Flere" aria-label="Flere">...</button>
+        <div id="shareMoreMenu" class="mapper-header-menu" aria-label="Share menu">
+          <button id="shareMenuSelectBtn" class="mapper-header-menu-item" type="button">Vaelg billeder</button>
+          <button id="shareMenuSelectAllBtn" class="mapper-header-menu-item" type="button">Vaelg alle</button>
+          <button id="shareMenuClearBtn" class="mapper-header-menu-item" type="button">Fjern valgte</button>
+          <button id="shareMenuDeleteBtn" class="mapper-header-menu-item" type="button">Slet valgte</button>
+        </div>
       </div>
     </header>
 
@@ -34,8 +41,20 @@
       </div>
     </section>
 
+    <div id="shareUploadWarnModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:10020;">
+      <div style="width:min(520px,92vw);background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 14px 12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <h3 style="margin:0;">Upload i gang</h3>
+          <button id="shareUploadWarnClose" class="btn" type="button" aria-label="Luk">&times;</button>
+        </div>
+        <p style="margin:10px 0 0;color:var(--muted);line-height:1.35;">
+          Upload er startet. Lad siden vaere aaben, og luk ikke browseren under upload.
+        </p>
+      </div>
+    </div>
+
     <section id="shareAuthBox" class="sidebar-card hidden" style="max-width:520px;margin:20px auto;">
-      <div class="sidebar-card-title" id="authTitle">Adgang kræves</div>
+      <div class="sidebar-card-title" id="authTitle">Adgang kraeves</div>
       <div class="form-row" id="authNameWrap">
         <label for="authName" id="authNameLabel">Dit navn</label>
         <input id="authName" class="mapper-input" type="text" placeholder="Skriv dit navn" />
@@ -48,7 +67,7 @@
         </button>
       </div>
       <div class="actions" style="justify-content:flex-end;">
-        <button id="authBtn" class="btn primary">Fortsæt</button>
+        <button id="authBtn" class="btn primary">Fortsaet</button>
       </div>
     </section>
 
@@ -58,14 +77,19 @@
     <div id="shareViewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;z-index:10000;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;">
         <div id="shareViewerTitle" class="mini-label" style="color:#d7e0f1;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72vw;"></div>
-        <div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="shareViewerMenuBtn" class="btn" type="button" title="Menu" aria-label="Aabn menu">...</button>
           <button id="shareViewerClose" class="btn" style="min-width:86px;">Luk</button>
+          <div id="shareViewerMenu" class="viewer-menu hidden" style="position:absolute;right:14px;top:56px;" aria-label="Viewer menu">
+            <a id="shareViewerOpenOrig" class="btn" target="_blank" rel="noopener">Aabn original</a>
+          </div>
         </div>
       </div>
       <div style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;">
-        <button id="shareViewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.85;">◀</button>
-        <img id="shareViewerImg" alt="" style="max-width:92vw;max-height:82vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);" />
-        <button id="shareViewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);opacity:.85;">▶</button>
+        <button id="shareViewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.85;">&lt;</button>
+        <img id="shareViewerImg" alt="" decoding="async" fetchpriority="high" style="max-width:92vw;max-height:90vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);display:none;" />
+        <video id="shareViewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);display:none;"></video>
+        <button id="shareViewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);opacity:.85;">&gt;</button>
       </div>
     </div>
   </main>
@@ -90,3 +114,4 @@
   <script src="{{ url_for('static', filename='shared.js') }}?v={{ app_build }}"></script>
 </body>
 </html>
+

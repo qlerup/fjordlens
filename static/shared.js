@@ -19,13 +19,25 @@ const els = {
   fileInput: document.getElementById('shareFileInput'),
   uploadBtn: document.getElementById('uploadBtn'),
   deleteBtn: document.getElementById('deleteBtn'),
+  moreBtn: document.getElementById('shareMoreBtn'),
+  moreMenu: document.getElementById('shareMoreMenu'),
+  moreSelectBtn: document.getElementById('shareMenuSelectBtn'),
+  moreSelectAllBtn: document.getElementById('shareMenuSelectAllBtn'),
+  moreClearBtn: document.getElementById('shareMenuClearBtn'),
+  moreDeleteBtn: document.getElementById('shareMenuDeleteBtn'),
   grid: document.getElementById('shareGrid'),
   viewer: document.getElementById('shareViewer'),
   viewerImg: document.getElementById('shareViewerImg'),
+  viewerVideo: document.getElementById('shareViewerVideo'),
   viewerClose: document.getElementById('shareViewerClose'),
   viewerPrev: document.getElementById('shareViewerPrev'),
   viewerNext: document.getElementById('shareViewerNext'),
   viewerTitle: document.getElementById('shareViewerTitle'),
+  viewerMenuBtn: document.getElementById('shareViewerMenuBtn'),
+  viewerMenu: document.getElementById('shareViewerMenu'),
+  viewerOpenOrig: document.getElementById('shareViewerOpenOrig'),
+  uploadWarnModal: document.getElementById('shareUploadWarnModal'),
+  uploadWarnClose: document.getElementById('shareUploadWarnClose'),
 };
 
 const state = {
@@ -34,6 +46,7 @@ const state = {
   items: [],
   selected: new Set(),
   auth: { passwordRequired: false, nameRequired: false },
+  selectMode: false,
   currentPath: '', // relative to share root (e.g. "sub/child")
   visible: [],    // items filtered to currentPath
   viewerIndex: -1,
@@ -170,15 +183,15 @@ function openSharedItem(item) {
 function t(key) {
   const da = {
     title: 'Delt mappe',
-    loading: 'Indlæser…',
-    auth_required: 'Adgang kræves',
-    auth_title: 'Adgang kræves',
+    loading: 'Indlaeser...',
+    auth_required: 'Adgang kraeves',
+    auth_title: 'Adgang kraeves',
     auth_name_label: 'Dit navn',
     auth_name_placeholder: 'Skriv dit navn',
     auth_password_label: 'Indtast adgangskode',
     auth_password_placeholder: 'Adgangskode',
-    auth_name_missing: 'Navn er påkrævet',
-    auth_continue: 'Fortsæt',
+    auth_name_missing: 'Navn er paakraevet',
+    auth_continue: 'Fortsaet',
     upload_pick: 'Upload',
     perms_label: 'Tilladelser',
     perms_view: 'Se',
@@ -187,17 +200,17 @@ function t(key) {
     upload_run: 'Upload',
     delete_selected: 'Slet valgte',
     no_files: 'Ingen filer valgt',
-    upload_done: 'Upload fuldført',
+    upload_done: 'Upload fuldfoert',
     upload_failed: 'Upload fejlede',
-    delete_done: 'Sletning fuldført',
+    delete_done: 'Sletning fuldfoert',
     delete_failed: 'Sletning fejlede',
     password_failed: 'Forkert adgangskode',
-    open: 'Åbn',
+    open: 'Aabn',
     selected: 'valgt',
   };
   const en = {
     title: 'Shared folder',
-    loading: 'Loading…',
+    loading: 'Loading...',
     auth_required: 'Access required',
     auth_title: 'Access required',
     auth_name_label: 'Your name',
@@ -238,11 +251,108 @@ function hideStatus() {
   els.status.classList.add('hidden');
 }
 
+function canDeleteFromShare() {
+  return !!(state.info && state.info.can_delete);
+}
+
+function closeShareMoreMenu() {
+  if (!els.moreMenu) return;
+  els.moreMenu.classList.remove('open');
+  try {
+    els.moreMenu.style.position = '';
+    els.moreMenu.style.left = '';
+    els.moreMenu.style.right = '';
+    els.moreMenu.style.top = '';
+    els.moreMenu.style.maxWidth = '';
+  } catch {}
+}
+
+function openShareMoreMenu() {
+  if (!els.moreMenu || !els.moreBtn) return;
+  els.moreMenu.classList.add('open');
+  try {
+    const r = els.moreBtn.getBoundingClientRect();
+    const vw = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0);
+    const width = 220;
+    const pad = 8;
+    let left = r.right - width;
+    left = Math.max(pad, Math.min(left, vw - width - pad));
+    const top = Math.max(pad, r.bottom + 8);
+    els.moreMenu.style.position = 'fixed';
+    els.moreMenu.style.left = `${left}px`;
+    els.moreMenu.style.right = 'auto';
+    els.moreMenu.style.top = `${top}px`;
+    els.moreMenu.style.maxWidth = `${width}px`;
+  } catch {}
+}
+
+function toggleShareMoreMenu() {
+  if (!els.moreMenu) return;
+  if (els.moreMenu.classList.contains('open')) closeShareMoreMenu();
+  else openShareMoreMenu();
+}
+
+function closeShareViewerMenu() {
+  if (els.viewerMenu) els.viewerMenu.classList.add('hidden');
+}
+
+function toggleShareViewerMenu() {
+  if (!els.viewerMenu) return;
+  els.viewerMenu.classList.toggle('hidden');
+}
+
+function setSelectMode(enabled, opts = {}) {
+  const on = !!enabled && canDeleteFromShare();
+  state.selectMode = on;
+  if (!on || opts.clearSelection) state.selected = new Set();
+  updateDeleteButton();
+  if (!opts.skipRender) renderGrid();
+}
+
+function syncSelectionToVisible() {
+  if (!state.selected || !state.selected.size) return;
+  const visibleIds = new Set((state.visible || []).map((it) => Number(it && it.id || 0)).filter((id) => id > 0));
+  const next = new Set();
+  state.selected.forEach((id) => { if (visibleIds.has(Number(id))) next.add(Number(id)); });
+  state.selected = next;
+}
+
 function updateDeleteButton() {
-  if (!els.deleteBtn) return;
+  const canDelete = canDeleteFromShare();
   const count = state.selected.size;
-  els.deleteBtn.disabled = count === 0;
-  els.deleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
+  if (els.deleteBtn) {
+    const showDelete = canDelete && state.selectMode;
+    els.deleteBtn.style.display = showDelete ? '' : 'none';
+    els.deleteBtn.disabled = count === 0;
+    els.deleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
+  }
+  if (els.moreBtn) {
+    els.moreBtn.style.display = canDelete ? '' : 'none';
+  }
+  if (els.moreSelectBtn) {
+    els.moreSelectBtn.textContent = state.selectMode ? 'Afslut vaelg' : 'Vaelg billeder';
+  }
+  if (els.moreSelectAllBtn) {
+    const hasVisible = Array.isArray(state.visible) && state.visible.length > 0;
+    els.moreSelectAllBtn.disabled = !(canDelete && state.selectMode && hasVisible);
+  }
+  if (els.moreClearBtn) {
+    els.moreClearBtn.disabled = !(canDelete && state.selectMode && count > 0);
+  }
+  if (els.moreDeleteBtn) {
+    els.moreDeleteBtn.disabled = !(canDelete && state.selectMode && count > 0);
+    els.moreDeleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
+  }
+}
+
+function showUploadWarningModal() {
+  if (!els.uploadWarnModal) return;
+  els.uploadWarnModal.classList.remove('hidden');
+}
+
+function closeUploadWarningModal() {
+  if (!els.uploadWarnModal) return;
+  els.uploadWarnModal.classList.add('hidden');
 }
 
 function renderGrid() {
@@ -256,7 +366,7 @@ function renderGrid() {
     root = (count <= 1 && fps.length) ? String(fps[0] || '') : '';
   } catch { root = ''; }
   const norm = (rel) => {
-    // Map uploads/originals|converted/<path>/<file> → <path>
+    // Map uploads/originals|converted/<path>/<file> -> <path>
     let p = String(rel || '').replace(/\\/g, '/');
     if (p.startsWith('uploads/originals/')) p = p.slice('uploads/originals/'.length);
     else if (p.startsWith('uploads/converted/')) p = p.slice('uploads/converted/'.length);
@@ -315,6 +425,7 @@ function renderGrid() {
     els.grid.appendChild(back);
     const btn = back.querySelector('#sharePathBack');
     if (btn) btn.addEventListener('click', () => {
+      if (state.selectMode) return;
       const parts = current.split('/').filter(Boolean); parts.pop();
       state.currentPath = parts.join('/');
       renderGrid();
@@ -323,7 +434,7 @@ function renderGrid() {
 
   // Upload tile (always visible when share allows upload)
   try {
-    if (state.info && state.info.can_upload) {
+    if (state.info && state.info.can_upload && !state.selectMode) {
       const up = document.createElement('article');
       up.className = 'photo-card upload-card';
       up.innerHTML = `<div class="card-thumb"><div class="upload-plus" aria-label="${t('upload_pick')}">+</div></div>`;
@@ -420,47 +531,157 @@ function renderGrid() {
         card.addEventListener('mouseover', onEnter, { passive: true });
       }
     } catch {}
-    card.addEventListener('click', () => { state.currentPath = fk; renderGrid(); });
+    card.addEventListener('click', () => {
+      if (state.selectMode) return;
+      state.currentPath = fk;
+      renderGrid();
+    });
     els.grid.appendChild(card);
   }
 
   // Photo cards
   state.visible = directItems.slice();
+  syncSelectionToVisible();
   state.visible.forEach((item, idx) => {
+    const photoId = Number(item && item.id ? item.id : 0);
+    const isSelected = !!(state.selectMode && photoId > 0 && state.selected.has(photoId));
     const card = document.createElement('article');
-    card.className = 'photo-card';
+    card.className = `photo-card${isSelected ? ' selected' : ''}`;
+    if (photoId > 0) card.setAttribute('data-photo-id', String(photoId));
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="auto" decoding="async" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
+    const selectBadge = canDeleteFromShare() ? `<span class="photo-select-badge">${isSelected ? '&#10003;' : ''}</span>` : '';
     const uploader = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
-    const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">👤 ${uploader}</div>` : '';
-    card.innerHTML = `${thumb}${uploaderTag}`;
-    card.addEventListener('click', () => openShareViewer(idx));
+    const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">${uploader}</div>` : '';
+    card.innerHTML = `${thumb}${selectBadge}${uploaderTag}`;
+    let longPressTimer = null;
+    let longPressActivated = false;
+    const startLongPress = () => {
+      if (!canDeleteFromShare() || state.selectMode || photoId <= 0) return;
+      longPressActivated = false;
+      longPressTimer = window.setTimeout(() => {
+        longPressActivated = true;
+        setSelectMode(true, { skipRender: true });
+        state.selected.add(photoId);
+        renderGrid();
+      }, 550);
+    };
+    const cancelLongPress = () => {
+      if (!longPressTimer) return;
+      window.clearTimeout(longPressTimer);
+      longPressTimer = null;
+    };
+    card.addEventListener('mousedown', startLongPress);
+    card.addEventListener('touchstart', startLongPress, { passive: true });
+    ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((ev) => card.addEventListener(ev, cancelLongPress));
+
+    card.addEventListener('click', (ev) => {
+      if (longPressActivated) {
+        longPressActivated = false;
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      if (state.selectMode && canDeleteFromShare()) {
+        if (photoId > 0) {
+          if (state.selected.has(photoId)) state.selected.delete(photoId);
+          else state.selected.add(photoId);
+        }
+        updateDeleteButton();
+        renderGrid();
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      openShareViewer(idx);
+    });
     els.grid.appendChild(card);
   });
+  updateDeleteButton();
 }
 
 // --- Simple viewer (popup) ---
 function openShareViewer(index) {
   if (!els.viewer || !state.visible.length) return;
-  const clamp = (i)=> (i+state.visible.length)%state.visible.length;
+  const clamp = (i) => (i + state.visible.length) % state.visible.length;
   state.viewerIndex = clamp(index);
   const it = state.visible[state.viewerIndex];
-  els.viewerImg.src = it && (it.original_url || it.view_url || it.download_url || it.thumb_url) || '';
-  els.viewerTitle.textContent = String(it && it.filename || '');
+  const mediaUrl = it && (it.original_url || it.view_url || it.download_url || it.thumb_url) || '';
+  const isVideo = !!(it && it.is_video);
+
+  if (els.viewerImg) {
+    els.viewerImg.style.display = isVideo ? 'none' : 'block';
+    if (!isVideo) els.viewerImg.src = mediaUrl;
+    else els.viewerImg.removeAttribute('src');
+  }
+  if (els.viewerVideo) {
+    els.viewerVideo.style.display = isVideo ? 'block' : 'none';
+    try { els.viewerVideo.pause(); } catch {}
+    if (isVideo) {
+      els.viewerVideo.src = mediaUrl;
+      try { els.viewerVideo.play().catch(() => {}); } catch {}
+    } else {
+      els.viewerVideo.removeAttribute('src');
+    }
+  }
+  if (els.viewerTitle) els.viewerTitle.textContent = String(it && it.filename || '');
+  if (els.viewerOpenOrig) {
+    const dl = (it && (it.download_url || it.original_url || mediaUrl)) || '';
+    els.viewerOpenOrig.href = dl;
+  }
+  closeShareMoreMenu();
+  closeShareViewerMenu();
   els.viewer.classList.remove('hidden');
 }
-function closeShareViewer(){ if (els.viewer) els.viewer.classList.add('hidden'); }
-function navShareViewer(step){ if (!state.visible.length) return; openShareViewer(state.viewerIndex + step); }
+function closeShareViewer() {
+  if (!els.viewer) return;
+  els.viewer.classList.add('hidden');
+  closeShareViewerMenu();
+  if (els.viewerImg) els.viewerImg.removeAttribute('src');
+  if (els.viewerVideo) {
+    try { els.viewerVideo.pause(); } catch {}
+    els.viewerVideo.removeAttribute('src');
+  }
+}
+function navShareViewer(step) {
+  if (!state.visible.length) return;
+  openShareViewer(state.viewerIndex + step);
+}
 
 if (els.viewerClose) els.viewerClose.addEventListener('click', closeShareViewer);
-if (els.viewerPrev) els.viewerPrev.addEventListener('click', ()=>navShareViewer(-1));
-if (els.viewerNext) els.viewerNext.addEventListener('click', ()=>navShareViewer(1));
-document.addEventListener('keydown',(e)=>{
-  if (els.viewer && els.viewer.classList.contains('hidden')) return;
-  if (e.key==='Escape') closeShareViewer();
-  if (e.key==='ArrowLeft') navShareViewer(-1);
-  if (e.key==='ArrowRight') navShareViewer(1);
+if (els.viewerPrev) els.viewerPrev.addEventListener('click', () => navShareViewer(-1));
+if (els.viewerNext) els.viewerNext.addEventListener('click', () => navShareViewer(1));
+if (els.viewerMenuBtn) {
+  els.viewerMenuBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleShareViewerMenu();
+  });
+}
+if (els.viewer) {
+  els.viewer.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target === els.viewer) {
+      closeShareViewer();
+      return;
+    }
+    if (target && target.closest && (target.closest('#shareViewerMenu') || target.closest('#shareViewerMenuBtn'))) return;
+    closeShareViewerMenu();
+  });
+}
+document.addEventListener('keydown', (e) => {
+  const viewerOpen = !!(els.viewer && !els.viewer.classList.contains('hidden'));
+  if (!viewerOpen) {
+    if (e.key === 'Escape') {
+      closeShareMoreMenu();
+      if (state.selectMode) setSelectMode(false, { clearSelection: true });
+    }
+    return;
+  }
+  if (e.key === 'Escape') closeShareViewer();
+  if (e.key === 'ArrowLeft') navShareViewer(-1);
+  if (e.key === 'ArrowRight') navShareViewer(1);
 });
 
 function applyAuthRequirements(data = {}) {
@@ -504,7 +725,11 @@ async function loadInfo() {
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';
-  if (els.deleteBtn) els.deleteBtn.style.display = (data.can_delete && !isMobileShareView()) ? '' : 'none';
+  if (!data.can_delete) {
+    state.selectMode = false;
+    state.selected = new Set();
+  }
+  updateDeleteButton();
   return true;
 }
 
@@ -520,7 +745,7 @@ async function loadPhotos() {
     return;
   }
   state.items = data.items || [];
-  state.selected = new Set();
+  if (!state.selectMode) state.selected = new Set();
   renderGrid();
 }
 
@@ -585,7 +810,7 @@ async function runUpload() {
         onProgress(bytesUploaded, bytesTotal){
           const pct = bytesTotal > 0 ? Math.round((bytesUploaded/bytesTotal)*100) : 0;
           updateShareUploadProgress(bytesUploaded, bytesTotal);
-          showStatus(`${t('upload_run')}: ${file.name} · ${pct}%`, 'ok');
+          showStatus(`${t('upload_run')}: ${file.name} - ${pct}%`, 'ok');
         },
         onError(err){
           try {
@@ -606,7 +831,8 @@ async function runUpload() {
   }
 
   let saved=0, failed=0;
-  if (!hasTusClient()) { showStatus('TUS klient mangler. Genindlæs siden.', 'err'); return; }
+  if (!hasTusClient()) { showStatus('TUS klient mangler. Genindlaes siden.', 'err'); return; }
+  showUploadWarningModal();
   startShareUploadProgress(files);
   try {
     for (const f of files){
@@ -618,16 +844,25 @@ async function runUpload() {
     }
   } finally {
     finishShareUploadProgress();
+    closeUploadWarningModal();
     if (els.fileInput) els.fileInput.value = '';
   }
-  if (failed>0){ showStatus(`${t('upload_done')} · ${saved} ok · ${failed} fejl`, 'err'); }
+  if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl`, 'err'); }
   else { showStatus(t('upload_done'), 'ok'); }
   await loadPhotos();
 }
 
 async function runDelete() {
+  if (!canDeleteFromShare()) {
+    showStatus('Sletning ikke tilladt', 'err');
+    return;
+  }
   const ids = Array.from(state.selected || []);
-  if (!ids.length) return;
+  if (!ids.length) {
+    showStatus('Ingen billeder valgt', 'err');
+    return;
+  }
+  if (!window.confirm(`Slet ${ids.length} billede(r)?`)) return;
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -639,11 +874,18 @@ async function runDelete() {
     return;
   }
   showStatus(t('delete_done'), 'ok');
+  state.selected = new Set();
+  if (state.selectMode) setSelectMode(false, { skipRender: true, clearSelection: true });
   await loadPhotos();
 }
 
 async function boot() {
   hideStatus();
+  state.selectMode = false;
+  state.selected = new Set();
+  closeShareMoreMenu();
+  closeShareViewerMenu();
+  closeUploadWarningModal();
   clearUploadProgressHideTimer();
   setShareUploadStatusVisible(false, 'ok');
   renderShareUploadStatus();
@@ -658,6 +900,10 @@ async function boot() {
   if (els.uploadLabel) els.uploadLabel.textContent = t('upload_pick');
   // No separate upload button; auto-start on file pick
   if (els.deleteBtn) els.deleteBtn.textContent = t('delete_selected');
+  if (els.moreSelectBtn) els.moreSelectBtn.textContent = 'Vaelg billeder';
+  if (els.moreSelectAllBtn) els.moreSelectAllBtn.textContent = 'Vaelg alle';
+  if (els.moreClearBtn) els.moreClearBtn.textContent = 'Fjern valgte';
+  if (els.moreDeleteBtn) els.moreDeleteBtn.textContent = t('delete_selected');
 
   const ok = await loadInfo();
   if (!ok) return;
@@ -683,14 +929,71 @@ if (els.authName) {
 }
 if (els.fileInput) els.fileInput.addEventListener('change', () => { if (els.fileInput && els.fileInput.files && els.fileInput.files.length) runUpload(); });
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
+if (els.moreBtn) {
+  ['pointerdown', 'touchstart'].forEach((ev) => {
+    els.moreBtn.addEventListener(ev, (e) => { e.stopPropagation(); }, { passive: true });
+  });
+  els.moreBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleShareMoreMenu();
+  });
+}
+if (els.moreMenu) {
+  ['pointerdown', 'touchstart', 'click'].forEach((ev) => {
+    els.moreMenu.addEventListener(ev, (e) => { e.stopPropagation(); }, { passive: true });
+  });
+}
+if (els.moreSelectBtn) {
+  els.moreSelectBtn.addEventListener('click', () => {
+    setSelectMode(!state.selectMode, { clearSelection: !state.selectMode ? false : true });
+    closeShareMoreMenu();
+  });
+}
+if (els.moreSelectAllBtn) {
+  els.moreSelectAllBtn.addEventListener('click', () => {
+    if (!state.selectMode || !canDeleteFromShare()) return;
+    state.selected = new Set((state.visible || []).map((it) => Number(it && it.id || 0)).filter((id) => id > 0));
+    renderGrid();
+    closeShareMoreMenu();
+  });
+}
+if (els.moreClearBtn) {
+  els.moreClearBtn.addEventListener('click', () => {
+    state.selected = new Set();
+    renderGrid();
+    closeShareMoreMenu();
+  });
+}
+if (els.moreDeleteBtn) {
+  els.moreDeleteBtn.addEventListener('click', async () => {
+    closeShareMoreMenu();
+    await runDelete();
+  });
+}
+if (els.uploadWarnClose) {
+  els.uploadWarnClose.addEventListener('click', closeUploadWarningModal);
+}
+if (els.uploadWarnModal) {
+  els.uploadWarnModal.addEventListener('click', (e) => {
+    if (e.target === els.uploadWarnModal) closeUploadWarningModal();
+  });
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const t = e.target;
+  if (!(t instanceof Node)) return;
+  if (els.moreMenu && els.moreMenu.contains(t)) return;
+  if (els.moreBtn && els.moreBtn.contains(t)) return;
+  closeShareMoreMenu();
+});
 
 window.addEventListener('resize', () => {
   const mobileNow = isMobileShareView();
   if (mobileNow === lastResizeIsMobile) return;
   lastResizeIsMobile = mobileNow;
-  if (state.info && els.deleteBtn) {
-    els.deleteBtn.style.display = (state.info.can_delete && !mobileNow) ? '' : 'none';
-  }
+  updateDeleteButton();
 });
 
 boot();
+
