@@ -3075,8 +3075,12 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
     if not base.exists() or not base.is_dir():
         return out
     try:
+        blocked_dir_names = {"@eadir"}
         for root, dirs, _files in os.walk(base):
-            dirs[:] = sorted([d for d in dirs if not d.startswith(".")])
+            dirs[:] = sorted([
+                d for d in dirs
+                if (not d.startswith(".")) and (d.strip().lower() not in blocked_dir_names)
+            ])
             for d in dirs:
                 p = Path(root) / d
                 try:
@@ -3085,6 +3089,8 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
                     continue
                 # Hide framework folders from folder pickers ('originals' and 'converted')
                 parts = [seg for seg in rel.split("/") if seg]
+                if any(seg.strip().lower() in blocked_dir_names for seg in parts):
+                    continue
                 if parts and parts[0] in {"originals", "converted"}:
                     # Do not surface internal storage roots as user folders
                     continue

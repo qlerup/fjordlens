@@ -4687,7 +4687,14 @@ async function loadSharedFolderOptions(force = false) {
   const folders = Array.isArray(data.folders)
     ? data.folders.map((v) => String(v || '').trim()).filter((v) => !!v)
     : [];
-  state.sharedFolderOptions = Array.from(new Set(folders));
+  const cleaned = folders.filter((value) => {
+    const parts = String(value || '')
+      .split('/')
+      .map((seg) => String(seg || '').trim().toLowerCase())
+      .filter(Boolean);
+    return !parts.includes('@eadir');
+  });
+  state.sharedFolderOptions = Array.from(new Set(cleaned));
   return state.sharedFolderOptions.slice();
 }
 

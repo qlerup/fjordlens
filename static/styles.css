@@ -675,8 +675,10 @@ body.view-mapper .mapper-header-actions {
   z-index: 20000; /* ensure above sticky headers and OS UI on mobile */
 }
 .mapper-header-menu.open {
-  max-height: 180px;
+  max-height: min(320px, calc(100vh - 24px));
   opacity: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
   pointer-events: auto;
   transform: translateY(0);
   border-color: var(--border);
