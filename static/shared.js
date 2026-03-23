@@ -15,6 +15,7 @@ const els = {
   authPassword: document.getElementById('authPassword'),
   authBtn: document.getElementById('authBtn'),
   uploadWrap: document.getElementById('uploadWrap'),
+  pathBackTop: document.getElementById('sharePathBackTop'),
   uploadLabel: document.getElementById('uploadLabel'),
   fileInput: document.getElementById('shareFileInput'),
   uploadBtn: document.getElementById('uploadBtn'),
@@ -206,6 +207,7 @@ function t(key) {
     delete_done: 'Sletning fuldf\u00f8rt',
     delete_failed: 'Sletning fejlede',
     password_failed: 'Forkert adgangskode',
+    back: 'Tilbage',
     open: '\u00c5bn',
     selected: 'valgt',
   };
@@ -233,6 +235,7 @@ function t(key) {
     delete_done: 'Delete completed',
     delete_failed: 'Delete failed',
     password_failed: 'Wrong password',
+    back: 'Back',
     open: 'Open',
     selected: 'selected',
   };
@@ -348,6 +351,12 @@ function updateDeleteButton() {
     els.moreDeleteBtn.disabled = !(canDelete && state.selectMode && count > 0);
     els.moreDeleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
   }
+  if (els.pathBackTop) {
+    const showBack = !!String(state.currentPath || '').trim();
+    els.pathBackTop.style.display = showBack ? '' : 'none';
+    els.pathBackTop.disabled = !!state.selectMode;
+    els.pathBackTop.textContent = t('back');
+  }
 }
 
 function showUploadWarningModal() {
@@ -420,23 +429,6 @@ function renderGrid() {
 
   // Render
   els.grid.innerHTML = '';
-  // Back button + path label (simple)
-  if (current) {
-    const back = document.createElement('div');
-    back.className = 'mini-label';
-    back.style.margin = '4px 0 6px 2px';
-    const labelPath = root ? `${root}/${current}` : current;
-    back.innerHTML = `<button class="btn small" id="sharePathBack">Tilbage</button> <span style="opacity:.8">${labelPath}</span>`;
-    els.grid.appendChild(back);
-    const btn = back.querySelector('#sharePathBack');
-    if (btn) btn.addEventListener('click', () => {
-      if (state.selectMode) return;
-      const parts = current.split('/').filter(Boolean); parts.pop();
-      state.currentPath = parts.join('/');
-      renderGrid();
-    });
-  }
-
   // Upload tile (always visible when share allows upload)
   try {
     if (state.info && state.info.can_upload && !state.selectMode) {
@@ -614,6 +606,16 @@ function renderGrid() {
   state.selectionPulseId = 0;
 }
 
+function navigateShareBackPath() {
+  if (state.selectMode) return;
+  const current = String(state.currentPath || '').trim();
+  if (!current) return;
+  const parts = current.split('/').filter(Boolean);
+  parts.pop();
+  state.currentPath = parts.join('/');
+  renderGrid();
+}
+
 // --- Simple viewer (popup) ---
 function openShareViewer(index) {
   if (!els.viewer || !state.visible.length) return;
@@ -788,8 +790,10 @@ async function runAuth() {
   await boot();
 }
 
-async function runUpload() {
-  const files = (els.fileInput && els.fileInput.files) ? Array.from(els.fileInput.files) : [];
+async function runUpload(preselectedFiles = null) {
+  const files = Array.isArray(preselectedFiles)
+    ? preselectedFiles
+    : ((els.fileInput && els.fileInput.files) ? Array.from(els.fileInput.files) : []);
   if (!files.length) { showStatus(t('no_files'), 'err'); return; }
   // Ensure we are authorized just before starting (handles expired session)
   try {
@@ -946,8 +950,32 @@ if (els.authName) {
     }
   });
 }
-if (els.fileInput) els.fileInput.addEventListener('change', () => { if (els.fileInput && els.fileInput.files && els.fileInput.files.length) runUpload(); });
+if (els.fileInput) {
+  els.fileInput.addEventListener('change', () => {
+    const list = (els.fileInput && els.fileInput.files) ? els.fileInput.files : null;
+    if (!list || !list.length) return;
+    // Clone FileList immediately; iOS Safari can keep picker UI blocked while
+    // the change handler runs. Defer heavy work one tick for smoother UX.
+    const files = Array.from(list);
+    showStatus(`${t('upload_run')}: forbereder ${files.length} filer...`, 'ok');
+    window.setTimeout(() => {
+      try {
+        runUpload(files);
+      } catch (e) {
+        console.error(e);
+      }
+    }, 50);
+    // Clear value so the same files can be picked again later
+    els.fileInput.value = '';
+  });
+}
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
+if (els.pathBackTop) {
+  els.pathBackTop.addEventListener('click', (e) => {
+    e.preventDefault();
+    navigateShareBackPath();
+  });
+}
 if (els.moreBtn) {
   ['pointerdown', 'touchstart'].forEach((ev) => {
     els.moreBtn.addEventListener(ev, (e) => { e.stopPropagation(); }, { passive: true });

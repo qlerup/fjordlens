@@ -148,8 +148,9 @@ body {
 .reveal-btn {
   position: absolute;
   right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: auto;
+  bottom: 9px;
+  transform: none;
   width: 28px; height: 28px;
   min-width: 28px;
   display: grid; place-items: center;
@@ -159,6 +160,11 @@ body {
   border-radius: 6px;
   cursor: pointer;
   z-index: 10;
+}
+.pwd-field > .reveal-btn {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
 }
 .reveal-btn:hover { color: var(--text); }
 .reveal-btn svg { width: 18px; height: 18px; display:block; }
@@ -1478,10 +1484,31 @@ body.view-mapper .mapper-header-actions {
 .share-page .main {
   padding-bottom: 84px;
 }
+#shareActions > .btn,
+#shareActions > label.btn {
+  min-height: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+#shareActions > label.btn {
+  cursor: pointer;
+}
+#shareActions > label.btn > span {
+  line-height: 1;
+}
 #shareMoreBtn {
   min-width: 42px;
-  padding-left: 10px;
-  padding-right: 10px;
+  width: 42px;
+  padding-left: 0;
+  padding-right: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
 }
 #shareMoreMenu.open {
   max-height: 260px;
