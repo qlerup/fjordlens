@@ -609,7 +609,7 @@
       <div class="toolbar" style="margin-bottom:10px;">
         <div class="form-row" style="margin:0;flex:1;min-width:110px;">
           <label id="mapperShareExpireLabel" for="mapperShareExpireValue">Gyldig i</label>
-          <input id="mapperShareExpireValue" class="input-number" type="number" min="1" max="365" value="7" />
+          <input id="mapperShareExpireValue" class="input-number" type="number" min="0" max="365" value="7" />
         </div>
         <div class="form-row" style="margin:0;flex:1;min-width:130px;">
           <label id="mapperShareExpireUnitLabel" for="mapperShareExpireUnit">Enhed</label>
@@ -667,6 +667,68 @@
           <button id="mapperShareQrDownload" class="btn" type="button">Download QR</button>
         </div>
       </div>
+    </div>
+  </div>
+  <div id="sharedEditModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:680px;max-width:94vw;max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 id="sharedEditModalTitle" style="margin:0;">Rediger deling</h3>
+        <button id="sharedEditModalClose" class="btn">Luk</button>
+      </div>
+      <div class="form-row">
+        <label id="sharedEditNameLabel" for="sharedEditNameInput">Navn</label>
+        <input id="sharedEditNameInput" class="mapper-input" type="text" style="min-width:0;width:100%;" maxlength="120" placeholder="F.eks. Familie sommer 2026" />
+      </div>
+      <div class="form-row">
+        <label id="sharedEditFoldersLabel">Mapper</label>
+        <div id="sharedEditFolders" class="ua-list" style="max-height:220px;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);"></div>
+      </div>
+      <div class="toolbar" style="margin-bottom:8px;">
+        <div class="form-row" style="margin:0;flex:1;min-width:120px;">
+          <label id="sharedEditExpireValueLabel" for="sharedEditExpireValue">Gyldig i</label>
+          <input id="sharedEditExpireValue" class="input-number" type="number" min="0" max="3650" step="1" value="7" />
+        </div>
+        <div class="form-row" style="margin:0;flex:1;min-width:140px;">
+          <label id="sharedEditExpireUnitLabel" for="sharedEditExpireUnit">Enhed</label>
+          <select id="sharedEditExpireUnit" class="select">
+            <option value="days">Dage</option>
+            <option value="hours">Timer</option>
+          </select>
+        </div>
+      </div>
+      <label class="toolbar" for="sharedEditNeverToggle" style="justify-content:flex-start;margin:8px 0 10px;gap:10px;">
+        <input id="sharedEditNeverToggle" type="checkbox" />
+        <span id="sharedEditNeverToggleText" class="mini-label">Udløber aldrig</span>
+      </label>
+      <div class="form-row">
+        <label id="sharedEditPermissionLabel" for="sharedEditPermission">Adgang</label>
+        <select id="sharedEditPermission" class="select">
+          <option value="view">Se</option>
+          <option value="upload">Se og uploade</option>
+          <option value="manage">Se, uploade og slette</option>
+        </select>
+      </div>
+      <label class="toolbar" for="sharedEditDuckdnsToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
+        <input id="sharedEditDuckdnsToggle" type="checkbox" />
+        <span id="sharedEditDuckdnsToggleText" class="mini-label">Brug ekstern base-URL</span>
+      </label>
+      <label class="toolbar" for="sharedEditPasswordToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
+        <input id="sharedEditPasswordToggle" type="checkbox" />
+        <span id="sharedEditPasswordToggleText" class="mini-label">Kodebeskyt link</span>
+      </label>
+      <div id="sharedEditPasswordWrap" class="form-row hidden">
+        <label id="sharedEditPasswordLabel" for="sharedEditPasswordInput">Adgangskode</label>
+        <input id="sharedEditPasswordInput" class="mapper-input" type="password" style="min-width:0;width:100%;" placeholder="Tom = behold nuværende kode" />
+      </div>
+      <label class="toolbar" for="sharedEditRequireNameToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
+        <input id="sharedEditRequireNameToggle" type="checkbox" />
+        <span id="sharedEditRequireNameToggleText" class="mini-label">Kræv navn ved åbning</span>
+      </label>
+      <div class="actions" style="justify-content:flex-end;gap:8px;margin-top:12px;">
+        <button id="sharedEditModalCancel" class="btn">Annuller</button>
+        <button id="sharedEditModalSave" class="btn primary">Gem ændringer</button>
+      </div>
+      <div id="sharedEditError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
     </div>
   </div>
   <div id="scanModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">

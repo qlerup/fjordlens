@@ -3453,6 +3453,39 @@ def _share_is_expired(expires_at: Optional[str]) -> bool:
     return exp <= now_iso()
 
 
+def _share_expires_at_from_body(
+    body: dict[str, Any],
+    default_value: int = 7,
+    default_unit: str = "days",
+) -> tuple[Optional[str], Optional[str]]:
+    has_expires_value = "expires_value" in body
+    raw_value = body.get("expires_value")
+    if not has_expires_value:
+        expires_value = int(default_value)
+    else:
+        raw_text = str(raw_value or "").strip()
+        if (not raw_text) or raw_text == "0":
+            return None, None
+        try:
+            expires_value = int(raw_text)
+        except Exception:
+            return None, "Ugyldig udløbsværdi"
+        if expires_value < 0:
+            return None, "Ugyldig udløbsværdi"
+        if expires_value == 0:
+            return None, None
+        if expires_value < 1:
+            return None, "Ugyldig udløbsværdi"
+
+    expires_unit = str(body.get("expires_unit") or default_unit).strip().lower()
+    if expires_unit not in {"hours", "days"}:
+        expires_unit = default_unit if default_unit in {"hours", "days"} else "days"
+    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
+    expires_hours = max(1, min(expires_hours, 24 * 3650))
+    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+    return expires_at, None
+
+
 def _share_folder_rel_prefix(folder_path: str) -> str:
     folder = _normalize_upload_subdir(folder_path)
     return f"uploads/{folder}" if folder else "uploads"
@@ -6228,18 +6261,9 @@ def api_create_share():
     elif perm != "view":
         return jsonify({"ok": False, "error": "Ugyldig rettighed"}), 400
 
-    try:
-        expires_value = int(body.get("expires_value") or 7)
-    except Exception:
-        expires_value = 7
-    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
-    if expires_value < 1:
-        expires_value = 1
-    if expires_unit not in {"hours", "days"}:
-        expires_unit = "days"
-    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
-    expires_hours = max(1, min(expires_hours, 24 * 365))
-    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+    expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
+    if expires_error:
+        return jsonify({"ok": False, "error": expires_error}), 400
 
     password_enabled = bool(body.get("password_enabled"))
     require_visitor_name = bool(body.get("require_visitor_name"))
@@ -9955,7 +9979,7 @@ def api_admin_shares_list():
         rows = conn.execute(
             """
              SELECT s.id, s.share_name, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
-                 s.token_plain, s.link_use_duckdns,
+                 s.token_plain, s.link_use_duckdns, s.require_visitor_name,
                    s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
                    u.username AS created_by_username
             FROM share_links s
@@ -10021,6 +10045,8 @@ def api_admin_shares_list():
                 "permission": permission,
                 "can_upload": can_upload,
                 "can_delete": can_delete,
+                "require_visitor_name": bool(int(r["require_visitor_name"] or 0)),
+                "use_duckdns": bool(int(r["link_use_duckdns"] or 0)),
                 "password_enabled": bool(str(r["password_hash"] or "").strip()),
                 "expires_at": r["expires_at"],
                 "created_at": r["created_at"],
@@ -10062,18 +10088,9 @@ def api_admin_shares_extend(share_id: int):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
 
     body = request.get_json(silent=True) or {}
-    try:
-        expires_value = int(body.get("expires_value") or 7)
-    except Exception:
-        expires_value = 7
-    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
-    if expires_value < 1:
-        expires_value = 1
-    if expires_unit not in {"hours", "days"}:
-        expires_unit = "days"
-    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
-    expires_hours = max(1, min(expires_hours, 24 * 365))
-    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+    expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
+    if expires_error:
+        return jsonify({"ok": False, "error": expires_error}), 400
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT id, revoked FROM share_links WHERE id=?", (int(share_id),)).fetchone()
@@ -10094,18 +10111,9 @@ def api_admin_shares_activate(share_id: int):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
 
     body = request.get_json(silent=True) or {}
-    try:
-        expires_value = int(body.get("expires_value") or 7)
-    except Exception:
-        expires_value = 7
-    expires_unit = str(body.get("expires_unit") or "days").strip().lower()
-    if expires_value < 1:
-        expires_value = 1
-    if expires_unit not in {"hours", "days"}:
-        expires_unit = "days"
-    expires_hours = expires_value if expires_unit == "hours" else (expires_value * 24)
-    expires_hours = max(1, min(expires_hours, 24 * 365))
-    expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(timespec="seconds") + "Z"
+    expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
+    if expires_error:
+        return jsonify({"ok": False, "error": expires_error}), 400
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT id FROM share_links WHERE id=?", (int(share_id),)).fetchone()
@@ -10115,6 +10123,155 @@ def api_admin_shares_activate(share_id: int):
         conn.commit()
 
     return jsonify({"ok": True, "expires_at": expires_at})
+
+
+@app.route("/api/admin/shares/<int:share_id>", methods=["PUT"])
+@login_required
+def api_admin_shares_update(share_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    raw_folder_paths = body.get("folder_paths")
+    folder_paths_raw: list[str]
+    if isinstance(raw_folder_paths, list):
+        folder_paths_raw = [str(v or "") for v in raw_folder_paths]
+    else:
+        folder_paths_raw = [str(body.get("folder_path") or "")]
+
+    folder_paths: list[str] = []
+    for raw in folder_paths_raw:
+        try:
+            fp = _normalize_upload_subdir(raw)
+        except Exception:
+            fp = ""
+        if fp and fp not in folder_paths:
+            folder_paths.append(fp)
+    if not folder_paths:
+        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+
+    base = UPLOAD_DIR.resolve()
+    for folder_path in folder_paths:
+        candidates = [
+            (UPLOAD_DIR / folder_path),
+            (UPLOAD_DIR / "originals" / folder_path),
+            (UPLOAD_DIR / "converted" / folder_path),
+        ]
+        found = False
+        for cand in candidates:
+            try:
+                target = cand.resolve()
+                target.relative_to(base)
+            except Exception:
+                continue
+            if target.exists() and target.is_dir():
+                found = True
+                break
+        if not found:
+            return jsonify({"ok": False, "error": f"Mappen findes ikke: {folder_path}"}), 404
+
+    share_name = str(body.get("share_name") or "").strip()
+    if len(share_name) > 120:
+        share_name = share_name[:120].strip()
+    if not share_name:
+        if len(folder_paths) == 1:
+            share_name = f"uploads/{folder_paths[0]}"
+        else:
+            share_name = f"{len(folder_paths)} mapper"
+
+    perm = str(body.get("permission") or "view").strip().lower()
+    can_upload = 0
+    can_delete = 0
+    if perm == "upload":
+        can_upload = 1
+    elif perm in {"manage", "delete"}:
+        can_upload = 1
+        can_delete = 1
+    elif perm != "view":
+        return jsonify({"ok": False, "error": "Ugyldig rettighed"}), 400
+
+    expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
+    if expires_error:
+        return jsonify({"ok": False, "error": expires_error}), 400
+
+    password_enabled = bool(body.get("password_enabled"))
+    require_visitor_name = bool(body.get("require_visitor_name"))
+    use_duckdns = bool(body.get("use_duckdns"))
+    password_raw = str(body.get("password") or "")
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id, password_hash FROM share_links WHERE id=?",
+            (int(share_id),),
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
+
+        existing_password_hash = str(row["password_hash"] or "").strip()
+        password_hash: Optional[str]
+        if not password_enabled:
+            password_hash = None
+        else:
+            if password_raw:
+                if len(password_raw) < 4:
+                    return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+                password_hash = generate_password_hash(password_raw)
+            elif existing_password_hash:
+                password_hash = existing_password_hash
+            else:
+                return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+
+        now = now_iso()
+        primary_folder_path = folder_paths[0]
+        conn.execute(
+            """
+            UPDATE share_links
+               SET share_name=?,
+                   folder_path=?,
+                   can_upload=?,
+                   can_delete=?,
+                   require_visitor_name=?,
+                   link_use_duckdns=?,
+                   password_hash=?,
+                   expires_at=?
+             WHERE id=?
+            """,
+            (
+                share_name,
+                primary_folder_path,
+                int(can_upload),
+                int(can_delete),
+                1 if require_visitor_name else 0,
+                1 if use_duckdns else 0,
+                password_hash,
+                expires_at,
+                int(share_id),
+            ),
+        )
+        conn.execute("DELETE FROM share_link_folders WHERE share_id=?", (int(share_id),))
+        for fp in folder_paths:
+            conn.execute(
+                "INSERT OR IGNORE INTO share_link_folders(share_id, folder_path, created_at) VALUES(?,?,?)",
+                (int(share_id), fp, now),
+            )
+        conn.commit()
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": int(share_id),
+            "share_name": share_name,
+            "folder_path": folder_paths[0],
+            "folder_paths": folder_paths,
+            "permission": perm,
+            "can_upload": bool(can_upload),
+            "can_delete": bool(can_delete),
+            "require_visitor_name": bool(require_visitor_name),
+            "password_enabled": bool(password_hash),
+            "use_duckdns": bool(use_duckdns),
+            "expires_at": expires_at,
+        }
+    )
 
 
 @app.route("/api/admin/shares/<int:share_id>", methods=["DELETE"])

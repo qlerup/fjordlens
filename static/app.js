@@ -123,6 +123,33 @@ const els = {
   sharedLinksDesc: document.getElementById("sharedLinksDesc"),
   sharedLinksStatus: document.getElementById("sharedLinksStatus"),
   sharedLinksList: document.getElementById("sharedLinksList"),
+  sharedEditModal: document.getElementById("sharedEditModal"),
+  sharedEditModalTitle: document.getElementById("sharedEditModalTitle"),
+  sharedEditModalClose: document.getElementById("sharedEditModalClose"),
+  sharedEditModalCancel: document.getElementById("sharedEditModalCancel"),
+  sharedEditModalSave: document.getElementById("sharedEditModalSave"),
+  sharedEditNameLabel: document.getElementById("sharedEditNameLabel"),
+  sharedEditNameInput: document.getElementById("sharedEditNameInput"),
+  sharedEditFoldersLabel: document.getElementById("sharedEditFoldersLabel"),
+  sharedEditFolders: document.getElementById("sharedEditFolders"),
+  sharedEditExpireValueLabel: document.getElementById("sharedEditExpireValueLabel"),
+  sharedEditExpireValue: document.getElementById("sharedEditExpireValue"),
+  sharedEditExpireUnitLabel: document.getElementById("sharedEditExpireUnitLabel"),
+  sharedEditExpireUnit: document.getElementById("sharedEditExpireUnit"),
+  sharedEditNeverToggle: document.getElementById("sharedEditNeverToggle"),
+  sharedEditNeverToggleText: document.getElementById("sharedEditNeverToggleText"),
+  sharedEditPermissionLabel: document.getElementById("sharedEditPermissionLabel"),
+  sharedEditPermission: document.getElementById("sharedEditPermission"),
+  sharedEditDuckdnsToggle: document.getElementById("sharedEditDuckdnsToggle"),
+  sharedEditDuckdnsToggleText: document.getElementById("sharedEditDuckdnsToggleText"),
+  sharedEditPasswordToggle: document.getElementById("sharedEditPasswordToggle"),
+  sharedEditPasswordToggleText: document.getElementById("sharedEditPasswordToggleText"),
+  sharedEditPasswordWrap: document.getElementById("sharedEditPasswordWrap"),
+  sharedEditPasswordLabel: document.getElementById("sharedEditPasswordLabel"),
+  sharedEditPasswordInput: document.getElementById("sharedEditPasswordInput"),
+  sharedEditRequireNameToggle: document.getElementById("sharedEditRequireNameToggle"),
+  sharedEditRequireNameToggleText: document.getElementById("sharedEditRequireNameToggleText"),
+  sharedEditError: document.getElementById("sharedEditError"),
   placesMapWrap: document.getElementById("placesMapWrap"),
   placesMapEl: document.getElementById("placesMap"),
   // duplicates
@@ -554,14 +581,34 @@ const I18N = {
     dns_shares_revoke_failed: 'Kunne ikke tilbagekalde share-link.',
     dns_shares_deactivate_confirm: 'Deaktiver dette share-link?',
     dns_shares_deactivate_ok: 'Share-link deaktiveret.',
-    dns_shares_activate_prompt: 'Aktivér link i antal dage:',
+    dns_shares_activate_prompt: 'Aktivér link i antal dage (0 eller tom = aldrig):',
     dns_shares_activate_ok: 'Share-link aktiveret.',
     dns_shares_activate_failed: 'Kunne ikke aktivere share-link.',
     dns_shares_delete: 'Slet',
     dns_shares_delete_confirm: 'Slet dette share-link permanent?',
     dns_shares_delete_ok: 'Share-link slettet.',
     dns_shares_delete_failed: 'Kunne ikke slette share-link.',
-    dns_shares_extend_prompt: 'Forlæng med antal dage:',
+    dns_shares_edit: 'Rediger',
+    dns_shares_edit_title: 'Rediger deling',
+    dns_shares_edit_name_label: 'Navn',
+    dns_shares_edit_folders_label: 'Mapper',
+    dns_shares_edit_no_folders: 'Ingen mapper fundet.',
+    dns_shares_edit_expire_value: 'Gyldig i',
+    dns_shares_edit_expire_unit: 'Enhed',
+    dns_shares_edit_never: 'Udløber aldrig',
+    dns_shares_edit_permission: 'Adgang',
+    dns_shares_edit_password_toggle: 'Kodebeskyt link',
+    dns_shares_edit_password_label: 'Adgangskode',
+    dns_shares_edit_password_placeholder: 'Tom = behold nuværende kode',
+    dns_shares_edit_require_name: 'Kræv navn ved åbning',
+    dns_shares_edit_save: 'Gem ændringer',
+    dns_shares_edit_saving: 'Gemmer...',
+    dns_shares_edit_saved: 'Deling opdateret.',
+    dns_shares_edit_failed: 'Kunne ikke opdatere deling.',
+    dns_shares_edit_select_folder: 'Vælg mindst én mappe.',
+    dns_shares_edit_load_folders_failed: 'Kunne ikke hente mapper til redigering.',
+    dns_shares_edit_invalid_expiry: 'Ugyldig udløbsværdi.',
+    dns_shares_extend_prompt: 'Forlæng med antal dage (0 eller tom = aldrig):',
     dns_shares_extend_ok: 'Share-link forlænget.',
     dns_shares_extend_failed: 'Kunne ikke forlænge share-link.',
     btn_scan_library: 'Scan bibliotek',
@@ -968,14 +1015,34 @@ const I18N = {
     dns_shares_revoke_failed: 'Could not revoke share link.',
     dns_shares_deactivate_confirm: 'Deactivate this share link?',
     dns_shares_deactivate_ok: 'Share link deactivated.',
-    dns_shares_activate_prompt: 'Activate link for number of days:',
+    dns_shares_activate_prompt: 'Activate link for number of days (0 or empty = never):',
     dns_shares_activate_ok: 'Share link activated.',
     dns_shares_activate_failed: 'Could not activate share link.',
     dns_shares_delete: 'Delete',
     dns_shares_delete_confirm: 'Delete this share link permanently?',
     dns_shares_delete_ok: 'Share link deleted.',
     dns_shares_delete_failed: 'Could not delete share link.',
-    dns_shares_extend_prompt: 'Extend by number of days:',
+    dns_shares_edit: 'Edit',
+    dns_shares_edit_title: 'Edit share',
+    dns_shares_edit_name_label: 'Name',
+    dns_shares_edit_folders_label: 'Folders',
+    dns_shares_edit_no_folders: 'No folders found.',
+    dns_shares_edit_expire_value: 'Valid for',
+    dns_shares_edit_expire_unit: 'Unit',
+    dns_shares_edit_never: 'Never expires',
+    dns_shares_edit_permission: 'Access',
+    dns_shares_edit_password_toggle: 'Protect link with password',
+    dns_shares_edit_password_label: 'Password',
+    dns_shares_edit_password_placeholder: 'Empty = keep current password',
+    dns_shares_edit_require_name: 'Require visitor name',
+    dns_shares_edit_save: 'Save changes',
+    dns_shares_edit_saving: 'Saving...',
+    dns_shares_edit_saved: 'Share updated.',
+    dns_shares_edit_failed: 'Could not update share.',
+    dns_shares_edit_select_folder: 'Select at least one folder.',
+    dns_shares_edit_load_folders_failed: 'Could not load folders for editing.',
+    dns_shares_edit_invalid_expiry: 'Invalid expiry value.',
+    dns_shares_extend_prompt: 'Extend by number of days (0 or empty = never):',
     dns_shares_extend_ok: 'Share link extended.',
     dns_shares_extend_failed: 'Could not extend share link.',
     btn_scan_library: 'Scan library',
@@ -1409,6 +1476,8 @@ let state = {
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
+  sharedEditShareId: 0,
+  sharedFolderOptions: [],
 };
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
@@ -4477,6 +4546,7 @@ function renderDnsSharesList() {
     const actionBtn = isActive
       ? `<button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_deactivate'))}</button>`
       : `<button class="btn small" data-share-activate="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_activate'))}</button>`;
+    const editBtn = `<button class="btn small" data-share-edit="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_edit'))}</button>`;
     const deleteBtn = `<button class="btn danger small" data-share-delete="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_delete'))}</button>`;
     const extendBtn = isActive
       ? `<button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
@@ -4493,6 +4563,7 @@ function renderDnsSharesList() {
           <div class="dns-share-actions">
             <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
             ${qrBtn}
+            ${editBtn}
             ${extendBtn}
             ${actionBtn}
             ${deleteBtn}
@@ -4541,6 +4612,258 @@ async function loadDnsShares() {
   }
 }
 
+function showSharedEditError(message = '') {
+  if (!els.sharedEditError) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.sharedEditError.classList.add('hidden');
+    els.sharedEditError.textContent = '';
+    return;
+  }
+  els.sharedEditError.textContent = msg;
+  els.sharedEditError.classList.remove('hidden');
+}
+
+function _collectShareFoldersFromItem(item) {
+  const list = [];
+  const paths = Array.isArray(item && item.folder_paths) ? item.folder_paths : [];
+  paths.forEach((value) => {
+    const fp = String(value || '').trim();
+    if (fp && !list.includes(fp)) list.push(fp);
+  });
+  const fallback = String((item && item.folder_path) || '').trim();
+  if (fallback && !list.includes(fallback)) list.push(fallback);
+  return list;
+}
+
+function _deriveEditExpiryState(expiresAtRaw) {
+  const raw = String(expiresAtRaw || '').trim();
+  if (!raw) return { never: true, value: '0', unit: 'days' };
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return { never: false, value: '7', unit: 'days' };
+  const diffMs = dt.getTime() - Date.now();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return { never: false, value: '1', unit: 'days' };
+  const hours = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60)));
+  if (hours <= 48) return { never: false, value: String(hours), unit: 'hours' };
+  return { never: false, value: String(Math.max(1, Math.ceil(hours / 24))), unit: 'days' };
+}
+
+function _syncSharedEditNeverToggle() {
+  const never = !!(els.sharedEditNeverToggle && els.sharedEditNeverToggle.checked);
+  if (els.sharedEditExpireValue) {
+    els.sharedEditExpireValue.disabled = never;
+    if (never) {
+      els.sharedEditExpireValue.value = '0';
+    } else {
+      const raw = String(els.sharedEditExpireValue.value || '').trim();
+      const val = Number(raw);
+      if (!raw || !Number.isFinite(val) || val <= 0) els.sharedEditExpireValue.value = '7';
+    }
+  }
+  if (els.sharedEditExpireUnit) els.sharedEditExpireUnit.disabled = never;
+}
+
+function _syncSharedEditPasswordToggle() {
+  const enabled = !!(els.sharedEditPasswordToggle && els.sharedEditPasswordToggle.checked);
+  if (els.sharedEditPasswordWrap) els.sharedEditPasswordWrap.classList.toggle('hidden', !enabled);
+  if (!enabled && els.sharedEditPasswordInput) els.sharedEditPasswordInput.value = '';
+}
+
+function closeSharedEditModal() {
+  if (!els.sharedEditModal) return;
+  els.sharedEditModal.classList.add('hidden');
+  state.sharedEditShareId = 0;
+  showSharedEditError('');
+}
+
+async function loadSharedFolderOptions(force = false) {
+  if (!force && Array.isArray(state.sharedFolderOptions) && state.sharedFolderOptions.length) {
+    return state.sharedFolderOptions.slice();
+  }
+  const { res, data } = await fetchUploadDestinationConfig('uploads');
+  if (!res.ok || !data || !data.ok) {
+    throw new Error((data && data.error) || tr('dns_shares_edit_load_folders_failed'));
+  }
+  const folders = Array.isArray(data.folders)
+    ? data.folders.map((v) => String(v || '').trim()).filter((v) => !!v)
+    : [];
+  state.sharedFolderOptions = Array.from(new Set(folders));
+  return state.sharedFolderOptions.slice();
+}
+
+function _renderSharedEditFolders(allFolders, selectedFolders) {
+  if (!els.sharedEditFolders) return;
+  const selectedSet = new Set((Array.isArray(selectedFolders) ? selectedFolders : []).map((v) => String(v || '').trim()).filter(Boolean));
+  const rows = Array.isArray(allFolders) ? allFolders : [];
+  if (!rows.length) {
+    els.sharedEditFolders.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_edit_no_folders'))}</div>`;
+    return;
+  }
+  els.sharedEditFolders.innerHTML = '';
+  rows.forEach((folderPath) => {
+    const fp = String(folderPath || '').trim();
+    if (!fp) return;
+    const row = document.createElement('label');
+    row.className = 'toolbar';
+    row.style.justifyContent = 'flex-start';
+    row.style.gap = '10px';
+    row.style.margin = '0 0 8px';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.setAttribute('data-folder-path', fp);
+    cb.checked = selectedSet.has(fp);
+    const text = document.createElement('span');
+    text.className = 'mini-label';
+    text.textContent = `uploads/${fp}`;
+    row.appendChild(cb);
+    row.appendChild(text);
+    els.sharedEditFolders.appendChild(row);
+  });
+}
+
+async function openSharedEditModal(shareId) {
+  if (!els.sharedEditModal) return;
+  const sid = Number(shareId || 0) || 0;
+  if (!sid) return;
+  const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === sid) : null;
+  if (!item) {
+    showSharedStatus(tr('dns_shares_edit_failed'), 'err');
+    return;
+  }
+  showSharedEditError('');
+  state.sharedEditShareId = sid;
+
+  try {
+    await loadSharedFolderOptions(true);
+  } catch (err) {
+    showSharedStatus((err && err.message) || tr('dns_shares_edit_load_folders_failed'), 'err');
+    return;
+  }
+  await refreshShareDuckdnsConfig();
+  applyUiLanguage();
+
+  const selectedFolders = _collectShareFoldersFromItem(item);
+  const options = Array.from(new Set([...(state.sharedFolderOptions || []), ...selectedFolders]))
+    .sort((a, b) => String(a || '').localeCompare(String(b || ''), 'da-DK'));
+  _renderSharedEditFolders(options, selectedFolders);
+
+  if (els.sharedEditNameInput) {
+    const name = String(item.share_name || '').trim();
+    const fallback = selectedFolders.length === 1 ? `uploads/${selectedFolders[0]}` : `${selectedFolders.length} mapper`;
+    els.sharedEditNameInput.value = name || fallback;
+  }
+  const expiry = _deriveEditExpiryState(item.expires_at);
+  if (els.sharedEditNeverToggle) els.sharedEditNeverToggle.checked = !!expiry.never;
+  if (els.sharedEditExpireValue) els.sharedEditExpireValue.value = String(expiry.value || '7');
+  if (els.sharedEditExpireUnit) els.sharedEditExpireUnit.value = expiry.unit || 'days';
+  _syncSharedEditNeverToggle();
+
+  if (els.sharedEditPermission) els.sharedEditPermission.value = String(item.permission || 'view');
+  if (els.sharedEditDuckdnsToggle) {
+    const duckdnsEnabled = !!state.shareDuckdnsConfigured;
+    els.sharedEditDuckdnsToggle.checked = duckdnsEnabled ? !!item.use_duckdns : false;
+    els.sharedEditDuckdnsToggle.disabled = !duckdnsEnabled;
+    els.sharedEditDuckdnsToggle.title = duckdnsEnabled ? '' : tr('mapper_share_duckdns_not_configured');
+  }
+  if (els.sharedEditPasswordToggle) els.sharedEditPasswordToggle.checked = !!item.password_enabled;
+  if (els.sharedEditPasswordInput) els.sharedEditPasswordInput.value = '';
+  _syncSharedEditPasswordToggle();
+
+  if (els.sharedEditRequireNameToggle) els.sharedEditRequireNameToggle.checked = !!item.require_visitor_name;
+  if (els.sharedEditModalSave) {
+    els.sharedEditModalSave.disabled = false;
+    els.sharedEditModalSave.classList.remove('loading');
+    els.sharedEditModalSave.textContent = tr('dns_shares_edit_save');
+  }
+  els.sharedEditModal.classList.remove('hidden');
+}
+
+async function saveSharedEditModal() {
+  const shareId = Number(state.sharedEditShareId || 0) || 0;
+  if (!shareId) return;
+  const folders = [];
+  if (els.sharedEditFolders) {
+    const checks = Array.from(els.sharedEditFolders.querySelectorAll('input[data-folder-path]:checked'));
+    checks.forEach((cb) => {
+      const fp = String(cb.getAttribute('data-folder-path') || '').trim();
+      if (fp && !folders.includes(fp)) folders.push(fp);
+    });
+  }
+  if (!folders.length) {
+    showSharedEditError(tr('dns_shares_edit_select_folder'));
+    return;
+  }
+
+  let expiresValue = 0;
+  const neverExpires = !!(els.sharedEditNeverToggle && els.sharedEditNeverToggle.checked);
+  if (!neverExpires) {
+    const raw = String((els.sharedEditExpireValue && els.sharedEditExpireValue.value) || '').trim();
+    if (!raw) {
+      expiresValue = 0;
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        showSharedEditError(tr('dns_shares_edit_invalid_expiry'));
+        return;
+      }
+      expiresValue = Math.floor(parsed);
+    }
+  }
+
+  const shareName = String((els.sharedEditNameInput && els.sharedEditNameInput.value) || '').trim();
+  const permission = String((els.sharedEditPermission && els.sharedEditPermission.value) || 'view');
+  const useDuckdns = !!(els.sharedEditDuckdnsToggle && els.sharedEditDuckdnsToggle.checked);
+  const requireVisitorName = !!(els.sharedEditRequireNameToggle && els.sharedEditRequireNameToggle.checked);
+  const passwordEnabled = !!(els.sharedEditPasswordToggle && els.sharedEditPasswordToggle.checked);
+  const password = String((els.sharedEditPasswordInput && els.sharedEditPasswordInput.value) || '');
+  if (passwordEnabled && password && password.length < 4) {
+    showSharedEditError(tr('mapper_share_password_placeholder'));
+    return;
+  }
+
+  const saveBtn = els.sharedEditModalSave;
+  const original = saveBtn ? saveBtn.textContent : tr('dns_shares_edit_save');
+  showSharedEditError('');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+      saveBtn.textContent = tr('dns_shares_edit_saving');
+    }
+    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        share_name: shareName,
+        folder_paths: folders,
+        permission,
+        expires_value: neverExpires ? 0 : expiresValue,
+        expires_unit: String((els.sharedEditExpireUnit && els.sharedEditExpireUnit.value) || 'days'),
+        use_duckdns: useDuckdns,
+        require_visitor_name: requireVisitorName,
+        password_enabled: passwordEnabled,
+        password,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showSharedEditError((data && data.error) || tr('dns_shares_edit_failed'));
+      return;
+    }
+    closeSharedEditModal();
+    showSharedStatus(tr('dns_shares_edit_saved'), 'ok');
+    await loadDnsShares();
+  } catch {
+    showSharedEditError(tr('dns_shares_edit_failed'));
+  } finally {
+    if (saveBtn) {
+      saveBtn.classList.remove('loading');
+      saveBtn.disabled = false;
+      saveBtn.textContent = original || tr('dns_shares_edit_save');
+    }
+  }
+}
+
 async function revokeDnsShare(shareId) {
   if (!shareId) return;
   if (!window.confirm(tr('dns_shares_deactivate_confirm'))) return;
@@ -4565,16 +4888,21 @@ async function activateDnsShare(shareId) {
   if (!shareId) return;
   const raw = window.prompt(tr('dns_shares_activate_prompt'), '7');
   if (raw === null) return;
-  const days = Number(raw);
-  if (!Number.isFinite(days) || days < 1) {
-    showSharedStatus(tr('dns_shares_activate_failed'), 'err');
-    return;
+  const value = String(raw || '').trim();
+  let days = 0;
+  if (value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      showSharedStatus(tr('dns_shares_activate_failed'), 'err');
+      return;
+    }
+    days = Math.floor(parsed);
   }
   try {
     const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expires_value: Math.floor(days), expires_unit: 'days' }),
+      body: JSON.stringify({ expires_value: days, expires_unit: 'days' }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
@@ -4630,16 +4958,21 @@ async function extendDnsShare(shareId) {
   if (!shareId) return;
   const raw = window.prompt(tr('dns_shares_extend_prompt'), '7');
   if (raw === null) return;
-  const days = Number(raw);
-  if (!Number.isFinite(days) || days < 1) {
-    showSharedStatus(tr('dns_shares_extend_failed'), 'err');
-    return;
+  const value = String(raw || '').trim();
+  let days = 0;
+  if (value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      showSharedStatus(tr('dns_shares_extend_failed'), 'err');
+      return;
+    }
+    days = Math.floor(parsed);
   }
   try {
     const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/extend`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expires_value: Math.floor(days), expires_unit: 'days' }),
+      body: JSON.stringify({ expires_value: days, expires_unit: 'days' }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || !data.ok) {
@@ -6042,6 +6375,38 @@ function applyUiLanguage() {
   if (els.sharedLinksTitle) els.sharedLinksTitle.textContent = tr('dns_shares_title');
   if (els.sharedLinksDesc) els.sharedLinksDesc.textContent = tr('dns_shares_desc');
   if (els.sharedLinksList && Array.isArray(state.sharedLinks) && state.sharedLinks.length) renderDnsSharesList();
+  if (els.sharedEditModalTitle) els.sharedEditModalTitle.textContent = tr('dns_shares_edit_title');
+  if (els.sharedEditModalClose) els.sharedEditModalClose.textContent = tr('scan_modal_close');
+  if (els.sharedEditModalCancel) els.sharedEditModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.sharedEditModalSave && !els.sharedEditModalSave.classList.contains('loading')) {
+    els.sharedEditModalSave.textContent = tr('dns_shares_edit_save');
+  }
+  if (els.sharedEditNameLabel) els.sharedEditNameLabel.textContent = tr('dns_shares_edit_name_label');
+  if (els.sharedEditNameInput) els.sharedEditNameInput.placeholder = tr('mapper_share_name_placeholder');
+  if (els.sharedEditFoldersLabel) els.sharedEditFoldersLabel.textContent = tr('dns_shares_edit_folders_label');
+  if (els.sharedEditExpireValueLabel) els.sharedEditExpireValueLabel.textContent = tr('dns_shares_edit_expire_value');
+  if (els.sharedEditExpireUnitLabel) els.sharedEditExpireUnitLabel.textContent = tr('dns_shares_edit_expire_unit');
+  if (els.sharedEditNeverToggleText) els.sharedEditNeverToggleText.textContent = tr('dns_shares_edit_never');
+  if (els.sharedEditPermissionLabel) els.sharedEditPermissionLabel.textContent = tr('dns_shares_edit_permission');
+  if (els.sharedEditDuckdnsToggleText) els.sharedEditDuckdnsToggleText.textContent = tr('mapper_share_duckdns_toggle');
+  if (els.sharedEditPasswordToggleText) els.sharedEditPasswordToggleText.textContent = tr('dns_shares_edit_password_toggle');
+  if (els.sharedEditPasswordLabel) els.sharedEditPasswordLabel.textContent = tr('dns_shares_edit_password_label');
+  if (els.sharedEditPasswordInput) els.sharedEditPasswordInput.placeholder = tr('dns_shares_edit_password_placeholder');
+  if (els.sharedEditRequireNameToggleText) els.sharedEditRequireNameToggleText.textContent = tr('dns_shares_edit_require_name');
+  if (els.sharedEditExpireUnit) {
+    const dayOpt = els.sharedEditExpireUnit.querySelector('option[value="days"]');
+    const hourOpt = els.sharedEditExpireUnit.querySelector('option[value="hours"]');
+    if (dayOpt) dayOpt.textContent = tr('mapper_share_expire_days');
+    if (hourOpt) hourOpt.textContent = tr('mapper_share_expire_hours');
+  }
+  if (els.sharedEditPermission) {
+    const viewOpt = els.sharedEditPermission.querySelector('option[value="view"]');
+    const uploadOpt = els.sharedEditPermission.querySelector('option[value="upload"]');
+    const manageOpt = els.sharedEditPermission.querySelector('option[value="manage"]');
+    if (viewOpt) viewOpt.textContent = tr('mapper_share_perm_view');
+    if (uploadOpt) uploadOpt.textContent = tr('mapper_share_perm_upload');
+    if (manageOpt) manageOpt.textContent = tr('mapper_share_perm_manage');
+  }
 
   if (els.scanBtn) els.scanBtn.textContent = tr('btn_scan_library');
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
@@ -6342,7 +6707,19 @@ async function createMapperShareLink() {
       confirmBtn.classList.add('loading');
       confirmBtn.textContent = tr('mapper_share_generating');
     }
-    const expiresValue = Number((els.mapperShareExpireValue && els.mapperShareExpireValue.value) || 7) || 7;
+    const expiresRaw = String((els.mapperShareExpireValue && els.mapperShareExpireValue.value) || '').trim();
+    let expiresValue = 0;
+    if (expiresRaw) {
+      const parsedExpires = Number(expiresRaw);
+      if (!Number.isFinite(parsedExpires) || parsedExpires < 0) {
+        const message = tr('dns_shares_edit_invalid_expiry');
+        showStatus(message, 'err');
+        const errEl = document.getElementById('mapperShareError');
+        if (errEl) { errEl.textContent = message; errEl.classList.remove('hidden'); }
+        return;
+      }
+      expiresValue = Math.floor(parsedExpires);
+    }
     const expiresUnit = String((els.mapperShareExpireUnit && els.mapperShareExpireUnit.value) || 'days');
     const permission = String((els.mapperSharePermission && els.mapperSharePermission.value) || 'view');
     const shareNameRaw = String((els.mapperShareNameInput && els.mapperShareNameInput.value) || '').trim();
@@ -7433,6 +7810,28 @@ if (els.mapperShareModal) {
     if (e.target === els.mapperShareModal) closeMapperShareModal();
   });
 }
+if (els.sharedEditNeverToggle) {
+  els.sharedEditNeverToggle.addEventListener('change', _syncSharedEditNeverToggle);
+}
+if (els.sharedEditPasswordToggle) {
+  els.sharedEditPasswordToggle.addEventListener('change', _syncSharedEditPasswordToggle);
+}
+if (els.sharedEditModalClose) {
+  els.sharedEditModalClose.addEventListener('click', closeSharedEditModal);
+}
+if (els.sharedEditModalCancel) {
+  els.sharedEditModalCancel.addEventListener('click', closeSharedEditModal);
+}
+if (els.sharedEditModalSave) {
+  els.sharedEditModalSave.addEventListener('click', async () => {
+    await saveSharedEditModal();
+  });
+}
+if (els.sharedEditModal) {
+  els.sharedEditModal.addEventListener('click', (e) => {
+    if (e.target === els.sharedEditModal) closeSharedEditModal();
+  });
+}
 
 if (els.scanModalClose) {
   els.scanModalClose.addEventListener('click', closeScanModal);
@@ -7574,6 +7973,11 @@ if (els.sharedLinksList) {
       if (link) await _downloadQrForLink(link, `share-${qrId}-qr.png`);
       return;
     }
+    const editId = Number(target.getAttribute('data-share-edit') || 0) || 0;
+    if (editId > 0) {
+      await openSharedEditModal(editId);
+      return;
+    }
     const revokeId = Number(target.getAttribute('data-share-revoke') || 0) || 0;
     if (revokeId > 0) {
       await revokeDnsShare(revokeId);
@@ -7619,6 +8023,10 @@ if (els.mapperDownloadModal) {
 }
 document.addEventListener('keydown', (e) => {
   if (!e || e.key !== 'Escape') return;
+  if (els.sharedEditModal && !els.sharedEditModal.classList.contains('hidden')) {
+    closeSharedEditModal();
+    return;
+  }
   if (els.mapperDownloadModal && !els.mapperDownloadModal.classList.contains('hidden')) closeDownloadModal();
 });
 els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
