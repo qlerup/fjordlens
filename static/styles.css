@@ -1137,6 +1137,11 @@ body.view-mapper .mapper-header-actions {
   content-visibility: auto;
   contain-intrinsic-size: 300px 340px;
 }
+/* Share view: avoid scroll-triggered thumbnail repaint glitches on mobile browsers. */
+.share-page .photo-card {
+  content-visibility: visible;
+  contain-intrinsic-size: auto;
+}
 .photo-card:hover {
   transform: translateY(-2px);
   border-color: rgba(91, 140, 255, 0.55);
@@ -1456,6 +1461,77 @@ body.view-mapper .mapper-header-actions {
   top: auto;
   bottom: auto;
   max-width: none;
+}
+
+.share-page .main {
+  padding-bottom: 84px;
+}
+.share-upload-status {
+  position: fixed;
+  left: clamp(10px, 2vw, 22px);
+  right: clamp(10px, 2vw, 22px);
+  bottom: max(10px, env(safe-area-inset-bottom));
+  z-index: 9999;
+  background: rgba(16, 20, 29, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  padding: 7px 10px 8px;
+  backdrop-filter: blur(4px);
+}
+.share-upload-status.hidden {
+  display: none !important;
+}
+.share-upload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.share-upload-label,
+.share-upload-pct {
+  font-size: 0.78rem;
+  color: #dce5f8;
+  white-space: nowrap;
+}
+.share-upload-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.share-upload-pct {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+.share-upload-track {
+  margin-top: 6px;
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.14);
+}
+.share-upload-bar {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.15s linear;
+}
+.share-upload-status.err .share-upload-bar {
+  background: linear-gradient(90deg, #ff7b7b, #ffb38f);
+}
+@media (max-width: 760px) {
+  .share-page .main {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+  .share-upload-status {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    border-radius: 9px;
+  }
 }
 
 .dns-share-actions {

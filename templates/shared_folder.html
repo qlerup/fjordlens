@@ -6,7 +6,7 @@
   <title>FjordLens Share</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
 </head>
-<body>
+<body class="share-page">
   <main class="main" style="max-width:1200px;margin:0 auto;">
     <header class="topbar" style="justify-content:space-between;">
       <div>
@@ -23,6 +23,16 @@
     </header>
 
     <section id="shareStatus" class="status hidden"></section>
+
+    <section id="shareUploadStatus" class="share-upload-status hidden" aria-live="polite">
+      <div class="share-upload-head">
+        <span id="shareUploadLabel" class="share-upload-label">Upload: 0/0</span>
+        <span id="shareUploadPct" class="share-upload-pct">0%</span>
+      </div>
+      <div class="share-upload-track">
+        <span id="shareUploadBar" class="share-upload-bar" style="width:0%"></span>
+      </div>
+    </section>
 
     <section id="shareAuthBox" class="sidebar-card hidden" style="max-width:520px;margin:20px auto;">
       <div class="sidebar-card-title" id="authTitle">Adgang kræves</div>

@@ -207,7 +207,7 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
 THUMB_SIZE = (600, 600)
-FACE_THUMB_VERSION = 2
+FACE_THUMB_VERSION = 3
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -4910,12 +4910,19 @@ def api_people_list():
                     FROM faces f
                     LEFT JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=?
-                    ORDER BY COALESCE(f.confidence, 0) DESC,
+                    ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
-                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
                                THEN 1 ELSE 0
                              END DESC,
+                             CASE WHEN COALESCE(f.bbox_w,0) >= 72 AND COALESCE(f.bbox_h,0) >= 72 THEN 1 ELSE 0 END DESC,
+                             CASE
+                               WHEN COALESCE(f.bbox_h,0) > 0
+                                    AND (1.0 * COALESCE(f.bbox_w,0) / COALESCE(f.bbox_h,1)) BETWEEN 0.55 AND 1.90
+                               THEN 1 ELSE 0
+                             END DESC,
+                             COALESCE(f.confidence, 0) DESC,
                              (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                              f.id DESC
                     LIMIT 1
@@ -4945,12 +4952,19 @@ def api_people_list():
                     FROM faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
-                    ORDER BY COALESCE(f.confidence, 0) DESC,
+                    ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
-                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                                    AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
                                THEN 1 ELSE 0
                              END DESC,
+                             CASE WHEN COALESCE(f.bbox_w,0) >= 72 AND COALESCE(f.bbox_h,0) >= 72 THEN 1 ELSE 0 END DESC,
+                             CASE
+                               WHEN COALESCE(f.bbox_h,0) > 0
+                                    AND (1.0 * COALESCE(f.bbox_w,0) / COALESCE(f.bbox_h,1)) BETWEEN 0.55 AND 1.90
+                               THEN 1 ELSE 0
+                             END DESC,
+                             COALESCE(f.confidence, 0) DESC,
                              (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                              f.id DESC
                     LIMIT 1
@@ -4978,12 +4992,19 @@ def api_people_list():
                 FROM faces f
                 LEFT JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL
-                ORDER BY COALESCE(f.confidence, 0) DESC,
+                ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
-                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
                            THEN 1 ELSE 0
                          END DESC,
+                         CASE WHEN COALESCE(f.bbox_w,0) >= 72 AND COALESCE(f.bbox_h,0) >= 72 THEN 1 ELSE 0 END DESC,
+                         CASE
+                           WHEN COALESCE(f.bbox_h,0) > 0
+                                AND (1.0 * COALESCE(f.bbox_w,0) / COALESCE(f.bbox_h,1)) BETWEEN 0.55 AND 1.90
+                           THEN 1 ELSE 0
+                         END DESC,
+                         COALESCE(f.confidence, 0) DESC,
                          (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                          f.id DESC
                 LIMIT 1
@@ -5012,12 +5033,19 @@ def api_people_list():
                 FROM faces f
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
-                ORDER BY COALESCE(f.confidence, 0) DESC,
+                ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
-                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.01 AND 0.60
+                                AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
                            THEN 1 ELSE 0
                          END DESC,
+                         CASE WHEN COALESCE(f.bbox_w,0) >= 72 AND COALESCE(f.bbox_h,0) >= 72 THEN 1 ELSE 0 END DESC,
+                         CASE
+                           WHEN COALESCE(f.bbox_h,0) > 0
+                                AND (1.0 * COALESCE(f.bbox_w,0) / COALESCE(f.bbox_h,1)) BETWEEN 0.55 AND 1.90
+                           THEN 1 ELSE 0
+                         END DESC,
+                         COALESCE(f.confidence, 0) DESC,
                          (COALESCE(f.bbox_w, 0) * COALESCE(f.bbox_h, 0)) DESC,
                          f.id DESC
                 LIMIT 1
@@ -5287,7 +5315,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name, p.width, p.height FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -5366,40 +5394,6 @@ def _build_face_thumb(face_id: int) -> bool:
                     return True
         except Exception:
             pass
-
-        # Fallback: if original cannot be read, crop from existing photo thumb
-        # by scaling bbox from photo dimensions to thumb dimensions.
-        thumb_name = str(r["thumb_name"] or "").strip()
-        thumb_path = THUMB_DIR / thumb_name if thumb_name else None
-        if thumb_path and thumb_path.exists():
-            try:
-                pw = float(r["width"] or 0) or 0.0
-                ph = float(r["height"] or 0) or 0.0
-                bx = float(r["bbox_x"] or 0)
-                by = float(r["bbox_y"] or 0)
-                bw = float(r["bbox_w"] or 1)
-                bh = float(r["bbox_h"] or 1)
-            except Exception:
-                pw = ph = 0.0
-                bx = by = 0.0
-                bw = bh = 1.0
-            try:
-                with Image.open(thumb_path) as im_thumb:
-                    tw = max(1, int(im_thumb.width))
-                    th = max(1, int(im_thumb.height))
-                    # If source dimensions are unknown, assume bbox is already in thumb space.
-                    sx = (tw / pw) if pw > 0 else 1.0
-                    sy = (th / ph) if ph > 0 else 1.0
-                    if _crop_and_save(
-                        im_thumb,
-                        int(round(bx * sx)),
-                        int(round(by * sy)),
-                        int(round(max(1.0, bw * sx))),
-                        int(round(max(1.0, bh * sy))),
-                    ):
-                        return True
-            except Exception:
-                pass
 
         return False
     except Exception as e:

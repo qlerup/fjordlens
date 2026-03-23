@@ -2,6 +2,10 @@ const els = {
   title: document.getElementById('shareTitle'),
   meta: document.getElementById('shareMeta'),
   status: document.getElementById('shareStatus'),
+  shareUploadStatus: document.getElementById('shareUploadStatus'),
+  shareUploadLabel: document.getElementById('shareUploadLabel'),
+  shareUploadPct: document.getElementById('shareUploadPct'),
+  shareUploadBar: document.getElementById('shareUploadBar'),
   authBox: document.getElementById('shareAuthBox'),
   authTitle: document.getElementById('authTitle'),
   authNameWrap: document.getElementById('authNameWrap'),
@@ -34,6 +38,121 @@ const state = {
   visible: [],    // items filtered to currentPath
   viewerIndex: -1,
 };
+
+const uploadProgress = {
+  active: false,
+  totalFiles: 0,
+  totalBytes: 0,
+  completedFiles: 0,
+  completedBytes: 0,
+  failedFiles: 0,
+  currentFile: '',
+  currentBytes: 0,
+};
+
+let uploadProgressHideTimer = null;
+let lastResizeIsMobile = isMobileShareView();
+
+function clearUploadProgressHideTimer() {
+  if (uploadProgressHideTimer) {
+    window.clearTimeout(uploadProgressHideTimer);
+    uploadProgressHideTimer = null;
+  }
+}
+
+function setShareUploadStatusVisible(visible, tone = 'ok') {
+  if (!els.shareUploadStatus) return;
+  els.shareUploadStatus.classList.remove('err');
+  if (tone === 'err') els.shareUploadStatus.classList.add('err');
+  els.shareUploadStatus.classList.toggle('hidden', !visible);
+}
+
+function renderShareUploadStatus() {
+  if (!els.shareUploadLabel || !els.shareUploadPct || !els.shareUploadBar) return;
+
+  const totalFiles = Math.max(0, Number(uploadProgress.totalFiles || 0));
+  if (totalFiles <= 0) {
+    els.shareUploadLabel.textContent = 'Upload: 0/0';
+    els.shareUploadPct.textContent = '0%';
+    els.shareUploadBar.style.width = '0%';
+    return;
+  }
+
+  const totalBytes = Math.max(0, Number(uploadProgress.totalBytes || 0));
+  const completedFiles = Math.max(0, Number(uploadProgress.completedFiles || 0));
+  const completedBytes = Math.max(0, Number(uploadProgress.completedBytes || 0));
+  const currentBytes = Math.max(0, Number(uploadProgress.currentBytes || 0));
+  const inProgress = !!uploadProgress.active && completedFiles < totalFiles;
+  const currentIndex = inProgress ? Math.min(totalFiles, completedFiles + 1) : Math.min(totalFiles, completedFiles);
+
+  let pct = 0;
+  if (totalBytes > 0) {
+    const combined = Math.max(0, Math.min(totalBytes, completedBytes + currentBytes));
+    pct = Math.round((combined / totalBytes) * 100);
+  } else {
+    pct = Math.round((Math.max(0, Math.min(totalFiles, completedFiles)) / totalFiles) * 100);
+  }
+  pct = Math.max(0, Math.min(100, pct));
+
+  let label = `${t('upload_run')}: ${currentIndex}/${totalFiles}`;
+  if (inProgress && uploadProgress.currentFile) label += ` - ${uploadProgress.currentFile}`;
+  if (!inProgress) {
+    label = `Upload: ${Math.min(totalFiles, completedFiles)}/${totalFiles}`;
+    if (uploadProgress.failedFiles > 0) label += ` (${uploadProgress.failedFiles} fejl)`;
+  }
+
+  els.shareUploadLabel.textContent = label;
+  els.shareUploadPct.textContent = `${pct}%`;
+  els.shareUploadBar.style.width = `${pct}%`;
+}
+
+function startShareUploadProgress(files) {
+  const list = Array.isArray(files) ? files : [];
+  clearUploadProgressHideTimer();
+  uploadProgress.active = true;
+  uploadProgress.totalFiles = list.length;
+  uploadProgress.totalBytes = list.reduce((sum, f) => sum + Math.max(0, Number((f && f.size) || 0)), 0);
+  uploadProgress.completedFiles = 0;
+  uploadProgress.completedBytes = 0;
+  uploadProgress.failedFiles = 0;
+  uploadProgress.currentFile = '';
+  uploadProgress.currentBytes = 0;
+  setShareUploadStatusVisible(list.length > 0, 'ok');
+  renderShareUploadStatus();
+}
+
+function markShareUploadCurrentFile(file) {
+  uploadProgress.currentFile = String((file && file.name) || '');
+  uploadProgress.currentBytes = 0;
+  renderShareUploadStatus();
+}
+
+function updateShareUploadProgress(bytesUploaded, bytesTotal) {
+  const uploaded = Math.max(0, Number(bytesUploaded || 0));
+  const total = Math.max(0, Number(bytesTotal || 0));
+  uploadProgress.currentBytes = (total > 0) ? Math.min(uploaded, total) : uploaded;
+  renderShareUploadStatus();
+}
+
+function finishShareUploadFile(file, ok) {
+  uploadProgress.completedFiles += 1;
+  uploadProgress.completedBytes += Math.max(0, Number((file && file.size) || 0));
+  uploadProgress.currentBytes = 0;
+  uploadProgress.currentFile = '';
+  if (!ok) uploadProgress.failedFiles += 1;
+  renderShareUploadStatus();
+}
+
+function finishShareUploadProgress() {
+  uploadProgress.active = false;
+  renderShareUploadStatus();
+  const hasErrors = uploadProgress.failedFiles > 0;
+  setShareUploadStatusVisible(true, hasErrors ? 'err' : 'ok');
+  clearUploadProgressHideTimer();
+  uploadProgressHideTimer = window.setTimeout(() => {
+    setShareUploadStatusVisible(false, 'ok');
+  }, 5000);
+}
 
 function isMobileShareView() {
   try {
@@ -311,7 +430,7 @@ function renderGrid() {
     const card = document.createElement('article');
     card.className = 'photo-card';
     const thumb = item.thumb_url
-      ? `<div class="card-thumb"><img loading="lazy" src="${item.thumb_url}" alt=""></div>`
+      ? `<div class="card-thumb"><img loading="auto" decoding="async" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
     const uploader = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
     const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">👤 ${uploader}</div>` : '';
@@ -465,6 +584,7 @@ async function runUpload() {
         removeFingerprintOnSuccess: true,
         onProgress(bytesUploaded, bytesTotal){
           const pct = bytesTotal > 0 ? Math.round((bytesUploaded/bytesTotal)*100) : 0;
+          updateShareUploadProgress(bytesUploaded, bytesTotal);
           showStatus(`${t('upload_run')}: ${file.name} · ${pct}%`, 'ok');
         },
         onError(err){
@@ -487,11 +607,19 @@ async function runUpload() {
 
   let saved=0, failed=0;
   if (!hasTusClient()) { showStatus('TUS klient mangler. Genindlæs siden.', 'err'); return; }
-  for (const f of files){
-    const r = await uploadTus(f);
-    if (r && r.ok) saved+=1; else failed+=1;
+  startShareUploadProgress(files);
+  try {
+    for (const f of files){
+      markShareUploadCurrentFile(f);
+      const r = await uploadTus(f);
+      const ok = !!(r && r.ok);
+      finishShareUploadFile(f, ok);
+      if (ok) saved+=1; else failed+=1;
+    }
+  } finally {
+    finishShareUploadProgress();
+    if (els.fileInput) els.fileInput.value = '';
   }
-  if (els.fileInput) els.fileInput.value = '';
   if (failed>0){ showStatus(`${t('upload_done')} · ${saved} ok · ${failed} fejl`, 'err'); }
   else { showStatus(t('upload_done'), 'ok'); }
   await loadPhotos();
@@ -516,6 +644,9 @@ async function runDelete() {
 
 async function boot() {
   hideStatus();
+  clearUploadProgressHideTimer();
+  setShareUploadStatusVisible(false, 'ok');
+  renderShareUploadStatus();
   if (els.title) els.title.textContent = t('title');
   if (els.meta) els.meta.textContent = t('loading');
   if (els.authTitle) els.authTitle.textContent = t('auth_title');
@@ -554,10 +685,12 @@ if (els.fileInput) els.fileInput.addEventListener('change', () => { if (els.file
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
 
 window.addEventListener('resize', () => {
+  const mobileNow = isMobileShareView();
+  if (mobileNow === lastResizeIsMobile) return;
+  lastResizeIsMobile = mobileNow;
   if (state.info && els.deleteBtn) {
-    els.deleteBtn.style.display = (state.info.can_delete && !isMobileShareView()) ? '' : 'none';
+    els.deleteBtn.style.display = (state.info.can_delete && !mobileNow) ? '' : 'none';
   }
-  renderGrid();
 });
 
 boot();
