@@ -45,6 +45,7 @@ const state = {
   info: null,
   items: [],
   selected: new Set(),
+  selectionPulseId: 0,
   auth: { passwordRequired: false, nameRequired: false },
   selectMode: false,
   currentPath: '', // relative to share root (e.g. "sub/child")
@@ -183,15 +184,15 @@ function openSharedItem(item) {
 function t(key) {
   const da = {
     title: 'Delt mappe',
-    loading: 'Indlaeser...',
-    auth_required: 'Adgang kraeves',
-    auth_title: 'Adgang kraeves',
+    loading: 'Indl\u00e6ser...',
+    auth_required: 'Adgang kr\u00e6ves',
+    auth_title: 'Adgang kr\u00e6ves',
     auth_name_label: 'Dit navn',
     auth_name_placeholder: 'Skriv dit navn',
     auth_password_label: 'Indtast adgangskode',
     auth_password_placeholder: 'Adgangskode',
-    auth_name_missing: 'Navn er paakraevet',
-    auth_continue: 'Fortsaet',
+    auth_name_missing: 'Navn er p\u00e5kr\u00e6vet',
+    auth_continue: 'Forts\u00e6t',
     upload_pick: 'Upload',
     perms_label: 'Tilladelser',
     perms_view: 'Se',
@@ -200,12 +201,12 @@ function t(key) {
     upload_run: 'Upload',
     delete_selected: 'Slet valgte',
     no_files: 'Ingen filer valgt',
-    upload_done: 'Upload fuldfoert',
+    upload_done: 'Upload fuldf\u00f8rt',
     upload_failed: 'Upload fejlede',
-    delete_done: 'Sletning fuldfoert',
+    delete_done: 'Sletning fuldf\u00f8rt',
     delete_failed: 'Sletning fejlede',
     password_failed: 'Forkert adgangskode',
-    open: 'Aabn',
+    open: '\u00c5bn',
     selected: 'valgt',
   };
   const en = {
@@ -304,7 +305,10 @@ function toggleShareViewerMenu() {
 function setSelectMode(enabled, opts = {}) {
   const on = !!enabled && canDeleteFromShare();
   state.selectMode = on;
-  if (!on || opts.clearSelection) state.selected = new Set();
+  if (!on || opts.clearSelection) {
+    state.selected = new Set();
+    state.selectionPulseId = 0;
+  }
   updateDeleteButton();
   if (!opts.skipRender) renderGrid();
 }
@@ -315,6 +319,7 @@ function syncSelectionToVisible() {
   const next = new Set();
   state.selected.forEach((id) => { if (visibleIds.has(Number(id))) next.add(Number(id)); });
   state.selected = next;
+  if (!state.selected.has(Number(state.selectionPulseId || 0))) state.selectionPulseId = 0;
 }
 
 function updateDeleteButton() {
@@ -330,7 +335,7 @@ function updateDeleteButton() {
     els.moreBtn.style.display = canDelete ? '' : 'none';
   }
   if (els.moreSelectBtn) {
-    els.moreSelectBtn.textContent = state.selectMode ? 'Afslut vaelg' : 'Vaelg billeder';
+    els.moreSelectBtn.textContent = state.selectMode ? 'Afslut v\u00e6lg' : 'V\u00e6lg billeder';
   }
   if (els.moreSelectAllBtn) {
     const hasVisible = Array.isArray(state.visible) && state.visible.length > 0;
@@ -545,8 +550,9 @@ function renderGrid() {
   state.visible.forEach((item, idx) => {
     const photoId = Number(item && item.id ? item.id : 0);
     const isSelected = !!(state.selectMode && photoId > 0 && state.selected.has(photoId));
+    const shouldAnimateSelection = !!(isSelected && photoId > 0 && Number(state.selectionPulseId || 0) === photoId);
     const card = document.createElement('article');
-    card.className = `photo-card${isSelected ? ' selected' : ''}`;
+    card.className = `photo-card${isSelected ? ' selected' : ''}${shouldAnimateSelection ? ' just-selected' : ''}`;
     if (photoId > 0) card.setAttribute('data-photo-id', String(photoId));
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="auto" decoding="async" src="${item.thumb_url}" alt=""></div>`
@@ -563,6 +569,7 @@ function renderGrid() {
       longPressTimer = window.setTimeout(() => {
         longPressActivated = true;
         setSelectMode(true, { skipRender: true });
+        state.selectionPulseId = photoId;
         state.selected.add(photoId);
         renderGrid();
       }, 550);
@@ -585,8 +592,13 @@ function renderGrid() {
       }
       if (state.selectMode && canDeleteFromShare()) {
         if (photoId > 0) {
-          if (state.selected.has(photoId)) state.selected.delete(photoId);
-          else state.selected.add(photoId);
+          if (state.selected.has(photoId)) {
+            state.selected.delete(photoId);
+            if (Number(state.selectionPulseId || 0) === photoId) state.selectionPulseId = 0;
+          } else {
+            state.selected.add(photoId);
+            state.selectionPulseId = photoId;
+          }
         }
         updateDeleteButton();
         renderGrid();
@@ -599,6 +611,7 @@ function renderGrid() {
     els.grid.appendChild(card);
   });
   updateDeleteButton();
+  state.selectionPulseId = 0;
 }
 
 // --- Simple viewer (popup) ---
@@ -728,6 +741,7 @@ async function loadInfo() {
   if (!data.can_delete) {
     state.selectMode = false;
     state.selected = new Set();
+    state.selectionPulseId = 0;
   }
   updateDeleteButton();
   return true;
@@ -745,7 +759,10 @@ async function loadPhotos() {
     return;
   }
   state.items = data.items || [];
-  if (!state.selectMode) state.selected = new Set();
+  if (!state.selectMode) {
+    state.selected = new Set();
+    state.selectionPulseId = 0;
+  }
   renderGrid();
 }
 
@@ -831,7 +848,7 @@ async function runUpload() {
   }
 
   let saved=0, failed=0;
-  if (!hasTusClient()) { showStatus('TUS klient mangler. Genindlaes siden.', 'err'); return; }
+  if (!hasTusClient()) { showStatus('TUS klient mangler. Genindl\u00e6s siden.', 'err'); return; }
   showUploadWarningModal();
   startShareUploadProgress(files);
   try {
@@ -875,6 +892,7 @@ async function runDelete() {
   }
   showStatus(t('delete_done'), 'ok');
   state.selected = new Set();
+  state.selectionPulseId = 0;
   if (state.selectMode) setSelectMode(false, { skipRender: true, clearSelection: true });
   await loadPhotos();
 }
@@ -883,6 +901,7 @@ async function boot() {
   hideStatus();
   state.selectMode = false;
   state.selected = new Set();
+  state.selectionPulseId = 0;
   closeShareMoreMenu();
   closeShareViewerMenu();
   closeUploadWarningModal();
@@ -900,8 +919,8 @@ async function boot() {
   if (els.uploadLabel) els.uploadLabel.textContent = t('upload_pick');
   // No separate upload button; auto-start on file pick
   if (els.deleteBtn) els.deleteBtn.textContent = t('delete_selected');
-  if (els.moreSelectBtn) els.moreSelectBtn.textContent = 'Vaelg billeder';
-  if (els.moreSelectAllBtn) els.moreSelectAllBtn.textContent = 'Vaelg alle';
+  if (els.moreSelectBtn) els.moreSelectBtn.textContent = 'V\u00e6lg billeder';
+  if (els.moreSelectAllBtn) els.moreSelectAllBtn.textContent = 'V\u00e6lg alle';
   if (els.moreClearBtn) els.moreClearBtn.textContent = 'Fjern valgte';
   if (els.moreDeleteBtn) els.moreDeleteBtn.textContent = t('delete_selected');
 
@@ -954,6 +973,7 @@ if (els.moreSelectAllBtn) {
   els.moreSelectAllBtn.addEventListener('click', () => {
     if (!state.selectMode || !canDeleteFromShare()) return;
     state.selected = new Set((state.visible || []).map((it) => Number(it && it.id || 0)).filter((id) => id > 0));
+    state.selectionPulseId = 0;
     renderGrid();
     closeShareMoreMenu();
   });
@@ -961,6 +981,7 @@ if (els.moreSelectAllBtn) {
 if (els.moreClearBtn) {
   els.moreClearBtn.addEventListener('click', () => {
     state.selected = new Set();
+    state.selectionPulseId = 0;
     renderGrid();
     closeShareMoreMenu();
   });

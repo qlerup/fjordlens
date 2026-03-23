@@ -1223,6 +1223,16 @@ body.view-mapper .mapper-header-actions {
   opacity: 0;
   animation: selectRing .5s ease-out .06s both;
 }
+.share-page .photo-card.selected .photo-select-badge,
+.share-page .photo-card.selected .photo-select-badge::after {
+  animation: none;
+}
+.share-page .photo-card.just-selected .photo-select-badge {
+  animation: selectPop .28s cubic-bezier(.2,.9,.2,1.1) both;
+}
+.share-page .photo-card.just-selected .photo-select-badge::after {
+  animation: selectRing .5s ease-out .06s both;
+}
 .card-thumb {
   background: #1b1f29;
   aspect-ratio: 1 / 1; /* more square thumbs */

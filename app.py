@@ -8355,6 +8355,349 @@ def api_settings_upload_folder_delete():
     return jsonify(payload)
 
 
+def _replace_path_prefix(value: Any, old_prefix: str, new_prefix: str) -> str:
+    raw = str(value or "").replace("\\", "/").strip("/")
+    old = str(old_prefix or "").replace("\\", "/").strip("/")
+    new = str(new_prefix or "").replace("\\", "/").strip("/")
+    if not raw or not old or not new:
+        return raw
+    if raw == old:
+        return new
+    pref = old + "/"
+    if raw.startswith(pref):
+        return new + raw[len(old):]
+    return raw
+
+
+def _merge_permission_value(a: Optional[str], b: Optional[str]) -> str:
+    order = {"view": 1, "upload": 2, "edit": 3}
+    va = str(a or "view").strip().lower()
+    vb = str(b or "view").strip().lower()
+    if va not in order:
+        va = "view"
+    if vb not in order:
+        vb = "view"
+    return va if order[va] >= order[vb] else vb
+
+
+def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
+    old_sub = _normalize_upload_subdir(old_subdir)
+    new_sub = _normalize_upload_subdir(new_subdir)
+    if not old_sub or not new_sub:
+        return {"photos_renamed": 0, "photos_conflicts_removed": 0}
+
+    old_acl = f"uploads/{old_sub}"
+    new_acl = f"uploads/{new_sub}"
+    old_share_default = f"uploads/{old_sub}"
+    conflict_thumbs: list[str] = []
+    photos_renamed = 0
+    photos_conflicts_removed = 0
+
+    photo_prefix_pairs = [
+        (f"uploads/originals/{old_sub}", f"uploads/originals/{new_sub}"),
+        (f"uploads/converted/{old_sub}", f"uploads/converted/{new_sub}"),
+        (f"uploads/{old_sub}", f"uploads/{new_sub}"),
+    ]
+
+    def _map_photo_rel(rel_path: str) -> str:
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+        for old_pref, new_pref in photo_prefix_pairs:
+            if rel == old_pref:
+                return new_pref
+            if rel.startswith(old_pref + "/"):
+                return new_pref + rel[len(old_pref):]
+        return rel
+
+    with closing(get_conn()) as conn:
+        # Keep active upload target in sync when it points into renamed folder
+        for key in ("upload_subdir_uploads", "upload_subdir"):
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if not row:
+                continue
+            before = str(row["value"] or "")
+            after = _replace_path_prefix(before, old_sub, new_sub)
+            if after != before:
+                conn.execute("UPDATE settings SET value=? WHERE key=?", (after, key))
+
+        # ACL references
+        acl_rows = conn.execute(
+            """
+            SELECT user_id, folder_path, permission, created_at
+            FROM user_folder_access
+            WHERE folder_path=? OR folder_path LIKE ?
+            """,
+            (old_acl, old_acl + "/%"),
+        ).fetchall()
+        for r in acl_rows:
+            uid = int(r["user_id"] or 0)
+            prev_path = str(r["folder_path"] or "")
+            next_path = _replace_path_prefix(prev_path, old_acl, new_acl)
+            if not next_path or next_path == prev_path:
+                continue
+            perm = str(r["permission"] or "view").strip().lower()
+            if perm not in {"view", "upload", "edit"}:
+                perm = "view"
+            existing = conn.execute(
+                "SELECT permission FROM user_folder_access WHERE user_id=? AND folder_path=? LIMIT 1",
+                (uid, next_path),
+            ).fetchone()
+            if existing:
+                merged = _merge_permission_value(existing["permission"], perm)
+                conn.execute(
+                    "UPDATE user_folder_access SET permission=? WHERE user_id=? AND folder_path=?",
+                    (merged, uid, next_path),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO user_folder_access(user_id, folder_path, permission, created_at) VALUES(?,?,?,?)",
+                    (uid, next_path, perm, str(r["created_at"] or now_iso())),
+                )
+        conn.execute(
+            "DELETE FROM user_folder_access WHERE folder_path=? OR folder_path LIKE ?",
+            (old_acl, old_acl + "/%"),
+        )
+
+        # Folder owners
+        owner_rows = conn.execute(
+            "SELECT folder_path, user_id FROM folder_owners WHERE folder_path=? OR folder_path LIKE ?",
+            (old_acl, old_acl + "/%"),
+        ).fetchall()
+        for r in owner_rows:
+            prev_path = str(r["folder_path"] or "")
+            next_path = _replace_path_prefix(prev_path, old_acl, new_acl)
+            if not next_path or next_path == prev_path:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO folder_owners(folder_path, user_id) VALUES(?,?)",
+                (next_path, int(r["user_id"] or 0)),
+            )
+        conn.execute(
+            "DELETE FROM folder_owners WHERE folder_path=? OR folder_path LIKE ?",
+            (old_acl, old_acl + "/%"),
+        )
+
+        # Folder previews
+        preview_rows = conn.execute(
+            "SELECT folder_path, previews_json, updated_at FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
+            (old_sub, old_sub + "/%"),
+        ).fetchall()
+        for r in preview_rows:
+            prev_path = str(r["folder_path"] or "")
+            next_path = _replace_path_prefix(prev_path, old_sub, new_sub)
+            if not next_path or next_path == prev_path:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO folder_previews(folder_path, previews_json, updated_at) VALUES(?,?,?)",
+                (next_path, str(r["previews_json"] or "[]"), str(r["updated_at"] or now_iso())),
+            )
+        conn.execute(
+            "DELETE FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
+            (old_sub, old_sub + "/%"),
+        )
+
+        # Share folder references (multi-folder shares)
+        slf_rows = conn.execute(
+            "SELECT share_id, folder_path, created_at FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ?",
+            (old_sub, old_sub + "/%"),
+        ).fetchall()
+        for r in slf_rows:
+            prev_path = str(r["folder_path"] or "")
+            next_path = _replace_path_prefix(prev_path, old_sub, new_sub)
+            if not next_path or next_path == prev_path:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO share_link_folders(share_id, folder_path, created_at) VALUES(?,?,?)",
+                (int(r["share_id"] or 0), next_path, str(r["created_at"] or now_iso())),
+            )
+        conn.execute(
+            "DELETE FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ?",
+            (old_sub, old_sub + "/%"),
+        )
+
+        # Share primary folder + default share_name
+        share_rows = conn.execute(
+            "SELECT id, folder_path, share_name FROM share_links WHERE folder_path=? OR folder_path LIKE ?",
+            (old_sub, old_sub + "/%"),
+        ).fetchall()
+        for r in share_rows:
+            prev_path = str(r["folder_path"] or "")
+            next_path = _replace_path_prefix(prev_path, old_sub, new_sub)
+            if not next_path or next_path == prev_path:
+                continue
+            share_name = str(r["share_name"] or "").strip()
+            next_share_name = share_name
+            if share_name == f"uploads/{prev_path}" or share_name == old_share_default:
+                next_share_name = f"uploads/{next_path}"
+            conn.execute(
+                "UPDATE share_links SET folder_path=?, share_name=? WHERE id=?",
+                (next_path, next_share_name, int(r["id"] or 0)),
+            )
+
+        # Indexed photo rel_path references
+        where_parts: list[str] = []
+        where_params: list[Any] = []
+        for old_pref, _new_pref in photo_prefix_pairs:
+            where_parts.append("(rel_path=? OR rel_path LIKE ?)")
+            where_params.extend([old_pref, old_pref + "/%"])
+        photo_rows = conn.execute(
+            f"SELECT id, rel_path FROM photos WHERE {' OR '.join(where_parts)}",
+            tuple(where_params),
+        ).fetchall()
+        for r in photo_rows:
+            pid = int(r["id"] or 0)
+            prev_rel = str(r["rel_path"] or "")
+            next_rel = _map_photo_rel(prev_rel)
+            if not next_rel or next_rel == prev_rel:
+                continue
+            conflict = conn.execute(
+                "SELECT id, thumb_name FROM photos WHERE rel_path=? AND id<>? LIMIT 1",
+                (next_rel, pid),
+            ).fetchone()
+            if conflict:
+                conflict_id = int(conflict["id"] or 0)
+                conn.execute("DELETE FROM faces WHERE photo_id=?", (conflict_id,))
+                conn.execute("DELETE FROM photos WHERE id=?", (conflict_id,))
+                thumb_name = str(conflict["thumb_name"] or "").strip()
+                if thumb_name:
+                    conflict_thumbs.append(thumb_name)
+                photos_conflicts_removed += 1
+            conn.execute("UPDATE photos SET rel_path=? WHERE id=?", (next_rel, pid))
+            photos_renamed += 1
+
+        conn.commit()
+
+    # Best-effort cleanup of stale thumbs from removed conflict rows
+    for tn in sorted(set(conflict_thumbs)):
+        try:
+            p = THUMB_DIR / tn
+            if p.exists():
+                p.unlink()
+        except Exception:
+            continue
+
+    return {"photos_renamed": photos_renamed, "photos_conflicts_removed": photos_conflicts_removed}
+
+
+@app.route("/api/settings/upload-folder-rename", methods=["POST"])
+def api_settings_upload_folder_rename():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    body = request.get_json(silent=True) or {}
+    destination = str(body.get("destination") or "uploads").strip().lower()
+    if destination != UPLOAD_DEST_UPLOADS:
+        return jsonify({"ok": False, "error": "Omdøbning understøttes kun i uploads-mappen"}), 400
+
+    try:
+        old_subdir = _normalize_upload_subdir(str(body.get("path") or ""))
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+    if old_subdir == "originals" or old_subdir == "converted":
+        old_subdir = ""
+    elif old_subdir.startswith("originals/"):
+        old_subdir = old_subdir[len("originals/"):]
+    elif old_subdir.startswith("converted/"):
+        old_subdir = old_subdir[len("converted/"):]
+    if not old_subdir:
+        return jsonify({"ok": False, "error": "Rodmappen kan ikke omdøbes"}), 400
+
+    new_name_raw = str(body.get("new_name") or "").strip()
+    if not new_name_raw:
+        return jsonify({"ok": False, "error": "Angiv nyt navn"}), 400
+    try:
+        new_name = _sanitize_folder_part_allow_spaces(new_name_raw)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldigt nyt mappenavn"}), 400
+
+    parent_subdir = old_subdir.rsplit("/", 1)[0] if "/" in old_subdir else ""
+    new_subdir = f"{parent_subdir}/{new_name}" if parent_subdir else new_name
+    try:
+        new_subdir = _normalize_upload_subdir(new_subdir)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+
+    if old_subdir.lower() == new_subdir.lower():
+        return jsonify({"ok": False, "error": "Det nye navn skal være anderledes"}), 400
+
+    base_rel = f"uploads/{old_subdir}"
+    perm = _current_user_folder_permission_for_rel(base_rel)
+    if not _perm_allows(perm, "edit"):
+        return jsonify({"ok": False, "error": f"Ingen omdøb-adgang til '{old_subdir}'"}), 403
+
+    roots = [UPLOAD_DIR / "originals", UPLOAD_DIR / "converted", UPLOAD_DIR]
+    operations: list[tuple[Path, Path]] = []
+    protected_roots: set[Path] = set()
+    for root in roots:
+        try:
+            base = root.resolve()
+            protected_roots.add(base)
+            src = (root / old_subdir).resolve()
+            dst = (root / new_subdir).resolve()
+            src.relative_to(base)
+            dst.relative_to(base)
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+        if src.exists() and src.is_dir():
+            if dst.exists():
+                return jsonify({"ok": False, "error": f"Målmappen findes allerede: {new_subdir}"}), 409
+            operations.append((src, dst))
+
+    if not operations:
+        return jsonify({"ok": False, "error": f"Mappen findes ikke: {old_subdir}"}), 404
+
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for src, dst in operations:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+            moved.append((src, dst))
+    except Exception as e:
+        for src, dst in reversed(moved):
+            try:
+                if dst.exists() and not src.exists():
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    dst.rename(src)
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": f"Kunne ikke omdøbe mappe: {e}"}), 400
+
+    try:
+        db_stats = _apply_upload_folder_rename_db(old_subdir, new_subdir)
+    except Exception as e:
+        for src, dst in reversed(moved):
+            try:
+                if dst.exists() and not src.exists():
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    dst.rename(src)
+            except Exception:
+                pass
+        return jsonify({"ok": False, "error": f"Kunne ikke opdatere database: {e}"}), 500
+
+    # Remove now-empty old parent directories where safe
+    for src, _dst in moved:
+        cur = src.parent
+        while True:
+            try:
+                cur_res = cur.resolve()
+            except Exception:
+                break
+            if cur_res in protected_roots:
+                break
+            try:
+                cur.rmdir()
+            except Exception:
+                break
+            cur = cur.parent
+
+    payload = _upload_settings_payload(destination)
+    payload["old_path"] = old_subdir
+    payload["new_path"] = new_subdir
+    payload["photos_renamed"] = int(db_stats.get("photos_renamed", 0))
+    payload["photos_conflicts_removed"] = int(db_stats.get("photos_conflicts_removed", 0))
+    return jsonify(payload)
+
+
 @app.route("/api/settings/dns", methods=["GET", "POST"])
 def api_settings_dns():
     if not getattr(current_user, "is_admin", False):

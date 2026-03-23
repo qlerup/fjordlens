@@ -52,6 +52,7 @@ const els = {
   mapperHeaderShareAction: document.getElementById("mapperHeaderShareAction"),
   mapperHeaderUploadAction: document.getElementById("mapperHeaderUploadAction"),
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
+  mapperHeaderRenameAction: document.getElementById("mapperHeaderRenameAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
@@ -605,8 +606,20 @@ const I18N = {
     mapper_menu_share: 'Del',
     mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Opret mappe',
+    mapper_menu_rename: 'Omd\u00f8b mappe',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
+    mapper_rename_modal_title: 'Omd\u00f8b mappe',
+    mapper_rename_action: 'Gem nyt navn',
+    mapper_rename_pending: 'Omd\u00f8ber...',
+    mapper_rename_placeholder: 'Nyt mappenavn',
+    mapper_rename_select_one: 'V\u00e6lg pr\u00e6cis \u00e9n mappe at omd\u00f8be.',
+    mapper_rename_root_block: 'Rodmappen kan ikke omd\u00f8bes.',
+    mapper_rename_name_required: 'Skriv nyt mappenavn f\u00f8rst.',
+    mapper_rename_same_name: 'Det nye navn skal v\u00e6re anderledes.',
+    mapper_rename_failed: 'Kunne ikke omd\u00f8be mappe',
+    mapper_rename_error: 'Fejl ved omd\u00f8bning af mappe.',
+    mapper_rename_success: 'Mappe omd\u00f8bt',
     mapper_delete_selected: 'Slet valgte',
     mapper_download: 'Download',
     mapper_download_converted: 'Download konverterede',
@@ -1007,8 +1020,20 @@ const I18N = {
     mapper_menu_share: 'Share',
     mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Create folder',
+    mapper_menu_rename: 'Rename folder',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
+    mapper_rename_modal_title: 'Rename folder',
+    mapper_rename_action: 'Save new name',
+    mapper_rename_pending: 'Renaming...',
+    mapper_rename_placeholder: 'New folder name',
+    mapper_rename_select_one: 'Select exactly one folder to rename.',
+    mapper_rename_root_block: 'The root folder cannot be renamed.',
+    mapper_rename_name_required: 'Enter a new folder name first.',
+    mapper_rename_same_name: 'The new name must be different.',
+    mapper_rename_failed: 'Could not rename folder',
+    mapper_rename_error: 'Error while renaming folder.',
+    mapper_rename_success: 'Folder renamed',
     mapper_delete_selected: 'Delete selected',
     mapper_download: 'Download',
     mapper_download_converted: 'Download converted',
@@ -1363,6 +1388,8 @@ let state = {
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
   mapperSelectedPhotoIds: new Set(),
+  mapperFolderModalMode: "create",
+  mapperRenameTargetPath: "",
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
   currentUser: {
@@ -4127,6 +4154,18 @@ function renderMapperContext(path = '') {
     els.mapperHeaderUploadAction.disabled = !!state.mapperEditMode;
     els.mapperHeaderUploadAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
   }
+  if (els.mapperHeaderRenameAction) {
+    const canRenameInEdit = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0;
+    const canRenameCurrent = !state.mapperEditMode && !!p;
+    const canRename = canRenameInEdit || canRenameCurrent;
+    els.mapperHeaderRenameAction.textContent = tr('mapper_menu_rename');
+    els.mapperHeaderRenameAction.disabled = !canRename;
+    if (state.mapperEditMode) {
+      els.mapperHeaderRenameAction.title = canRename ? tr('mapper_menu_rename') : tr('mapper_rename_select_one');
+    } else {
+      els.mapperHeaderRenameAction.title = canRename ? tr('mapper_menu_rename') : tr('mapper_rename_root_block');
+    }
+  }
   if (els.mapperDeleteBtn) {
     const show = !!state.mapperEditMode;
     const canDelete = show && selectedCount > 0;
@@ -4812,6 +4851,91 @@ async function createMapperFolder() {
       createBtn.classList.remove('loading');
       createBtn.textContent = originalLabel || tr('upload_create_folder');
       createBtn.disabled = false;
+    }
+  }
+}
+
+function _replaceMapperPathPrefix(value, oldPrefix, newPrefix) {
+  const v = _normalizeMapperPath(value || '');
+  const from = _normalizeMapperPath(oldPrefix || '');
+  const to = _normalizeMapperPath(newPrefix || '');
+  if (!v || !from || !to) return v;
+  if (v === from) return to;
+  if (v.startsWith(from + '/')) return to + v.slice(from.length);
+  return v;
+}
+
+async function renameMapperFolder() {
+  if (!els.mapperCreateModalInput) return;
+  const target = _normalizeMapperPath(state.mapperRenameTargetPath || '');
+  if (!target) {
+    showStatus(tr('mapper_rename_select_one'), 'err');
+    return;
+  }
+  const newName = String((els.mapperCreateModalInput.value || '')).trim();
+  if (!newName) {
+    showStatus(tr('mapper_rename_name_required'), 'err');
+    try { els.mapperCreateModalInput.focus(); } catch {}
+    return;
+  }
+  const currentName = target.includes('/') ? target.split('/').pop() : target;
+  if (String(currentName || '').toLowerCase() === newName.toLowerCase()) {
+    showStatus(tr('mapper_rename_same_name'), 'err');
+    return;
+  }
+
+  const saveBtn = els.mapperCreateModalConfirm;
+  const originalLabel = saveBtn ? saveBtn.textContent : tr('mapper_rename_action');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+      saveBtn.textContent = tr('mapper_rename_pending');
+    }
+    const res = await fetch('/api/settings/upload-folder-rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination: 'uploads', path: target, new_name: newName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showStatus((data && data.error) || tr('mapper_rename_failed'), 'err');
+      return;
+    }
+
+    const oldPath = _normalizeMapperPath(data.old_path || target);
+    const newPath = _normalizeMapperPath(data.new_path || '');
+    if (!newPath) {
+      showStatus(tr('mapper_rename_failed'), 'err');
+      return;
+    }
+
+    state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter((f) => !!f) : [];
+    if (state.mapperSelectedFolders && state.mapperSelectedFolders.size) {
+      const next = new Set();
+      state.mapperSelectedFolders.forEach((f) => {
+        const mapped = _replaceMapperPathPrefix(String(f || ''), oldPath, newPath);
+        if (mapped) next.add(mapped);
+      });
+      state.mapperSelectedFolders = next;
+    }
+
+    const nextCurrent = _replaceMapperPathPrefix(String(state.mapperPath || ''), oldPath, newPath);
+    state.mapperPath = nextCurrent;
+    state.folder = nextCurrent || null;
+    _expandMapperAncestors(nextCurrent);
+
+    closeMapperCreateModal();
+    await loadMapperTools(nextCurrent);
+    await loadPhotos();
+    showStatus(`${tr('mapper_rename_success')}: ${oldPath} -> ${newPath}`, 'ok');
+  } catch {
+    showStatus(tr('mapper_rename_error'), 'err');
+  } finally {
+    if (saveBtn) {
+      saveBtn.classList.remove('loading');
+      saveBtn.textContent = originalLabel || tr('mapper_rename_action');
+      saveBtn.disabled = false;
     }
   }
 }
@@ -5948,11 +6072,7 @@ function applyUiLanguage() {
   if (els.scanModalClose) els.scanModalClose.textContent = tr('scan_modal_close');
   if (els.scanModalCancel) els.scanModalCancel.textContent = tr('scan_modal_cancel');
   if (els.scanModalStart) els.scanModalStart.textContent = tr('scan_modal_start');
-  if (els.mapperCreateModalTitle) els.mapperCreateModalTitle.textContent = tr('mapper_create_modal_title');
-  if (els.mapperCreateModalClose) els.mapperCreateModalClose.textContent = tr('scan_modal_close');
-  if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
-  if (els.mapperCreateModalConfirm) els.mapperCreateModalConfirm.textContent = tr('upload_create_folder');
-  if (els.mapperCreateModalInput) els.mapperCreateModalInput.placeholder = tr('upload_new_folder_placeholder');
+  applyMapperFolderModalTexts();
   if (els.mapperShareModalTitle) els.mapperShareModalTitle.textContent = tr('mapper_share_title');
   if (els.mapperShareModalClose) els.mapperShareModalClose.textContent = tr('scan_modal_close');
   if (els.mapperShareModalCancel) els.mapperShareModalCancel.textContent = tr('scan_modal_cancel');
@@ -6029,17 +6149,10 @@ function closeTwofaModal() {
 
 function openMapperCreateModal() {
   if (!els.mapperCreateModal) return;
-  if (els.mapperCreateModalTitle) els.mapperCreateModalTitle.textContent = tr('mapper_create_modal_title');
-  if (els.mapperCreateModalClose) els.mapperCreateModalClose.textContent = tr('scan_modal_close');
-  if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
-  if (els.mapperCreateModalConfirm) {
-    els.mapperCreateModalConfirm.disabled = false;
-    els.mapperCreateModalConfirm.classList.remove('loading');
-    els.mapperCreateModalConfirm.textContent = tr('upload_create_folder');
-  }
-  if (els.mapperCreateModalInput) {
-    els.mapperCreateModalInput.placeholder = tr('upload_new_folder_placeholder');
-  }
+  state.mapperFolderModalMode = 'create';
+  state.mapperRenameTargetPath = '';
+  if (els.mapperCreateModalInput) els.mapperCreateModalInput.value = '';
+  applyMapperFolderModalTexts();
   els.mapperCreateModal.classList.remove('hidden');
   if (els.mapperCreateModalInput) {
     requestAnimationFrame(() => {
@@ -6052,12 +6165,65 @@ function openMapperCreateModal() {
   }
 }
 
+function openMapperRenameModal(folderPath) {
+  const target = _normalizeMapperPath(folderPath || '');
+  if (!target) {
+    showStatus(tr('mapper_rename_root_block'), 'err');
+    return;
+  }
+  state.mapperFolderModalMode = 'rename';
+  state.mapperRenameTargetPath = target;
+  const currentName = target.includes('/') ? target.split('/').pop() : target;
+  if (els.mapperCreateModalInput) {
+    els.mapperCreateModalInput.value = String(currentName || '');
+  }
+  applyMapperFolderModalTexts();
+  if (!els.mapperCreateModal) return;
+  els.mapperCreateModal.classList.remove('hidden');
+  if (els.mapperCreateModalInput) {
+    requestAnimationFrame(() => {
+      try {
+        els.mapperCreateModalInput.focus();
+        const len = String(els.mapperCreateModalInput.value || '').length;
+        els.mapperCreateModalInput.setSelectionRange(0, len);
+      } catch {}
+    });
+  }
+}
+
+function applyMapperFolderModalTexts() {
+  const isRename = String(state.mapperFolderModalMode || 'create') === 'rename';
+  if (els.mapperCreateModalTitle) {
+    els.mapperCreateModalTitle.textContent = isRename ? tr('mapper_rename_modal_title') : tr('mapper_create_modal_title');
+  }
+  if (els.mapperCreateModalClose) els.mapperCreateModalClose.textContent = tr('scan_modal_close');
+  if (els.mapperCreateModalCancel) els.mapperCreateModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.mapperCreateModalConfirm) {
+    els.mapperCreateModalConfirm.disabled = false;
+    els.mapperCreateModalConfirm.classList.remove('loading');
+    els.mapperCreateModalConfirm.textContent = isRename ? tr('mapper_rename_action') : tr('upload_create_folder');
+  }
+  if (els.mapperCreateModalInput) {
+    els.mapperCreateModalInput.placeholder = isRename ? tr('mapper_rename_placeholder') : tr('upload_new_folder_placeholder');
+  }
+}
+
 function closeMapperCreateModal(clearInput = true) {
   if (!els.mapperCreateModal) return;
   els.mapperCreateModal.classList.add('hidden');
   if (clearInput && els.mapperCreateModalInput) {
     els.mapperCreateModalInput.value = '';
   }
+  state.mapperFolderModalMode = 'create';
+  state.mapperRenameTargetPath = '';
+}
+
+async function submitMapperFolderModal() {
+  if (String(state.mapperFolderModalMode || 'create') === 'rename') {
+    await renameMapperFolder();
+    return;
+  }
+  await createMapperFolder();
 }
 
 function _getSelectedMapperFolders() {
@@ -6531,6 +6697,30 @@ if (els.mapperHeaderUploadAction) {
 if (els.mapperHeaderShareAction) {
   els.mapperHeaderShareAction.addEventListener('click', async () => {
     await openMapperShareModal();
+    closeMapperHeaderMenu();
+  });
+}
+if (els.mapperHeaderRenameAction) {
+  els.mapperHeaderRenameAction.addEventListener('click', () => {
+    const selFolders = Array.from(state.mapperSelectedFolders || []);
+    const selPhotos = state.mapperSelectedPhotoIds ? state.mapperSelectedPhotoIds.size : 0;
+    if (state.mapperEditMode) {
+      if (selFolders.length !== 1 || selPhotos > 0) {
+        showStatus(tr('mapper_rename_select_one'), 'err');
+        closeMapperHeaderMenu();
+        return;
+      }
+      openMapperRenameModal(selFolders[0]);
+      closeMapperHeaderMenu();
+      return;
+    }
+    const current = _normalizeMapperPath(String(state.mapperPath || ''));
+    if (!current) {
+      showStatus(tr('mapper_rename_root_block'), 'err');
+      closeMapperHeaderMenu();
+      return;
+    }
+    openMapperRenameModal(current);
     closeMapperHeaderMenu();
   });
 }
@@ -7198,14 +7388,14 @@ if (els.mapperCreateModalCancel) {
 }
 if (els.mapperCreateModalConfirm) {
   els.mapperCreateModalConfirm.addEventListener('click', async () => {
-    await createMapperFolder();
+    await submitMapperFolderModal();
   });
 }
 if (els.mapperCreateModalInput) {
   els.mapperCreateModalInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      await createMapperFolder();
+      await submitMapperFolderModal();
       return;
     }
     if (e.key === 'Escape') {
