@@ -9144,10 +9144,9 @@ function renderSimilarModalGrid(items, opts = {}) {
 async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
-  // Slightly higher default sensitivity for "Lignende" than duplicate scanning.
-  const distance = 20;
-  // Embedding fallback threshold: lower means more sensitive.
-  const embMin = 0.84;
+  // Recommended balanced profile for "Lignende".
+  const distance = 12;
+  const embMin = 0.90;
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
