@@ -94,6 +94,8 @@ const els = {
   detailDate: document.getElementById("detailDate"),
   detailSize: document.getElementById("detailSize"),
   detailDims: document.getElementById("detailDims"),
+  detailConvertedRow: document.getElementById("detailConvertedRow"),
+  detailConverted: document.getElementById("detailConverted"),
   detailDevice: document.getElementById("detailDevice"),
   detailLens: document.getElementById("detailLens"),
   detailGps: document.getElementById("detailGps"),
@@ -1731,6 +1733,65 @@ function fmtDate(s) {
   }
 }
 
+function _normalizeTagList(raw) {
+  if (Array.isArray(raw)) return raw.map((v) => String(v || '').trim()).filter(Boolean);
+  if (raw == null) return [];
+  if (typeof raw === 'string') {
+    const txt = raw.trim();
+    if (!txt) return [];
+    try {
+      const parsed = JSON.parse(txt);
+      if (Array.isArray(parsed)) return parsed.map((v) => String(v || '').trim()).filter(Boolean);
+    } catch {}
+    return txt.split(',').map((v) => String(v || '').trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function _collectItemTags(item) {
+  const primary = _normalizeTagList(item && item.ai_tags);
+  const secondary = _normalizeTagList(item && item.ai_desc_tags);
+  return Array.from(new Set(primary.concat(secondary)));
+}
+
+function _extractFileExt(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const clean = raw.split('#')[0].split('?')[0];
+  const leaf = clean.split('/').pop() || clean;
+  const dot = leaf.lastIndexOf('.');
+  if (dot < 0 || dot >= (leaf.length - 1)) return '';
+  return leaf.slice(dot + 1).trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+function _getItemConversionInfo(item) {
+  const rel = String(item && item.rel_path ? item.rel_path : '').replace(/\\/g, '/').trim();
+  const metadata = (item && item.metadata_json && typeof item.metadata_json === 'object') ? item.metadata_json : {};
+  const conversion = (metadata && metadata.conversion && typeof metadata.conversion === 'object') ? metadata.conversion : {};
+
+  let toExt = _extractFileExt(item && (item.ext || item.filename || rel));
+  const toExtMeta = _extractFileExt(conversion.to_ext || metadata.converted_to_ext || item && item.converted_to_ext);
+  if (!toExt && toExtMeta) toExt = toExtMeta;
+
+  let fromExt = _extractFileExt(conversion.from_ext || metadata.converted_from_ext || item && item.converted_from_ext);
+  if (!fromExt) {
+    const fromRel = conversion.from_rel_path || metadata.converted_from_rel || item && item.converted_from_rel;
+    fromExt = _extractFileExt(fromRel);
+  }
+
+  let converted = !!(item && (item.converted === true || item.is_converted === true));
+  if (!converted && rel) {
+    const rl = rel.toLowerCase();
+    converted = rl.startsWith('uploads/converted/') || rl.startsWith('converted/') || rl.includes('/converted/');
+  }
+  if (!converted && fromExt && toExt && fromExt !== toExt) converted = true;
+
+  if (!converted) return { converted: false, label: '' };
+  const fromLabel = fromExt || 'Ukendt';
+  const toLabel = toExt || 'Ukendt';
+  return { converted: true, label: `${fromLabel} -> ${toLabel}` };
+}
+
 function renderStats() {
   const inPeople = (state.view === 'personer');
   if (els.photoCountLabel) els.photoCountLabel.textContent = inPeople ? tr('stat_people') : tr('stat_photos');
@@ -1806,12 +1867,11 @@ function setDetail(item) {
   } else {
     els.detailGps.textContent = item.gps_name || "-";
   }
-  const allAiTags = [
-    ...((item.ai_tags && item.ai_tags.length) ? item.ai_tags : []),
-    ...((item.ai_desc_tags && item.ai_desc_tags.length) ? item.ai_desc_tags : []),
-  ];
-  const dedupAiTags = Array.from(new Set(allAiTags.map((t) => String(t || '').trim()).filter(Boolean)));
+  const dedupAiTags = _collectItemTags(item);
   els.detailAiTags.textContent = dedupAiTags.length ? dedupAiTags.join(", ") : "-";
+  const conversion = _getItemConversionInfo(item);
+  if (els.detailConvertedRow) els.detailConvertedRow.classList.toggle('hidden', !conversion.converted);
+  if (els.detailConverted) els.detailConverted.textContent = conversion.converted ? conversion.label : '-';
   const geo = (item.metadata_json && item.metadata_json.geo) ? item.metadata_json.geo : {};
   els.detailCountry.textContent = geo.country || "-";
   els.detailCity.textContent = geo.city || "-";
@@ -2299,6 +2359,10 @@ function renderGrid() {
 function appendCardTo(item, container) {
   const card = document.createElement("article");
   card.className = "photo-card" + (state.selectedId === item.id ? " active" : "");
+  try {
+    const photoId = Number(item && item.id);
+    if (Number.isFinite(photoId) && photoId > 0) card.setAttribute('data-photo-id', String(photoId));
+  } catch {}
   card.innerHTML = cardHTML(item);
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
@@ -2373,10 +2437,18 @@ function appendCardTo(item, container) {
       }
     }
   } catch {}
+  card.addEventListener('pointerdown', (ev) => {
+    _startMapperDragSelect(ev, card);
+  });
   // Single-click opens viewer directly (unless clicking info icon or in select/edit mode)
   card.addEventListener("click", (ev) => {
     // If click was on info icon, ignore (handled above)
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
+    if (_consumeMapperDragSelectClickSuppression()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
     // When in selection mode (mapper edit), clicking should toggle selection instead of opening
     try {
       if (state && state.view === 'mapper' && state.mapperEditMode) {
@@ -2556,8 +2628,12 @@ function appendFolderCard(folder, arr, opts = {}) {
   card.addEventListener('mousedown', _lpStart);
   card.addEventListener('touchstart', _lpStart, { passive: true });
   ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev => card.addEventListener(ev, _lpCancel));
-  card.addEventListener("click", () => {
+  card.addEventListener("click", (ev) => {
     if (_lpActivated) { _lpActivated = false; return; }
+    if (_consumeMapperDragSelectClickSuppression()) {
+      try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+      return;
+    }
     if (state.mapperEditMode) {
       toggleMapperFolderSelection(folder);
       return;
@@ -2944,6 +3020,10 @@ function openViewer(index) {
   state.selectedIndex = index;
   const it = state.items[index];
   if (!it || !it.original_url) return;
+  try {
+    const pid = Number(it.id || 0);
+    if (Number.isFinite(pid) && pid > 0) state.selectedId = pid;
+  } catch {}
   if (!els.viewer) return;
   // Toggle media elements
   if (els.viewerImg) {
@@ -2998,26 +3078,35 @@ function openViewer(index) {
     const title = (it.filename || it.rel_path || "-");
     const date = fmtDate(it.captured_at || it.modified_fs || it.created_fs);
     const dims = it.width && it.height ? `${it.width} × ${it.height}` : "-";
-    const dev = it.device_label || (it.camera_make || "");
+    const dev = it.device_label || [it.camera_make, it.camera_model].filter(Boolean).join(" ");
     const lens = it.lens_label || it.lens_model || "-";
     const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
     const uploader = String(it && it.uploaded_by ? it.uploaded_by : '').trim();
-    const tags = (it.ai_tags && it.ai_tags.length) ? it.ai_tags.join(", ") : "-";
+    const tagsList = _collectItemTags(it);
+    const tags = tagsList.length ? tagsList.join(", ") : "-";
+    const conversion = _getItemConversionInfo(it);
     const dl = (it.download_url || it.original_url || '#');
-    const q = (id)=>document.getElementById(id);
-    q('viTitle').textContent = title;
-    q('viDate').textContent = date;
-    q('viSize').textContent = fmtBytes(it.file_size);
-    q('viDims').textContent = dims;
-    q('viDevice').textContent = dev || '-';
-    q('viLens').textContent = lens;
-    q('viGps').textContent = gps;
-    try { const el = q('viUploader'); if (el) el.textContent = uploader || '—'; } catch {}
-    q('viTags').textContent = tags;
+    const q = (id) => document.getElementById(id);
+    const setText = (id, value) => {
+      const el = q(id);
+      if (el) el.textContent = String(value == null ? '-' : value);
+    };
+    setText('viTitle', title);
+    setText('viDate', date);
+    setText('viSize', fmtBytes(it.file_size));
+    setText('viDims', dims);
+    setText('viDevice', dev || '-');
+    setText('viLens', lens);
+    setText('viGps', gps);
+    setText('viUploader', uploader || '—');
+    setText('viTags', tags);
+    const convRow = q('viConvertedRow');
+    if (convRow) convRow.classList.toggle('hidden', !conversion.converted);
+    setText('viConverted', conversion.converted ? conversion.label : '—');
     try {
       const geo = (it.metadata_json && it.metadata_json.geo) ? it.metadata_json.geo : {};
-      q('viCountry').textContent = geo.country || '-';
-      q('viCity').textContent = geo.city || '-';
+      setText('viCountry', geo.country || '-');
+      setText('viCity', geo.city || '-');
     } catch {}
     const viDL = q('viDownload'); if (viDL) viDL.href = dl;
     try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
@@ -5283,6 +5372,7 @@ async function renameMapperFolder() {
 function setMapperEditMode(enabled) {
   state.mapperEditMode = !!enabled;
   if (!state.mapperEditMode) {
+    _stopMapperDragSelectSession();
     state.mapperSelectedFolders = new Set();
     state.mapperSelectedPhotoIds = new Set();
   }
@@ -5294,6 +5384,136 @@ function setMapperEditMode(enabled) {
       el.style.display = state.mapperEditMode ? 'none' : '';
     });
   } catch {}
+}
+
+const MAPPER_DRAG_SELECT_MIN_DISTANCE_PX = 8;
+const MAPPER_DRAG_SELECT_SAMPLE_STEP_PX = 18;
+let mapperDragSelectSession = null;
+let mapperDragSelectRefreshRaf = 0;
+let mapperDragSelectSuppressClickUntil = 0;
+
+function _queueMapperDragSelectContextRefresh() {
+  if (mapperDragSelectRefreshRaf) return;
+  mapperDragSelectRefreshRaf = window.requestAnimationFrame(() => {
+    mapperDragSelectRefreshRaf = 0;
+    try { renderMapperContext(state.mapperPath || ''); } catch {}
+  });
+}
+
+function _isMapperSelectablePhotoCard(card) {
+  if (!card || !card.classList) return false;
+  if (!state || state.view !== 'mapper' || !state.mapperEditMode) return false;
+  if (!card.classList.contains('photo-card')) return false;
+  if (card.classList.contains('folder-card')) return false;
+  if (card.classList.contains('upload-card')) return false;
+  return true;
+}
+
+function _applyMapperPhotoSelection(card) {
+  if (!_isMapperSelectablePhotoCard(card)) return false;
+  const photoId = Number(card.getAttribute('data-photo-id') || 0);
+  if (!Number.isFinite(photoId) || photoId <= 0) return false;
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  if (state.mapperSelectedPhotoIds.has(photoId)) return false;
+  state.mapperSelectedPhotoIds.add(photoId);
+  card.classList.add('selected');
+  return true;
+}
+
+function _selectMapperPhotoAtPoint(x, y, seen = null) {
+  const node = document.elementFromPoint(Number(x), Number(y));
+  if (!(node instanceof Element)) return false;
+  const card = node.closest('.gallery-grid .photo-card');
+  if (!_isMapperSelectablePhotoCard(card)) return false;
+  const key = card.getAttribute('data-photo-id') || '';
+  if (!key) return false;
+  if (seen && seen.has(key)) return false;
+  if (seen) seen.add(key);
+  const changed = _applyMapperPhotoSelection(card);
+  if (changed) _queueMapperDragSelectContextRefresh();
+  return changed;
+}
+
+function _selectMapperPhotosAlongSegment(fromX, fromY, toX, toY, seen = null) {
+  const dx = Number(toX) - Number(fromX);
+  const dy = Number(toY) - Number(fromY);
+  const distance = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.ceil(distance / MAPPER_DRAG_SELECT_SAMPLE_STEP_PX));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = Number(fromX) + dx * t;
+    const y = Number(fromY) + dy * t;
+    _selectMapperPhotoAtPoint(x, y, seen);
+  }
+}
+
+function _finishMapperDragSelectSession(pointerId = null) {
+  const session = mapperDragSelectSession;
+  if (!session) return;
+  if (pointerId !== null && Number(pointerId) !== Number(session.pointerId)) return;
+  if (session.dragging) mapperDragSelectSuppressClickUntil = Date.now() + 280;
+  _stopMapperDragSelectSession();
+}
+
+function _onMapperDragSelectPointerMove(ev) {
+  const session = mapperDragSelectSession;
+  if (!session) return;
+  if (Number(ev.pointerId) !== Number(session.pointerId)) return;
+  const x = Number(ev.clientX || 0);
+  const y = Number(ev.clientY || 0);
+  if (!session.dragging) {
+    const distance = Math.hypot(x - session.startX, y - session.startY);
+    if (distance < MAPPER_DRAG_SELECT_MIN_DISTANCE_PX) return;
+    session.dragging = true;
+  }
+  _selectMapperPhotosAlongSegment(session.lastX, session.lastY, x, y, session.seen);
+  session.lastX = x;
+  session.lastY = y;
+  try { ev.preventDefault(); } catch {}
+}
+
+function _onMapperDragSelectPointerUp(ev) {
+  _finishMapperDragSelectSession(ev && ev.pointerId != null ? ev.pointerId : null);
+}
+
+function _onMapperDragSelectPointerCancel(ev) {
+  _finishMapperDragSelectSession(ev && ev.pointerId != null ? ev.pointerId : null);
+}
+
+function _stopMapperDragSelectSession() {
+  document.removeEventListener('pointermove', _onMapperDragSelectPointerMove);
+  document.removeEventListener('pointerup', _onMapperDragSelectPointerUp);
+  document.removeEventListener('pointercancel', _onMapperDragSelectPointerCancel);
+  mapperDragSelectSession = null;
+}
+
+function _startMapperDragSelect(ev, card) {
+  if (!_isMapperSelectablePhotoCard(card)) return;
+  if (!ev) return;
+  if (ev.button != null && Number(ev.button) !== 0) return;
+  if (ev.pointerType === 'mouse' && ev.buttons != null && (Number(ev.buttons) & 1) !== 1) return;
+
+  _stopMapperDragSelectSession();
+  mapperDragSelectSession = {
+    pointerId: Number(ev.pointerId),
+    startX: Number(ev.clientX || 0),
+    startY: Number(ev.clientY || 0),
+    lastX: Number(ev.clientX || 0),
+    lastY: Number(ev.clientY || 0),
+    dragging: false,
+    seen: new Set(),
+  };
+  document.addEventListener('pointermove', _onMapperDragSelectPointerMove, { passive: false });
+  document.addEventListener('pointerup', _onMapperDragSelectPointerUp, { passive: true });
+  document.addEventListener('pointercancel', _onMapperDragSelectPointerCancel, { passive: true });
+}
+
+function _consumeMapperDragSelectClickSuppression() {
+  if (Date.now() < mapperDragSelectSuppressClickUntil) {
+    mapperDragSelectSuppressClickUntil = 0;
+    return true;
+  }
+  return false;
 }
 
 function toggleMapperFolderSelection(folderPath) {
@@ -5446,6 +5666,7 @@ function mapperSelectAll() {
 }
 
 function mapperClearSelection() {
+  _stopMapperDragSelectSession();
   state.mapperSelectedPhotoIds = new Set();
   state.mapperSelectedFolders = new Set();
   try { document.querySelectorAll('.gallery-grid .photo-card.selected, .gallery-grid .folder-card.selected').forEach(el=> el.classList.remove('selected')); } catch {}
@@ -6264,6 +6485,7 @@ async function setView(view, opts = {}) {
     if (nextView === 'settings' && role === 'user') nextView = 'timeline';
   } catch {}
   state.view = nextView;
+  if (nextView !== 'mapper') _stopMapperDragSelectSession();
   if (nextView !== 'mapper') state.mapperPath = _normalizeMapperPath(state.mapperPath);
   state.folder = (nextView === 'mapper' ? (_normalizeMapperPath(state.mapperPath) || null) : null);
   state.selectedId = null;
