@@ -9145,7 +9145,9 @@ async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
   // Slightly higher default sensitivity for "Lignende" than duplicate scanning.
-  const distance = 10;
+  const distance = 20;
+  // Embedding fallback threshold: lower means more sensitive.
+  const embMin = 0.84;
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
@@ -9156,7 +9158,7 @@ async function openSimilarForSelected(){
   renderSimilarModalGrid([], { showEmpty: false });
   openSimilarModal();
   try {
-    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}`);
+    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}&emb_min=${encodeURIComponent(embMin)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) {
       _setSimilarModalStatus((data && data.error) ? String(data.error) : tr('similar_fetch_failed'), 'err');

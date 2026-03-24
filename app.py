@@ -7380,71 +7380,130 @@ def api_similar(photo_id: int):
 def api_similar_phash(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "120"))))
     try:
-        dist_thr = int(request.args.get("distance", "10"))
+        dist_thr = int(request.args.get("distance", "20"))
     except Exception:
-        dist_thr = 10
+        dist_thr = 20
     dist_thr = max(0, min(20, dist_thr))
+    try:
+        emb_min = float(request.args.get("emb_min", "0.84"))
+    except Exception:
+        emb_min = 0.84
+    emb_min = max(0.0, min(0.999, emb_min))
 
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id, rel_path, phash FROM photos WHERE id=?", (photo_id,)).fetchone()
+        row = conn.execute("SELECT id, rel_path, phash, embedding_json FROM photos WHERE id=?", (photo_id,)).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
         seed_phash = str(row["phash"] or "").strip().lower()
-        if not seed_phash:
+        seed_emb = None
+        try:
+            seed_emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+        except Exception:
+            seed_emb = None
+
+        # Best effort: compute and persist missing source embedding so fallback can work.
+        if not seed_emb:
+            try:
+                src_path = _disk_path_from_rel_path(str(row["rel_path"] or ""))
+                if src_path.exists():
+                    emb_now = _ai_embed_image_path(src_path)
+                    if emb_now:
+                        seed_emb = emb_now
+                        conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb_now), photo_id))
+                        conn.commit()
+            except Exception:
+                seed_emb = None
+
+        if (not seed_phash) and (not seed_emb):
             return jsonify({
                 "ok": True,
                 "items": [],
                 "count": 0,
                 "distance": dist_thr,
-                "source": "phash_near",
+                "source": "phash_near+embedding",
             })
 
         # More sensitive than strict prefix buckets:
-        # evaluate all pHash candidates, then keep by Hamming distance threshold.
+        # evaluate all pHash/embedding candidates, then keep by thresholds.
         candidates = conn.execute(
-            "SELECT id, rel_path, phash FROM photos WHERE phash IS NOT NULL AND id<>?",
+            "SELECT id, rel_path, phash, embedding_json FROM photos WHERE id<>?",
             (photo_id,),
         ).fetchall()
 
-        scored: list[tuple[int, int]] = []
+        phash_scored: list[tuple[int, int]] = []
+        emb_scored: list[tuple[float, int]] = []
         for r in candidates:
             rel = str(r["rel_path"] or "")
             if not _is_rel_path_allowed_for_current_user(rel, conn):
                 continue
-            p = str(r["phash"] or "").strip().lower()
-            if not p:
-                continue
-            d = _hamdist_hex(seed_phash, p)
-            if d <= dist_thr:
-                scored.append((d, int(r["id"])))
+            pid = int(r["id"])
+            if seed_phash:
+                p = str(r["phash"] or "").strip().lower()
+                if p:
+                    d = _hamdist_hex(seed_phash, p)
+                    if d <= dist_thr:
+                        phash_scored.append((d, pid))
+            if seed_emb:
+                try:
+                    e2 = json.loads(r["embedding_json"]) if r["embedding_json"] else None
+                except Exception:
+                    e2 = None
+                if e2:
+                    s = _cosine(seed_emb, e2)
+                    if s >= emb_min:
+                        emb_scored.append((float(s), pid))
 
-        # Same spirit as pHash-near: prioritize nearest hash distance first.
-        scored.sort(key=lambda x: (x[0], -x[1]))
-        top = scored[:limit]
-        if not top:
+        # Order: strict pHash-near first, then embedding-only matches by cosine score.
+        phash_scored.sort(key=lambda x: (x[0], -x[1]))
+        emb_scored.sort(key=lambda x: (-x[0], -x[1]))
+
+        phash_by_id: dict[int, int] = {}
+        ordered_ids: list[int] = []
+        for d, pid in phash_scored:
+            if pid in phash_by_id:
+                continue
+            phash_by_id[pid] = int(d)
+            ordered_ids.append(pid)
+            if len(ordered_ids) >= limit:
+                break
+
+        emb_by_id: dict[int, float] = {}
+        if len(ordered_ids) < limit:
+            for s, pid in emb_scored:
+                emb_by_id[pid] = float(s)
+                if pid in phash_by_id:
+                    continue
+                ordered_ids.append(pid)
+                if len(ordered_ids) >= limit:
+                    break
+
+        if not ordered_ids:
             return jsonify({
                 "ok": True,
                 "items": [],
                 "count": 0,
                 "distance": dist_thr,
-                "source": "phash_near",
+                "source": "phash_near+embedding",
             })
 
-        top_ids = [pid for _, pid in top]
+        top_ids = ordered_ids
         ph = ",".join(["?"] * len(top_ids))
         rows = conn.execute(f"SELECT * FROM photos WHERE id IN ({ph})", top_ids).fetchall()
         by_id = {int(r["id"]): r for r in rows}
 
         items = []
-        for d, pid in top:
+        for pid in top_ids:
             r = by_id.get(pid)
             if not r:
                 continue
             pub = row_to_public(r)
-            pub["distance"] = int(d)
+            if pid in phash_by_id:
+                pub["distance"] = int(phash_by_id[pid])
+            if pid in emb_by_id:
+                pub["similarity"] = round(float(emb_by_id[pid]), 4)
             items.append(pub)
 
     return jsonify({
@@ -7452,7 +7511,8 @@ def api_similar_phash(photo_id: int):
         "items": items,
         "count": len(items),
         "distance": dist_thr,
-        "source": "phash_near",
+        "embedding_min": emb_min,
+        "source": "phash_near+embedding",
     })
 
 
