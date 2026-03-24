@@ -1677,18 +1677,31 @@ body.view-mapper .mapper-header-actions {
 .viewer-info .detail-panel {
   display: block;
   position: static;
+  right: auto;
+  bottom: auto;
+  width: auto;
+  max-width: none;
+  border-left: none;
+  padding: 14px;
   top: auto;
   height: 100%;
   overflow: auto;
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: none;
 }
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
 #viewerPrev, #viewerNext, #viewerClose, #viewerOpenOrig, #viewerMenu { position: absolute; z-index: 5; }
-#viewerInfoMediaBtn { position: absolute; z-index: 5; }
-#viewerOpenOrig { display: none !important; }
-#viewerClose,
 #viewerInfoMediaBtn {
+  position: absolute;
+  z-index: 5;
+}
+#viewerOpenOrig { display: none !important; }
+#viewerClose {
   width: 42px;
   height: 42px;
   min-width: 42px;
@@ -1709,12 +1722,30 @@ body.view-mapper .mapper-header-actions {
   top: 12px;
 }
 #viewerInfoMediaBtn {
-  right: 12px;
+  left: 12px;
   top: 12px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
+  border: none;
   border-radius: 999px;
+  background: rgba(255,255,255,0.92);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: box-shadow 0.15s ease;
+}
+#viewerInfoMediaBtn:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
 #viewerInfoMediaBtn svg {
+  width: 20px;
+  height: 20px;
   display: block;
 }
 #viewerMenu {
@@ -2016,8 +2047,7 @@ body.detail-open .detail-panel {
   #viewerPrev, #viewerNext {
     display: none !important;
   }
-  #viewerClose,
-  #viewerInfoMediaBtn {
+  #viewerClose {
     top: calc(env(safe-area-inset-top) + 10px);
     width: 36px;
     height: 36px;
@@ -2029,11 +2059,21 @@ body.detail-open .detail-panel {
     box-shadow: none;
     backdrop-filter: blur(1px);
   }
-  #viewerClose {
-    left: 10px;
-  }
   #viewerInfoMediaBtn {
-    right: 10px;
+    top: calc(env(safe-area-inset-top) + 10px);
+    left: 10px;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.92);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    color: #333;
+    backdrop-filter: none;
+  }
+  #viewerClose {
+    left: 44px;
   }
   #viewerMenu {
     top: calc(env(safe-area-inset-top) + 52px);

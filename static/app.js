@@ -2868,13 +2868,30 @@ function openPersonRenameMenu(anchorBtn, person) {
 
   const input = menu.querySelector('.person-rename-input');
   const createBtn = menu.querySelector('[data-act="create"]');
+  let createBusy = false;
   const createNow = async () => {
+    if (createBusy) return;
     const val = String(input && input.value ? input.value : '').trim();
     if (!val) {
       input && input.focus();
       return;
     }
-    await renameOrMergePerson(person.id, val);
+    createBusy = true;
+    const originalLabel = createBtn ? String(createBtn.textContent || '') : '';
+    try {
+      if (createBtn) {
+        createBtn.disabled = true;
+        createBtn.classList.add('loading');
+      }
+      await renameOrMergePerson(person.id, val);
+    } finally {
+      createBusy = false;
+      if (createBtn && createBtn.isConnected) {
+        createBtn.disabled = false;
+        createBtn.classList.remove('loading');
+        if (originalLabel) createBtn.textContent = originalLabel;
+      }
+    }
   };
   createBtn && createBtn.addEventListener('click', createNow);
   input && input.addEventListener('keydown', async (e) => {
@@ -5437,6 +5454,7 @@ function setMapperEditMode(enabled) {
 
 const MAPPER_DRAG_SELECT_MIN_DISTANCE_PX = 8;
 const MAPPER_DRAG_SELECT_SAMPLE_STEP_PX = 18;
+const MAPPER_DRAG_SELECT_ROW_TOP_EPS_PX = 10;
 let mapperDragSelectSession = null;
 let mapperDragSelectRefreshRaf = 0;
 let mapperDragSelectSuppressClickUntil = 0;
@@ -5470,31 +5488,201 @@ function _applyMapperPhotoSelection(card) {
   return true;
 }
 
-function _selectMapperPhotoAtPoint(x, y, seen = null) {
+function _getMapperSelectablePhotoCardsInOrder() {
+  if (!els.grid) return [];
+  return Array.from(els.grid.querySelectorAll('.photo-card[data-photo-id]')).filter((card) => _isMapperSelectablePhotoCard(card));
+}
+
+function _buildMapperDragRowMeta(cards) {
+  const rowByIndex = new Array(cards.length).fill(0);
+  const rowStartByRow = [];
+  const rowEndByRow = [];
+  let row = -1;
+  let currentTop = null;
+
+  for (let i = 0; i < cards.length; i++) {
+    const rect = cards[i].getBoundingClientRect();
+    const top = Number(rect && rect.top);
+    if (currentTop === null || !Number.isFinite(top) || Math.abs(top - currentTop) > MAPPER_DRAG_SELECT_ROW_TOP_EPS_PX) {
+      row += 1;
+      currentTop = Number.isFinite(top) ? top : currentTop;
+      rowStartByRow[row] = i;
+      if (row > 0) rowEndByRow[row - 1] = i - 1;
+    }
+    rowByIndex[i] = row;
+  }
+  if (row >= 0) rowEndByRow[row] = cards.length - 1;
+
+  return { rowByIndex, rowStartByRow, rowEndByRow };
+}
+
+function _mapperSelectableCardIndexAtPoint(session, x, y) {
   const node = document.elementFromPoint(Number(x), Number(y));
-  if (!(node instanceof Element)) return false;
-  const card = node.closest('.gallery-grid .photo-card');
-  if (!_isMapperSelectablePhotoCard(card)) return false;
+  if (!(node instanceof Element)) return -1;
+  const card = node.closest('.photo-card[data-photo-id]');
+  if (!_isMapperSelectablePhotoCard(card)) return -1;
   const key = card.getAttribute('data-photo-id') || '';
-  if (!key) return false;
-  if (seen && seen.has(key)) return false;
-  if (seen) seen.add(key);
-  const changed = _applyMapperPhotoSelection(card);
+  if (!key) return -1;
+  const idx = session && session.indexByPhotoId ? session.indexByPhotoId.get(key) : null;
+  return Number.isFinite(idx) ? Number(idx) : -1;
+}
+
+function _normalizeMapperDragReadingTargetIndex(session, rawIndex) {
+  const idx = Number(rawIndex);
+  if (!Number.isFinite(idx) || idx < 0) return -1;
+  if (!session) return idx;
+  const anchorIdx = Number(session.anchorIndex);
+  if (!Number.isFinite(anchorIdx) || anchorIdx < 0) return idx;
+
+  const rowByIndex = Array.isArray(session.rowByIndex) ? session.rowByIndex : [];
+  const rowStartByRow = Array.isArray(session.rowStartByRow) ? session.rowStartByRow : [];
+  const rowEndByRow = Array.isArray(session.rowEndByRow) ? session.rowEndByRow : [];
+  const anchorRow = Number(rowByIndex[anchorIdx]);
+  const row = Number(rowByIndex[idx]);
+  if (!Number.isFinite(anchorRow) || !Number.isFinite(row) || row === anchorRow) return idx;
+
+  if (idx > anchorIdx) {
+    const endIdx = Number(rowEndByRow[row]);
+    return Number.isFinite(endIdx) ? endIdx : idx;
+  }
+  const startIdx = Number(rowStartByRow[row]);
+  return Number.isFinite(startIdx) ? startIdx : idx;
+}
+
+function _selectMapperPhotoRangeByIndex(session, fromIndex, toIndex) {
+  if (!session || !Array.isArray(session.cards) || !session.cards.length) return false;
+  const cards = session.cards;
+  const max = cards.length - 1;
+  const aRaw = Number(fromIndex);
+  const bRaw = Number(toIndex);
+  if (!Number.isFinite(aRaw) || !Number.isFinite(bRaw)) return false;
+  const a = Math.max(0, Math.min(max, Math.round(aRaw)));
+  const b = Math.max(0, Math.min(max, Math.round(bRaw)));
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  let changed = false;
+  for (let i = lo; i <= hi; i++) {
+    const card = cards[i];
+    if (!card) continue;
+    if (_applyMapperPhotoSelection(card)) changed = true;
+  }
   if (changed) _queueMapperDragSelectContextRefresh();
   return changed;
 }
 
-function _selectMapperPhotosAlongSegment(fromX, fromY, toX, toY, seen = null) {
+function _selectMapperPhotosAlongSegment(session, fromX, fromY, toX, toY) {
+  if (!session) return;
   const dx = Number(toX) - Number(fromX);
   const dy = Number(toY) - Number(fromY);
   const distance = Math.hypot(dx, dy);
   const steps = Math.max(1, Math.ceil(distance / MAPPER_DRAG_SELECT_SAMPLE_STEP_PX));
+  const touched = new Set();
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const x = Number(fromX) + dx * t;
     const y = Number(fromY) + dy * t;
-    _selectMapperPhotoAtPoint(x, y, seen);
+    const idx = _mapperSelectableCardIndexAtPoint(session, x, y);
+    if (idx >= 0) touched.add(idx);
   }
+  if (!touched.size) return;
+  touched.forEach((idx) => {
+    const targetIdx = _normalizeMapperDragReadingTargetIndex(session, idx);
+    if (targetIdx < 0) return;
+    _selectMapperPhotoRangeByIndex(session, session.anchorIndex, targetIdx);
+    session.lastTargetIndex = targetIdx;
+  });
+}
+
+function _buildMapperDragIndexMap(cards) {
+  const map = new Map();
+  cards.forEach((card, idx) => {
+    const key = card.getAttribute('data-photo-id') || '';
+    if (key) map.set(key, idx);
+  });
+  return map;
+}
+
+function _resolveMapperDragAnchorIndex(card, indexByPhotoId, cards) {
+  const key = card && card.getAttribute ? (card.getAttribute('data-photo-id') || '') : '';
+  const mapIdx = key ? indexByPhotoId.get(key) : null;
+  if (Number.isFinite(mapIdx)) return Number(mapIdx);
+  const fallback = Array.isArray(cards) ? cards.indexOf(card) : -1;
+  return Number.isFinite(fallback) ? fallback : -1;
+}
+
+function _buildMapperDragSession(ev, card) {
+  const cards = _getMapperSelectablePhotoCardsInOrder();
+  if (!cards.length) return null;
+  const indexByPhotoId = _buildMapperDragIndexMap(cards);
+  const anchorIndex = _resolveMapperDragAnchorIndex(card, indexByPhotoId, cards);
+  if (!Number.isFinite(anchorIndex) || anchorIndex < 0) return null;
+  const rowMeta = _buildMapperDragRowMeta(cards);
+  return {
+    pointerId: Number(ev.pointerId),
+    startX: Number(ev.clientX || 0),
+    startY: Number(ev.clientY || 0),
+    lastX: Number(ev.clientX || 0),
+    lastY: Number(ev.clientY || 0),
+    dragging: false,
+    cards,
+    indexByPhotoId,
+    anchorIndex,
+    lastTargetIndex: anchorIndex,
+    rowByIndex: rowMeta.rowByIndex,
+    rowStartByRow: rowMeta.rowStartByRow,
+    rowEndByRow: rowMeta.rowEndByRow,
+  };
+}
+
+function _beginMapperDragSelectionIfNeeded(session, x, y) {
+  if (session.dragging) return true;
+  const distance = Math.hypot(Number(x) - session.startX, Number(y) - session.startY);
+  if (distance < MAPPER_DRAG_SELECT_MIN_DISTANCE_PX) return false;
+  session.dragging = true;
+  _selectMapperPhotoRangeByIndex(session, session.anchorIndex, session.anchorIndex);
+  return true;
+}
+
+function _updateMapperDragSelection(session, x, y) {
+  if (!_beginMapperDragSelectionIfNeeded(session, x, y)) return;
+  _selectMapperPhotosAlongSegment(session, session.lastX, session.lastY, x, y);
+  session.lastX = x;
+  session.lastY = y;
+}
+
+function _createMapperDragSession(ev, card) {
+  const session = _buildMapperDragSession(ev, card);
+  if (!session) return null;
+  return session;
+}
+
+function _startMapperDragSelection(ev, card) {
+  _stopMapperDragSelectSession();
+  const session = _createMapperDragSession(ev, card);
+  if (!session) return null;
+  mapperDragSelectSession = session;
+  document.addEventListener('pointermove', _onMapperDragSelectPointerMove, { passive: false });
+  document.addEventListener('pointerup', _onMapperDragSelectPointerUp, { passive: true });
+  document.addEventListener('pointercancel', _onMapperDragSelectPointerCancel, { passive: true });
+  return session;
+}
+
+function _handleMapperDragPointerMove(ev) {
+  const session = mapperDragSelectSession;
+  if (!session) return;
+  if (Number(ev.pointerId) !== Number(session.pointerId)) return;
+  const x = Number(ev.clientX || 0);
+  const y = Number(ev.clientY || 0);
+  _updateMapperDragSelection(session, x, y);
+  try { ev.preventDefault(); } catch {}
+}
+
+function _handleMapperDragPointerStart(ev, card) {
+  if (!_isMapperSelectablePhotoCard(card)) return;
+  if (!ev) return;
+  if (ev.button != null && Number(ev.button) !== 0) return;
+  if (ev.pointerType === 'mouse' && ev.buttons != null && (Number(ev.buttons) & 1) !== 1) return;
+  _startMapperDragSelection(ev, card);
 }
 
 function _finishMapperDragSelectSession(pointerId = null) {
@@ -5506,20 +5694,7 @@ function _finishMapperDragSelectSession(pointerId = null) {
 }
 
 function _onMapperDragSelectPointerMove(ev) {
-  const session = mapperDragSelectSession;
-  if (!session) return;
-  if (Number(ev.pointerId) !== Number(session.pointerId)) return;
-  const x = Number(ev.clientX || 0);
-  const y = Number(ev.clientY || 0);
-  if (!session.dragging) {
-    const distance = Math.hypot(x - session.startX, y - session.startY);
-    if (distance < MAPPER_DRAG_SELECT_MIN_DISTANCE_PX) return;
-    session.dragging = true;
-  }
-  _selectMapperPhotosAlongSegment(session.lastX, session.lastY, x, y, session.seen);
-  session.lastX = x;
-  session.lastY = y;
-  try { ev.preventDefault(); } catch {}
+  _handleMapperDragPointerMove(ev);
 }
 
 function _onMapperDragSelectPointerUp(ev) {
@@ -5538,24 +5713,7 @@ function _stopMapperDragSelectSession() {
 }
 
 function _startMapperDragSelect(ev, card) {
-  if (!_isMapperSelectablePhotoCard(card)) return;
-  if (!ev) return;
-  if (ev.button != null && Number(ev.button) !== 0) return;
-  if (ev.pointerType === 'mouse' && ev.buttons != null && (Number(ev.buttons) & 1) !== 1) return;
-
-  _stopMapperDragSelectSession();
-  mapperDragSelectSession = {
-    pointerId: Number(ev.pointerId),
-    startX: Number(ev.clientX || 0),
-    startY: Number(ev.clientY || 0),
-    lastX: Number(ev.clientX || 0),
-    lastY: Number(ev.clientY || 0),
-    dragging: false,
-    seen: new Set(),
-  };
-  document.addEventListener('pointermove', _onMapperDragSelectPointerMove, { passive: false });
-  document.addEventListener('pointerup', _onMapperDragSelectPointerUp, { passive: true });
-  document.addEventListener('pointercancel', _onMapperDragSelectPointerCancel, { passive: true });
+  _handleMapperDragPointerStart(ev, card);
 }
 
 function _consumeMapperDragSelectClickSuppression() {
@@ -8725,9 +8883,8 @@ function positionViewerInfoTrigger() {
     const r = mediaEl.getBoundingClientRect();
     if (!Number.isFinite(r.left) || !Number.isFinite(r.right)) return;
 
-    const w = viMediaBtn.offsetWidth || 42;
     const pad = isMobileViewerLayout() ? 10 : 8;
-    viMediaBtn.style.left = `${Math.round(r.right - w - pad)}px`;
+    viMediaBtn.style.left = `${Math.round(r.left + pad)}px`;
     viMediaBtn.style.top = `${Math.round(r.top + pad)}px`;
     viMediaBtn.style.right = 'auto';
   } catch {}
