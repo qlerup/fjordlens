@@ -1407,7 +1407,9 @@ async function ensureMaplibre(){
 function tr(key) {
   const lang = resolveUiLanguage(state.uiLanguage || 'da');
   const dict = I18N[lang] || I18N.da;
-  return (dict[key] || I18N.da[key] || key);
+  if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
+  if (Object.prototype.hasOwnProperty.call(I18N.da, key)) return I18N.da[key];
+  return key;
 }
 
 function updateAiToggleButton() {
@@ -9158,8 +9160,8 @@ function renderSimilarModalGrid(items, opts = {}) {
 async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
-  const distRaw = parseInt(String((els.dupeDist && els.dupeDist.value) || '5'), 10);
-  const distance = Number.isFinite(distRaw) ? Math.max(0, Math.min(20, distRaw)) : 5;
+  // Slightly higher default sensitivity for "Lignende" than duplicate scanning.
+  const distance = 6;
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }

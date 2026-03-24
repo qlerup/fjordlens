@@ -7364,54 +7364,72 @@ def api_similar(photo_id: int):
 def api_similar_phash(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "120"))))
     try:
-        dist_thr = int(request.args.get("distance", "5"))
+        dist_thr = int(request.args.get("distance", "6"))
     except Exception:
-        dist_thr = 5
+        dist_thr = 6
     dist_thr = max(0, min(20, dist_thr))
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT id, rel_path, phash FROM photos WHERE id=?", (photo_id,)).fetchone()
-    if not row:
-        return jsonify({"ok": False, "error": "not_found"}), 404
-    if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
-        return jsonify({"ok": False, "error": "not_found"}), 404
+        if not row:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
+            return jsonify({"ok": False, "error": "not_found"}), 404
 
-    seed_phash = str(row["phash"] or "").strip().lower()
-    if not seed_phash:
-        return jsonify({
-            "ok": True,
-            "items": [],
-            "count": 0,
-            "distance": dist_thr,
-            "source": "phash_near",
-        })
+        seed_phash = str(row["phash"] or "").strip().lower()
+        if not seed_phash:
+            return jsonify({
+                "ok": True,
+                "items": [],
+                "count": 0,
+                "distance": dist_thr,
+                "source": "phash_near",
+            })
 
-    bucket = seed_phash[:4]
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT * FROM photos WHERE phash IS NOT NULL AND id<>? AND SUBSTR(phash,1,4)=?",
-            (photo_id, bucket),
+        # More sensitive than strict prefix buckets:
+        # evaluate all pHash candidates, then keep by Hamming distance threshold.
+        candidates = conn.execute(
+            "SELECT id, rel_path, phash FROM photos WHERE phash IS NOT NULL AND id<>?",
+            (photo_id,),
         ).fetchall()
 
-    scored: list[tuple[int, sqlite3.Row]] = []
-    for r in rows:
-        rel = str(r["rel_path"] or "")
-        if not _is_rel_path_allowed_for_current_user(rel):
-            continue
-        p = str(r["phash"] or "").strip().lower()
-        if not p:
-            continue
-        d = _hamdist_hex(seed_phash, p)
-        if d <= dist_thr:
-            scored.append((d, r))
+        scored: list[tuple[int, int]] = []
+        for r in candidates:
+            rel = str(r["rel_path"] or "")
+            if not _is_rel_path_allowed_for_current_user(rel, conn):
+                continue
+            p = str(r["phash"] or "").strip().lower()
+            if not p:
+                continue
+            d = _hamdist_hex(seed_phash, p)
+            if d <= dist_thr:
+                scored.append((d, int(r["id"])))
 
-    # Same spirit as pHash-near: prioritize nearest hash distance first.
-    scored.sort(key=lambda x: (x[0], -int(x[1]["id"] or 0)))
-    items = []
-    for d, r in scored[:limit]:
-        pub = row_to_public(r)
-        pub["distance"] = int(d)
-        items.append(pub)
+        # Same spirit as pHash-near: prioritize nearest hash distance first.
+        scored.sort(key=lambda x: (x[0], -x[1]))
+        top = scored[:limit]
+        if not top:
+            return jsonify({
+                "ok": True,
+                "items": [],
+                "count": 0,
+                "distance": dist_thr,
+                "source": "phash_near",
+            })
+
+        top_ids = [pid for _, pid in top]
+        ph = ",".join(["?"] * len(top_ids))
+        rows = conn.execute(f"SELECT * FROM photos WHERE id IN ({ph})", top_ids).fetchall()
+        by_id = {int(r["id"]): r for r in rows}
+
+        items = []
+        for d, pid in top:
+            r = by_id.get(pid)
+            if not r:
+                continue
+            pub = row_to_public(r)
+            pub["distance"] = int(d)
+            items.append(pub)
 
     return jsonify({
         "ok": True,
