@@ -7360,6 +7360,68 @@ def api_similar(photo_id: int):
     return jsonify({"items": items, "count": len(items)})
 
 
+@app.route("/api/photos/<int:photo_id>/similar-phash")
+def api_similar_phash(photo_id: int):
+    limit = max(1, min(200, int(request.args.get("limit", "120"))))
+    try:
+        dist_thr = int(request.args.get("distance", "5"))
+    except Exception:
+        dist_thr = 5
+    dist_thr = max(0, min(20, dist_thr))
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, rel_path, phash FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    seed_phash = str(row["phash"] or "").strip().lower()
+    if not seed_phash:
+        return jsonify({
+            "ok": True,
+            "items": [],
+            "count": 0,
+            "distance": dist_thr,
+            "source": "phash_near",
+        })
+
+    bucket = seed_phash[:4]
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM photos WHERE phash IS NOT NULL AND id<>? AND SUBSTR(phash,1,4)=?",
+            (photo_id, bucket),
+        ).fetchall()
+
+    scored: list[tuple[int, sqlite3.Row]] = []
+    for r in rows:
+        rel = str(r["rel_path"] or "")
+        if not _is_rel_path_allowed_for_current_user(rel):
+            continue
+        p = str(r["phash"] or "").strip().lower()
+        if not p:
+            continue
+        d = _hamdist_hex(seed_phash, p)
+        if d <= dist_thr:
+            scored.append((d, r))
+
+    # Same spirit as pHash-near: prioritize nearest hash distance first.
+    scored.sort(key=lambda x: (x[0], -int(x[1]["id"] or 0)))
+    items = []
+    for d, r in scored[:limit]:
+        pub = row_to_public(r)
+        pub["distance"] = int(d)
+        items.append(pub)
+
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "count": len(items),
+        "distance": dist_thr,
+        "source": "phash_near",
+    })
+
+
 @app.route("/api/photos/<int:photo_id>/ai-tags", methods=["POST"])
 def api_ai_tags(photo_id: int):
     with closing(get_conn()) as conn:

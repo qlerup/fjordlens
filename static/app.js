@@ -103,6 +103,7 @@ const els = {
   detailCity: document.getElementById("detailCity"),
   detailUploader: document.getElementById("detailUploader"),
   detailAiTags: document.getElementById("detailAiTags"),
+  similarBtn: document.getElementById("similarBtn"),
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
@@ -171,7 +172,13 @@ const els = {
   viewerMenuBtn: document.getElementById("viewerMenuBtn"),
   viewerMenu: document.getElementById("viewerMenu"),
   viewerMenuInfoBtn: document.getElementById("viewerMenuInfoBtn"),
+  viewerInfoMediaBtn: document.getElementById("viewerInfoMediaBtn"),
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
+  similarModal: document.getElementById("similarModal"),
+  similarModalClose: document.getElementById("similarModalClose"),
+  similarModalTitle: document.getElementById("similarModalTitle"),
+  similarModalStatus: document.getElementById("similarModalStatus"),
+  similarModalGrid: document.getElementById("similarModalGrid"),
   menuBtn: document.getElementById("menuBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
   mobileBottomNav: document.getElementById("mobileBottomNav"),
@@ -521,7 +528,7 @@ const I18N = {
     view_mapper_title: 'Mapper',
     view_mapper_sub: 'Grupperet efter kilde-mappe',
     view_personer_title: 'Personer',
-    view_personer_sub: 'Klar til ansigtsgenkendelse (kommer med ONNX face-service)',
+    view_personer_sub: '',
     view_settings_title: 'Indstillinger',
     view_settings_sub: 'Vedligeholdelse, scan og administration',
     sort_date_desc: 'Nyeste først',
@@ -920,6 +927,10 @@ const I18N = {
     similar_fetch_error: 'Fejl ved hentning af lignende',
     similar_view_title: 'Lignende billeder',
     similar_view_subtitle: 'Fundet via billed-embedding',
+    similar_modal_title: 'Lignende billeder (pHash nær)',
+    similar_modal_loading: 'Finder lignende billeder...',
+    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende pHash-afstand.',
+    similar_modal_count: 'Fundet {count} lignende billeder (afstand ≤ {distance}).',
     raw_meta_show: 'Vis rå metadata (JSON)',
     raw_meta_hide: 'Skjul rå metadata (JSON)',
   },
@@ -955,7 +966,7 @@ const I18N = {
     view_mapper_title: 'Folders',
     view_mapper_sub: 'Grouped by source folder',
     view_personer_title: 'People',
-    view_personer_sub: 'Face-recognition ready (ONNX face service)',
+    view_personer_sub: '',
     view_settings_title: 'Settings',
     view_settings_sub: 'Maintenance, scan and administration',
     sort_date_desc: 'Newest first',
@@ -1354,6 +1365,10 @@ const I18N = {
     similar_fetch_error: 'Error while loading similar photos',
     similar_view_title: 'Similar photos',
     similar_view_subtitle: 'Found via image embedding',
+    similar_modal_title: 'Similar photos (pHash near)',
+    similar_modal_loading: 'Finding similar photos...',
+    similar_modal_empty: 'No similar photos found with current pHash distance.',
+    similar_modal_count: 'Found {count} similar photos (distance ≤ {distance}).',
     raw_meta_show: 'Show raw metadata (JSON)',
     raw_meta_hide: 'Hide raw metadata (JSON)',
   },
@@ -1437,11 +1452,15 @@ function navLabels() {
 
 let state = {
   selectedId: null,
+  items: [],
   view: "timeline",
   sort: "date_desc",
   q: "",
   scanning: false,
   selectedIndex: -1,
+  viewerItems: null,
+  similarModalItems: [],
+  similarSourceId: 0,
   folder: null,
   // logs
   // Default off; enable only for authorized users
@@ -1881,7 +1900,10 @@ function setDetail(item) {
   // Click on thumbnail in detail opens viewer
   els.detailThumb.onclick = () => {
     const idx = state.items.findIndex(i => i.id === item.id);
-    if (idx >= 0) openViewer(idx);
+    if (idx >= 0) {
+      state.viewerItems = null;
+      openViewer(idx);
+    }
   };
 }
 
@@ -2465,7 +2487,10 @@ function appendCardTo(item, container) {
     try { document.body.classList.remove('detail-open'); } catch {}
     state.selectedId = item.id;
     const idx = state.items.findIndex(i => i.id === item.id);
-    if (idx >= 0) openViewer(idx);
+    if (idx >= 0) {
+      state.viewerItems = null;
+      openViewer(idx);
+    }
   });
   (container || els.grid).appendChild(card);
 }
@@ -2751,6 +2776,9 @@ async function renameOrMergePerson(pid, name) {
     // Optionally kick off a quick unknown-face re-match pass (non-blocking)
     fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) })
       .then(r=>r.json().catch(()=>({}))).then((d2)=>{ if (d2 && d2.ok && d2.matched>0) showStatus(`Matchede ${d2.matched} ukendte ansigt(er).`, 'ok'); }).catch(()=>{});
+    // Force fresh people list so newly created names are available immediately in rename suggestions.
+    state._peopleCache = { key: '', items: [], ts: 0 };
+    await loadPeople(false);
     closePersonRenameMenu();
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
@@ -2925,7 +2953,7 @@ function appendPersonCard(p) {
         const d = await r.json();
         if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
         showStatus(tr('person_hidden_ok'), 'ok');
-        loadPeople();
+        await loadPeople(false);
       } catch { showStatus(tr('person_hide_error'), 'err'); }
     });
   }
@@ -2937,7 +2965,7 @@ function appendPersonCard(p) {
         const d = await r.json();
         if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; }
         showStatus(tr('person_unhidden_ok'), 'ok');
-        loadPeople();
+        await loadPeople(false);
       } catch { showStatus(tr('person_unhide_error'), 'err'); }
     });
   }
@@ -2956,6 +2984,27 @@ function cleanupViewerMediaAnimation() {
     node.style.opacity = '';
     node.style.willChange = '';
   });
+}
+
+function getViewerItems() {
+  if (Array.isArray(state.viewerItems) && state.viewerItems.length) return state.viewerItems;
+  return Array.isArray(state.items) ? state.items : [];
+}
+
+function openViewerWithItems(items, index = 0) {
+  if (!Array.isArray(items) || !items.length) return;
+  state.viewerItems = items.slice();
+  const idx = Math.max(0, Math.min(items.length - 1, Number(index) || 0));
+  openViewer(idx);
+}
+
+function _resolveSelectedPhotoIdForSimilar() {
+  const sid = Number(state.selectedId || 0);
+  if (Number.isFinite(sid) && sid > 0) return sid;
+  const items = getViewerItems();
+  const current = items[state.selectedIndex];
+  const pid = Number(current && current.id || 0);
+  return (Number.isFinite(pid) && pid > 0) ? pid : 0;
 }
 
 function getActiveViewerMediaElement() {
@@ -3017,8 +3066,9 @@ function animateViewerSlideTransition(step, applyUpdate) {
 }
 
 function openViewer(index) {
+  const items = getViewerItems();
   state.selectedIndex = index;
-  const it = state.items[index];
+  const it = items[index];
   if (!it || !it.original_url) return;
   try {
     const pid = Number(it.id || 0);
@@ -3028,6 +3078,9 @@ function openViewer(index) {
   // Toggle media elements
   if (els.viewerImg) {
     els.viewerImg.setAttribute('draggable', 'false');
+    els.viewerImg.onload = () => {
+      try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+    };
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
       // Show a fast placeholder immediately, then swap to full viewable when ready
@@ -3042,8 +3095,11 @@ function openViewer(index) {
       hi.onload = async () => {
         try { if (hi.decode) await hi.decode().catch(()=>{}); } catch {}
         // Only swap if the viewer still shows this item
-        if (state.items[state.selectedIndex] === it) {
+        const currentItems = getViewerItems();
+        const current = currentItems[state.selectedIndex];
+        if (current && Number(current.id || 0) === Number(it.id || 0)) {
           els.viewerImg.src = it.original_url || it.thumb_url || '';
+          try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
         }
       };
       hi.src = it.original_url || it.thumb_url || '';
@@ -3052,6 +3108,9 @@ function openViewer(index) {
   }
   if (els.viewerVideo) {
     els.viewerVideo.setAttribute('draggable', 'false');
+    els.viewerVideo.onloadedmetadata = () => {
+      try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+    };
     els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch(_) {}
     if (it.is_video) {
@@ -3062,11 +3121,17 @@ function openViewer(index) {
     }
   }
   els.viewer.classList.remove("hidden");
+  try {
+    requestAnimationFrame(() => {
+      positionViewerInfoPanel();
+      positionViewerInfoTrigger();
+    });
+  } catch {}
   // Preload neighbors for snappier next/prev navigation
   try {
     const idxs = [index - 1, index + 1];
     for (const j of idxs) {
-      const nx = state.items[j];
+      const nx = items[j];
       if (!nx || nx.is_video || !nx.original_url) continue;
       const pre = new Image();
       try { pre.decoding = 'async'; } catch {}
@@ -3112,26 +3177,8 @@ function openViewer(index) {
     try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
   } catch {}
 
-  // Position the info panel so it appears to slide out from "under" the media
-  try {
-    const vi = document.getElementById('viewerInfo');
-    if (vi) {
-      const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-      const r = mediaEl.getBoundingClientRect();
-      // Hide panel "under" image: set its left so it sits fully beneath media
-      const w = vi.offsetWidth || 360;
-      const underOffset = 8; // tuck a bit under the image
-      vi.style.left = `${Math.round(r.right - w - underOffset)}px`;
-      vi.style.right = 'auto';
-      // Size/position vertically to be slightly smaller than image (16px padding on top/bottom)
-      const vPad = 16;
-      const top = Math.max(0, Math.round(r.top + vPad));
-      const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
-      vi.style.top = `${top}px`;
-      vi.style.bottom = `${bottomGap}px`;
-      vi.style.height = '';
-    }
-  } catch {}
+  // Keep panel + info icon anchored to the active media.
+  try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
   if (els.viewerOpenOrig) {
     const dl = (it.download_url || it.original_url || '');
     els.viewerOpenOrig.href = dl;
@@ -3151,9 +3198,11 @@ function nextViewer(step=1) {
     viewerPendingStep = step;
     return;
   }
-  const n = state.items.length;
+  const items = getViewerItems();
+  const n = items.length;
+  if (!n) return;
   const targetIndex = (state.selectedIndex + step + n) % n;
-  const it = state.items[targetIndex];
+  const it = items[targetIndex];
   if (!it || !it.original_url) return;
   viewerTransitionRunning = true;
   state.selectedIndex = targetIndex;
@@ -5403,6 +5452,7 @@ function _queueMapperDragSelectContextRefresh() {
 function _isMapperSelectablePhotoCard(card) {
   if (!card || !card.classList) return false;
   if (!state || state.view !== 'mapper' || !state.mapperEditMode) return false;
+  if (!els.grid || !els.grid.contains(card)) return false;
   if (!card.classList.contains('photo-card')) return false;
   if (card.classList.contains('folder-card')) return false;
   if (card.classList.contains('upload-card')) return false;
@@ -6158,7 +6208,10 @@ function renderPlacesMarkers() {
       el.addEventListener("click", () => {
         const pid = typeof p.id === "string" ? parseInt(p.id, 10) : p.id;
         const idx = state.items.findIndex(i => i.id === pid);
-        if (idx >= 0) openViewer(idx);
+        if (idx >= 0) {
+          state.viewerItems = null;
+          openViewer(idx);
+        }
       });
       const m = new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat(coords)
@@ -6193,7 +6246,10 @@ function openClusterSheet(clusterId) {
           img.addEventListener("click", () => {
             // Åbn viewer på dette billede hvis muligt
             const idx = state.items.findIndex(i => i.id === p.id);
-            if (idx >= 0) openViewer(idx);
+            if (idx >= 0) {
+              state.viewerItems = null;
+              openViewer(idx);
+            }
           });
           grid.appendChild(img);
         }
@@ -8256,6 +8312,10 @@ document.addEventListener('keydown', (e) => {
     closeSharedEditModal();
     return;
   }
+  if (els.similarModal && !els.similarModal.classList.contains('hidden')) {
+    closeSimilarModal();
+    return;
+  }
   if (els.mapperDownloadModal && !els.mapperDownloadModal.classList.contains('hidden')) closeDownloadModal();
 });
 els.mapperCancelBtn && els.mapperCancelBtn.addEventListener('click', () => setMapperEditMode(false));
@@ -8328,7 +8388,7 @@ let viewerSwipePreviewEl = null;
 let viewerSwipePreviewIndex = -1;
 
 function getViewerTargetIndex(step) {
-  const n = Array.isArray(state.items) ? state.items.length : 0;
+  const n = getViewerItems().length;
   if (!n || state.selectedIndex < 0) return -1;
   return (state.selectedIndex + step + n) % n;
 }
@@ -8353,14 +8413,15 @@ function removeViewerSwipePreview() {
 
 function ensureViewerSwipePreview(targetIndex) {
   if (!els.viewer || els.viewer.classList.contains('hidden')) return null;
-  if (targetIndex < 0 || !state.items[targetIndex]) {
+  const items = getViewerItems();
+  if (targetIndex < 0 || !items[targetIndex]) {
     removeViewerSwipePreview();
     return null;
   }
   if (viewerSwipePreviewEl && viewerSwipePreviewIndex === targetIndex) return viewerSwipePreviewEl;
 
   removeViewerSwipePreview();
-  const it = state.items[targetIndex];
+  const it = items[targetIndex];
   if (!it || !it.original_url) return null;
 
   const node = it.is_video ? document.createElement('video') : document.createElement('img');
@@ -8442,8 +8503,9 @@ function animateViewerDragReset() {
 }
 
 function commitViewerDragSwipe(step) {
+  const items = getViewerItems();
   const targetIndex = getViewerTargetIndex(step);
-  if (targetIndex < 0 || !state.items[targetIndex]) {
+  if (targetIndex < 0 || !items[targetIndex]) {
     animateViewerDragReset();
     return;
   }
@@ -8489,7 +8551,7 @@ if (els.viewer) {
     if (!e.touches || e.touches.length !== 1) return;
     if (viewerTransitionRunning) return;
     const target = e.target;
-    if (target && (target.closest('#viewerClose, #viewerMenuBtn, #viewerMenu, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
+    if (target && (target.closest('#viewerClose, #viewerInfoMediaBtn, #viewerMenuBtn, #viewerMenu, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
     const t = e.touches[0];
     viewerTouchStartX = t.clientX;
     viewerTouchStartY = t.clientY;
@@ -8598,6 +8660,7 @@ if (els.viewer) {
 // Viewer Info toggle
 const viPanel = document.getElementById('viewerInfo');
 const viBtn = document.getElementById('viewerInfoBtn');
+const viMediaBtn = els.viewerInfoMediaBtn || document.getElementById('viewerInfoMediaBtn');
 const viewerMenu = els.viewerMenu;
 const viewerMenuBtn = els.viewerMenuBtn;
 const viewerMenuInfoBtn = els.viewerMenuInfoBtn;
@@ -8634,7 +8697,8 @@ function positionViewerInfoPanel() {
     return;
   }
   try {
-    const it = state.items[state.selectedIndex] || {};
+    const items = getViewerItems();
+    const it = items[state.selectedIndex] || {};
     const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
     const r = mediaEl.getBoundingClientRect();
     const w = viPanel.offsetWidth || 360;
@@ -8647,6 +8711,25 @@ function positionViewerInfoPanel() {
     viPanel.style.top = `${top}px`;
     viPanel.style.bottom = `${bottomGap}px`;
     viPanel.style.height = '';
+  } catch {}
+}
+
+function positionViewerInfoTrigger() {
+  if (!viMediaBtn) return;
+  if (!els.viewer || els.viewer.classList.contains('hidden')) return;
+  try {
+    const items = getViewerItems();
+    const it = items[state.selectedIndex] || {};
+    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
+    if (!mediaEl) return;
+    const r = mediaEl.getBoundingClientRect();
+    if (!Number.isFinite(r.left) || !Number.isFinite(r.right)) return;
+
+    const w = viMediaBtn.offsetWidth || 42;
+    const pad = isMobileViewerLayout() ? 10 : 8;
+    viMediaBtn.style.left = `${Math.round(r.right - w - pad)}px`;
+    viMediaBtn.style.top = `${Math.round(r.top + pad)}px`;
+    viMediaBtn.style.right = 'auto';
   } catch {}
 }
 
@@ -8682,6 +8765,12 @@ function toggleViewerInfoPanel(forceOpen = null) {
 
 if (viBtn && viPanel) {
   viBtn.addEventListener('click', () => toggleViewerInfoPanel());
+}
+if (viMediaBtn && viPanel) {
+  viMediaBtn.addEventListener('click', (e) => {
+    try { e.stopPropagation(); } catch {}
+    toggleViewerInfoPanel();
+  });
 }
 
 if (viewerMenuBtn && viewerMenu) {
@@ -8804,6 +8893,7 @@ closeViewer = function(){
     cleanupViewerMediaAnimation();
     removeViewerSwipePreview();
     resetViewerTouchState();
+    state.viewerItems = null;
   } catch {}
   _origCloseViewer();
 }
@@ -8811,23 +8901,8 @@ closeViewer = function(){
 // Keep the slide-out anchored to the media edge on resize
 window.addEventListener('resize', ()=>{
   try {
-    const vi = document.getElementById('viewerInfo');
-    if (!vi) return;
-    if (isMobileViewerLayout()) return;
-    const it = state.items[state.selectedIndex] || {};
-    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-    const r = mediaEl.getBoundingClientRect();
-
-    const w = vi.offsetWidth || 360;
-    const underOffset = 8;
-    vi.style.left = `${Math.round(r.right - w - underOffset)}px`;
-    vi.style.right = 'auto';
-    const vPad = 16;
-    const top = Math.max(0, Math.round(r.top + vPad));
-    const bottomGap = Math.max(0, Math.round(window.innerHeight - (r.bottom - vPad)));
-    vi.style.top = `${top}px`;
-    vi.style.bottom = `${bottomGap}px`;
-    vi.style.height = '';
+    positionViewerInfoPanel();
+    positionViewerInfoTrigger();
   } catch {}
 });
 
@@ -8846,27 +8921,134 @@ const viFavoriteBtn = document.getElementById('viFavoriteBtn');
 if (viFavoriteBtn) {
   viFavoriteBtn.addEventListener('click', async ()=>{
     await toggleFavorite();
-    try { const selected = state.items.find(i=>i.id===state.selectedId); viFavoriteBtn.textContent = selected && selected.favorite ? '★' : '☆'; } catch {}
+    try {
+      const selected = Array.isArray(state.items) ? state.items.find(i=>i.id===state.selectedId) : null;
+      const viewerItems = getViewerItems();
+      const current = viewerItems[state.selectedIndex] || null;
+      if (selected) {
+        viFavoriteBtn.textContent = selected.favorite ? '★' : '☆';
+      } else if (current) {
+        current.favorite = !current.favorite;
+        viFavoriteBtn.textContent = current.favorite ? '★' : '☆';
+      }
+    } catch {}
+  });
+}
+
+function _setSimilarModalStatus(message, kind = 'ok') {
+  if (!els.similarModalStatus) return;
+  const txt = String(message || '').trim();
+  if (!txt) {
+    els.similarModalStatus.classList.add('hidden');
+    els.similarModalStatus.textContent = '';
+    els.similarModalStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.similarModalStatus.textContent = txt;
+  els.similarModalStatus.classList.remove('hidden');
+  els.similarModalStatus.classList.toggle('ok', kind === 'ok');
+  els.similarModalStatus.classList.toggle('err', kind !== 'ok');
+}
+
+function closeSimilarModal(opts = {}) {
+  const clearItems = opts && opts.clearItems !== false;
+  if (els.similarModal) els.similarModal.classList.add('hidden');
+  if (els.similarModalGrid) els.similarModalGrid.innerHTML = '';
+  _setSimilarModalStatus('');
+  if (clearItems) {
+    state.similarModalItems = [];
+    state.similarSourceId = 0;
+  }
+}
+
+function openSimilarModal() {
+  if (!els.similarModal) return;
+  els.similarModal.classList.remove('hidden');
+}
+
+function renderSimilarModalGrid(items, opts = {}) {
+  if (!els.similarModalGrid) return;
+  els.similarModalGrid.innerHTML = '';
+  const arr = Array.isArray(items) ? items : [];
+  const showEmpty = !(opts && opts.showEmpty === false);
+  if (!arr.length) {
+    if (showEmpty) {
+      els.similarModalGrid.innerHTML = `<div class="similar-modal-empty">${escapeHtml(tr('similar_modal_empty'))}</div>`;
+    }
+    return;
+  }
+  arr.forEach((it, idx) => {
+    appendCardTo(it, els.similarModalGrid);
+    const card = els.similarModalGrid.lastElementChild;
+    if (!card || !(card instanceof HTMLElement)) return;
+    card.addEventListener('click', (ev) => {
+      if (ev && ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
+      if (_consumeMapperDragSelectClickSuppression()) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      const viewerItems = Array.isArray(state.similarModalItems) ? state.similarModalItems.slice() : [];
+      if (!viewerItems.length) return;
+      closeSimilarModal({ clearItems: false });
+      openViewerWithItems(viewerItems, idx);
+    }, true);
   });
 }
 
 async function openSimilarForSelected(){
-  if (!state.selectedId) return;
-  try {
-    const res = await fetch(`/api/photos/${state.selectedId}/similar?limit=60`);
-    const data = await res.json();
-    if (!res.ok) { showStatus(data && data.error ? data.error : tr('similar_fetch_failed'), 'err'); return; }
-    state.view = 'timeline';
-    state.items = Array.isArray(data.items) ? data.items : [];
-    state.selectedId = null;
-    if (els.viewTitle) els.viewTitle.textContent = tr('similar_view_title');
-    if (els.viewSubtitle) els.viewSubtitle.textContent = tr('similar_view_subtitle');
+  const sourceId = _resolveSelectedPhotoIdForSimilar();
+  if (!sourceId) return;
+  const distRaw = parseInt(String((els.dupeDist && els.dupeDist.value) || '5'), 10);
+  const distance = Number.isFinite(distRaw) ? Math.max(0, Math.min(20, distRaw)) : 5;
+  if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
-    renderGrid();
-  } catch { showStatus(tr('similar_fetch_error'), 'err'); }
+  }
+  state.similarSourceId = sourceId;
+  state.similarModalItems = [];
+  if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
+  _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
+  renderSimilarModalGrid([], { showEmpty: false });
+  openSimilarModal();
+  try {
+    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) {
+      _setSimilarModalStatus((data && data.error) ? String(data.error) : tr('similar_fetch_failed'), 'err');
+      return;
+    }
+    const items = Array.isArray(data.items) ? data.items : [];
+    state.similarModalItems = items;
+    const msg = tr('similar_modal_count')
+      .replace('{count}', String(items.length))
+      .replace('{distance}', String(data.distance != null ? data.distance : distance));
+    _setSimilarModalStatus(items.length ? msg : tr('similar_modal_empty'), items.length ? 'ok' : 'ok');
+    if (els.similarModalTitle) {
+      els.similarModalTitle.textContent = `${tr('similar_modal_title')} (${items.length})`;
+    }
+    renderSimilarModalGrid(items);
+  } catch {
+    _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
+  }
 }
 const viSimilarBtn = document.getElementById('viSimilarBtn');
 if (viSimilarBtn) viSimilarBtn.addEventListener('click', openSimilarForSelected);
+if (els.similarBtn) els.similarBtn.addEventListener('click', openSimilarForSelected);
+if (els.similarModalClose) {
+  els.similarModalClose.addEventListener('click', () => closeSimilarModal());
+}
+if (els.similarModal) {
+  els.similarModal.addEventListener('click', (e) => {
+    const t = e && e.target;
+    if (t === els.similarModal) {
+      closeSimilarModal();
+      return;
+    }
+    if (t && t.classList && t.classList.contains('modal-backdrop')) closeSimilarModal();
+  });
+}
 
 // Mobile drawer toggle
 function openDrawer(){ document.body.classList.add("drawer-open"); }

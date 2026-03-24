@@ -1684,11 +1684,11 @@ body.view-mapper .mapper-header-actions {
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
-#viewerPrev, #viewerNext, #viewerClose, #viewerInfoBtn, #viewerOpenOrig, #viewerMenuBtn, #viewerMenu { position: absolute; z-index: 5; }
+#viewerPrev, #viewerNext, #viewerClose, #viewerOpenOrig, #viewerMenu { position: absolute; z-index: 5; }
+#viewerInfoMediaBtn { position: absolute; z-index: 5; }
 #viewerOpenOrig { display: none !important; }
-#viewerInfoBtn { display: none !important; }
 #viewerClose,
-#viewerMenuBtn {
+#viewerInfoMediaBtn {
   width: 42px;
   height: 42px;
   min-width: 42px;
@@ -1708,9 +1708,14 @@ body.view-mapper .mapper-header-actions {
   right: auto;
   top: 12px;
 }
-#viewerMenuBtn {
+#viewerInfoMediaBtn {
   right: 12px;
   top: 12px;
+  padding: 0;
+  border-radius: 999px;
+}
+#viewerInfoMediaBtn svg {
+  display: block;
 }
 #viewerMenu {
   right: 12px;
@@ -1938,6 +1943,29 @@ body.detail-open .detail-panel {
 #mapperDownloadModal .modal-backdrop {
   display: none !important;
 }
+.similar-modal-dialog {
+  width: min(1240px, calc(100vw - 24px)) !important;
+  max-height: min(90vh, 960px);
+  display: flex;
+  flex-direction: column;
+}
+#similarModal .modal-body {
+  overflow: auto;
+}
+#similarModalGrid.gallery-grid {
+  margin-top: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+#similarModalGrid .photo-card {
+  cursor: pointer;
+}
+.similar-modal-empty {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  color: var(--muted);
+}
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display:none; align-items:center; justify-content:center; pointer-events: none; }
 .modal-backdrop.active { display:flex; pointer-events: auto; }
 .gps-modal { position: relative; z-index: 10000; width: min(900px, 92vw); background: var(--panel); border:1px solid var(--border); box-shadow: 0 18px 40px rgba(0,0,0,0.55); border-radius: 12px; padding: 12px; }
@@ -1989,7 +2017,7 @@ body.detail-open .detail-panel {
     display: none !important;
   }
   #viewerClose,
-  #viewerMenuBtn {
+  #viewerInfoMediaBtn {
     top: calc(env(safe-area-inset-top) + 10px);
     width: 36px;
     height: 36px;
@@ -2004,12 +2032,16 @@ body.detail-open .detail-panel {
   #viewerClose {
     left: 10px;
   }
-  #viewerMenuBtn {
+  #viewerInfoMediaBtn {
     right: 10px;
   }
   #viewerMenu {
     top: calc(env(safe-area-inset-top) + 52px);
     right: 10px;
+  }
+  .similar-modal-dialog {
+    width: calc(100vw - 12px) !important;
+    max-height: calc(100vh - 16px);
   }
   .viewer-info {
     position: fixed;

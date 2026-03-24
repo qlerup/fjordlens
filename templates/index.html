@@ -514,11 +514,12 @@
     <video id="viewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
     <button id="viewerClose" class="btn" type="button" title="Luk" aria-label="Luk" style="position:absolute;left:12px;top:12px;">←</button>
-    <button id="viewerMenuBtn" class="btn" type="button" title="Menu" aria-label="Åbn menu" style="position:absolute;right:12px;top:12px;">⋯</button>
-    <div id="viewerMenu" class="viewer-menu hidden" aria-label="Viewer menu">
-      <button id="viewerMenuInfoBtn" class="btn" type="button">Info</button>
-    </div>
-    <button id="viewerInfoBtn" class="btn hidden" title="Vis info" aria-hidden="true" tabindex="-1" style="position:absolute;right:12px;top:54px;">Info</button>
+    <button id="viewerInfoMediaBtn" class="viewer-info-media-btn" type="button" title="Vis info" aria-label="Vis info">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="10" cy="10" r="10" fill="#fff"/>
+        <text x="10" y="15" text-anchor="middle" font-size="13" fill="#333" font-family="Arial" font-weight="bold">i</text>
+      </svg>
+    </button>
     <a id="viewerOpenOrig" class="btn" target="_blank" rel="noopener" style="position:absolute;left:12px;top:12px;">Åbn original</a>
     <!-- Slide-out info panel inside viewer -->
     <aside id="viewerInfo" class="viewer-info hidden">
@@ -559,6 +560,19 @@
         </div>
       </div>
     </aside>
+  </div>
+  <div id="similarModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="similarModalTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog similar-modal-dialog">
+      <div class="modal-header">
+        <h3 id="similarModalTitle">Lignende billeder</h3>
+        <button id="similarModalClose" class="btn ghost" aria-label="Luk">✕</button>
+      </div>
+      <div class="modal-body">
+        <section id="similarModalStatus" class="status hidden"></section>
+        <section id="similarModalGrid" class="gallery-grid similar-modal-grid"></section>
+      </div>
+    </div>
   </div>
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
   <div id="profileModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
