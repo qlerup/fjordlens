@@ -5532,23 +5532,9 @@ function _mapperSelectableCardIndexAtPoint(session, x, y) {
 function _normalizeMapperDragReadingTargetIndex(session, rawIndex) {
   const idx = Number(rawIndex);
   if (!Number.isFinite(idx) || idx < 0) return -1;
-  if (!session) return idx;
-  const anchorIdx = Number(session.anchorIndex);
-  if (!Number.isFinite(anchorIdx) || anchorIdx < 0) return idx;
-
-  const rowByIndex = Array.isArray(session.rowByIndex) ? session.rowByIndex : [];
-  const rowStartByRow = Array.isArray(session.rowStartByRow) ? session.rowStartByRow : [];
-  const rowEndByRow = Array.isArray(session.rowEndByRow) ? session.rowEndByRow : [];
-  const anchorRow = Number(rowByIndex[anchorIdx]);
-  const row = Number(rowByIndex[idx]);
-  if (!Number.isFinite(anchorRow) || !Number.isFinite(row) || row === anchorRow) return idx;
-
-  if (idx > anchorIdx) {
-    const endIdx = Number(rowEndByRow[row]);
-    return Number.isFinite(endIdx) ? endIdx : idx;
-  }
-  const startIdx = Number(rowStartByRow[row]);
-  return Number.isFinite(startIdx) ? startIdx : idx;
+  if (!session || !Array.isArray(session.cards) || !session.cards.length) return idx;
+  const max = session.cards.length - 1;
+  return Math.max(0, Math.min(max, Math.round(idx)));
 }
 
 function _selectMapperPhotoRangeByIndex(session, fromIndex, toIndex) {
@@ -5578,21 +5564,19 @@ function _selectMapperPhotosAlongSegment(session, fromX, fromY, toX, toY) {
   const dy = Number(toY) - Number(fromY);
   const distance = Math.hypot(dx, dy);
   const steps = Math.max(1, Math.ceil(distance / MAPPER_DRAG_SELECT_SAMPLE_STEP_PX));
-  const touched = new Set();
+  let lastTouchedIndex = -1;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const x = Number(fromX) + dx * t;
     const y = Number(fromY) + dy * t;
     const idx = _mapperSelectableCardIndexAtPoint(session, x, y);
-    if (idx >= 0) touched.add(idx);
+    if (idx >= 0) lastTouchedIndex = idx;
   }
-  if (!touched.size) return;
-  touched.forEach((idx) => {
-    const targetIdx = _normalizeMapperDragReadingTargetIndex(session, idx);
-    if (targetIdx < 0) return;
-    _selectMapperPhotoRangeByIndex(session, session.anchorIndex, targetIdx);
-    session.lastTargetIndex = targetIdx;
-  });
+  if (lastTouchedIndex < 0) return;
+  const targetIdx = _normalizeMapperDragReadingTargetIndex(session, lastTouchedIndex);
+  if (targetIdx < 0) return;
+  _selectMapperPhotoRangeByIndex(session, session.anchorIndex, targetIdx);
+  session.lastTargetIndex = targetIdx;
 }
 
 function _buildMapperDragIndexMap(cards) {

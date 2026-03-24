@@ -1421,6 +1421,10 @@ def _postprocess_uploaded_rels(
         })
         disk_path = _disk_path_from_rel_path(rel)
         orig_rel_for_convert = rel
+        conversion_from_rel: Optional[str] = None
+        conversion_from_ext: Optional[str] = None
+        conversion_to_rel: Optional[str] = None
+        conversion_to_ext: Optional[str] = None
         # Optional: convert HEIC/HEIF and RAW to JPEG in-place (preserve EXIF when possible for HEIC)
         try:
             extl = disk_path.suffix.lower()
@@ -1502,6 +1506,10 @@ def _postprocess_uploaded_rels(
                             new_rel = rel + ".jpg"
                     rel = new_rel
                     disk_path = new_path
+                    conversion_from_rel = orig_rel_for_convert
+                    conversion_from_ext = extl
+                    conversion_to_rel = rel
+                    conversion_to_ext = str(new_path.suffix or "").lower() if new_path else ".jpg"
                     try:
                         log_event("heic_converted" if extl in {".heic", ".heif"} else "raw_converted", rel_path=rel)
                     except Exception:
@@ -1539,6 +1547,14 @@ def _postprocess_uploaded_rels(
             continue
         try:
             meta = extract_metadata(disk_path, rel, generate_thumb=False)
+            if conversion_from_rel and conversion_to_rel:
+                _attach_conversion_metadata(
+                    meta,
+                    from_rel_path=conversion_from_rel,
+                    to_rel_path=conversion_to_rel,
+                    from_ext=conversion_from_ext,
+                    to_ext=conversion_to_ext or meta.get("ext"),
+                )
             meta["uploaded_by"] = user
             upsert_photo(meta)
             indexed_ok.append(rel)
@@ -8902,6 +8918,71 @@ def api_settings_raw():
     )
 
 
+def _normalize_rel_for_conversion(value: Any) -> str:
+    try:
+        return str(value or "").replace("\\", "/").lstrip("/").strip()
+    except Exception:
+        return ""
+
+
+def _normalize_ext_for_conversion(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        raw_norm = raw.replace("\\", "/")
+    except Exception:
+        raw_norm = raw
+    leaf = raw_norm.split("/")[-1]
+    ext = Path(leaf).suffix.lower()
+    if not ext:
+        compact = re.sub(r"[^a-zA-Z0-9.]", "", raw_norm).lower()
+        if compact:
+            ext = compact if compact.startswith(".") else f".{compact}"
+    if ext == ".":
+        return ""
+    return ext
+
+
+def _attach_conversion_metadata(
+    meta: Dict[str, Any],
+    *,
+    from_rel_path: str,
+    to_rel_path: str,
+    from_ext: Optional[str] = None,
+    to_ext: Optional[str] = None,
+) -> None:
+    if not isinstance(meta, dict):
+        return
+
+    from_rel = _normalize_rel_for_conversion(from_rel_path)
+    to_rel = _normalize_rel_for_conversion(to_rel_path)
+    from_ext_norm = _normalize_ext_for_conversion(from_ext or from_rel)
+    to_ext_norm = _normalize_ext_for_conversion(to_ext or meta.get("ext") or to_rel)
+
+    mj_raw = meta.get("metadata_json")
+    mj: Dict[str, Any] = dict(mj_raw) if isinstance(mj_raw, dict) else {}
+    conv_raw = mj.get("conversion")
+    conv: Dict[str, Any] = dict(conv_raw) if isinstance(conv_raw, dict) else {}
+
+    if from_rel:
+        conv["from_rel_path"] = from_rel
+        mj["converted_from_rel"] = from_rel
+    if to_rel:
+        conv["to_rel_path"] = to_rel
+    if from_ext_norm:
+        conv["from_ext"] = from_ext_norm
+        mj["converted_from_ext"] = from_ext_norm
+    if to_ext_norm:
+        conv["to_ext"] = to_ext_norm
+        mj["converted_to_ext"] = to_ext_norm
+
+    conv["converted"] = True
+    conv["converted_at"] = now_iso()
+    mj["conversion"] = conv
+    meta["metadata_json"] = mj
+
+
 def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("heic_bulk_start")
@@ -8991,6 +9072,13 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 pass
 
             meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            _attach_conversion_metadata(
+                meta,
+                from_rel_path=orig_rel,
+                to_rel_path=new_rel,
+                from_ext=extl,
+                to_ext=str(dst.suffix or "").lower() or meta.get("ext"),
+            )
             try:
                 # Preserve original uploader if known
                 up_by = r.get("uploaded_by") if isinstance(r, dict) else (r["uploaded_by"] if "uploaded_by" in r.keys() else None)
@@ -9148,6 +9236,13 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
             except Exception:
                 pass
             meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            _attach_conversion_metadata(
+                meta,
+                from_rel_path=orig_rel,
+                to_rel_path=new_rel,
+                from_ext=src.suffix.lower(),
+                to_ext=str(dst.suffix or "").lower() or meta.get("ext"),
+            )
             try:
                 up_by = r.get("uploaded_by") if isinstance(r, dict) else (r["uploaded_by"] if "uploaded_by" in r.keys() else None)
             except Exception:
