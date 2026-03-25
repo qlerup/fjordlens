@@ -570,6 +570,30 @@ const I18N = {
     photoframe_source_env: 'Kilde: miljøvariabel',
     photoframe_source_file: 'Kilde: konfig-fil',
     photoframe_source_none: 'Kilde: ingen',
+    photoframe_create_btn: 'Opret fotoramme',
+    photoframe_create_title: 'Opret fotoramme',
+    photoframe_create_name_label: 'Navn',
+    photoframe_create_name_placeholder: 'Fx Stue-ramme',
+    photoframe_create_url_label: 'Ramme URL',
+    photoframe_create_url_placeholder: 'Fx http://10.0.0.71:5001',
+    photoframe_create_location_label: 'Placering (valgfri)',
+    photoframe_create_location_placeholder: 'Fx Stue',
+    photoframe_create_note_label: 'Note (valgfri)',
+    photoframe_create_note_placeholder: 'Valgfri note',
+    photoframe_create_cancel: 'Annuller',
+    photoframe_create_submit: 'Generer token',
+    photoframe_create_submit_loading: 'Genererer...',
+    photoframe_create_result_title: 'Token genereret',
+    photoframe_create_server_label: 'Server URL',
+    photoframe_create_token_label: 'Device token',
+    photoframe_create_feed_label: 'Feed URL',
+    photoframe_create_copy: 'Kopier',
+    photoframe_create_copy_ok: 'Kopieret til udklipsholder',
+    photoframe_create_copy_failed: 'Kunne ikke kopiere automatisk.',
+    photoframe_create_saved_ok: 'Fotoramme oprettet.',
+    photoframe_create_name_required: 'Indtast navn på fotorammen.',
+    photoframe_create_url_required: 'Indtast URL til fotorammen.',
+    photoframe_create_failed: 'Kunne ikke oprette fotoramme.',
     no_thumb: 'Ingen thumbnail',
     settings_title: 'Indstillinger',
     settings_sub: 'Vedligeholdelse, scan og logs',
@@ -1032,6 +1056,30 @@ const I18N = {
     photoframe_source_env: 'Source: environment variable',
     photoframe_source_file: 'Source: config file',
     photoframe_source_none: 'Source: none',
+    photoframe_create_btn: 'Create frame',
+    photoframe_create_title: 'Create photo frame',
+    photoframe_create_name_label: 'Name',
+    photoframe_create_name_placeholder: 'Example: Living room frame',
+    photoframe_create_url_label: 'Frame URL',
+    photoframe_create_url_placeholder: 'Example: http://10.0.0.71:5001',
+    photoframe_create_location_label: 'Location (optional)',
+    photoframe_create_location_placeholder: 'Example: Living room',
+    photoframe_create_note_label: 'Note (optional)',
+    photoframe_create_note_placeholder: 'Optional note',
+    photoframe_create_cancel: 'Cancel',
+    photoframe_create_submit: 'Generate token',
+    photoframe_create_submit_loading: 'Generating...',
+    photoframe_create_result_title: 'Token generated',
+    photoframe_create_server_label: 'Server URL',
+    photoframe_create_token_label: 'Device token',
+    photoframe_create_feed_label: 'Feed URL',
+    photoframe_create_copy: 'Copy',
+    photoframe_create_copy_ok: 'Copied to clipboard',
+    photoframe_create_copy_failed: 'Could not copy automatically.',
+    photoframe_create_saved_ok: 'Photo frame created.',
+    photoframe_create_name_required: 'Enter a frame name.',
+    photoframe_create_url_required: 'Enter the frame URL.',
+    photoframe_create_failed: 'Could not create photo frame.',
     no_thumb: 'No thumbnail',
     settings_title: 'Settings',
     settings_sub: 'Maintenance, scan and logs',
@@ -1897,6 +1945,7 @@ function photoframeSourceLabel(source) {
 function renderPhotoframePanel() {
   if (!els.grid) return;
   const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
+  const canCreateFrame = String((state.currentUser && state.currentUser.role) || '').toLowerCase() === 'admin';
   const checkedText = state.photoframeCheckedAt ? fmtDate(state.photoframeCheckedAt) : '-';
   const sourceText = photoframeSourceLabel(String(state.photoframeSource || 'none'));
   const pathText = String(state.photoframeConfigPath || '/data/photoframes.json');
@@ -1960,19 +2009,246 @@ function renderPhotoframePanel() {
     <section class="photoframe-wrap">
       <div class="photoframe-toolbar">
         <div class="mini-label">${escapeHtml(sourceText)} - ${escapeHtml(tr('photoframe_last_checked'))}: ${escapeHtml(checkedText)}</div>
-        <button id="photoframeRefreshBtn" class="btn small"${state.photoframeLoading ? ' disabled' : ''}>${escapeHtml(tr('photoframe_refresh'))}</button>
+        <div class="photoframe-toolbar-actions">
+          ${canCreateFrame ? `<button id="photoframeCreateBtn" class="btn small">${escapeHtml(tr('photoframe_create_btn'))}</button>` : ''}
+          <button id="photoframeRefreshBtn" class="btn small"${state.photoframeLoading ? ' disabled' : ''}>${escapeHtml(tr('photoframe_refresh'))}</button>
+        </div>
       </div>
       ${errorBlock}
       ${loadingBlock}
       ${emptyBlock}
       <div class="photoframe-grid">${cardsHtml}</div>
     </section>
+    <div id="photoframeCreateModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+      <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h3 style="margin:0;">${escapeHtml(tr('photoframe_create_title'))}</h3>
+          <button id="photoframeCreateCloseBtn" class="btn">${escapeHtml(tr('scan_modal_close'))}</button>
+        </div>
+        <div class="form-row">
+          <label for="photoframeCreateName">${escapeHtml(tr('photoframe_create_name_label'))}</label>
+          <input id="photoframeCreateName" class="mapper-input" type="text" maxlength="80" placeholder="${escapeHtml(tr('photoframe_create_name_placeholder'))}">
+        </div>
+        <div class="form-row">
+          <label for="photoframeCreateUrl">${escapeHtml(tr('photoframe_create_url_label'))}</label>
+          <input id="photoframeCreateUrl" class="mapper-input" type="text" maxlength="300" placeholder="${escapeHtml(tr('photoframe_create_url_placeholder'))}">
+        </div>
+        <div class="form-row">
+          <label for="photoframeCreateLocation">${escapeHtml(tr('photoframe_create_location_label'))}</label>
+          <input id="photoframeCreateLocation" class="mapper-input" type="text" maxlength="80" placeholder="${escapeHtml(tr('photoframe_create_location_placeholder'))}">
+        </div>
+        <div class="form-row">
+          <label for="photoframeCreateNote">${escapeHtml(tr('photoframe_create_note_label'))}</label>
+          <input id="photoframeCreateNote" class="mapper-input" type="text" maxlength="240" placeholder="${escapeHtml(tr('photoframe_create_note_placeholder'))}">
+        </div>
+        <div class="actions" style="justify-content:flex-end;gap:8px;">
+          <button id="photoframeCreateCancelBtn" class="btn">${escapeHtml(tr('photoframe_create_cancel'))}</button>
+          <button id="photoframeCreateSubmitBtn" class="btn primary">${escapeHtml(tr('photoframe_create_submit'))}</button>
+        </div>
+        <div id="photoframeCreateError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
+        <div id="photoframeCreateResultWrap" class="hidden" style="margin-top:12px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2);padding:10px;">
+          <div class="mini-label" style="margin-bottom:8px;font-weight:700;">${escapeHtml(tr('photoframe_create_result_title'))}</div>
+          <div class="form-row" style="margin-bottom:8px;">
+            <label for="photoframeCreateServer">${escapeHtml(tr('photoframe_create_server_label'))}</label>
+            <div class="toolbar" style="gap:8px;align-items:stretch;">
+              <input id="photoframeCreateServer" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
+              <button id="photoframeCreateCopyServerBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:8px;">
+            <label for="photoframeCreateToken">${escapeHtml(tr('photoframe_create_token_label'))}</label>
+            <div class="toolbar" style="gap:8px;align-items:stretch;">
+              <input id="photoframeCreateToken" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
+              <button id="photoframeCreateCopyTokenBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label for="photoframeCreateFeed">${escapeHtml(tr('photoframe_create_feed_label'))}</label>
+            <div class="toolbar" style="gap:8px;align-items:stretch;">
+              <input id="photoframeCreateFeed" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
+              <button id="photoframeCreateCopyFeedBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   const refreshBtn = document.getElementById('photoframeRefreshBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
       await loadPhotoframeStatus();
+    });
+  }
+
+  const createBtn = document.getElementById('photoframeCreateBtn');
+  const createModal = document.getElementById('photoframeCreateModal');
+  const createCloseBtn = document.getElementById('photoframeCreateCloseBtn');
+  const createCancelBtn = document.getElementById('photoframeCreateCancelBtn');
+  const createSubmitBtn = document.getElementById('photoframeCreateSubmitBtn');
+  const createNameInput = document.getElementById('photoframeCreateName');
+  const createUrlInput = document.getElementById('photoframeCreateUrl');
+  const createLocationInput = document.getElementById('photoframeCreateLocation');
+  const createNoteInput = document.getElementById('photoframeCreateNote');
+  const createErrorEl = document.getElementById('photoframeCreateError');
+  const resultWrap = document.getElementById('photoframeCreateResultWrap');
+  const serverInput = document.getElementById('photoframeCreateServer');
+  const tokenInput = document.getElementById('photoframeCreateToken');
+  const feedInput = document.getElementById('photoframeCreateFeed');
+  const copyServerBtn = document.getElementById('photoframeCreateCopyServerBtn');
+  const copyTokenBtn = document.getElementById('photoframeCreateCopyTokenBtn');
+  const copyFeedBtn = document.getElementById('photoframeCreateCopyFeedBtn');
+
+  let shouldRefreshOnClose = false;
+
+  const showCreateError = (text) => {
+    if (!createErrorEl) return;
+    const msg = String(text || '').trim();
+    if (!msg) {
+      createErrorEl.textContent = '';
+      createErrorEl.classList.add('hidden');
+      return;
+    }
+    createErrorEl.textContent = msg;
+    createErrorEl.classList.remove('hidden');
+  };
+
+  const copyText = async (value) => {
+    const txt = String(value || '').trim();
+    if (!txt) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(txt);
+      } else {
+        const temp = document.createElement('input');
+        temp.value = txt;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+      }
+      showStatus(tr('photoframe_create_copy_ok'), 'ok');
+    } catch (_) {
+      showStatus(tr('photoframe_create_copy_failed'), 'err');
+    }
+  };
+
+  const openCreateModal = () => {
+    if (!createModal) return;
+    shouldRefreshOnClose = false;
+    showCreateError('');
+    if (resultWrap) resultWrap.classList.add('hidden');
+    if (serverInput) serverInput.value = '';
+    if (tokenInput) tokenInput.value = '';
+    if (feedInput) feedInput.value = '';
+    if (createNameInput) createNameInput.value = '';
+    if (createUrlInput) createUrlInput.value = '';
+    if (createLocationInput) createLocationInput.value = '';
+    if (createNoteInput) createNoteInput.value = '';
+    createModal.classList.remove('hidden');
+    if (createNameInput) {
+      setTimeout(() => {
+        try { createNameInput.focus(); } catch {}
+      }, 0);
+    }
+  };
+
+  const closeCreateModal = async () => {
+    if (!createModal) return;
+    createModal.classList.add('hidden');
+    if (shouldRefreshOnClose) await loadPhotoframeStatus();
+  };
+
+  if (createBtn) {
+    createBtn.addEventListener('click', openCreateModal);
+  }
+  if (createCloseBtn) createCloseBtn.addEventListener('click', closeCreateModal);
+  if (createCancelBtn) createCancelBtn.addEventListener('click', closeCreateModal);
+  if (createModal) {
+    createModal.addEventListener('click', (e) => {
+      if (e.target === createModal) closeCreateModal();
+    });
+    createModal.addEventListener('keydown', async (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        await closeCreateModal();
+      }
+    });
+  }
+  if (copyServerBtn) copyServerBtn.addEventListener('click', async () => copyText(serverInput ? serverInput.value : ''));
+  if (copyTokenBtn) copyTokenBtn.addEventListener('click', async () => copyText(tokenInput ? tokenInput.value : ''));
+  if (copyFeedBtn) copyFeedBtn.addEventListener('click', async () => copyText(feedInput ? feedInput.value : ''));
+  if (createUrlInput) {
+    createUrlInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        await closeCreateModal();
+      }
+    });
+  }
+  if (createSubmitBtn) {
+    createSubmitBtn.addEventListener('click', async () => {
+      const name = String(createNameInput ? createNameInput.value : '').trim();
+      const frameUrl = String(createUrlInput ? createUrlInput.value : '').trim();
+      const location = String(createLocationInput ? createLocationInput.value : '').trim();
+      const note = String(createNoteInput ? createNoteInput.value : '').trim();
+
+      if (!name) {
+        showCreateError(tr('photoframe_create_name_required'));
+        try { if (createNameInput) createNameInput.focus(); } catch {}
+        return;
+      }
+      if (!frameUrl) {
+        showCreateError(tr('photoframe_create_url_required'));
+        try { if (createUrlInput) createUrlInput.focus(); } catch {}
+        return;
+      }
+
+      showCreateError('');
+      createSubmitBtn.disabled = true;
+      createSubmitBtn.classList.add('loading');
+      createSubmitBtn.textContent = tr('photoframe_create_submit_loading');
+      try {
+        const res = await fetch('/api/photoframes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            base_url: frameUrl,
+            location,
+            note,
+          }),
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_create_failed');
+          showCreateError(message);
+          return;
+        }
+
+        const serverUrl = String(data.server_url || '').trim();
+        const tokenValue = String(data.token || '').trim();
+        const feedUrl = String(data.feed_url || '').trim();
+        if (serverInput) serverInput.value = serverUrl;
+        if (tokenInput) tokenInput.value = tokenValue;
+        if (feedInput) feedInput.value = feedUrl;
+        if (resultWrap) resultWrap.classList.remove('hidden');
+        shouldRefreshOnClose = true;
+        showStatus(tr('photoframe_create_saved_ok'), 'ok');
+      } catch (e) {
+        const msg = String((e && e.message) || '').trim() || tr('photoframe_create_failed');
+        showCreateError(msg);
+      } finally {
+        createSubmitBtn.disabled = false;
+        createSubmitBtn.classList.remove('loading');
+        createSubmitBtn.textContent = tr('photoframe_create_submit');
+      }
     });
   }
 }

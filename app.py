@@ -3664,12 +3664,30 @@ def _normalize_photoframe_base_url(raw: Any) -> Optional[str]:
     return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
 
 
+def _sanitize_photoframe_text(raw: Any, max_len: int = 120) -> str:
+    value = re.sub(r"\s+", " ", str(raw or "")).strip()
+    if max_len > 0 and len(value) > max_len:
+        value = value[:max_len].strip()
+    return value
+
+
+def _normalize_photoframe_token_hash(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if re.match(r"^[a-f0-9]{64}$", value):
+        return value
+    return ""
+
+
 def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]:
     name = ""
     base_candidate = ""
     info_candidate = ""
     note = ""
     location = ""
+    token_plain = ""
+    token_hash_raw = ""
+    token_hint_raw = ""
+    created_at_raw = ""
 
     if isinstance(raw_item, str):
         base_candidate = raw_item.strip()
@@ -3685,6 +3703,10 @@ def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]
         info_candidate = str(raw_item.get("info_url") or raw_item.get("status_url") or "").strip()
         note = str(raw_item.get("note") or raw_item.get("notes") or "").strip()
         location = str(raw_item.get("location") or "").strip()
+        token_plain = str(raw_item.get("device_token") or raw_item.get("token") or "").strip()
+        token_hash_raw = str(raw_item.get("token_hash") or raw_item.get("device_token_hash") or "").strip()
+        token_hint_raw = str(raw_item.get("token_hint") or raw_item.get("token_last4") or "").strip()
+        created_at_raw = str(raw_item.get("created_at") or "").strip()
     else:
         return None
 
@@ -3705,13 +3727,24 @@ def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]
     if not name:
         name = host_label or f"Frame {idx + 1}"
 
+    token_hash = _normalize_photoframe_token_hash(token_hash_raw)
+    if (not token_hash) and token_plain:
+        token_hash = _share_token_digest(token_plain)
+    token_hint = _sanitize_photoframe_text(token_hint_raw, 16)
+    if (not token_hint) and token_plain:
+        token_hint = token_plain[-4:]
+    created_at = _sanitize_photoframe_text(created_at_raw, 40)
+
     return {
         "id": re.sub(r"[^a-zA-Z0-9_-]+", "-", name.lower()).strip("-") or f"frame-{idx + 1}",
-        "name": name,
+        "name": _sanitize_photoframe_text(name, 80),
         "base_url": base_url or "",
         "info_url": info_url,
-        "location": location,
-        "note": note,
+        "location": _sanitize_photoframe_text(location, 80),
+        "note": _sanitize_photoframe_text(note, 240),
+        "token_hash": token_hash,
+        "token_hint": token_hint,
+        "created_at": created_at,
     }
 
 
@@ -3770,6 +3803,44 @@ def _load_photoframe_entries() -> Tuple[list[Dict[str, Any]], str]:
         if parsed:
             return parsed, source
     return [], "none"
+
+
+def _photoframe_entries_to_setting_payload(entries: list[Dict[str, Any]]) -> str:
+    frames: list[Dict[str, Any]] = []
+    seen_info_urls: set[str] = set()
+    for idx, it in enumerate(entries):
+        entry = _build_photoframe_entry(it, idx)
+        if not entry:
+            continue
+        info_url = str(entry.get("info_url") or "").strip()
+        if (not info_url) or (info_url in seen_info_urls):
+            continue
+        seen_info_urls.add(info_url)
+
+        item: Dict[str, Any] = {
+            "name": str(entry.get("name") or "").strip(),
+            "base_url": str(entry.get("base_url") or "").strip(),
+            "info_url": info_url,
+        }
+        location = str(entry.get("location") or "").strip()
+        note = str(entry.get("note") or "").strip()
+        token_hash = _normalize_photoframe_token_hash(entry.get("token_hash"))
+        token_hint = _sanitize_photoframe_text(entry.get("token_hint"), 16)
+        created_at = _sanitize_photoframe_text(entry.get("created_at"), 40)
+
+        if location:
+            item["location"] = location
+        if note:
+            item["note"] = note
+        if token_hash:
+            item["token_hash"] = token_hash
+        if token_hint:
+            item["token_hint"] = token_hint
+        if created_at:
+            item["created_at"] = created_at
+
+        frames.append(item)
+    return json.dumps({"frames": frames}, ensure_ascii=False)
 
 
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
@@ -7055,6 +7126,66 @@ def api_photoframes_status():
             "source": source,
             "config_path": str(PHOTOFRAME_FRAMES_PATH),
             "timeout_sec": PHOTOFRAME_STATUS_TIMEOUT_SEC,
+        }
+    )
+
+
+@app.route("/api/photoframes", methods=["POST"])
+@login_required
+def api_photoframes_create():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    name = _sanitize_photoframe_text(body.get("name"), 80)
+    base_url = str(body.get("base_url") or body.get("url") or body.get("host") or "").strip()
+    info_url = str(body.get("info_url") or body.get("status_url") or "").strip()
+    location = _sanitize_photoframe_text(body.get("location"), 80)
+    note = _sanitize_photoframe_text(body.get("note"), 240)
+
+    if not name:
+        return jsonify({"ok": False, "error": "Navn mangler"}), 400
+    if (not base_url) and (not info_url):
+        return jsonify({"ok": False, "error": "URL mangler"}), 400
+
+    candidate = _build_photoframe_entry(
+        {
+            "name": name,
+            "base_url": base_url,
+            "info_url": info_url,
+            "location": location,
+            "note": note,
+        },
+        0,
+    )
+    if not candidate:
+        return jsonify({"ok": False, "error": "Ugyldig URL"}), 400
+
+    entries, _ = _load_photoframe_entries()
+    candidate_info = str(candidate.get("info_url") or "").strip().lower()
+    for it in entries:
+        info_url_existing = str(it.get("info_url") or "").strip().lower()
+        if info_url_existing and info_url_existing == candidate_info:
+            return jsonify({"ok": False, "error": "Fotoramme findes allerede"}), 409
+
+    token = secrets.token_urlsafe(24)
+    candidate["token_hash"] = _share_token_digest(token)
+    candidate["token_hint"] = token[-4:]
+    candidate["created_at"] = now_iso()
+    entries.append(candidate)
+
+    _set_setting("photoframe_frames", _photoframe_entries_to_setting_payload(entries))
+
+    server_url = request.url_root.rstrip("/")
+    feed_url = f"{server_url}/api/frame/{token}/feed"
+    return jsonify(
+        {
+            "ok": True,
+            "item": candidate,
+            "token": token,
+            "server_url": server_url,
+            "feed_url": feed_url,
+            "source": "setting",
         }
     )
 

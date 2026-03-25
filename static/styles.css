@@ -1639,6 +1639,12 @@ body.view-mapper .mapper-header-actions {
   gap: 10px;
   flex-wrap: wrap;
 }
+.photoframe-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .photoframe-grid {
   display: grid;
   gap: 12px;
@@ -2300,6 +2306,9 @@ body.view-settings .content-header,
 body.view-settings #statusBar,
 body.view-settings #emptyState,
 body.view-settings .gallery-grid { display: none !important; }
+
+/* Photoframe uses its own content header/panel, so hide the global topbar */
+body.view-photoframe .topbar { display: none !important; }
 
 body.view-timeline .topbar {
   border: none;
