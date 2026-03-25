@@ -66,6 +66,16 @@ try:
 except Exception:
     PHOTOFRAME_STATUS_TIMEOUT_SEC = 2.5
 PHOTOFRAME_STATUS_TIMEOUT_SEC = max(0.5, min(8.0, PHOTOFRAME_STATUS_TIMEOUT_SEC))
+try:
+    PHOTOFRAME_ONLINE_WINDOW_SEC = int(os.environ.get("PHOTOFRAME_ONLINE_WINDOW_SEC", "180") or 180)
+except Exception:
+    PHOTOFRAME_ONLINE_WINDOW_SEC = 180
+PHOTOFRAME_ONLINE_WINDOW_SEC = max(30, min(3600, PHOTOFRAME_ONLINE_WINDOW_SEC))
+try:
+    PHOTOFRAME_FEED_MAX_IMAGES = int(os.environ.get("PHOTOFRAME_FEED_MAX_IMAGES", "1200") or 1200)
+except Exception:
+    PHOTOFRAME_FEED_MAX_IMAGES = 1200
+PHOTOFRAME_FEED_MAX_IMAGES = max(10, min(5000, PHOTOFRAME_FEED_MAX_IMAGES))
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -2832,6 +2842,8 @@ def enforce_login_for_app():
         "api_share_tus_file",
         "api_share_tus_file_override",
         "api_share_delete",
+        "api_frame_feed",
+        "api_frame_viewable",
     }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
@@ -3870,12 +3882,20 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         rec_id = _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{idx + 1}"
         token_hint = _sanitize_photoframe_text(it.get("token_hint") or it.get("token_last4"), 16)
         created_at = _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso()
+        last_seen_at = _sanitize_photoframe_text(it.get("last_seen_at"), 40)
+        last_ip = _sanitize_photoframe_text(it.get("last_ip"), 120)
+        device_name = _sanitize_photoframe_text(it.get("device_name"), 80)
+        last_user_agent = _sanitize_photoframe_text(it.get("last_user_agent"), 180)
         out.append(
             {
                 "id": rec_id,
                 "token_hash": token_hash,
                 "token_hint": token_hint,
                 "created_at": created_at,
+                "last_seen_at": last_seen_at,
+                "last_ip": last_ip,
+                "device_name": device_name,
+                "last_user_agent": last_user_agent,
             }
         )
     return out
@@ -3895,12 +3915,39 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "token_hash": token_hash,
                 "token_hint": _sanitize_photoframe_text(it.get("token_hint"), 16),
                 "created_at": _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso(),
+                "last_seen_at": _sanitize_photoframe_text(it.get("last_seen_at"), 40),
+                "last_ip": _sanitize_photoframe_text(it.get("last_ip"), 120),
+                "device_name": _sanitize_photoframe_text(it.get("device_name"), 80),
+                "last_user_agent": _sanitize_photoframe_text(it.get("last_user_agent"), 180),
             }
         )
 
     if len(clean) > 500:
         clean = clean[-500:]
     _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
+
+
+def _photoframe_token_lookup(token_plain: str) -> tuple[list[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
+    token_hash = _share_token_digest(token_plain)
+    if not token_hash:
+        return ([], -1, None)
+    records = _load_photoframe_token_records()
+    for idx, rec in enumerate(records):
+        if str(rec.get("token_hash") or "").strip().lower() == token_hash:
+            return (records, idx, rec)
+    return (records, -1, None)
+
+
+def _parse_iso_to_epoch(value: Any) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return float(datetime.fromisoformat(raw).timestamp())
+    except Exception:
+        return 0.0
 
 
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
@@ -7174,17 +7221,57 @@ def api_health():
 @app.route("/api/photoframes/status", methods=["GET"])
 @login_required
 def api_photoframes_status():
-    entries, source = _load_photoframe_entries()
     checked_at = now_iso()
-    items = [_probe_photoframe_status(entry, checked_at) for entry in entries]
+    now_ts = time.time()
+    records = _load_photoframe_token_records()
+    records_sorted = sorted(
+        records,
+        key=lambda r: str(r.get("created_at") or ""),
+    )
+    items: list[Dict[str, Any]] = []
+    for idx, rec in enumerate(records_sorted, start=1):
+        token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
+        last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
+        seen_ts = _parse_iso_to_epoch(last_seen_at)
+        online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
+        device_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
+        name = device_name or (f"Fotoramme {idx}")
+        error = ""
+        if not last_seen_at:
+            error = "Ingen forbindelse endnu"
+        elif not online:
+            error = "Offline"
+
+        items.append(
+            {
+                "id": str(rec.get("id") or f"pf-token-{idx}"),
+                "name": name,
+                "base_url": "",
+                "info_url": "",
+                "location": "",
+                "note": "",
+                "online": online,
+                "http_status": 200 if online else None,
+                "latency_ms": None,
+                "error": error,
+                "ip": _sanitize_photoframe_text(rec.get("last_ip"), 120),
+                "feed_url": "",
+                "setup_complete": None,
+                "checked_at": checked_at,
+                "token_hint": token_hint,
+                "last_seen_at": last_seen_at,
+                "created_at": _sanitize_photoframe_text(rec.get("created_at"), 40),
+            }
+        )
+
     return jsonify(
         {
             "ok": True,
             "items": items,
             "count": len(items),
             "checked_at": checked_at,
-            "source": source,
-            "config_path": str(PHOTOFRAME_FRAMES_PATH),
+            "source": "tokens",
+            "config_path": "settings:photoframe_tokens",
             "timeout_sec": PHOTOFRAME_STATUS_TIMEOUT_SEC,
         }
     )
@@ -7220,6 +7307,114 @@ def api_photoframes_create():
             "created_at": created_at,
         }
     )
+
+
+@app.route("/api/frame/<token>/feed", methods=["GET"])
+def api_frame_feed(token: str):
+    records, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Invalid token"}), 404
+
+    now = now_iso()
+    records[rec_idx]["last_seen_at"] = now
+    records[rec_idx]["last_ip"] = _request_client_ip()
+    records[rec_idx]["last_user_agent"] = _sanitize_photoframe_text(request.headers.get("User-Agent"), 180)
+    frame_name = _sanitize_photoframe_text(
+        request.headers.get("X-Photoframe-Name") or request.args.get("name"),
+        80,
+    )
+    if frame_name:
+        records[rec_idx]["device_name"] = frame_name
+    _save_photoframe_token_records(records)
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (PHOTOFRAME_FEED_MAX_IMAGES,),
+        ).fetchall()
+
+    req_parsed = urlparse(str(request.url or ""))
+    request_base = f"{req_parsed.scheme}://{req_parsed.netloc}".rstrip("/")
+    if not request_base or "://" not in request_base:
+        request_base = request.url_root.rstrip("/")
+
+    images: list[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            photo_id = int(row["id"])
+        except Exception:
+            continue
+        updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
+        images.append(
+            {
+                "id": str(photo_id),
+                "url": f"{request_base}{url_for('api_frame_viewable', token=token, photo_id=photo_id, _external=False)}",
+                "updated_at": updated_at or now,
+            }
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "images": images,
+            "count": len(images),
+            "generated_at": now,
+        }
+    )
+
+
+@app.route("/api/frame/<token>/view/<int:photo_id>", methods=["GET"])
+def api_frame_viewable(token: str, photo_id: int):
+    _, rec_idx, _ = _photoframe_token_lookup(token)
+    if rec_idx < 0:
+        return ("Forbidden", 403)
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return ("Not found", 404)
+
+    safe_rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    if not safe_rel:
+        return ("Not found", 404)
+    src = _disk_path_from_rel_path(safe_rel)
+    if not src.exists():
+        cand = CONVERT_DIR / safe_rel
+        if cand.exists():
+            return send_from_directory(CONVERT_DIR, safe_rel)
+        return ("Not found", 404)
+
+    view_path = ensure_viewable_copy(src, safe_rel)
+    try:
+        vp = str(view_path)
+        if vp.startswith(str(CONVERT_DIR)):
+            rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
+            resp = send_from_directory(CONVERT_DIR, rel_conv)
+            try:
+                resp.headers["Cache-Control"] = "public, max-age=86400"
+            except Exception:
+                pass
+            return resp
+        if safe_rel.startswith("uploads/"):
+            resp = send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
+            try:
+                resp.headers["Cache-Control"] = "public, max-age=86400"
+            except Exception:
+                pass
+            return resp
+        resp = send_from_directory(PHOTO_DIR, safe_rel)
+        try:
+            resp.headers["Cache-Control"] = "public, max-age=86400"
+        except Exception:
+            pass
+        return resp
+    except Exception as e:
+        return (str(e), 500)
 
 
 

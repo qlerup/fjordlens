@@ -554,13 +554,15 @@ const I18N = {
     photoframe_loading: 'Tjekker fotorammer...',
     photoframe_refresh: 'Opdater',
     photoframe_empty_title: 'Ingen fotorammer konfigureret endnu.',
-    photoframe_empty_sub: 'Tilføj fotorammer via PHOTOFRAME_FRAMES eller filen {path}.',
+    photoframe_empty_sub: 'Generer en token med \"Opret fotoramme\", indsæt den på rammen, og vent på første forbindelse.',
     photoframe_status_online: 'Online',
     photoframe_status_offline: 'Offline',
     photoframe_status_unknown: 'Ukendt',
     photoframe_last_checked: 'Sidst tjekket',
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
+    photoframe_card_token: 'Token',
+    photoframe_card_last_seen: 'Sidst online',
     photoframe_card_setup: 'Opsætning',
     photoframe_setup_ready: 'Klar',
     photoframe_setup_pending: 'Mangler setup',
@@ -569,6 +571,7 @@ const I18N = {
     photoframe_source_setting: 'Kilde: app-indstilling',
     photoframe_source_env: 'Kilde: miljøvariabel',
     photoframe_source_file: 'Kilde: konfig-fil',
+    photoframe_source_tokens: 'Kilde: tokens',
     photoframe_source_none: 'Kilde: ingen',
     photoframe_create_btn: 'Opret fotoramme',
     photoframe_create_title: 'Opret fotoramme',
@@ -1042,13 +1045,15 @@ const I18N = {
     photoframe_loading: 'Checking photo frames...',
     photoframe_refresh: 'Refresh',
     photoframe_empty_title: 'No photo frames configured yet.',
-    photoframe_empty_sub: 'Add frames via PHOTOFRAME_FRAMES or the file {path}.',
+    photoframe_empty_sub: 'Generate a token with \"Create frame\", paste it on the frame, and wait for first connection.',
     photoframe_status_online: 'Online',
     photoframe_status_offline: 'Offline',
     photoframe_status_unknown: 'Unknown',
     photoframe_last_checked: 'Last checked',
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
+    photoframe_card_token: 'Token',
+    photoframe_card_last_seen: 'Last online',
     photoframe_card_setup: 'Setup',
     photoframe_setup_ready: 'Ready',
     photoframe_setup_pending: 'Setup needed',
@@ -1057,6 +1062,7 @@ const I18N = {
     photoframe_source_setting: 'Source: app setting',
     photoframe_source_env: 'Source: environment variable',
     photoframe_source_file: 'Source: config file',
+    photoframe_source_tokens: 'Source: tokens',
     photoframe_source_none: 'Source: none',
     photoframe_create_btn: 'Create frame',
     photoframe_create_title: 'Create photo frame',
@@ -1943,6 +1949,7 @@ function photoframeSourceLabel(source) {
   if (source === 'setting') return tr('photoframe_source_setting');
   if (source === 'env') return tr('photoframe_source_env');
   if (source === 'file') return tr('photoframe_source_file');
+  if (source === 'tokens') return tr('photoframe_source_tokens');
   return tr('photoframe_source_none');
 }
 
@@ -1958,20 +1965,16 @@ function renderPhotoframePanel() {
     const online = !!item.online;
     const statusLabel = online ? tr('photoframe_status_online') : tr('photoframe_status_offline');
     const statusClass = online ? 'online' : 'offline';
-    const setupComplete = (typeof item.setup_complete === 'boolean') ? item.setup_complete : null;
-    const setupLabel = (setupComplete === true)
-      ? tr('photoframe_setup_ready')
-      : (setupComplete === false ? tr('photoframe_setup_pending') : '-');
-    const latency = Number(item.latency_ms);
-    const latencyText = Number.isFinite(latency) ? `${Math.max(0, Math.round(latency))} ms` : '';
     const ipText = String(item.ip || '').trim() || '-';
-    const endpointText = String(item.info_url || item.base_url || '').trim() || '-';
-    const feedText = String(item.feed_url || '').trim() || '-';
+    const tokenHint = String(item.token_hint || '').trim();
+    const tokenText = tokenHint ? `***${tokenHint}` : '-';
     const noteText = String(item.note || '').trim();
     const locationText = String(item.location || '').trim();
     const errText = String(item.error || '').trim();
     const checkedItemText = String(item.checked_at || state.photoframeCheckedAt || '').trim();
     const checkedLabel = checkedItemText ? fmtDate(checkedItemText) : checkedText;
+    const lastSeenRaw = String(item.last_seen_at || '').trim();
+    const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
     return `
       <article class="photoframe-card ${online ? 'is-online' : 'is-offline'}">
         <div class="photoframe-card-head">
@@ -1983,12 +1986,10 @@ function renderPhotoframePanel() {
         </div>
         ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
         <div class="photoframe-meta">
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_endpoint'))}</span><strong title="${escapeHtml(endpointText)}">${escapeHtml(endpointText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong>${escapeHtml(tokenText)}</strong></div>
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_setup'))}</span><strong>${escapeHtml(setupLabel)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_feed'))}</span><strong title="${escapeHtml(feedText)}">${escapeHtml(feedText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
-          <div class="photoframe-row"><span>Ping</span><strong>${escapeHtml(latencyText || '-')}</strong></div>
           ${errText ? `<div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_error'))}</span><strong>${escapeHtml(errText)}</strong></div>` : ''}
         </div>
         ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
