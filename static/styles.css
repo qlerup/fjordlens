@@ -1733,6 +1733,11 @@ body.view-mapper .mapper-header-actions {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.photoframe-card-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
 /* Simple toggle control */
 .toggle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }

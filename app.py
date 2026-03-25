@@ -21,7 +21,7 @@ from flask_login import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 import threading
-from PIL import Image, ExifTags, ImageOps
+from PIL import Image, ExifTags, ImageOps, ImageDraw, ImageFont
 import piexif
 import exifread
 import requests
@@ -76,6 +76,7 @@ try:
 except Exception:
     PHOTOFRAME_FEED_MAX_IMAGES = 1200
 PHOTOFRAME_FEED_MAX_IMAGES = max(10, min(5000, PHOTOFRAME_FEED_MAX_IMAGES))
+PHOTOFRAME_TEXT_ONLY = (str(os.environ.get("PHOTOFRAME_TEXT_ONLY", "1") or "1").strip().lower() in {"1", "true", "yes", "on"})
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -2844,6 +2845,7 @@ def enforce_login_for_app():
         "api_share_delete",
         "api_frame_feed",
         "api_frame_viewable",
+        "api_frame_status_card",
     }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
@@ -3683,6 +3685,17 @@ def _sanitize_photoframe_text(raw: Any, max_len: int = 120) -> str:
     return value
 
 
+def _sanitize_photoframe_token_plain(raw: Any) -> str:
+    token = str(raw or "").strip()
+    if not token:
+        return ""
+    if len(token) > 256:
+        token = token[:256].strip()
+    if not re.match(r"^[A-Za-z0-9._~-]{8,256}$", token):
+        return ""
+    return token
+
+
 def _normalize_photoframe_token_hash(raw: Any) -> str:
     value = str(raw or "").strip().lower()
     if re.match(r"^[a-f0-9]{64}$", value):
@@ -3881,6 +3894,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
             continue
         rec_id = _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{idx + 1}"
         token_hint = _sanitize_photoframe_text(it.get("token_hint") or it.get("token_last4"), 16)
+        token_plain = _sanitize_photoframe_token_plain(it.get("token_plain") or it.get("token"))
         created_at = _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso()
         last_seen_at = _sanitize_photoframe_text(it.get("last_seen_at"), 40)
         last_ip = _sanitize_photoframe_text(it.get("last_ip"), 120)
@@ -3891,6 +3905,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "id": rec_id,
                 "token_hash": token_hash,
                 "token_hint": token_hint,
+                "token_plain": token_plain,
                 "created_at": created_at,
                 "last_seen_at": last_seen_at,
                 "last_ip": last_ip,
@@ -3914,6 +3929,7 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "id": _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{len(clean) + 1}",
                 "token_hash": token_hash,
                 "token_hint": _sanitize_photoframe_text(it.get("token_hint"), 16),
+                "token_plain": _sanitize_photoframe_token_plain(it.get("token_plain") or it.get("token")),
                 "created_at": _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso(),
                 "last_seen_at": _sanitize_photoframe_text(it.get("last_seen_at"), 40),
                 "last_ip": _sanitize_photoframe_text(it.get("last_ip"), 120),
@@ -7231,6 +7247,7 @@ def api_photoframes_status():
     items: list[Dict[str, Any]] = []
     for idx, rec in enumerate(records_sorted, start=1):
         token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
+        token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
         last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
         seen_ts = _parse_iso_to_epoch(last_seen_at)
         online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
@@ -7259,6 +7276,7 @@ def api_photoframes_status():
                 "setup_complete": None,
                 "checked_at": checked_at,
                 "token_hint": token_hint,
+                "token_available": bool(token_plain),
                 "last_seen_at": last_seen_at,
                 "created_at": _sanitize_photoframe_text(rec.get("created_at"), 40),
             }
@@ -7291,6 +7309,7 @@ def api_photoframes_create():
             "id": f"pf-token-{int(time.time())}-{secrets.token_hex(3)}",
             "token_hash": _share_token_digest(token),
             "token_hint": token[-4:],
+            "token_plain": token,
             "created_at": created_at,
         }
     )
@@ -7307,6 +7326,105 @@ def api_photoframes_create():
             "created_at": created_at,
         }
     )
+
+
+@app.route("/api/photoframes/<token_id>/token", methods=["GET"])
+@login_required
+def api_photoframes_get_token(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    for rec in records:
+        rec_id = _sanitize_photoframe_text(rec.get("id"), 64)
+        if rec_id != target_id:
+            continue
+        token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
+        if not token_plain:
+            return jsonify({"ok": False, "error": "Token kan ikke vises for denne post. Opret evt. en ny token."}), 404
+        return jsonify(
+            {
+                "ok": True,
+                "id": rec_id,
+                "token": token_plain,
+                "token_hint": _sanitize_photoframe_text(rec.get("token_hint"), 16),
+                "name": _sanitize_photoframe_text(rec.get("device_name"), 80),
+            }
+        )
+
+    return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+
+@app.route("/api/photoframes/<token_id>", methods=["DELETE"])
+@login_required
+def api_photoframes_delete(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    kept = [r for r in records if _sanitize_photoframe_text(r.get("id"), 64) != target_id]
+    if len(kept) == len(records):
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    _save_photoframe_token_records(kept)
+    return jsonify({"ok": True, "deleted_id": target_id, "count": len(kept)})
+
+
+def _render_photoframe_status_image(frame_name: str, token_hint: str, generated_at: str) -> io.BytesIO:
+    width, height = 1280, 720
+    img = Image.new("RGB", (width, height), (8, 16, 32))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 56)
+        body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
+        small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 26)
+    except Exception:
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+
+    draw.rectangle([(0, 0), (width, 96)], fill=(18, 34, 62))
+    draw.text((48, 26), "FjordLens connection OK", fill=(240, 246, 255), font=body_font)
+    draw.text((48, 150), "Photoframe is connected", fill=(245, 250, 255), font=title_font)
+    draw.text((48, 290), f"Frame: {frame_name or 'Unknown'}", fill=(200, 220, 255), font=body_font)
+    draw.text((48, 350), f"Token: ***{token_hint or '----'}", fill=(200, 220, 255), font=body_font)
+    draw.text((48, 410), f"Server time: {generated_at}", fill=(200, 220, 255), font=body_font)
+    draw.text((48, 650), "This test screen is served by FjordLens.", fill=(160, 185, 230), font=small_font)
+
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=90, optimize=True)
+    out.seek(0)
+    return out
+
+
+@app.route("/api/frame/<token>/status-card.jpg", methods=["GET"])
+def api_frame_status_card(token: str):
+    _, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return ("Forbidden", 403)
+
+    frame_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
+    if not frame_name:
+        frame_name = _sanitize_photoframe_text(request.args.get("name"), 80)
+    token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
+    generated_at = now_iso()
+
+    payload = _render_photoframe_status_image(frame_name, token_hint, generated_at)
+    resp = send_file(payload, mimetype="image/jpeg")
+    try:
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    except Exception:
+        pass
+    return resp
 
 
 @app.route("/api/frame/<token>/feed", methods=["GET"])
@@ -7327,6 +7445,30 @@ def api_frame_feed(token: str):
         records[rec_idx]["device_name"] = frame_name
     _save_photoframe_token_records(records)
 
+    req_parsed = urlparse(str(request.url or ""))
+    request_base = f"{req_parsed.scheme}://{req_parsed.netloc}".rstrip("/")
+    if not request_base or "://" not in request_base:
+        request_base = request.url_root.rstrip("/")
+
+    if PHOTOFRAME_TEXT_ONLY:
+        status_url = f"{request_base}{url_for('api_frame_status_card', token=token, _external=False)}?t={int(time.time())}"
+        return jsonify(
+            {
+                "ok": True,
+                "images": [
+                    {
+                        "id": "connection-status",
+                        "url": status_url,
+                        "updated_at": now,
+                    }
+                ],
+                "count": 1,
+                "generated_at": now,
+                "mode": "text-only",
+                "message": "FjordLens connection OK",
+            }
+        )
+
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
@@ -7337,11 +7479,6 @@ def api_frame_feed(token: str):
             """,
             (PHOTOFRAME_FEED_MAX_IMAGES,),
         ).fetchall()
-
-    req_parsed = urlparse(str(request.url or ""))
-    request_base = f"{req_parsed.scheme}://{req_parsed.netloc}".rstrip("/")
-    if not request_base or "://" not in request_base:
-        request_base = request.url_root.rstrip("/")
 
     images: list[Dict[str, Any]] = []
     for row in rows:

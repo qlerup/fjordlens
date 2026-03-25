@@ -568,6 +568,17 @@ const I18N = {
     photoframe_setup_pending: 'Mangler setup',
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Fejl',
+    photoframe_show_token_btn: 'Vis token',
+    photoframe_delete_btn: 'Slet',
+    photoframe_delete_confirm: 'Slet token for {name}?',
+    photoframe_delete_done: 'Token slettet.',
+    photoframe_delete_failed: 'Kunne ikke slette token.',
+    photoframe_show_token_title: 'Vis token',
+    photoframe_show_token_for: 'Token for {name}',
+    photoframe_show_token_loading: 'Henter token...',
+    photoframe_show_token_unavailable: 'Token kan ikke vises for denne post.',
+    photoframe_show_token_failed: 'Kunne ikke hente token.',
+    photoframe_show_token_close: 'Luk',
     photoframe_source_setting: 'Kilde: app-indstilling',
     photoframe_source_env: 'Kilde: miljøvariabel',
     photoframe_source_file: 'Kilde: konfig-fil',
@@ -588,7 +599,7 @@ const I18N = {
     photoframe_create_submit: 'Generer token',
     photoframe_create_submit_loading: 'Genererer...',
     photoframe_create_result_title: 'Token genereret',
-    photoframe_create_token_help: 'Gem token nu. Det vises kun her.',
+    photoframe_create_token_help: 'Gem token nu. Det kan vises igen fra kortet.',
     photoframe_create_server_label: 'Server URL',
     photoframe_create_token_label: 'Device token',
     photoframe_create_feed_label: 'Feed URL',
@@ -1059,6 +1070,17 @@ const I18N = {
     photoframe_setup_pending: 'Setup needed',
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Error',
+    photoframe_show_token_btn: 'Show token',
+    photoframe_delete_btn: 'Delete',
+    photoframe_delete_confirm: 'Delete token for {name}?',
+    photoframe_delete_done: 'Token deleted.',
+    photoframe_delete_failed: 'Could not delete token.',
+    photoframe_show_token_title: 'Show token',
+    photoframe_show_token_for: 'Token for {name}',
+    photoframe_show_token_loading: 'Loading token...',
+    photoframe_show_token_unavailable: 'Token is not available for this record.',
+    photoframe_show_token_failed: 'Could not fetch token.',
+    photoframe_show_token_close: 'Close',
     photoframe_source_setting: 'Source: app setting',
     photoframe_source_env: 'Source: environment variable',
     photoframe_source_file: 'Source: config file',
@@ -1079,7 +1101,7 @@ const I18N = {
     photoframe_create_submit: 'Generate token',
     photoframe_create_submit_loading: 'Generating...',
     photoframe_create_result_title: 'Token generated',
-    photoframe_create_token_help: 'Save the token now. It is only shown here.',
+    photoframe_create_token_help: 'Save the token now. You can view it again from the frame card.',
     photoframe_create_server_label: 'Server URL',
     photoframe_create_token_label: 'Device token',
     photoframe_create_feed_label: 'Feed URL',
@@ -1965,6 +1987,8 @@ function renderPhotoframePanel() {
     const online = !!item.online;
     const statusLabel = online ? tr('photoframe_status_online') : tr('photoframe_status_offline');
     const statusClass = online ? 'online' : 'offline';
+    const frameId = String(item.id || '').trim();
+    const frameName = String(item.name || 'Photoframe').trim();
     const ipText = String(item.ip || '').trim() || '-';
     const tokenHint = String(item.token_hint || '').trim();
     const tokenText = tokenHint ? `***${tokenHint}` : '-';
@@ -1978,7 +2002,7 @@ function renderPhotoframePanel() {
     return `
       <article class="photoframe-card ${online ? 'is-online' : 'is-offline'}">
         <div class="photoframe-card-head">
-          <h3 class="photoframe-card-title">${escapeHtml(String(item.name || 'Photoframe'))}</h3>
+          <h3 class="photoframe-card-title">${escapeHtml(frameName)}</h3>
           <span class="photoframe-badge ${statusClass}">
             <span class="dot" aria-hidden="true"></span>
             ${escapeHtml(statusLabel)}
@@ -1993,6 +2017,24 @@ function renderPhotoframePanel() {
           ${errText ? `<div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_error'))}</span><strong>${escapeHtml(errText)}</strong></div>` : ''}
         </div>
         ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
+        ${canCreateFrame ? `
+          <div class="photoframe-card-actions">
+            <button
+              class="btn small"
+              type="button"
+              data-photoframe-action="show-token"
+              data-frame-id="${escapeHtml(frameId)}"
+              data-frame-name="${escapeHtml(frameName)}"
+            >${escapeHtml(tr('photoframe_show_token_btn'))}</button>
+            <button
+              class="btn small"
+              type="button"
+              data-photoframe-action="delete-token"
+              data-frame-id="${escapeHtml(frameId)}"
+              data-frame-name="${escapeHtml(frameName)}"
+            >${escapeHtml(tr('photoframe_delete_btn'))}</button>
+          </div>
+        ` : ''}
       </article>
     `;
   }).join('');
@@ -2049,6 +2091,22 @@ function renderPhotoframePanel() {
         </div>
       </div>
     </div>
+    <div id="photoframeShowTokenModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10001;">
+      <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h3 id="photoframeShowTokenTitle" style="margin:0;">${escapeHtml(tr('photoframe_show_token_title'))}</h3>
+          <button id="photoframeShowTokenCloseBtn" class="btn">${escapeHtml(tr('photoframe_show_token_close'))}</button>
+        </div>
+        <div class="form-row" style="margin-bottom:0;">
+          <label for="photoframeShowTokenInput">${escapeHtml(tr('photoframe_create_token_label'))}</label>
+          <div class="toolbar" style="gap:8px;align-items:stretch;">
+            <input id="photoframeShowTokenInput" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
+            <button id="photoframeShowTokenCopyBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
+          </div>
+        </div>
+        <div id="photoframeShowTokenError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
+      </div>
+    </div>
   `;
 
   const refreshBtn = document.getElementById('photoframeRefreshBtn');
@@ -2067,6 +2125,12 @@ function renderPhotoframePanel() {
   const resultWrap = document.getElementById('photoframeCreateResultWrap');
   const tokenInput = document.getElementById('photoframeCreateToken');
   const copyTokenBtn = document.getElementById('photoframeCreateCopyTokenBtn');
+  const showTokenModal = document.getElementById('photoframeShowTokenModal');
+  const showTokenTitle = document.getElementById('photoframeShowTokenTitle');
+  const showTokenCloseBtn = document.getElementById('photoframeShowTokenCloseBtn');
+  const showTokenInput = document.getElementById('photoframeShowTokenInput');
+  const showTokenCopyBtn = document.getElementById('photoframeShowTokenCopyBtn');
+  const showTokenErrorEl = document.getElementById('photoframeShowTokenError');
 
   let shouldRefreshOnClose = false;
 
@@ -2099,6 +2163,59 @@ function renderPhotoframePanel() {
       showStatus(tr('photoframe_create_copy_ok'), 'ok');
     } catch (_) {
       showStatus(tr('photoframe_create_copy_failed'), 'err');
+    }
+  };
+
+  const showTokenError = (text) => {
+    if (!showTokenErrorEl) return;
+    const msg = String(text || '').trim();
+    if (!msg) {
+      showTokenErrorEl.textContent = '';
+      showTokenErrorEl.classList.add('hidden');
+      return;
+    }
+    showTokenErrorEl.textContent = msg;
+    showTokenErrorEl.classList.remove('hidden');
+  };
+
+  const closeShowTokenModal = () => {
+    if (!showTokenModal) return;
+    showTokenModal.classList.add('hidden');
+  };
+
+  const openShowTokenModal = async (frameId, frameName) => {
+    if (!showTokenModal) return;
+    const id = String(frameId || '').trim();
+    if (!id) return;
+    const name = String(frameName || '').trim() || 'Photoframe';
+    if (showTokenTitle) {
+      showTokenTitle.textContent = tr('photoframe_show_token_for').replace('{name}', name);
+    }
+    if (showTokenInput) showTokenInput.value = tr('photoframe_show_token_loading');
+    if (showTokenCopyBtn) showTokenCopyBtn.disabled = true;
+    showTokenError('');
+    showTokenModal.classList.remove('hidden');
+
+    try {
+      const res = await fetch(`/api/photoframes/${encodeURIComponent(id)}/token`);
+      let data = null;
+      try {
+        const ct = String(res.headers.get('content-type') || '');
+        data = ct.includes('application/json') ? await res.json() : null;
+      } catch (_) {
+        data = null;
+      }
+      if (!res.ok || !data || !data.ok) {
+        const message = (data && data.error) ? String(data.error) : tr('photoframe_show_token_failed');
+        throw new Error(message);
+      }
+      const tokenValue = String(data.token || '').trim();
+      if (!tokenValue) throw new Error(tr('photoframe_show_token_unavailable'));
+      if (showTokenInput) showTokenInput.value = tokenValue;
+      if (showTokenCopyBtn) showTokenCopyBtn.disabled = false;
+    } catch (e) {
+      if (showTokenInput) showTokenInput.value = '';
+      showTokenError(String((e && e.message) || tr('photoframe_show_token_failed')));
     }
   };
 
@@ -2139,6 +2256,59 @@ function renderPhotoframePanel() {
     });
   }
   if (copyTokenBtn) copyTokenBtn.addEventListener('click', async () => copyText(tokenInput ? tokenInput.value : ''));
+  if (showTokenCloseBtn) showTokenCloseBtn.addEventListener('click', closeShowTokenModal);
+  if (showTokenModal) {
+    showTokenModal.addEventListener('click', (e) => {
+      if (e.target === showTokenModal) closeShowTokenModal();
+    });
+    showTokenModal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeShowTokenModal();
+      }
+    });
+  }
+  if (showTokenCopyBtn) showTokenCopyBtn.addEventListener('click', async () => copyText(showTokenInput ? showTokenInput.value : ''));
+
+  document.querySelectorAll('[data-photoframe-action="show-token"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || '').trim();
+      await openShowTokenModal(frameId, frameName);
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="delete-token"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || 'Photoframe').trim();
+      if (!frameId) return;
+      const question = tr('photoframe_delete_confirm').replace('{name}', frameName || 'Photoframe');
+      if (!window.confirm(question)) return;
+
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/photoframes/${encodeURIComponent(frameId)}`, { method: 'DELETE' });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_delete_failed');
+          throw new Error(message);
+        }
+        showStatus(tr('photoframe_delete_done'), 'ok');
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showStatus(String((e && e.message) || tr('photoframe_delete_failed')), 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
   if (createSubmitBtn) {
     createSubmitBtn.addEventListener('click', async () => {
       showCreateError('');
