@@ -3843,6 +3843,66 @@ def _photoframe_entries_to_setting_payload(entries: list[Dict[str, Any]]) -> str
     return json.dumps({"frames": frames}, ensure_ascii=False)
 
 
+def _load_photoframe_token_records() -> list[Dict[str, Any]]:
+    raw = str(_get_setting("photoframe_tokens", "") or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+
+    source_items: list[Any] = []
+    if isinstance(parsed, list):
+        source_items = parsed
+    elif isinstance(parsed, dict):
+        tokens = parsed.get("tokens")
+        if isinstance(tokens, list):
+            source_items = tokens
+
+    out: list[Dict[str, Any]] = []
+    for idx, it in enumerate(source_items):
+        if not isinstance(it, dict):
+            continue
+        token_hash = _normalize_photoframe_token_hash(it.get("token_hash"))
+        if not token_hash:
+            continue
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{idx + 1}"
+        token_hint = _sanitize_photoframe_text(it.get("token_hint") or it.get("token_last4"), 16)
+        created_at = _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso()
+        out.append(
+            {
+                "id": rec_id,
+                "token_hash": token_hash,
+                "token_hint": token_hint,
+                "created_at": created_at,
+            }
+        )
+    return out
+
+
+def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
+    clean: list[Dict[str, Any]] = []
+    seen_hashes: set[str] = set()
+    for it in records:
+        token_hash = _normalize_photoframe_token_hash(it.get("token_hash"))
+        if (not token_hash) or (token_hash in seen_hashes):
+            continue
+        seen_hashes.add(token_hash)
+        clean.append(
+            {
+                "id": _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{len(clean) + 1}",
+                "token_hash": token_hash,
+                "token_hint": _sanitize_photoframe_text(it.get("token_hint"), 16),
+                "created_at": _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso(),
+            }
+        )
+
+    if len(clean) > 500:
+        clean = clean[-500:]
+    _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
+
+
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
     info_url = str(entry.get("info_url") or "").strip()
     start = time.perf_counter()
@@ -7136,56 +7196,28 @@ def api_photoframes_create():
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
 
-    body = request.get_json(silent=True) or {}
-    name = _sanitize_photoframe_text(body.get("name"), 80)
-    base_url = str(body.get("base_url") or body.get("url") or body.get("host") or "").strip()
-    info_url = str(body.get("info_url") or body.get("status_url") or "").strip()
-    location = _sanitize_photoframe_text(body.get("location"), 80)
-    note = _sanitize_photoframe_text(body.get("note"), 240)
-
-    if not name:
-        return jsonify({"ok": False, "error": "Navn mangler"}), 400
-    if (not base_url) and (not info_url):
-        return jsonify({"ok": False, "error": "URL mangler"}), 400
-
-    candidate = _build_photoframe_entry(
-        {
-            "name": name,
-            "base_url": base_url,
-            "info_url": info_url,
-            "location": location,
-            "note": note,
-        },
-        0,
-    )
-    if not candidate:
-        return jsonify({"ok": False, "error": "Ugyldig URL"}), 400
-
-    entries, _ = _load_photoframe_entries()
-    candidate_info = str(candidate.get("info_url") or "").strip().lower()
-    for it in entries:
-        info_url_existing = str(it.get("info_url") or "").strip().lower()
-        if info_url_existing and info_url_existing == candidate_info:
-            return jsonify({"ok": False, "error": "Fotoramme findes allerede"}), 409
-
     token = secrets.token_urlsafe(24)
-    candidate["token_hash"] = _share_token_digest(token)
-    candidate["token_hint"] = token[-4:]
-    candidate["created_at"] = now_iso()
-    entries.append(candidate)
-
-    _set_setting("photoframe_frames", _photoframe_entries_to_setting_payload(entries))
+    created_at = now_iso()
+    records = _load_photoframe_token_records()
+    records.append(
+        {
+            "id": f"pf-token-{int(time.time())}-{secrets.token_hex(3)}",
+            "token_hash": _share_token_digest(token),
+            "token_hint": token[-4:],
+            "created_at": created_at,
+        }
+    )
+    _save_photoframe_token_records(records)
 
     server_url = request.url_root.rstrip("/")
     feed_url = f"{server_url}/api/frame/{token}/feed"
     return jsonify(
         {
             "ok": True,
-            "item": candidate,
             "token": token,
             "server_url": server_url,
             "feed_url": feed_url,
-            "source": "setting",
+            "created_at": created_at,
         }
     )
 

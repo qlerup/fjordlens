@@ -572,6 +572,7 @@ const I18N = {
     photoframe_source_none: 'Kilde: ingen',
     photoframe_create_btn: 'Opret fotoramme',
     photoframe_create_title: 'Opret fotoramme',
+    photoframe_create_intro: 'Generer et nyt token/link til en fotoramme. Det er tokenet, du indsætter på rammen.',
     photoframe_create_name_label: 'Navn',
     photoframe_create_name_placeholder: 'Fx Stue-ramme',
     photoframe_create_url_label: 'Ramme URL',
@@ -584,6 +585,7 @@ const I18N = {
     photoframe_create_submit: 'Generer token',
     photoframe_create_submit_loading: 'Genererer...',
     photoframe_create_result_title: 'Token genereret',
+    photoframe_create_token_help: 'Gem token nu. Det vises kun her.',
     photoframe_create_server_label: 'Server URL',
     photoframe_create_token_label: 'Device token',
     photoframe_create_feed_label: 'Feed URL',
@@ -1058,6 +1060,7 @@ const I18N = {
     photoframe_source_none: 'Source: none',
     photoframe_create_btn: 'Create frame',
     photoframe_create_title: 'Create photo frame',
+    photoframe_create_intro: 'Generate a new token/link for a photo frame. This is the token you paste on the frame.',
     photoframe_create_name_label: 'Name',
     photoframe_create_name_placeholder: 'Example: Living room frame',
     photoframe_create_url_label: 'Frame URL',
@@ -1070,6 +1073,7 @@ const I18N = {
     photoframe_create_submit: 'Generate token',
     photoframe_create_submit_loading: 'Generating...',
     photoframe_create_result_title: 'Token generated',
+    photoframe_create_token_help: 'Save the token now. It is only shown here.',
     photoframe_create_server_label: 'Server URL',
     photoframe_create_token_label: 'Device token',
     photoframe_create_feed_label: 'Feed URL',
@@ -2025,22 +2029,7 @@ function renderPhotoframePanel() {
           <h3 style="margin:0;">${escapeHtml(tr('photoframe_create_title'))}</h3>
           <button id="photoframeCreateCloseBtn" class="btn">${escapeHtml(tr('scan_modal_close'))}</button>
         </div>
-        <div class="form-row">
-          <label for="photoframeCreateName">${escapeHtml(tr('photoframe_create_name_label'))}</label>
-          <input id="photoframeCreateName" class="mapper-input" type="text" maxlength="80" placeholder="${escapeHtml(tr('photoframe_create_name_placeholder'))}">
-        </div>
-        <div class="form-row">
-          <label for="photoframeCreateUrl">${escapeHtml(tr('photoframe_create_url_label'))}</label>
-          <input id="photoframeCreateUrl" class="mapper-input" type="text" maxlength="300" placeholder="${escapeHtml(tr('photoframe_create_url_placeholder'))}">
-        </div>
-        <div class="form-row">
-          <label for="photoframeCreateLocation">${escapeHtml(tr('photoframe_create_location_label'))}</label>
-          <input id="photoframeCreateLocation" class="mapper-input" type="text" maxlength="80" placeholder="${escapeHtml(tr('photoframe_create_location_placeholder'))}">
-        </div>
-        <div class="form-row">
-          <label for="photoframeCreateNote">${escapeHtml(tr('photoframe_create_note_label'))}</label>
-          <input id="photoframeCreateNote" class="mapper-input" type="text" maxlength="240" placeholder="${escapeHtml(tr('photoframe_create_note_placeholder'))}">
-        </div>
+        <p class="mini-label" style="margin:0 0 14px;line-height:1.5;">${escapeHtml(tr('photoframe_create_intro'))}</p>
         <div class="actions" style="justify-content:flex-end;gap:8px;">
           <button id="photoframeCreateCancelBtn" class="btn">${escapeHtml(tr('photoframe_create_cancel'))}</button>
           <button id="photoframeCreateSubmitBtn" class="btn primary">${escapeHtml(tr('photoframe_create_submit'))}</button>
@@ -2048,27 +2037,14 @@ function renderPhotoframePanel() {
         <div id="photoframeCreateError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
         <div id="photoframeCreateResultWrap" class="hidden" style="margin-top:12px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2);padding:10px;">
           <div class="mini-label" style="margin-bottom:8px;font-weight:700;">${escapeHtml(tr('photoframe_create_result_title'))}</div>
-          <div class="form-row" style="margin-bottom:8px;">
-            <label for="photoframeCreateServer">${escapeHtml(tr('photoframe_create_server_label'))}</label>
-            <div class="toolbar" style="gap:8px;align-items:stretch;">
-              <input id="photoframeCreateServer" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
-              <button id="photoframeCreateCopyServerBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
-            </div>
-          </div>
-          <div class="form-row" style="margin-bottom:8px;">
+          <div class="form-row" style="margin-bottom:0;">
             <label for="photoframeCreateToken">${escapeHtml(tr('photoframe_create_token_label'))}</label>
             <div class="toolbar" style="gap:8px;align-items:stretch;">
               <input id="photoframeCreateToken" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
               <button id="photoframeCreateCopyTokenBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
             </div>
           </div>
-          <div class="form-row" style="margin-bottom:0;">
-            <label for="photoframeCreateFeed">${escapeHtml(tr('photoframe_create_feed_label'))}</label>
-            <div class="toolbar" style="gap:8px;align-items:stretch;">
-              <input id="photoframeCreateFeed" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
-              <button id="photoframeCreateCopyFeedBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
-            </div>
-          </div>
+          <div class="mini-label" style="margin-top:8px;">${escapeHtml(tr('photoframe_create_token_help'))}</div>
         </div>
       </div>
     </div>
@@ -2086,18 +2062,10 @@ function renderPhotoframePanel() {
   const createCloseBtn = document.getElementById('photoframeCreateCloseBtn');
   const createCancelBtn = document.getElementById('photoframeCreateCancelBtn');
   const createSubmitBtn = document.getElementById('photoframeCreateSubmitBtn');
-  const createNameInput = document.getElementById('photoframeCreateName');
-  const createUrlInput = document.getElementById('photoframeCreateUrl');
-  const createLocationInput = document.getElementById('photoframeCreateLocation');
-  const createNoteInput = document.getElementById('photoframeCreateNote');
   const createErrorEl = document.getElementById('photoframeCreateError');
   const resultWrap = document.getElementById('photoframeCreateResultWrap');
-  const serverInput = document.getElementById('photoframeCreateServer');
   const tokenInput = document.getElementById('photoframeCreateToken');
-  const feedInput = document.getElementById('photoframeCreateFeed');
-  const copyServerBtn = document.getElementById('photoframeCreateCopyServerBtn');
   const copyTokenBtn = document.getElementById('photoframeCreateCopyTokenBtn');
-  const copyFeedBtn = document.getElementById('photoframeCreateCopyFeedBtn');
 
   let shouldRefreshOnClose = false;
 
@@ -2138,17 +2106,11 @@ function renderPhotoframePanel() {
     shouldRefreshOnClose = false;
     showCreateError('');
     if (resultWrap) resultWrap.classList.add('hidden');
-    if (serverInput) serverInput.value = '';
     if (tokenInput) tokenInput.value = '';
-    if (feedInput) feedInput.value = '';
-    if (createNameInput) createNameInput.value = '';
-    if (createUrlInput) createUrlInput.value = '';
-    if (createLocationInput) createLocationInput.value = '';
-    if (createNoteInput) createNoteInput.value = '';
     createModal.classList.remove('hidden');
-    if (createNameInput) {
+    if (createSubmitBtn) {
       setTimeout(() => {
-        try { createNameInput.focus(); } catch {}
+        try { createSubmitBtn.focus(); } catch {}
       }, 0);
     }
   };
@@ -2175,35 +2137,9 @@ function renderPhotoframePanel() {
       }
     });
   }
-  if (copyServerBtn) copyServerBtn.addEventListener('click', async () => copyText(serverInput ? serverInput.value : ''));
   if (copyTokenBtn) copyTokenBtn.addEventListener('click', async () => copyText(tokenInput ? tokenInput.value : ''));
-  if (copyFeedBtn) copyFeedBtn.addEventListener('click', async () => copyText(feedInput ? feedInput.value : ''));
-  if (createUrlInput) {
-    createUrlInput.addEventListener('keydown', async (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        await closeCreateModal();
-      }
-    });
-  }
   if (createSubmitBtn) {
     createSubmitBtn.addEventListener('click', async () => {
-      const name = String(createNameInput ? createNameInput.value : '').trim();
-      const frameUrl = String(createUrlInput ? createUrlInput.value : '').trim();
-      const location = String(createLocationInput ? createLocationInput.value : '').trim();
-      const note = String(createNoteInput ? createNoteInput.value : '').trim();
-
-      if (!name) {
-        showCreateError(tr('photoframe_create_name_required'));
-        try { if (createNameInput) createNameInput.focus(); } catch {}
-        return;
-      }
-      if (!frameUrl) {
-        showCreateError(tr('photoframe_create_url_required'));
-        try { if (createUrlInput) createUrlInput.focus(); } catch {}
-        return;
-      }
-
       showCreateError('');
       createSubmitBtn.disabled = true;
       createSubmitBtn.classList.add('loading');
@@ -2212,12 +2148,7 @@ function renderPhotoframePanel() {
         const res = await fetch('/api/photoframes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            base_url: frameUrl,
-            location,
-            note,
-          }),
+          body: JSON.stringify({}),
         });
         let data = null;
         try {
@@ -2232,12 +2163,8 @@ function renderPhotoframePanel() {
           return;
         }
 
-        const serverUrl = String(data.server_url || '').trim();
         const tokenValue = String(data.token || '').trim();
-        const feedUrl = String(data.feed_url || '').trim();
-        if (serverInput) serverInput.value = serverUrl;
         if (tokenInput) tokenInput.value = tokenValue;
-        if (feedInput) feedInput.value = feedUrl;
         if (resultWrap) resultWrap.classList.remove('hidden');
         shouldRefreshOnClose = true;
         showStatus(tr('photoframe_create_saved_ok'), 'ok');
