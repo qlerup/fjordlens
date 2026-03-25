@@ -502,6 +502,7 @@ const I18N = {
     nav_places: '📍 Steder',
     nav_cameras: '📸 Kameraer',
     nav_folders: '🗂️ Mapper',
+    nav_photoframe: 'Photoframe',
     nav_people: '🙂 Personer',
     nav_settings: '⚙️ Indstillinger',
     profile_link: 'Profil',
@@ -527,6 +528,8 @@ const I18N = {
     view_kameraer_sub: 'Filtreret på billeder med kameradata',
     view_mapper_title: 'Mapper',
     view_mapper_sub: 'Grupperet efter kilde-mappe',
+    view_photoframe_title: 'Photoframe',
+    view_photoframe_sub: 'Startpunkt for integration mellem app og Pi OS',
     view_personer_title: 'Personer',
     view_personer_sub: '',
     view_settings_title: 'Indstillinger',
@@ -546,6 +549,8 @@ const I18N = {
     empty_no_photos: 'Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.',
     empty_no_matches: "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.",
     empty_mapper_tree: 'Ingen mapper endnu.',
+    photoframe_intro_title: 'Photoframe',
+    photoframe_intro_sub: 'Sektionen er oprettet. Næste trin er at koble den til Pi OS-funktionerne.',
     no_thumb: 'Ingen thumbnail',
     settings_title: 'Indstillinger',
     settings_sub: 'Vedligeholdelse, scan og logs',
@@ -940,6 +945,7 @@ const I18N = {
     nav_places: '📍 Places',
     nav_cameras: '📸 Cameras',
     nav_folders: '🗂️ Folders',
+    nav_photoframe: 'Photoframe',
     nav_people: '🙂 People',
     nav_settings: '⚙️ Settings',
     profile_link: 'Profile',
@@ -965,6 +971,8 @@ const I18N = {
     view_kameraer_sub: 'Filtered by available camera metadata',
     view_mapper_title: 'Folders',
     view_mapper_sub: 'Grouped by source folder',
+    view_photoframe_title: 'Photoframe',
+    view_photoframe_sub: 'Starting point for app and Pi OS integration',
     view_personer_title: 'People',
     view_personer_sub: '',
     view_settings_title: 'Settings',
@@ -984,6 +992,8 @@ const I18N = {
     empty_no_photos: 'No photos yet. Drop files to upload or scan the library.',
     empty_no_matches: "No photos match the current filters yet. Try 'Scan library'.",
     empty_mapper_tree: 'No folders yet.',
+    photoframe_intro_title: 'Photoframe',
+    photoframe_intro_sub: 'Section created. Next step is wiring it to Pi OS features.',
     no_thumb: 'No thumbnail',
     settings_title: 'Settings',
     settings_sub: 'Maintenance, scan and logs',
@@ -1374,7 +1384,7 @@ const I18N = {
   },
 };
 
-const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'personer', 'settings']);
+const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'photoframe', 'personer', 'settings']);
 
 function resolveUiLanguage(lang) {
   return UI_LANGUAGES.has(lang) ? lang : 'da';
@@ -1447,6 +1457,7 @@ function navLabels() {
     kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
     // Remove subtitle for mapper view
     mapper: [tr('view_mapper_title'), ''],
+    photoframe: [tr('view_photoframe_title'), tr('view_photoframe_sub')],
     personer: [tr('view_personer_title'), tr('view_personer_sub')],
     settings: [tr('view_settings_title'), tr('view_settings_sub')],
   };
@@ -2144,6 +2155,25 @@ function renderGrid() {
         p.classList.toggle('hidden', p.dataset.tabpanel !== activeTab);
       });
     }
+    return;
+  }
+  // Handle Photoframe view (placeholder for upcoming Pi integration)
+  if (state.view === "photoframe") {
+    if (els.searchShell) els.searchShell.style.display = '';
+    const peopleBtn = document.getElementById('peopleMatchScanBtn');
+    if (peopleBtn) peopleBtn.style.display = 'none';
+    if (els.statHiddenToggle) els.statHiddenToggle.style.display = 'none';
+    els.grid.classList.remove('timeline-wrap');
+    els.grid.classList.add('gallery-grid');
+    els.grid.innerHTML = `
+      <section class="panel" style="max-width:760px;">
+        <h2 style="margin:0 0 8px;">${escapeHtml(tr('photoframe_intro_title'))}</h2>
+        <p class="mini-label" style="margin:0;">${escapeHtml(tr('photoframe_intro_sub'))}</p>
+      </section>
+    `;
+    hideEmpty();
+    setDetail(null);
+    renderStats();
     return;
   }
   // Handle Places (Steder) view: show map with clusters
@@ -3229,6 +3259,16 @@ function nextViewer(step=1) {
 }
 
 async function loadPhotos() {
+  if (state.view === 'photoframe') {
+    state.items = [];
+    const labels = navLabels();
+    const [title, subtitle] = labels[state.view] || ["FjordLens", ""];
+    if (els.viewTitle) els.viewTitle.textContent = title;
+    if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
+    renderGrid();
+    return;
+  }
+
   const qs = new URLSearchParams({
     q: state.q,
     view: state.view,
@@ -6697,6 +6737,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
+  document.body.classList.toggle("view-photoframe", nextView === "photoframe");
   // Toggle compact Settings layout on small viewports
   try {
     const isSmall = window.matchMedia('(max-width: 760px)').matches;
@@ -6711,6 +6752,9 @@ async function setView(view, opts = {}) {
 
   if (nextView === "settings") {
     // show logs panel, do not load photos
+    renderGrid();
+  } else if (nextView === 'photoframe') {
+    state.items = [];
     renderGrid();
   } else if (nextView === 'personer') {
     state.personView = { mode: 'list', personId: null, personName: null };
@@ -6754,6 +6798,7 @@ function applyUiLanguage() {
     steder: tr('nav_places'),
     kameraer: tr('nav_cameras'),
     mapper: tr('nav_folders'),
+    photoframe: tr('nav_photoframe'),
     personer: tr('nav_people'),
     settings: tr('nav_settings'),
   };
