@@ -562,6 +562,10 @@ const I18N = {
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
     photoframe_card_token: 'Token',
+    photoframe_card_scope: 'Indhold',
+    photoframe_scope_summary_all: 'Alle billeder',
+    photoframe_scope_summary_folders: 'Mapper ({count})',
+    photoframe_scope_summary_photos: 'Billeder ({count})',
     photoframe_card_last_seen: 'Sidst online',
     photoframe_card_setup: 'Opsætning',
     photoframe_setup_ready: 'Klar',
@@ -569,6 +573,7 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Fejl',
     photoframe_show_token_btn: 'Vis token',
+    photoframe_scope_btn: 'Indhold',
     photoframe_delete_btn: 'Slet',
     photoframe_delete_confirm: 'Slet token for {name}?',
     photoframe_delete_done: 'Token slettet.',
@@ -579,6 +584,22 @@ const I18N = {
     photoframe_show_token_unavailable: 'Token kan ikke vises for denne post.',
     photoframe_show_token_failed: 'Kunne ikke hente token.',
     photoframe_show_token_close: 'Luk',
+    photoframe_scope_title: 'Vælg indhold',
+    photoframe_scope_target: 'Adgang for {name}',
+    photoframe_scope_mode_label: 'Hvad må rammen vise?',
+    photoframe_scope_mode_all: 'Alle billeder',
+    photoframe_scope_mode_folders: 'Kun valgte mapper',
+    photoframe_scope_mode_photos: 'Kun valgte billeder',
+    photoframe_scope_folders_label: 'Mapper',
+    photoframe_scope_photos_label: 'Billeder',
+    photoframe_scope_search_placeholder: 'Søg i billeder eller id',
+    photoframe_scope_search_btn: 'Søg',
+    photoframe_scope_empty_folders: 'Ingen mapper fundet.',
+    photoframe_scope_empty_photos: 'Ingen billeder fundet.',
+    photoframe_scope_save: 'Gem',
+    photoframe_scope_saved: 'Adgang gemt.',
+    photoframe_scope_save_failed: 'Kunne ikke gemme adgang.',
+    photoframe_scope_load_failed: 'Kunne ikke hente adgangsdata.',
     photoframe_source_setting: 'Kilde: app-indstilling',
     photoframe_source_env: 'Kilde: miljøvariabel',
     photoframe_source_file: 'Kilde: konfig-fil',
@@ -1064,6 +1085,10 @@ const I18N = {
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
     photoframe_card_token: 'Token',
+    photoframe_card_scope: 'Content',
+    photoframe_scope_summary_all: 'All photos',
+    photoframe_scope_summary_folders: 'Folders ({count})',
+    photoframe_scope_summary_photos: 'Photos ({count})',
     photoframe_card_last_seen: 'Last online',
     photoframe_card_setup: 'Setup',
     photoframe_setup_ready: 'Ready',
@@ -1071,6 +1096,7 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Error',
     photoframe_show_token_btn: 'Show token',
+    photoframe_scope_btn: 'Content',
     photoframe_delete_btn: 'Delete',
     photoframe_delete_confirm: 'Delete token for {name}?',
     photoframe_delete_done: 'Token deleted.',
@@ -1081,6 +1107,22 @@ const I18N = {
     photoframe_show_token_unavailable: 'Token is not available for this record.',
     photoframe_show_token_failed: 'Could not fetch token.',
     photoframe_show_token_close: 'Close',
+    photoframe_scope_title: 'Choose content',
+    photoframe_scope_target: 'Access for {name}',
+    photoframe_scope_mode_label: 'What may this frame display?',
+    photoframe_scope_mode_all: 'All photos',
+    photoframe_scope_mode_folders: 'Only selected folders',
+    photoframe_scope_mode_photos: 'Only selected photos',
+    photoframe_scope_folders_label: 'Folders',
+    photoframe_scope_photos_label: 'Photos',
+    photoframe_scope_search_placeholder: 'Search photos or id',
+    photoframe_scope_search_btn: 'Search',
+    photoframe_scope_empty_folders: 'No folders found.',
+    photoframe_scope_empty_photos: 'No photos found.',
+    photoframe_scope_save: 'Save',
+    photoframe_scope_saved: 'Access saved.',
+    photoframe_scope_save_failed: 'Could not save access.',
+    photoframe_scope_load_failed: 'Could not load access data.',
     photoframe_source_setting: 'Source: app setting',
     photoframe_source_env: 'Source: environment variable',
     photoframe_source_file: 'Source: config file',
@@ -1975,6 +2017,15 @@ function photoframeSourceLabel(source) {
   return tr('photoframe_source_none');
 }
 
+function photoframeScopeSummary(item) {
+  const mode = String(item && item.scope_mode ? item.scope_mode : 'all').trim().toLowerCase();
+  const folderCount = Number(item && item.allowed_folder_count ? item.allowed_folder_count : 0) || 0;
+  const photoCount = Number(item && item.allowed_photo_count ? item.allowed_photo_count : 0) || 0;
+  if (mode === 'folders') return tr('photoframe_scope_summary_folders').replace('{count}', String(folderCount));
+  if (mode === 'photos') return tr('photoframe_scope_summary_photos').replace('{count}', String(photoCount));
+  return tr('photoframe_scope_summary_all');
+}
+
 function renderPhotoframePanel() {
   if (!els.grid) return;
   const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
@@ -1992,6 +2043,7 @@ function renderPhotoframePanel() {
     const ipText = String(item.ip || '').trim() || '-';
     const tokenHint = String(item.token_hint || '').trim();
     const tokenText = tokenHint ? `***${tokenHint}` : '-';
+    const scopeText = photoframeScopeSummary(item);
     const noteText = String(item.note || '').trim();
     const locationText = String(item.location || '').trim();
     const errText = String(item.error || '').trim();
@@ -2011,6 +2063,7 @@ function renderPhotoframePanel() {
         ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
         <div class="photoframe-meta">
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong>${escapeHtml(tokenText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_scope'))}</span><strong>${escapeHtml(scopeText)}</strong></div>
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
           <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
@@ -2019,6 +2072,13 @@ function renderPhotoframePanel() {
         ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
         ${canCreateFrame ? `
           <div class="photoframe-card-actions">
+            <button
+              class="btn small"
+              type="button"
+              data-photoframe-action="scope"
+              data-frame-id="${escapeHtml(frameId)}"
+              data-frame-name="${escapeHtml(frameName)}"
+            >${escapeHtml(tr('photoframe_scope_btn'))}</button>
             <button
               class="btn small"
               type="button"
@@ -2107,6 +2167,40 @@ function renderPhotoframePanel() {
         <div id="photoframeShowTokenError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
       </div>
     </div>
+    <div id="photoframeScopeModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10002;">
+      <div style="width:760px;max-width:95vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;max-height:90vh;overflow:auto;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h3 style="margin:0;">${escapeHtml(tr('photoframe_scope_title'))}</h3>
+          <button id="photoframeScopeCloseBtn" class="btn">${escapeHtml(tr('scan_modal_close'))}</button>
+        </div>
+        <div id="photoframeScopeTarget" class="mini-label" style="margin-bottom:10px;"></div>
+        <div class="form-row">
+          <label for="photoframeScopeMode">${escapeHtml(tr('photoframe_scope_mode_label'))}</label>
+          <select id="photoframeScopeMode" class="select">
+            <option value="all">${escapeHtml(tr('photoframe_scope_mode_all'))}</option>
+            <option value="folders">${escapeHtml(tr('photoframe_scope_mode_folders'))}</option>
+            <option value="photos">${escapeHtml(tr('photoframe_scope_mode_photos'))}</option>
+          </select>
+        </div>
+        <div id="photoframeScopeFoldersWrap" class="hidden">
+          <div class="mini-label" style="margin-bottom:6px;">${escapeHtml(tr('photoframe_scope_folders_label'))}</div>
+          <div id="photoframeScopeFoldersList" class="photoframe-scope-list"></div>
+        </div>
+        <div id="photoframeScopePhotosWrap" class="hidden">
+          <div class="mini-label" style="margin-bottom:6px;">${escapeHtml(tr('photoframe_scope_photos_label'))}</div>
+          <div class="toolbar" style="gap:8px;align-items:stretch;margin-bottom:8px;">
+            <input id="photoframeScopePhotoSearch" class="mapper-input" type="text" placeholder="${escapeHtml(tr('photoframe_scope_search_placeholder'))}" style="min-width:0;width:100%;">
+            <button id="photoframeScopePhotoSearchBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_search_btn'))}</button>
+          </div>
+          <div id="photoframeScopePhotosList" class="photoframe-scope-list"></div>
+        </div>
+        <div id="photoframeScopeError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
+        <div class="actions" style="justify-content:flex-end;gap:8px;margin-top:12px;">
+          <button id="photoframeScopeCancelBtn" class="btn">${escapeHtml(tr('scan_modal_cancel'))}</button>
+          <button id="photoframeScopeSaveBtn" class="btn primary">${escapeHtml(tr('photoframe_scope_save'))}</button>
+        </div>
+      </div>
+    </div>
   `;
 
   const refreshBtn = document.getElementById('photoframeRefreshBtn');
@@ -2131,8 +2225,28 @@ function renderPhotoframePanel() {
   const showTokenInput = document.getElementById('photoframeShowTokenInput');
   const showTokenCopyBtn = document.getElementById('photoframeShowTokenCopyBtn');
   const showTokenErrorEl = document.getElementById('photoframeShowTokenError');
+  const scopeModal = document.getElementById('photoframeScopeModal');
+  const scopeCloseBtn = document.getElementById('photoframeScopeCloseBtn');
+  const scopeCancelBtn = document.getElementById('photoframeScopeCancelBtn');
+  const scopeSaveBtn = document.getElementById('photoframeScopeSaveBtn');
+  const scopeTargetEl = document.getElementById('photoframeScopeTarget');
+  const scopeModeSel = document.getElementById('photoframeScopeMode');
+  const scopeFoldersWrap = document.getElementById('photoframeScopeFoldersWrap');
+  const scopeFoldersList = document.getElementById('photoframeScopeFoldersList');
+  const scopePhotosWrap = document.getElementById('photoframeScopePhotosWrap');
+  const scopePhotosList = document.getElementById('photoframeScopePhotosList');
+  const scopePhotoSearchInput = document.getElementById('photoframeScopePhotoSearch');
+  const scopePhotoSearchBtn = document.getElementById('photoframeScopePhotoSearchBtn');
+  const scopeErrorEl = document.getElementById('photoframeScopeError');
 
   let shouldRefreshOnClose = false;
+  let scopeFrameId = '';
+  let scopeFrameName = '';
+  let scopeMode = 'all';
+  let scopeFoldersSelected = new Set();
+  let scopePhotosSelected = new Set();
+  let scopeFolderOptions = [];
+  let scopePhotoOptions = [];
 
   const showCreateError = (text) => {
     if (!createErrorEl) return;
@@ -2181,6 +2295,166 @@ function renderPhotoframePanel() {
   const closeShowTokenModal = () => {
     if (!showTokenModal) return;
     showTokenModal.classList.add('hidden');
+  };
+
+  const showScopeError = (text) => {
+    if (!scopeErrorEl) return;
+    const msg = String(text || '').trim();
+    if (!msg) {
+      scopeErrorEl.textContent = '';
+      scopeErrorEl.classList.add('hidden');
+      return;
+    }
+    scopeErrorEl.textContent = msg;
+    scopeErrorEl.classList.remove('hidden');
+  };
+
+  const closeScopeModal = () => {
+    if (!scopeModal) return;
+    scopeModal.classList.add('hidden');
+  };
+
+  const updateScopeModeVisibility = () => {
+    const mode = String(scopeMode || (scopeModeSel && scopeModeSel.value) || 'all').trim().toLowerCase();
+    if (scopeFoldersWrap) scopeFoldersWrap.classList.toggle('hidden', mode !== 'folders');
+    if (scopePhotosWrap) scopePhotosWrap.classList.toggle('hidden', mode !== 'photos');
+  };
+
+  const renderScopeFolders = () => {
+    if (!scopeFoldersList) return;
+    if (!Array.isArray(scopeFolderOptions) || !scopeFolderOptions.length) {
+      scopeFoldersList.innerHTML = `<div class="mini-label">${escapeHtml(tr('photoframe_scope_empty_folders'))}</div>`;
+      return;
+    }
+    scopeFoldersList.innerHTML = scopeFolderOptions.map((path, idx) => {
+      const p = String(path || '').trim();
+      if (!p) return '';
+      const checked = scopeFoldersSelected.has(p) ? ' checked' : '';
+      const id = `pfScopeFolder_${idx}`;
+      return `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">
+        <input id="${id}" type="checkbox" data-photoframe-scope-folder="${escapeHtml(p)}"${checked}>
+        <span style="word-break:break-all;">${escapeHtml(p)}</span>
+      </label>`;
+    }).join('');
+    scopeFoldersList.querySelectorAll('input[data-photoframe-scope-folder]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const p = String(el.getAttribute('data-photoframe-scope-folder') || '').trim();
+        if (!p) return;
+        if (el.checked) scopeFoldersSelected.add(p);
+        else scopeFoldersSelected.delete(p);
+      });
+    });
+  };
+
+  const renderScopePhotos = () => {
+    if (!scopePhotosList) return;
+    if (!Array.isArray(scopePhotoOptions) || !scopePhotoOptions.length) {
+      scopePhotosList.innerHTML = `<div class="mini-label">${escapeHtml(tr('photoframe_scope_empty_photos'))}</div>`;
+      return;
+    }
+    scopePhotosList.innerHTML = scopePhotoOptions.map((it, idx) => {
+      const pid = Number(it && it.id ? it.id : 0) || 0;
+      if (!pid) return '';
+      const checked = scopePhotosSelected.has(pid) ? ' checked' : '';
+      const rel = String(it && it.rel_path ? it.rel_path : '').trim();
+      const label = String(it && it.label ? it.label : `Photo #${pid}`).trim();
+      const line = rel ? `${label} (${rel})` : label;
+      return `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">
+        <input type="checkbox" data-photoframe-scope-photo="${pid}"${checked}>
+        <span style="word-break:break-all;">#${pid} - ${escapeHtml(line)}</span>
+      </label>`;
+    }).join('');
+    scopePhotosList.querySelectorAll('input[data-photoframe-scope-photo]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const pid = Number(el.getAttribute('data-photoframe-scope-photo') || 0) || 0;
+        if (!pid) return;
+        if (el.checked) scopePhotosSelected.add(pid);
+        else scopePhotosSelected.delete(pid);
+      });
+    });
+  };
+
+  const loadScopeFolders = async () => {
+    if (Array.isArray(scopeFolderOptions) && scopeFolderOptions.length) return;
+    const res = await fetch('/api/photoframes/available-folders');
+    let data = null;
+    try {
+      const ct = String(res.headers.get('content-type') || '');
+      data = ct.includes('application/json') ? await res.json() : null;
+    } catch (_) {
+      data = null;
+    }
+    if (!res.ok || !data || !data.ok) {
+      throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_load_failed'));
+    }
+    scopeFolderOptions = Array.isArray(data.items) ? data.items.map((v) => String(v || '').trim()).filter(Boolean) : [];
+  };
+
+  const loadScopePhotos = async (queryText = '') => {
+    const ids = Array.from(scopePhotosSelected).filter((v) => Number.isFinite(v) && v > 0).slice(0, 900);
+    const qs = new URLSearchParams();
+    qs.set('limit', '160');
+    if (String(queryText || '').trim()) qs.set('q', String(queryText || '').trim());
+    if (ids.length) qs.set('ids', ids.join(','));
+    const res = await fetch(`/api/photoframes/available-photos?${qs.toString()}`);
+    let data = null;
+    try {
+      const ct = String(res.headers.get('content-type') || '');
+      data = ct.includes('application/json') ? await res.json() : null;
+    } catch (_) {
+      data = null;
+    }
+    if (!res.ok || !data || !data.ok) {
+      throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_load_failed'));
+    }
+    scopePhotoOptions = Array.isArray(data.items) ? data.items : [];
+  };
+
+  const openScopeModal = async (frameId, frameName) => {
+    if (!scopeModal) return;
+    scopeFrameId = String(frameId || '').trim();
+    scopeFrameName = String(frameName || '').trim() || 'Photoframe';
+    if (!scopeFrameId) return;
+    scopeMode = 'all';
+    scopeFoldersSelected = new Set();
+    scopePhotosSelected = new Set();
+    scopePhotoOptions = [];
+    showScopeError('');
+    if (scopeTargetEl) scopeTargetEl.textContent = tr('photoframe_scope_target').replace('{name}', scopeFrameName);
+    if (scopeModeSel) scopeModeSel.value = 'all';
+    updateScopeModeVisibility();
+    scopeModal.classList.remove('hidden');
+
+    try {
+      const res = await fetch(`/api/photoframes/${encodeURIComponent(scopeFrameId)}/scope`);
+      let data = null;
+      try {
+        const ct = String(res.headers.get('content-type') || '');
+        data = ct.includes('application/json') ? await res.json() : null;
+      } catch (_) {
+        data = null;
+      }
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_load_failed'));
+      }
+      scopeMode = String(data.scope_mode || 'all').trim().toLowerCase();
+      if (!['all', 'folders', 'photos'].includes(scopeMode)) scopeMode = 'all';
+      const folders = Array.isArray(data.allowed_folders) ? data.allowed_folders : [];
+      const photoIds = Array.isArray(data.allowed_photo_ids) ? data.allowed_photo_ids : [];
+      scopeFoldersSelected = new Set(folders.map((v) => String(v || '').trim()).filter(Boolean));
+      scopePhotosSelected = new Set(photoIds.map((v) => Number(v || 0)).filter((v) => Number.isFinite(v) && v > 0));
+      if (scopeModeSel) scopeModeSel.value = scopeMode;
+      updateScopeModeVisibility();
+      if (scopeMode === 'folders') {
+        await loadScopeFolders();
+        renderScopeFolders();
+      } else if (scopeMode === 'photos') {
+        await loadScopePhotos('');
+        renderScopePhotos();
+      }
+    } catch (e) {
+      showScopeError(String((e && e.message) || tr('photoframe_scope_load_failed')));
+    }
   };
 
   const openShowTokenModal = async (frameId, frameName) => {
@@ -2269,7 +2543,107 @@ function renderPhotoframePanel() {
     });
   }
   if (showTokenCopyBtn) showTokenCopyBtn.addEventListener('click', async () => copyText(showTokenInput ? showTokenInput.value : ''));
+  if (scopeCloseBtn) scopeCloseBtn.addEventListener('click', closeScopeModal);
+  if (scopeCancelBtn) scopeCancelBtn.addEventListener('click', closeScopeModal);
+  if (scopeModal) {
+    scopeModal.addEventListener('click', (e) => {
+      if (e.target === scopeModal) closeScopeModal();
+    });
+    scopeModal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeScopeModal();
+      }
+    });
+  }
+  if (scopeModeSel) {
+    scopeModeSel.addEventListener('change', async () => {
+      scopeMode = String(scopeModeSel.value || 'all').trim().toLowerCase();
+      updateScopeModeVisibility();
+      showScopeError('');
+      try {
+        if (scopeMode === 'folders') {
+          await loadScopeFolders();
+          renderScopeFolders();
+        } else if (scopeMode === 'photos') {
+          await loadScopePhotos(String((scopePhotoSearchInput && scopePhotoSearchInput.value) || ''));
+          renderScopePhotos();
+        }
+      } catch (e) {
+        showScopeError(String((e && e.message) || tr('photoframe_scope_load_failed')));
+      }
+    });
+  }
+  if (scopePhotoSearchBtn) {
+    scopePhotoSearchBtn.addEventListener('click', async () => {
+      showScopeError('');
+      try {
+        await loadScopePhotos(String((scopePhotoSearchInput && scopePhotoSearchInput.value) || ''));
+        renderScopePhotos();
+      } catch (e) {
+        showScopeError(String((e && e.message) || tr('photoframe_scope_load_failed')));
+      }
+    });
+  }
+  if (scopePhotoSearchInput) {
+    scopePhotoSearchInput.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      showScopeError('');
+      try {
+        await loadScopePhotos(String(scopePhotoSearchInput.value || ''));
+        renderScopePhotos();
+      } catch (err) {
+        showScopeError(String((err && err.message) || tr('photoframe_scope_load_failed')));
+      }
+    });
+  }
+  if (scopeSaveBtn) {
+    scopeSaveBtn.addEventListener('click', async () => {
+      if (!scopeFrameId) return;
+      scopeSaveBtn.disabled = true;
+      scopeSaveBtn.classList.add('loading');
+      showScopeError('');
+      try {
+        const payload = {
+          scope_mode: String(scopeModeSel && scopeModeSel.value ? scopeModeSel.value : scopeMode || 'all').trim().toLowerCase(),
+          allowed_folders: Array.from(scopeFoldersSelected),
+          allowed_photo_ids: Array.from(scopePhotosSelected).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0),
+        };
+        const res = await fetch(`/api/photoframes/${encodeURIComponent(scopeFrameId)}/scope`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_save_failed'));
+        }
+        showStatus(tr('photoframe_scope_saved'), 'ok');
+        closeScopeModal();
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showScopeError(String((e && e.message) || tr('photoframe_scope_save_failed')));
+      } finally {
+        scopeSaveBtn.disabled = false;
+        scopeSaveBtn.classList.remove('loading');
+      }
+    });
+  }
 
+  document.querySelectorAll('[data-photoframe-action="scope"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || '').trim();
+      await openScopeModal(frameId, frameName);
+    });
+  });
   document.querySelectorAll('[data-photoframe-action="show-token"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const frameId = String(btn.getAttribute('data-frame-id') || '').trim();

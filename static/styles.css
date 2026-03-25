@@ -1738,6 +1738,14 @@ body.view-mapper .mapper-header-actions {
   flex-wrap: wrap;
   gap: 8px;
 }
+.photoframe-scope-list {
+  max-height: 38vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+  padding: 8px;
+}
 
 /* Simple toggle control */
 .toggle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }

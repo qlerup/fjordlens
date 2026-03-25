@@ -3927,6 +3927,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         rec_id = _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{idx + 1}"
         token_hint = _sanitize_photoframe_text(it.get("token_hint") or it.get("token_last4"), 16)
         token_plain = _sanitize_photoframe_token_plain(it.get("token_plain") or it.get("token"))
+        scope_mode = _normalize_photoframe_scope_mode(it.get("scope_mode"))
+        allowed_folders = _normalize_photoframe_scope_folders(it.get("allowed_folders"))
+        allowed_photo_ids = _normalize_photoframe_scope_photo_ids(it.get("allowed_photo_ids"))
         created_at = _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso()
         last_seen_at = _sanitize_photoframe_text(it.get("last_seen_at"), 40)
         last_ip = _sanitize_photoframe_text(it.get("last_ip"), 120)
@@ -3938,6 +3941,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "token_hash": token_hash,
                 "token_hint": token_hint,
                 "token_plain": token_plain,
+                "scope_mode": scope_mode,
+                "allowed_folders": allowed_folders,
+                "allowed_photo_ids": allowed_photo_ids,
                 "created_at": created_at,
                 "last_seen_at": last_seen_at,
                 "last_ip": last_ip,
@@ -3962,6 +3968,9 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "token_hash": token_hash,
                 "token_hint": _sanitize_photoframe_text(it.get("token_hint"), 16),
                 "token_plain": _sanitize_photoframe_token_plain(it.get("token_plain") or it.get("token")),
+                "scope_mode": _normalize_photoframe_scope_mode(it.get("scope_mode")),
+                "allowed_folders": _normalize_photoframe_scope_folders(it.get("allowed_folders")),
+                "allowed_photo_ids": _normalize_photoframe_scope_photo_ids(it.get("allowed_photo_ids")),
                 "created_at": _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso(),
                 "last_seen_at": _sanitize_photoframe_text(it.get("last_seen_at"), 40),
                 "last_ip": _sanitize_photoframe_text(it.get("last_ip"), 120),
@@ -3973,6 +3982,106 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
     if len(clean) > 500:
         clean = clean[-500:]
     _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
+
+
+def _normalize_photoframe_scope_mode(raw: Any) -> str:
+    mode = str(raw or "").strip().lower()
+    if mode in {"folders", "photos"}:
+        return mode
+    return "all"
+
+
+def _normalize_photoframe_scope_folders(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in raw:
+        folder_raw: Any = it
+        if isinstance(it, dict):
+            folder_raw = it.get("folder") or it.get("folder_path") or it.get("path")
+        try:
+            folder = _normalize_folder_acl_path(str(folder_raw or ""))
+            # Keep scope paths aligned with ACL path mapping so values like
+            # uploads/originals/X collapse to uploads/X.
+            folder = _normalize_folder_acl_path(_normalize_rel_path_for_acl(folder))
+        except Exception:
+            folder = ""
+        if not folder or folder in seen:
+            continue
+        seen.add(folder)
+        out.append(folder)
+        if len(out) >= 2000:
+            break
+    return out
+
+
+def _normalize_photoframe_scope_photo_ids(raw: Any) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for it in raw:
+        try:
+            pid = int(it)
+        except Exception:
+            continue
+        if pid <= 0 or pid in seen:
+            continue
+        seen.add(pid)
+        out.append(pid)
+        if len(out) >= 10000:
+            break
+    return out
+
+
+def _photoframe_record_scope(rec: Optional[Dict[str, Any]]) -> tuple[str, list[str], list[int]]:
+    if not isinstance(rec, dict):
+        return ("all", [], [])
+    mode = _normalize_photoframe_scope_mode(rec.get("scope_mode"))
+    folders = _normalize_photoframe_scope_folders(rec.get("allowed_folders"))
+    photos = _normalize_photoframe_scope_photo_ids(rec.get("allowed_photo_ids"))
+    if mode == "folders" and not folders:
+        return ("folders", [], [])
+    if mode == "photos" and not photos:
+        return ("photos", [], [])
+    return (mode, folders, photos)
+
+
+def _photoframe_scope_rel_prefixes(folder: str) -> list[str]:
+    try:
+        p = _normalize_folder_acl_path(folder)
+    except Exception:
+        return []
+    if not p:
+        return []
+    out = [p]
+    if p == "uploads":
+        out.extend(["uploads/originals", "uploads/converted"])
+    elif p.startswith("uploads/"):
+        sub = p[len("uploads/"):].strip("/")
+        if sub:
+            out.extend([f"uploads/originals/{sub}", f"uploads/converted/{sub}"])
+    dedup: list[str] = []
+    seen: set[str] = set()
+    for it in out:
+        if it and it not in seen:
+            seen.add(it)
+            dedup.append(it)
+    return dedup
+
+
+def _photoframe_record_allows_photo(rec: Optional[Dict[str, Any]], photo_id: int, rel_path: str) -> bool:
+    mode, folders, photos = _photoframe_record_scope(rec)
+    if mode == "all":
+        return True
+    if mode == "photos":
+        return int(photo_id) in set(_normalize_photoframe_scope_photo_ids(photos))
+    rel_norm = _normalize_rel_path_for_acl(rel_path)
+    for folder in _normalize_photoframe_scope_folders(folders):
+        if rel_norm == folder or rel_norm.startswith(folder + "/"):
+            return True
+    return False
 
 
 def _photoframe_token_lookup(token_plain: str) -> tuple[list[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
@@ -7280,6 +7389,7 @@ def api_photoframes_status():
     for idx, rec in enumerate(records_sorted, start=1):
         token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
         token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
+        scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
         last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
         seen_ts = _parse_iso_to_epoch(last_seen_at)
         online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
@@ -7309,6 +7419,9 @@ def api_photoframes_status():
                 "checked_at": checked_at,
                 "token_hint": token_hint,
                 "token_available": bool(token_plain),
+                "scope_mode": scope_mode,
+                "allowed_folder_count": len(scope_folders),
+                "allowed_photo_count": len(scope_photo_ids),
                 "last_seen_at": last_seen_at,
                 "created_at": _sanitize_photoframe_text(rec.get("created_at"), 40),
             }
@@ -7342,6 +7455,9 @@ def api_photoframes_create():
             "token_hash": _share_token_digest(token),
             "token_hint": token[-4:],
             "token_plain": token,
+            "scope_mode": "all",
+            "allowed_folders": [],
+            "allowed_photo_ids": [],
             "created_at": created_at,
         }
     )
@@ -7410,6 +7526,174 @@ def api_photoframes_delete(token_id: str):
     return jsonify({"ok": True, "deleted_id": target_id, "count": len(kept)})
 
 
+@app.route("/api/photoframes/<token_id>/scope", methods=["GET", "PUT"])
+@login_required
+def api_photoframes_scope(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    if request.method == "GET":
+        scope_mode, folders, photo_ids = _photoframe_record_scope(rec)
+        return jsonify(
+            {
+                "ok": True,
+                "id": target_id,
+                "scope_mode": scope_mode,
+                "allowed_folders": folders,
+                "allowed_photo_ids": photo_ids,
+                "allowed_folder_count": len(folders),
+                "allowed_photo_count": len(photo_ids),
+            }
+        )
+
+    body = request.get_json(silent=True) or {}
+    scope_mode = _normalize_photoframe_scope_mode(body.get("scope_mode"))
+    allowed_folders = _normalize_photoframe_scope_folders(body.get("allowed_folders"))
+    allowed_photo_ids = _normalize_photoframe_scope_photo_ids(body.get("allowed_photo_ids"))
+
+    if scope_mode == "all":
+        allowed_folders = []
+        allowed_photo_ids = []
+    elif scope_mode == "folders":
+        allowed_photo_ids = []
+    elif scope_mode == "photos":
+        allowed_folders = []
+
+    records[rec_idx]["scope_mode"] = scope_mode
+    records[rec_idx]["allowed_folders"] = allowed_folders
+    records[rec_idx]["allowed_photo_ids"] = allowed_photo_ids
+    _save_photoframe_token_records(records)
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "scope_mode": scope_mode,
+            "allowed_folders": allowed_folders,
+            "allowed_photo_ids": allowed_photo_ids,
+            "allowed_folder_count": len(allowed_folders),
+            "allowed_photo_count": len(allowed_photo_ids),
+        }
+    )
+
+
+@app.route("/api/photoframes/available-folders", methods=["GET"])
+@login_required
+def api_photoframes_available_folders():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    with closing(get_conn()) as conn:
+        folders = _list_all_photo_folders(conn)
+    return jsonify({"ok": True, "items": folders, "count": len(folders)})
+
+
+@app.route("/api/photoframes/available-photos", methods=["GET"])
+@login_required
+def api_photoframes_available_photos():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    q = str(request.args.get("q") or "").strip()
+    ids_raw = str(request.args.get("ids") or "").strip()
+    try:
+        limit = int(request.args.get("limit", "120") or 120)
+    except Exception:
+        limit = 120
+    limit = max(20, min(500, limit))
+
+    selected_ids: list[int] = []
+    if ids_raw:
+        for part in re.split(r"[,\s;]+", ids_raw):
+            part = str(part or "").strip()
+            if not part:
+                continue
+            try:
+                pid = int(part)
+            except Exception:
+                continue
+            if pid > 0 and pid not in selected_ids:
+                selected_ids.append(pid)
+            # SQLite has a bind variable ceiling (often 999), so keep this below it.
+            if len(selected_ids) >= 900:
+                break
+
+    params: list[Any] = []
+    where_sql = ""
+    if q:
+        q_like = f"%{q}%"
+        if q.isdigit():
+            where_sql = "WHERE id=? OR rel_path LIKE ?"
+            params.extend([int(q), q_like])
+        else:
+            where_sql = "WHERE rel_path LIKE ?"
+            params.append(q_like)
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            {where_sql}
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+
+        extra_rows: list[sqlite3.Row] = []
+        if selected_ids:
+            ph = ",".join(["?"] * len(selected_ids))
+            extra_rows = conn.execute(
+                f"""
+                SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                FROM photos
+                WHERE id IN ({ph})
+                ORDER BY id DESC
+                """,
+                selected_ids,
+            ).fetchall()
+
+    by_id: dict[int, Dict[str, Any]] = {}
+    ordered: list[int] = []
+    for src in [rows, extra_rows]:
+        for r in src:
+            try:
+                pid = int(r["id"])
+            except Exception:
+                continue
+            if pid in by_id:
+                continue
+            rel = str(r["rel_path"] or "").replace("\\", "/")
+            label = rel.rsplit("/", 1)[-1] if "/" in rel else rel
+            by_id[pid] = {
+                "id": pid,
+                "rel_path": rel,
+                "label": label or f"Photo #{pid}",
+                "updated_at": _sanitize_photoframe_text(r["updated_at"], 40),
+                "selected": pid in selected_ids,
+            }
+            ordered.append(pid)
+
+    items = [by_id[pid] for pid in ordered]
+    return jsonify({"ok": True, "items": items, "count": len(items)})
+
+
 def _render_photoframe_status_image(frame_name: str, token_hint: str, generated_at: str) -> io.BytesIO:
     width, height = 1280, 720
     img = Image.new("RGB", (width, height), (8, 16, 32))
@@ -7476,6 +7760,8 @@ def api_frame_feed(token: str):
     if frame_name:
         records[rec_idx]["device_name"] = frame_name
     _save_photoframe_token_records(records)
+    active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
+    scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(active_record)
 
     request_base = _request_public_base_url() or request.url_root.rstrip("/")
 
@@ -7499,15 +7785,75 @@ def api_frame_feed(token: str):
         )
 
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            """
-            SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
-            FROM photos
-            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
-            LIMIT ?
-            """,
-            (PHOTOFRAME_FEED_MAX_IMAGES,),
-        ).fetchall()
+        if scope_mode == "photos":
+            ids_for_query = _normalize_photoframe_scope_photo_ids(scope_photo_ids)[:900]
+            if not ids_for_query:
+                rows = []
+            else:
+                ph = ",".join(["?"] * len(ids_for_query))
+                rows = conn.execute(
+                    f"""
+                    SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                    FROM photos
+                    WHERE id IN ({ph})
+                    ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (*ids_for_query, PHOTOFRAME_FEED_MAX_IMAGES),
+                ).fetchall()
+        elif scope_mode == "folders":
+            prefixes: list[str] = []
+            seen_prefixes: set[str] = set()
+            for folder in _normalize_photoframe_scope_folders(scope_folders):
+                for pref in _photoframe_scope_rel_prefixes(folder):
+                    if pref in seen_prefixes:
+                        continue
+                    seen_prefixes.add(pref)
+                    prefixes.append(pref)
+                    if len(prefixes) >= 300:
+                        break
+                if len(prefixes) >= 300:
+                    break
+            if not prefixes:
+                rows = []
+            else:
+                conds: list[str] = []
+                params: list[Any] = []
+                for pref in prefixes:
+                    conds.append("(rel_path=? OR rel_path LIKE ?)")
+                    params.extend([pref, pref + "/%"])
+                rows = conn.execute(
+                    f"""
+                    SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                    FROM photos
+                    WHERE {" OR ".join(conds)}
+                    ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (*params, PHOTOFRAME_FEED_MAX_IMAGES),
+                ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                FROM photos
+                ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                LIMIT ?
+                """,
+                (PHOTOFRAME_FEED_MAX_IMAGES,),
+            ).fetchall()
+
+    if rows:
+        safe_rows = []
+        for row in rows:
+            try:
+                pid = int(row["id"])
+            except Exception:
+                continue
+            rel = str(row["rel_path"] or "")
+            if _photoframe_record_allows_photo(active_record, pid, rel):
+                safe_rows.append(row)
+        rows = safe_rows
 
     images: list[Dict[str, Any]] = []
     for row in rows:
@@ -7536,16 +7882,19 @@ def api_frame_feed(token: str):
 
 @app.route("/api/frame/<token>/view/<int:photo_id>", methods=["GET"])
 def api_frame_viewable(token: str, photo_id: int):
-    _, rec_idx, _ = _photoframe_token_lookup(token)
-    if rec_idx < 0:
+    _, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
         return ("Forbidden", 403)
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
         return ("Not found", 404)
+    rel_path = str(row["rel_path"] or "")
+    if not _photoframe_record_allows_photo(rec, int(photo_id), rel_path):
+        return ("Forbidden", 403)
 
-    safe_rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    safe_rel = rel_path.replace("..", "").lstrip("/")
     if not safe_rel:
         return ("Not found", 404)
     src = _disk_path_from_rel_path(safe_rel)
