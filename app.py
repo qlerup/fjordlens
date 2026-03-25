@@ -76,7 +76,7 @@ try:
 except Exception:
     PHOTOFRAME_FEED_MAX_IMAGES = 1200
 PHOTOFRAME_FEED_MAX_IMAGES = max(10, min(5000, PHOTOFRAME_FEED_MAX_IMAGES))
-PHOTOFRAME_TEXT_ONLY = (str(os.environ.get("PHOTOFRAME_TEXT_ONLY", "1") or "1").strip().lower() in {"1", "true", "yes", "on"})
+PHOTOFRAME_TEXT_ONLY = (str(os.environ.get("PHOTOFRAME_TEXT_ONLY", "0") or "0").strip().lower() in {"1", "true", "yes", "on"})
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
