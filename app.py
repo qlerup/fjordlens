@@ -7870,12 +7870,24 @@ def api_frame_feed(token: str):
             }
         )
 
+    feed_message = ""
+    if not images:
+        if scope_mode == "folders" and not _normalize_photoframe_scope_folders(scope_folders):
+            feed_message = "Ingen mapper valgt til denne fotoramme endnu"
+        elif scope_mode == "photos" and not _normalize_photoframe_scope_photo_ids(scope_photo_ids):
+            feed_message = "Ingen billeder valgt til denne fotoramme endnu"
+        elif scope_mode in {"folders", "photos"}:
+            feed_message = "Ingen billeder matcher valget til denne fotoramme endnu"
+        else:
+            feed_message = "Ingen billeder i feedet endnu"
+
     return jsonify(
         {
             "ok": True,
             "images": images,
             "count": len(images),
             "generated_at": now,
+            "message": feed_message,
         }
     )
 
