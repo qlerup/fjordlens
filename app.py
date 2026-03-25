@@ -59,6 +59,13 @@ TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
+PHOTOFRAME_FRAMES_ENV = str(os.environ.get("PHOTOFRAME_FRAMES", "") or "").strip()
+PHOTOFRAME_FRAMES_PATH = DATA_DIR / "photoframes.json"
+try:
+    PHOTOFRAME_STATUS_TIMEOUT_SEC = float(os.environ.get("PHOTOFRAME_STATUS_TIMEOUT_SEC", "2.5") or 2.5)
+except Exception:
+    PHOTOFRAME_STATUS_TIMEOUT_SEC = 2.5
+PHOTOFRAME_STATUS_TIMEOUT_SEC = max(0.5, min(8.0, PHOTOFRAME_STATUS_TIMEOUT_SEC))
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -3634,6 +3641,187 @@ def _normalize_share_base_url(raw: str) -> Optional[str]:
     return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
 
 
+def _normalize_photoframe_http_url(raw: Any) -> Optional[str]:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    if "://" not in value:
+        value = f"http://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    path = str(parsed.path or "").rstrip("/")
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
+
+def _normalize_photoframe_base_url(raw: Any) -> Optional[str]:
+    normalized = _normalize_photoframe_http_url(raw)
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+
+def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]:
+    name = ""
+    base_candidate = ""
+    info_candidate = ""
+    note = ""
+    location = ""
+
+    if isinstance(raw_item, str):
+        base_candidate = raw_item.strip()
+    elif isinstance(raw_item, dict):
+        name = str(raw_item.get("name") or raw_item.get("label") or raw_item.get("title") or "").strip()
+        base_candidate = str(
+            raw_item.get("base_url")
+            or raw_item.get("url")
+            or raw_item.get("host")
+            or raw_item.get("address")
+            or ""
+        ).strip()
+        info_candidate = str(raw_item.get("info_url") or raw_item.get("status_url") or "").strip()
+        note = str(raw_item.get("note") or raw_item.get("notes") or "").strip()
+        location = str(raw_item.get("location") or "").strip()
+    else:
+        return None
+
+    info_url = _normalize_photoframe_http_url(info_candidate) if info_candidate else None
+    base_url = _normalize_photoframe_base_url(base_candidate) if base_candidate else None
+    if not info_url and base_url:
+        info_url = f"{base_url}/api/info"
+    if not base_url and info_url:
+        base_url = _normalize_photoframe_base_url(info_url)
+    if not info_url:
+        return None
+
+    host_label = ""
+    try:
+        host_label = str(urlparse(base_url or info_url).hostname or "").strip()
+    except Exception:
+        host_label = ""
+    if not name:
+        name = host_label or f"Frame {idx + 1}"
+
+    return {
+        "id": re.sub(r"[^a-zA-Z0-9_-]+", "-", name.lower()).strip("-") or f"frame-{idx + 1}",
+        "name": name,
+        "base_url": base_url or "",
+        "info_url": info_url,
+        "location": location,
+        "note": note,
+    }
+
+
+def _parse_photoframe_entries(raw_value: str) -> list[Dict[str, Any]]:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return []
+
+    source_items: list[Any] = []
+    parsed_json = None
+    try:
+        parsed_json = json.loads(raw)
+    except Exception:
+        parsed_json = None
+
+    if isinstance(parsed_json, list):
+        source_items = parsed_json
+    elif isinstance(parsed_json, dict):
+        frames = parsed_json.get("frames")
+        if isinstance(frames, list):
+            source_items = frames
+    else:
+        source_items = [v.strip() for v in re.split(r"[\r\n,;]+", raw) if str(v or "").strip()]
+
+    out: list[Dict[str, Any]] = []
+    seen_info_urls: set[str] = set()
+    for idx, it in enumerate(source_items):
+        entry = _build_photoframe_entry(it, idx)
+        if not entry:
+            continue
+        info_url = str(entry.get("info_url") or "").strip()
+        if not info_url or info_url in seen_info_urls:
+            continue
+        seen_info_urls.add(info_url)
+        out.append(entry)
+    return out
+
+
+def _load_photoframe_entries() -> Tuple[list[Dict[str, Any]], str]:
+    candidates: list[Tuple[str, str]] = []
+    raw_setting = str(_get_setting("photoframe_frames", "") or "").strip()
+    if raw_setting:
+        candidates.append(("setting", raw_setting))
+    if PHOTOFRAME_FRAMES_ENV:
+        candidates.append(("env", PHOTOFRAME_FRAMES_ENV))
+    try:
+        if PHOTOFRAME_FRAMES_PATH.exists():
+            raw_file = PHOTOFRAME_FRAMES_PATH.read_text(encoding="utf-8", errors="ignore").strip()
+            if raw_file:
+                candidates.append(("file", raw_file))
+    except Exception:
+        pass
+
+    for source, raw in candidates:
+        parsed = _parse_photoframe_entries(raw)
+        if parsed:
+            return parsed, source
+    return [], "none"
+
+
+def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
+    info_url = str(entry.get("info_url") or "").strip()
+    start = time.perf_counter()
+    online = False
+    error = ""
+    http_status: Optional[int] = None
+    info_json: Dict[str, Any] = {}
+
+    try:
+        res = requests.get(info_url, timeout=PHOTOFRAME_STATUS_TIMEOUT_SEC)
+        http_status = int(res.status_code)
+        online = bool(res.ok)
+        if online:
+            try:
+                payload = res.json()
+                if isinstance(payload, dict):
+                    info_json = payload
+            except Exception:
+                info_json = {}
+        elif http_status is not None:
+            error = f"HTTP {http_status}"
+    except Exception as e:
+        error = str(e)
+
+    latency_ms = int(max(0.0, (time.perf_counter() - start) * 1000))
+    setup_complete: Optional[bool] = None
+    if "setup_complete" in info_json:
+        try:
+            setup_complete = bool(info_json.get("setup_complete"))
+        except Exception:
+            setup_complete = None
+
+    return {
+        "id": entry.get("id"),
+        "name": entry.get("name"),
+        "base_url": entry.get("base_url"),
+        "info_url": info_url,
+        "location": entry.get("location") or "",
+        "note": entry.get("note") or "",
+        "online": bool(online),
+        "http_status": http_status,
+        "latency_ms": latency_ms,
+        "error": error,
+        "ip": str(info_json.get("ip") or "").strip(),
+        "feed_url": str(info_json.get("feed_url") or "").strip(),
+        "setup_complete": setup_complete,
+        "checked_at": checked_at,
+    }
+
+
 def _build_share_link(token: str, use_duckdns: bool) -> Tuple[Optional[str], Optional[str]]:
     share_path = url_for("shared_folder_view", token=token, _external=False)
     if use_duckdns:
@@ -6850,6 +7038,25 @@ def api_health():
         "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
     })
+
+
+@app.route("/api/photoframes/status", methods=["GET"])
+@login_required
+def api_photoframes_status():
+    entries, source = _load_photoframe_entries()
+    checked_at = now_iso()
+    items = [_probe_photoframe_status(entry, checked_at) for entry in entries]
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "count": len(items),
+            "checked_at": checked_at,
+            "source": source,
+            "config_path": str(PHOTOFRAME_FRAMES_PATH),
+            "timeout_sec": PHOTOFRAME_STATUS_TIMEOUT_SEC,
+        }
+    )
 
 
 

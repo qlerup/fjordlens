@@ -529,7 +529,7 @@ const I18N = {
     view_mapper_title: 'Mapper',
     view_mapper_sub: 'Grupperet efter kilde-mappe',
     view_photoframe_title: 'Photoframe',
-    view_photoframe_sub: 'Startpunkt for integration mellem app og Pi OS',
+    view_photoframe_sub: 'Status på dine fotorammer',
     view_personer_title: 'Personer',
     view_personer_sub: '',
     view_settings_title: 'Indstillinger',
@@ -550,7 +550,26 @@ const I18N = {
     empty_no_matches: "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.",
     empty_mapper_tree: 'Ingen mapper endnu.',
     photoframe_intro_title: 'Photoframe',
-    photoframe_intro_sub: 'Sektionen er oprettet. Næste trin er at koble den til Pi OS-funktionerne.',
+    photoframe_intro_sub: 'Overblik over fotorammer og om de er online.',
+    photoframe_loading: 'Tjekker fotorammer...',
+    photoframe_refresh: 'Opdater',
+    photoframe_empty_title: 'Ingen fotorammer konfigureret endnu.',
+    photoframe_empty_sub: 'Tilføj fotorammer via PHOTOFRAME_FRAMES eller filen {path}.',
+    photoframe_status_online: 'Online',
+    photoframe_status_offline: 'Offline',
+    photoframe_status_unknown: 'Ukendt',
+    photoframe_last_checked: 'Sidst tjekket',
+    photoframe_card_endpoint: 'Endpoint',
+    photoframe_card_ip: 'IP',
+    photoframe_card_setup: 'Opsætning',
+    photoframe_setup_ready: 'Klar',
+    photoframe_setup_pending: 'Mangler setup',
+    photoframe_card_feed: 'Feed',
+    photoframe_card_error: 'Fejl',
+    photoframe_source_setting: 'Kilde: app-indstilling',
+    photoframe_source_env: 'Kilde: miljøvariabel',
+    photoframe_source_file: 'Kilde: konfig-fil',
+    photoframe_source_none: 'Kilde: ingen',
     no_thumb: 'Ingen thumbnail',
     settings_title: 'Indstillinger',
     settings_sub: 'Vedligeholdelse, scan og logs',
@@ -972,7 +991,7 @@ const I18N = {
     view_mapper_title: 'Folders',
     view_mapper_sub: 'Grouped by source folder',
     view_photoframe_title: 'Photoframe',
-    view_photoframe_sub: 'Starting point for app and Pi OS integration',
+    view_photoframe_sub: 'Status for your photo frames',
     view_personer_title: 'People',
     view_personer_sub: '',
     view_settings_title: 'Settings',
@@ -993,7 +1012,26 @@ const I18N = {
     empty_no_matches: "No photos match the current filters yet. Try 'Scan library'.",
     empty_mapper_tree: 'No folders yet.',
     photoframe_intro_title: 'Photoframe',
-    photoframe_intro_sub: 'Section created. Next step is wiring it to Pi OS features.',
+    photoframe_intro_sub: 'Overview of your photo frames and whether they are online.',
+    photoframe_loading: 'Checking photo frames...',
+    photoframe_refresh: 'Refresh',
+    photoframe_empty_title: 'No photo frames configured yet.',
+    photoframe_empty_sub: 'Add frames via PHOTOFRAME_FRAMES or the file {path}.',
+    photoframe_status_online: 'Online',
+    photoframe_status_offline: 'Offline',
+    photoframe_status_unknown: 'Unknown',
+    photoframe_last_checked: 'Last checked',
+    photoframe_card_endpoint: 'Endpoint',
+    photoframe_card_ip: 'IP',
+    photoframe_card_setup: 'Setup',
+    photoframe_setup_ready: 'Ready',
+    photoframe_setup_pending: 'Setup needed',
+    photoframe_card_feed: 'Feed',
+    photoframe_card_error: 'Error',
+    photoframe_source_setting: 'Source: app setting',
+    photoframe_source_env: 'Source: environment variable',
+    photoframe_source_file: 'Source: config file',
+    photoframe_source_none: 'Source: none',
     no_thumb: 'No thumbnail',
     settings_title: 'Settings',
     settings_sub: 'Maintenance, scan and logs',
@@ -1507,6 +1545,12 @@ let state = {
   facesRunning: false,
   facesAutoEnabled: false,
   aiScopePendingFeature: null,
+  photoframeItems: [],
+  photoframeLoading: false,
+  photoframeError: '',
+  photoframeCheckedAt: '',
+  photoframeSource: 'none',
+  photoframeConfigPath: '',
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
@@ -1843,6 +1887,96 @@ function renderStats() {
   }
 }
 
+function photoframeSourceLabel(source) {
+  if (source === 'setting') return tr('photoframe_source_setting');
+  if (source === 'env') return tr('photoframe_source_env');
+  if (source === 'file') return tr('photoframe_source_file');
+  return tr('photoframe_source_none');
+}
+
+function renderPhotoframePanel() {
+  if (!els.grid) return;
+  const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
+  const checkedText = state.photoframeCheckedAt ? fmtDate(state.photoframeCheckedAt) : '-';
+  const sourceText = photoframeSourceLabel(String(state.photoframeSource || 'none'));
+  const pathText = String(state.photoframeConfigPath || '/data/photoframes.json');
+
+  const cardsHtml = items.map((item) => {
+    const online = !!item.online;
+    const statusLabel = online ? tr('photoframe_status_online') : tr('photoframe_status_offline');
+    const statusClass = online ? 'online' : 'offline';
+    const setupComplete = (typeof item.setup_complete === 'boolean') ? item.setup_complete : null;
+    const setupLabel = (setupComplete === true)
+      ? tr('photoframe_setup_ready')
+      : (setupComplete === false ? tr('photoframe_setup_pending') : '-');
+    const latency = Number(item.latency_ms);
+    const latencyText = Number.isFinite(latency) ? `${Math.max(0, Math.round(latency))} ms` : '';
+    const ipText = String(item.ip || '').trim() || '-';
+    const endpointText = String(item.info_url || item.base_url || '').trim() || '-';
+    const feedText = String(item.feed_url || '').trim() || '-';
+    const noteText = String(item.note || '').trim();
+    const locationText = String(item.location || '').trim();
+    const errText = String(item.error || '').trim();
+    const checkedItemText = String(item.checked_at || state.photoframeCheckedAt || '').trim();
+    const checkedLabel = checkedItemText ? fmtDate(checkedItemText) : checkedText;
+    return `
+      <article class="photoframe-card ${online ? 'is-online' : 'is-offline'}">
+        <div class="photoframe-card-head">
+          <h3 class="photoframe-card-title">${escapeHtml(String(item.name || 'Photoframe'))}</h3>
+          <span class="photoframe-badge ${statusClass}">
+            <span class="dot" aria-hidden="true"></span>
+            ${escapeHtml(statusLabel)}
+          </span>
+        </div>
+        ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
+        <div class="photoframe-meta">
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_endpoint'))}</span><strong title="${escapeHtml(endpointText)}">${escapeHtml(endpointText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_setup'))}</span><strong>${escapeHtml(setupLabel)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_feed'))}</span><strong title="${escapeHtml(feedText)}">${escapeHtml(feedText)}</strong></div>
+          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
+          <div class="photoframe-row"><span>Ping</span><strong>${escapeHtml(latencyText || '-')}</strong></div>
+          ${errText ? `<div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_error'))}</span><strong>${escapeHtml(errText)}</strong></div>` : ''}
+        </div>
+        ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
+      </article>
+    `;
+  }).join('');
+
+  const loadingBlock = (state.photoframeLoading && !items.length)
+    ? `<div class="panel"><div class="mini-label">${escapeHtml(tr('photoframe_loading'))}</div></div>`
+    : '';
+  const emptyBlock = (!state.photoframeLoading && !items.length)
+    ? `<div class="panel">
+         <h3 style="margin:0 0 8px;">${escapeHtml(tr('photoframe_empty_title'))}</h3>
+         <p class="mini-label" style="margin:0 0 8px;">${escapeHtml(tr('photoframe_empty_sub').replace('{path}', pathText))}</p>
+       </div>`
+    : '';
+  const errorBlock = state.photoframeError
+    ? `<div class="status err">${escapeHtml(state.photoframeError)}</div>`
+    : '';
+
+  els.grid.innerHTML = `
+    <section class="photoframe-wrap">
+      <div class="photoframe-toolbar">
+        <div class="mini-label">${escapeHtml(sourceText)} - ${escapeHtml(tr('photoframe_last_checked'))}: ${escapeHtml(checkedText)}</div>
+        <button id="photoframeRefreshBtn" class="btn small"${state.photoframeLoading ? ' disabled' : ''}>${escapeHtml(tr('photoframe_refresh'))}</button>
+      </div>
+      ${errorBlock}
+      ${loadingBlock}
+      ${emptyBlock}
+      <div class="photoframe-grid">${cardsHtml}</div>
+    </section>
+  `;
+
+  const refreshBtn = document.getElementById('photoframeRefreshBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      await loadPhotoframeStatus();
+    });
+  }
+}
+
 function renderEmpty(message) {
   els.empty.innerHTML = `<div>${message}</div>`;
   els.empty.classList.remove("hidden");
@@ -2159,18 +2293,14 @@ function renderGrid() {
   }
   // Handle Photoframe view (placeholder for upcoming Pi integration)
   if (state.view === "photoframe") {
-    if (els.searchShell) els.searchShell.style.display = '';
+    if (els.searchShell) els.searchShell.style.display = 'none';
+    if (els.sort) els.sort.style.display = 'none';
     const peopleBtn = document.getElementById('peopleMatchScanBtn');
     if (peopleBtn) peopleBtn.style.display = 'none';
     if (els.statHiddenToggle) els.statHiddenToggle.style.display = 'none';
     els.grid.classList.remove('timeline-wrap');
     els.grid.classList.add('gallery-grid');
-    els.grid.innerHTML = `
-      <section class="panel" style="max-width:760px;">
-        <h2 style="margin:0 0 8px;">${escapeHtml(tr('photoframe_intro_title'))}</h2>
-        <p class="mini-label" style="margin:0;">${escapeHtml(tr('photoframe_intro_sub'))}</p>
-      </section>
-    `;
+    renderPhotoframePanel();
     hideEmpty();
     setDetail(null);
     renderStats();
@@ -2265,6 +2395,7 @@ function renderGrid() {
   if (state.view !== 'personer') {
     // Show global search again in other views and hide the match-scan btn in header
     if (els.searchShell) els.searchShell.style.display = '';
+    if (els.sort) els.sort.style.display = '';
     const hdrBtn = document.getElementById('peopleMatchScanBtn');
     if (hdrBtn) hdrBtn.style.display = 'none';
   }
@@ -3256,6 +3387,39 @@ function nextViewer(step=1) {
   viewerTransitionRunning = true;
   state.selectedIndex = targetIndex;
   animateViewerSlideTransition(step, () => openViewer(state.selectedIndex));
+}
+
+async function loadPhotoframeStatus() {
+  if (state.photoframeLoading) return;
+  state.photoframeLoading = true;
+  state.photoframeError = '';
+  if (state.view === 'photoframe') renderGrid();
+
+  try {
+    const res = await fetch('/api/photoframes/status');
+    let data = null;
+    try {
+      const ct = String(res.headers.get('content-type') || '');
+      data = ct.includes('application/json') ? await res.json() : null;
+    } catch (_) {
+      data = null;
+    }
+    if (!res.ok || !data || !data.ok) {
+      const errTxt = (data && data.error) ? String(data.error) : tr('photoframe_status_unknown');
+      throw new Error(errTxt);
+    }
+    state.photoframeItems = Array.isArray(data.items) ? data.items : [];
+    state.photoframeCheckedAt = String(data.checked_at || new Date().toISOString());
+    state.photoframeSource = String(data.source || 'none');
+    state.photoframeConfigPath = String(data.config_path || '');
+  } catch (e) {
+    state.photoframeError = `${tr('photoframe_card_error')}: ${String((e && e.message) || e || tr('photoframe_status_unknown'))}`;
+    state.photoframeItems = [];
+    state.photoframeCheckedAt = new Date().toISOString();
+  } finally {
+    state.photoframeLoading = false;
+    if (state.view === 'photoframe') renderGrid();
+  }
 }
 
 async function loadPhotos() {
@@ -6755,7 +6919,9 @@ async function setView(view, opts = {}) {
     renderGrid();
   } else if (nextView === 'photoframe') {
     state.items = [];
+    if (!Array.isArray(state.photoframeItems)) state.photoframeItems = [];
     renderGrid();
+    await loadPhotoframeStatus();
   } else if (nextView === 'personer') {
     state.personView = { mode: 'list', personId: null, personName: null };
     await loadPeople();

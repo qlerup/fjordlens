@@ -1626,6 +1626,108 @@ body.view-mapper .mapper-header-actions {
   background: rgba(255, 221, 89, 0.08);
 }
 
+/* Photoframe */
+.photoframe-wrap {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+}
+.photoframe-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.photoframe-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.photoframe-card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  min-height: 220px;
+}
+.photoframe-card.is-online {
+  border-color: rgba(52,211,153,0.42);
+}
+.photoframe-card.is-offline {
+  border-color: rgba(255,107,107,0.36);
+}
+.photoframe-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.photoframe-card-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.photoframe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+.photoframe-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.photoframe-badge.online {
+  border-color: rgba(52,211,153,0.45);
+  color: #b9f4dc;
+}
+.photoframe-badge.online .dot {
+  background: #34d399;
+}
+.photoframe-badge.offline {
+  border-color: rgba(255,107,107,0.45);
+  color: #ffd2d2;
+}
+.photoframe-badge.offline .dot {
+  background: #ff6b6b;
+}
+.photoframe-meta {
+  display: grid;
+  gap: 6px;
+}
+.photoframe-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+  padding: 7px 9px;
+  font-size: 0.78rem;
+}
+.photoframe-row span {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.photoframe-row strong {
+  margin: 0;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Simple toggle control */
 .toggle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
 .toggle .switch { margin-right:2px; }
