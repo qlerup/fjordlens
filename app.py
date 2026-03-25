@@ -1293,6 +1293,38 @@ def _request_client_ip() -> str:
         return ""
 
 
+def _request_public_base_url() -> str:
+    try:
+        xf_proto = str(request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+        xf_host = str(request.headers.get("X-Forwarded-Host") or "").split(",", 1)[0].strip()
+        if xf_proto in {"http", "https"} and xf_host:
+            return f"{xf_proto}://{xf_host}".rstrip("/")
+    except Exception:
+        pass
+    try:
+        cf_visitor = str(request.headers.get("CF-Visitor") or "").strip()
+        host = str(request.headers.get("Host") or "").split(",", 1)[0].strip()
+        if cf_visitor and host:
+            parsed = json.loads(cf_visitor)
+            if isinstance(parsed, dict):
+                scheme = str(parsed.get("scheme") or "").strip().lower()
+                if scheme in {"http", "https"}:
+                    return f"{scheme}://{host}".rstrip("/")
+    except Exception:
+        pass
+    try:
+        req_parsed = urlparse(str(request.url or ""))
+        request_base = f"{req_parsed.scheme}://{req_parsed.netloc}".rstrip("/")
+        if request_base and "://" in request_base:
+            return request_base
+    except Exception:
+        pass
+    try:
+        return request.url_root.rstrip("/")
+    except Exception:
+        return ""
+
+
 def _request_client_country() -> Optional[str]:
     code = str(request.headers.get("CF-IPCountry") or "").strip().upper()
     if not code or code in {"XX", "T1"}:
@@ -7315,7 +7347,7 @@ def api_photoframes_create():
     )
     _save_photoframe_token_records(records)
 
-    server_url = request.url_root.rstrip("/")
+    server_url = _request_public_base_url() or request.url_root.rstrip("/")
     feed_url = f"{server_url}/api/frame/{token}/feed"
     return jsonify(
         {
@@ -7445,10 +7477,7 @@ def api_frame_feed(token: str):
         records[rec_idx]["device_name"] = frame_name
     _save_photoframe_token_records(records)
 
-    req_parsed = urlparse(str(request.url or ""))
-    request_base = f"{req_parsed.scheme}://{req_parsed.netloc}".rstrip("/")
-    if not request_base or "://" not in request_base:
-        request_base = request.url_root.rstrip("/")
+    request_base = _request_public_base_url() or request.url_root.rstrip("/")
 
     if PHOTOFRAME_TEXT_ONLY:
         status_url = f"{request_base}{url_for('api_frame_status_card', token=token, _external=False)}?t={int(time.time())}"
