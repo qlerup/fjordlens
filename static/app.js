@@ -594,6 +594,13 @@ const I18N = {
     photoframe_scope_photos_label: 'Billeder',
     photoframe_scope_search_placeholder: 'Søg i billeder eller id',
     photoframe_scope_search_btn: 'Søg',
+    photoframe_scope_select_mode: 'Vælg',
+    photoframe_scope_done_mode: 'Færdig',
+    photoframe_scope_select_visible: 'Vælg synlige',
+    photoframe_scope_unselect_visible: 'Fravælg synlige',
+    photoframe_scope_selected_count: '{count} valgt',
+    photoframe_scope_folder_all: 'Alle mapper',
+    photoframe_scope_hold_hint: 'Hold på et billede for at starte valg',
     photoframe_scope_empty_folders: 'Ingen mapper fundet.',
     photoframe_scope_empty_photos: 'Ingen billeder fundet.',
     photoframe_scope_save: 'Gem',
@@ -1117,6 +1124,13 @@ const I18N = {
     photoframe_scope_photos_label: 'Photos',
     photoframe_scope_search_placeholder: 'Search photos or id',
     photoframe_scope_search_btn: 'Search',
+    photoframe_scope_select_mode: 'Select',
+    photoframe_scope_done_mode: 'Done',
+    photoframe_scope_select_visible: 'Select visible',
+    photoframe_scope_unselect_visible: 'Unselect visible',
+    photoframe_scope_selected_count: '{count} selected',
+    photoframe_scope_folder_all: 'All folders',
+    photoframe_scope_hold_hint: 'Long-press an image to start selecting',
     photoframe_scope_empty_folders: 'No folders found.',
     photoframe_scope_empty_photos: 'No photos found.',
     photoframe_scope_save: 'Save',
@@ -2051,6 +2065,9 @@ function renderPhotoframePanel() {
     const checkedLabel = checkedItemText ? fmtDate(checkedItemText) : checkedText;
     const lastSeenRaw = String(item.last_seen_at || '').trim();
     const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
+    const previewThumbUrl = String(item.preview_thumb_url || '').trim();
+    const previewUpdatedRaw = String(item.preview_updated_at || '').trim();
+    const previewUpdatedLabel = previewUpdatedRaw ? fmtDate(previewUpdatedRaw) : '';
     return `
       <article class="photoframe-card ${online ? 'is-online' : 'is-offline'}">
         <div class="photoframe-card-head">
@@ -2060,41 +2077,52 @@ function renderPhotoframePanel() {
             ${escapeHtml(statusLabel)}
           </span>
         </div>
-        ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
-        <div class="photoframe-meta">
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong>${escapeHtml(tokenText)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_scope'))}</span><strong>${escapeHtml(scopeText)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
-          <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
-          ${errText ? `<div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_error'))}</span><strong>${escapeHtml(errText)}</strong></div>` : ''}
-        </div>
-        ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
-        ${canCreateFrame ? `
-          <div class="photoframe-card-actions">
-            <button
-              class="btn small"
-              type="button"
-              data-photoframe-action="scope"
-              data-frame-id="${escapeHtml(frameId)}"
-              data-frame-name="${escapeHtml(frameName)}"
-            >${escapeHtml(tr('photoframe_scope_btn'))}</button>
-            <button
-              class="btn small"
-              type="button"
-              data-photoframe-action="show-token"
-              data-frame-id="${escapeHtml(frameId)}"
-              data-frame-name="${escapeHtml(frameName)}"
-            >${escapeHtml(tr('photoframe_show_token_btn'))}</button>
-            <button
-              class="btn small"
-              type="button"
-              data-photoframe-action="delete-token"
-              data-frame-id="${escapeHtml(frameId)}"
-              data-frame-name="${escapeHtml(frameName)}"
-            >${escapeHtml(tr('photoframe_delete_btn'))}</button>
+        <div class="photoframe-card-body">
+          <div class="photoframe-card-main">
+            ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
+            <div class="photoframe-meta">
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong>${escapeHtml(tokenText)}</strong></div>
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_scope'))}</span><strong>${escapeHtml(scopeText)}</strong></div>
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
+              ${errText ? `<div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_error'))}</span><strong>${escapeHtml(errText)}</strong></div>` : ''}
+            </div>
+            ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
+            ${canCreateFrame ? `
+              <div class="photoframe-card-actions">
+                <button
+                  class="btn small"
+                  type="button"
+                  data-photoframe-action="scope"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-frame-name="${escapeHtml(frameName)}"
+                >${escapeHtml(tr('photoframe_scope_btn'))}</button>
+                <button
+                  class="btn small"
+                  type="button"
+                  data-photoframe-action="show-token"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-frame-name="${escapeHtml(frameName)}"
+                >${escapeHtml(tr('photoframe_show_token_btn'))}</button>
+                <button
+                  class="btn small"
+                  type="button"
+                  data-photoframe-action="delete-token"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-frame-name="${escapeHtml(frameName)}"
+                >${escapeHtml(tr('photoframe_delete_btn'))}</button>
+              </div>
+            ` : ''}
           </div>
-        ` : ''}
+          <aside class="photoframe-preview" aria-label="Preview">
+            ${previewThumbUrl
+              ? `<img src="${escapeHtml(previewThumbUrl)}" alt="${escapeHtml(frameName)}" loading="lazy" decoding="async">`
+              : `<div class="photoframe-preview-empty">${escapeHtml(tr('no_thumb'))}</div>`
+            }
+            ${previewUpdatedLabel ? `<div class="photoframe-preview-meta">${escapeHtml(previewUpdatedLabel)}</div>` : ''}
+          </aside>
+        </div>
       </article>
     `;
   }).join('');
@@ -2112,14 +2140,32 @@ function renderPhotoframePanel() {
     ? `<div class="status err">${escapeHtml(state.photoframeError)}</div>`
     : '';
 
+  const contentHeader = document.querySelector('.content-header');
+  if (contentHeader) {
+    let headerActions = document.getElementById('photoframeHeaderActions');
+    if (!headerActions) {
+      headerActions = document.createElement('div');
+      headerActions.id = 'photoframeHeaderActions';
+      headerActions.className = 'photoframe-header-actions';
+      contentHeader.appendChild(headerActions);
+    }
+    headerActions.innerHTML = `
+      ${canCreateFrame ? `<button id="photoframeCreateBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_create_btn'))}</button>` : ''}
+      <button
+        id="photoframeRefreshBtn"
+        class="btn small photoframe-refresh-btn"
+        type="button"
+        aria-label="${escapeHtml(tr('photoframe_refresh'))}"
+        title="${escapeHtml(tr('photoframe_refresh'))}"
+        ${state.photoframeLoading ? ' disabled' : ''}
+      ><span aria-hidden="true">&#x21bb;</span></button>
+    `;
+  }
+
   els.grid.innerHTML = `
     <section class="photoframe-wrap">
       <div class="photoframe-toolbar">
         <div class="mini-label">${escapeHtml(sourceText)} - ${escapeHtml(tr('photoframe_last_checked'))}: ${escapeHtml(checkedText)}</div>
-        <div class="photoframe-toolbar-actions">
-          ${canCreateFrame ? `<button id="photoframeCreateBtn" class="btn small">${escapeHtml(tr('photoframe_create_btn'))}</button>` : ''}
-          <button id="photoframeRefreshBtn" class="btn small"${state.photoframeLoading ? ' disabled' : ''}>${escapeHtml(tr('photoframe_refresh'))}</button>
-        </div>
       </div>
       ${errorBlock}
       ${loadingBlock}
@@ -2168,7 +2214,7 @@ function renderPhotoframePanel() {
       </div>
     </div>
     <div id="photoframeScopeModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10002;">
-      <div style="width:760px;max-width:95vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;max-height:90vh;overflow:auto;">
+      <div style="width:980px;max-width:96vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;max-height:90vh;overflow:auto;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
           <h3 style="margin:0;">${escapeHtml(tr('photoframe_scope_title'))}</h3>
           <button id="photoframeScopeCloseBtn" class="btn">${escapeHtml(tr('scan_modal_close'))}</button>
@@ -2187,12 +2233,26 @@ function renderPhotoframePanel() {
           <div id="photoframeScopeFoldersList" class="photoframe-scope-list"></div>
         </div>
         <div id="photoframeScopePhotosWrap" class="hidden">
-          <div class="mini-label" style="margin-bottom:6px;">${escapeHtml(tr('photoframe_scope_photos_label'))}</div>
-          <div class="toolbar" style="gap:8px;align-items:stretch;margin-bottom:8px;">
-            <input id="photoframeScopePhotoSearch" class="mapper-input" type="text" placeholder="${escapeHtml(tr('photoframe_scope_search_placeholder'))}" style="min-width:0;width:100%;">
-            <button id="photoframeScopePhotoSearchBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_search_btn'))}</button>
+          <div class="photoframe-scope-toolbar-row">
+            <button id="photoframeScopeSelectModeBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_select_mode'))}</button>
+            <button id="photoframeScopeSelectVisibleBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_select_visible'))}</button>
+            <button id="photoframeScopeClearVisibleBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_unselect_visible'))}</button>
+            <div id="photoframeScopeSelectedCount" class="mini-label">${escapeHtml(tr('photoframe_scope_selected_count').replace('{count}', '0'))}</div>
           </div>
-          <div id="photoframeScopePhotosList" class="photoframe-scope-list"></div>
+          <div class="mini-label photoframe-scope-hint">${escapeHtml(tr('photoframe_scope_hold_hint'))}</div>
+          <div class="photoframe-scope-browser">
+            <aside class="photoframe-scope-folders-pane">
+              <div class="mini-label" style="margin-bottom:6px;">${escapeHtml(tr('photoframe_scope_folders_label'))}</div>
+              <div id="photoframeScopeFolderNav" class="photoframe-scope-folder-nav"></div>
+            </aside>
+            <section class="photoframe-scope-photos-pane">
+              <div class="toolbar" style="gap:8px;align-items:stretch;margin-bottom:8px;">
+                <input id="photoframeScopePhotoSearch" class="mapper-input" type="text" placeholder="${escapeHtml(tr('photoframe_scope_search_placeholder'))}" style="min-width:0;width:100%;">
+                <button id="photoframeScopePhotoSearchBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_scope_search_btn'))}</button>
+              </div>
+              <div id="photoframeScopePhotosList" class="photoframe-scope-thumb-grid"></div>
+            </section>
+          </div>
         </div>
         <div id="photoframeScopeError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
         <div class="actions" style="justify-content:flex-end;gap:8px;margin-top:12px;">
@@ -2234,9 +2294,14 @@ function renderPhotoframePanel() {
   const scopeFoldersWrap = document.getElementById('photoframeScopeFoldersWrap');
   const scopeFoldersList = document.getElementById('photoframeScopeFoldersList');
   const scopePhotosWrap = document.getElementById('photoframeScopePhotosWrap');
+  const scopeFolderNav = document.getElementById('photoframeScopeFolderNav');
   const scopePhotosList = document.getElementById('photoframeScopePhotosList');
   const scopePhotoSearchInput = document.getElementById('photoframeScopePhotoSearch');
   const scopePhotoSearchBtn = document.getElementById('photoframeScopePhotoSearchBtn');
+  const scopeSelectModeBtn = document.getElementById('photoframeScopeSelectModeBtn');
+  const scopeSelectVisibleBtn = document.getElementById('photoframeScopeSelectVisibleBtn');
+  const scopeClearVisibleBtn = document.getElementById('photoframeScopeClearVisibleBtn');
+  const scopeSelectedCountEl = document.getElementById('photoframeScopeSelectedCount');
   const scopeErrorEl = document.getElementById('photoframeScopeError');
 
   let shouldRefreshOnClose = false;
@@ -2247,6 +2312,10 @@ function renderPhotoframePanel() {
   let scopePhotosSelected = new Set();
   let scopeFolderOptions = [];
   let scopePhotoOptions = [];
+  let scopePhotoFolderPath = '';
+  let scopePhotoSelectMode = false;
+  let scopePhotoDragSession = null;
+  let scopePhotoDragSuppressClickUntil = 0;
 
   const showCreateError = (text) => {
     if (!createErrorEl) return;
@@ -2311,6 +2380,7 @@ function renderPhotoframePanel() {
 
   const closeScopeModal = () => {
     if (!scopeModal) return;
+    setScopePhotoSelectMode(false);
     scopeModal.classList.add('hidden');
   };
 
@@ -2318,6 +2388,135 @@ function renderPhotoframePanel() {
     const mode = String(scopeMode || (scopeModeSel && scopeModeSel.value) || 'all').trim().toLowerCase();
     if (scopeFoldersWrap) scopeFoldersWrap.classList.toggle('hidden', mode !== 'folders');
     if (scopePhotosWrap) scopePhotosWrap.classList.toggle('hidden', mode !== 'photos');
+    const inPhotosMode = mode === 'photos';
+    if (scopeSelectModeBtn) scopeSelectModeBtn.disabled = !inPhotosMode;
+    if (scopeSelectVisibleBtn) scopeSelectVisibleBtn.disabled = !inPhotosMode;
+    if (scopeClearVisibleBtn) scopeClearVisibleBtn.disabled = !inPhotosMode;
+    if (mode !== 'photos') {
+      setScopePhotoSelectMode(false);
+    }
+  };
+
+  const updateScopeSelectedCount = () => {
+    if (!scopeSelectedCountEl) return;
+    const count = scopePhotosSelected ? scopePhotosSelected.size : 0;
+    scopeSelectedCountEl.textContent = tr('photoframe_scope_selected_count').replace('{count}', String(count));
+  };
+
+  const stopScopePhotoDragSelection = () => {
+    document.removeEventListener('pointermove', onScopePhotoDragPointerMove);
+    document.removeEventListener('pointerup', onScopePhotoDragPointerUp);
+    document.removeEventListener('pointercancel', onScopePhotoDragPointerUp);
+    scopePhotoDragSession = null;
+  };
+
+  const setScopePhotoSelection = (photoId, shouldSelect, cardEl = null) => {
+    const pid = Number(photoId || 0) || 0;
+    if (!pid) return;
+    if (shouldSelect) scopePhotosSelected.add(pid);
+    else scopePhotosSelected.delete(pid);
+    const card = cardEl || (scopePhotosList ? scopePhotosList.querySelector(`[data-photoframe-scope-photo-card="${pid}"]`) : null);
+    if (card) card.classList.toggle('selected', !!shouldSelect);
+    updateScopeSelectedCount();
+  };
+
+  const setScopePhotoSelectMode = (enabled) => {
+    scopePhotoSelectMode = !!enabled;
+    if (!scopePhotoSelectMode) stopScopePhotoDragSelection();
+    if (scopePhotosWrap) scopePhotosWrap.classList.toggle('photoframe-scope-select-mode', scopePhotoSelectMode);
+    if (scopeSelectModeBtn) {
+      scopeSelectModeBtn.textContent = scopePhotoSelectMode ? tr('photoframe_scope_done_mode') : tr('photoframe_scope_select_mode');
+      scopeSelectModeBtn.classList.toggle('primary', scopePhotoSelectMode);
+    }
+  };
+
+  const setScopeVisibleSelection = (shouldSelect) => {
+    if (!scopePhotosList) return;
+    const nextState = !!shouldSelect;
+    let touched = false;
+    scopePhotosList.querySelectorAll('[data-photoframe-scope-photo-card]').forEach((card) => {
+      const pid = Number(card.getAttribute('data-photoframe-scope-photo-card') || 0) || 0;
+      if (!pid) return;
+      const current = scopePhotosSelected.has(pid);
+      if (current === nextState) return;
+      touched = true;
+      if (nextState) scopePhotosSelected.add(pid);
+      else scopePhotosSelected.delete(pid);
+      card.classList.toggle('selected', nextState);
+    });
+    if (touched) updateScopeSelectedCount();
+  };
+
+  const startScopePhotoDragSelection = (ev, card, forceSelect = null) => {
+    if (!scopePhotoSelectMode) return;
+    if (!ev || !card) return;
+    try { ev.preventDefault(); } catch {}
+    const pid = Number(card.getAttribute('data-photoframe-scope-photo-card') || 0) || 0;
+    if (!pid) return;
+    const actionSelect = (forceSelect === null) ? !scopePhotosSelected.has(pid) : !!forceSelect;
+    stopScopePhotoDragSelection();
+    scopePhotoDragSession = {
+      pointerId: Number(ev.pointerId),
+      actionSelect,
+      touched: new Set(),
+    };
+    setScopePhotoSelection(pid, actionSelect, card);
+    scopePhotoDragSession.touched.add(pid);
+    document.addEventListener('pointermove', onScopePhotoDragPointerMove, { passive: false });
+    document.addEventListener('pointerup', onScopePhotoDragPointerUp, { passive: true });
+    document.addEventListener('pointercancel', onScopePhotoDragPointerUp, { passive: true });
+  };
+
+  function onScopePhotoDragPointerMove(ev) {
+    const session = scopePhotoDragSession;
+    if (!session) return;
+    if (Number(ev.pointerId) !== Number(session.pointerId)) return;
+    const node = document.elementFromPoint(Number(ev.clientX || 0), Number(ev.clientY || 0));
+    const card = (node && node.closest) ? node.closest('[data-photoframe-scope-photo-card]') : null;
+    if (!card) return;
+    const pid = Number(card.getAttribute('data-photoframe-scope-photo-card') || 0) || 0;
+    if (!pid || session.touched.has(pid)) return;
+    session.touched.add(pid);
+    setScopePhotoSelection(pid, !!session.actionSelect, card);
+    try { ev.preventDefault(); } catch {}
+  }
+
+  function onScopePhotoDragPointerUp(ev) {
+    const session = scopePhotoDragSession;
+    if (!session) return;
+    if (ev && ev.pointerId != null && Number(ev.pointerId) !== Number(session.pointerId)) return;
+    scopePhotoDragSuppressClickUntil = Date.now() + 220;
+    stopScopePhotoDragSelection();
+  }
+
+  const renderScopeFolderNav = () => {
+    if (!scopeFolderNav) return;
+    const opts = [''].concat(Array.isArray(scopeFolderOptions) ? scopeFolderOptions : []);
+    scopeFolderNav.innerHTML = opts.map((path) => {
+      const p = String(path || '').trim();
+      const active = p === scopePhotoFolderPath ? ' active' : '';
+      const label = p ? (p.split('/').filter(Boolean).pop() || p) : tr('photoframe_scope_folder_all');
+      const sub = p ? `<div class="mini-label">${escapeHtml(p)}</div>` : '';
+      return `<button type="button" class="photoframe-scope-folder-item${active}" data-photoframe-scope-folder-nav="${escapeHtml(p)}">
+        <div>${escapeHtml(label)}</div>
+        ${sub}
+      </button>`;
+    }).join('');
+    scopeFolderNav.querySelectorAll('[data-photoframe-scope-folder-nav]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const nextPath = String(el.getAttribute('data-photoframe-scope-folder-nav') || '').trim();
+        if (nextPath === scopePhotoFolderPath) return;
+        scopePhotoFolderPath = nextPath;
+        renderScopeFolderNav();
+        showScopeError('');
+        try {
+          await loadScopePhotos(String((scopePhotoSearchInput && scopePhotoSearchInput.value) || ''));
+          renderScopePhotos();
+        } catch (e) {
+          showScopeError(String((e && e.message) || tr('photoframe_scope_load_failed')));
+        }
+      });
+    });
   };
 
   const renderScopeFolders = () => {
@@ -2350,28 +2549,94 @@ function renderPhotoframePanel() {
     if (!scopePhotosList) return;
     if (!Array.isArray(scopePhotoOptions) || !scopePhotoOptions.length) {
       scopePhotosList.innerHTML = `<div class="mini-label">${escapeHtml(tr('photoframe_scope_empty_photos'))}</div>`;
+      updateScopeSelectedCount();
       return;
     }
-    scopePhotosList.innerHTML = scopePhotoOptions.map((it, idx) => {
+    scopePhotosList.innerHTML = scopePhotoOptions.map((it) => {
       const pid = Number(it && it.id ? it.id : 0) || 0;
       if (!pid) return '';
-      const checked = scopePhotosSelected.has(pid) ? ' checked' : '';
+      const selected = scopePhotosSelected.has(pid);
       const rel = String(it && it.rel_path ? it.rel_path : '').trim();
       const label = String(it && it.label ? it.label : `Photo #${pid}`).trim();
-      const line = rel ? `${label} (${rel})` : label;
-      return `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">
-        <input type="checkbox" data-photoframe-scope-photo="${pid}"${checked}>
-        <span style="word-break:break-all;">#${pid} - ${escapeHtml(line)}</span>
-      </label>`;
+      const thumb = String(it && it.thumb_url ? it.thumb_url : '').trim();
+      return `
+        <article class="photo-card photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
+          <div class="card-thumb">
+            ${thumb ? `<img loading="lazy" decoding="async" src="${escapeHtml(thumb)}" alt="">` : `<div class="photoframe-scope-photo-placeholder">${escapeHtml(tr('no_thumb'))}</div>`}
+            <span class="photo-select-badge">&#10003;</span>
+          </div>
+          <div class="card-body">
+            <h4 class="card-title">#${pid} - ${escapeHtml(label || `Photo #${pid}`)}</h4>
+            <div class="card-meta">
+              <span>${escapeHtml(rel || '-')}</span>
+            </div>
+          </div>
+        </article>
+      `;
     }).join('');
-    scopePhotosList.querySelectorAll('input[data-photoframe-scope-photo]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const pid = Number(el.getAttribute('data-photoframe-scope-photo') || 0) || 0;
-        if (!pid) return;
-        if (el.checked) scopePhotosSelected.add(pid);
-        else scopePhotosSelected.delete(pid);
+
+    scopePhotosList.querySelectorAll('[data-photoframe-scope-photo-card]').forEach((card) => {
+      const pid = Number(card.getAttribute('data-photoframe-scope-photo-card') || 0) || 0;
+      if (!pid) return;
+      let lpTimer = null;
+      let lpActivated = false;
+      let lpStartX = 0;
+      let lpStartY = 0;
+      const lpThreshold = 520;
+      const cancelLongPress = () => {
+        if (lpTimer) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+
+      card.addEventListener('pointerdown', (ev) => {
+        if (ev.button != null && Number(ev.button) !== 0) return;
+        if (scopePhotoSelectMode) {
+          startScopePhotoDragSelection(ev, card, null);
+          return;
+        }
+        lpActivated = false;
+        lpStartX = Number(ev.clientX || 0);
+        lpStartY = Number(ev.clientY || 0);
+        lpTimer = window.setTimeout(() => {
+          lpActivated = true;
+          setScopePhotoSelectMode(true);
+          setScopePhotoSelection(pid, true, card);
+          startScopePhotoDragSelection(ev, card, true);
+        }, lpThreshold);
+      });
+
+      card.addEventListener('pointermove', (ev) => {
+        if (!lpTimer) return;
+        const dx = Number(ev.clientX || 0) - lpStartX;
+        const dy = Number(ev.clientY || 0) - lpStartY;
+        if (Math.hypot(dx, dy) > 10) cancelLongPress();
+      });
+
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach((evtName) => {
+        card.addEventListener(evtName, cancelLongPress);
+      });
+
+      card.addEventListener('click', (ev) => {
+        if (Date.now() < scopePhotoDragSuppressClickUntil) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
+        if (lpActivated) {
+          lpActivated = false;
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
+        if (!scopePhotoSelectMode) return;
+        setScopePhotoSelection(pid, !scopePhotosSelected.has(pid), card);
+        ev.preventDefault();
+        ev.stopPropagation();
       });
     });
+    updateScopeSelectedCount();
   };
 
   const loadScopeFolders = async () => {
@@ -2391,11 +2656,10 @@ function renderPhotoframePanel() {
   };
 
   const loadScopePhotos = async (queryText = '') => {
-    const ids = Array.from(scopePhotosSelected).filter((v) => Number.isFinite(v) && v > 0).slice(0, 900);
     const qs = new URLSearchParams();
-    qs.set('limit', '160');
+    qs.set('limit', '220');
     if (String(queryText || '').trim()) qs.set('q', String(queryText || '').trim());
-    if (ids.length) qs.set('ids', ids.join(','));
+    if (String(scopePhotoFolderPath || '').trim()) qs.set('folder', String(scopePhotoFolderPath || '').trim());
     const res = await fetch(`/api/photoframes/available-photos?${qs.toString()}`);
     let data = null;
     try {
@@ -2418,10 +2682,18 @@ function renderPhotoframePanel() {
     scopeMode = 'all';
     scopeFoldersSelected = new Set();
     scopePhotosSelected = new Set();
+    scopeFolderOptions = [];
     scopePhotoOptions = [];
+    scopePhotoFolderPath = '';
+    scopePhotoDragSuppressClickUntil = 0;
+    setScopePhotoSelectMode(false);
     showScopeError('');
+    if (scopePhotoSearchInput) scopePhotoSearchInput.value = '';
     if (scopeTargetEl) scopeTargetEl.textContent = tr('photoframe_scope_target').replace('{name}', scopeFrameName);
     if (scopeModeSel) scopeModeSel.value = 'all';
+    renderScopeFolderNav();
+    renderScopePhotos();
+    updateScopeSelectedCount();
     updateScopeModeVisibility();
     scopeModal.classList.remove('hidden');
 
@@ -2444,9 +2716,11 @@ function renderPhotoframePanel() {
       scopeFoldersSelected = new Set(folders.map((v) => String(v || '').trim()).filter(Boolean));
       scopePhotosSelected = new Set(photoIds.map((v) => Number(v || 0)).filter((v) => Number.isFinite(v) && v > 0));
       if (scopeModeSel) scopeModeSel.value = scopeMode;
+      updateScopeSelectedCount();
       updateScopeModeVisibility();
+      await loadScopeFolders();
+      renderScopeFolderNav();
       if (scopeMode === 'folders') {
-        await loadScopeFolders();
         renderScopeFolders();
       } else if (scopeMode === 'photos') {
         await loadScopePhotos('');
@@ -2566,12 +2840,32 @@ function renderPhotoframePanel() {
           await loadScopeFolders();
           renderScopeFolders();
         } else if (scopeMode === 'photos') {
+          await loadScopeFolders();
+          renderScopeFolderNav();
           await loadScopePhotos(String((scopePhotoSearchInput && scopePhotoSearchInput.value) || ''));
           renderScopePhotos();
         }
       } catch (e) {
         showScopeError(String((e && e.message) || tr('photoframe_scope_load_failed')));
       }
+    });
+  }
+  if (scopeSelectModeBtn) {
+    scopeSelectModeBtn.addEventListener('click', () => {
+      if (String(scopeMode || '').trim().toLowerCase() !== 'photos') return;
+      setScopePhotoSelectMode(!scopePhotoSelectMode);
+    });
+  }
+  if (scopeSelectVisibleBtn) {
+    scopeSelectVisibleBtn.addEventListener('click', () => {
+      if (String(scopeMode || '').trim().toLowerCase() !== 'photos') return;
+      setScopeVisibleSelection(true);
+    });
+  }
+  if (scopeClearVisibleBtn) {
+    scopeClearVisibleBtn.addEventListener('click', () => {
+      if (String(scopeMode || '').trim().toLowerCase() !== 'photos') return;
+      setScopeVisibleSelection(false);
     });
   }
   if (scopePhotoSearchBtn) {
@@ -3047,7 +3341,8 @@ function renderGrid() {
     if (peopleBtn) peopleBtn.style.display = 'none';
     if (els.statHiddenToggle) els.statHiddenToggle.style.display = 'none';
     els.grid.classList.remove('timeline-wrap');
-    els.grid.classList.add('gallery-grid');
+    // Let photoframe panel take full width; card layout is handled by .photoframe-grid.
+    els.grid.classList.remove('gallery-grid');
     renderPhotoframePanel();
     hideEmpty();
     setDetail(null);
@@ -7637,6 +7932,10 @@ async function setView(view, opts = {}) {
     if (nextView === 'settings' && role === 'user') nextView = 'timeline';
   } catch {}
   state.view = nextView;
+  const labels = navLabels();
+  const [title, subtitle] = labels[nextView] || ['FjordLens', ''];
+  if (els.viewTitle) els.viewTitle.textContent = title;
+  if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
   if (nextView !== 'mapper') _stopMapperDragSelectSession();
   if (nextView !== 'mapper') state.mapperPath = _normalizeMapperPath(state.mapperPath);
   state.folder = (nextView === 'mapper' ? (_normalizeMapperPath(state.mapperPath) || null) : null);

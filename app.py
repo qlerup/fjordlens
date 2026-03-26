@@ -4084,6 +4084,90 @@ def _photoframe_record_allows_photo(rec: Optional[Dict[str, Any]], photo_id: int
     return False
 
 
+def _photoframe_status_preview(conn: sqlite3.Connection, rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
+    rows: list[sqlite3.Row] = []
+
+    if mode == "photos":
+        ids_for_query = _normalize_photoframe_scope_photo_ids(scope_photo_ids)[:900]
+        if not ids_for_query:
+            return {}
+        ph = ",".join(["?"] * len(ids_for_query))
+        rows = conn.execute(
+            f"""
+            SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            WHERE id IN ({ph})
+              AND thumb_name IS NOT NULL
+              AND TRIM(thumb_name) <> ''
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+            LIMIT 80
+            """,
+            (*ids_for_query,),
+        ).fetchall()
+    elif mode == "folders":
+        prefixes: list[str] = []
+        seen_prefixes: set[str] = set()
+        for folder in _normalize_photoframe_scope_folders(scope_folders):
+            for pref in _photoframe_scope_rel_prefixes(folder):
+                if pref in seen_prefixes:
+                    continue
+                seen_prefixes.add(pref)
+                prefixes.append(pref)
+                if len(prefixes) >= 300:
+                    break
+            if len(prefixes) >= 300:
+                break
+        if not prefixes:
+            return {}
+        conds: list[str] = []
+        params: list[Any] = []
+        for pref in prefixes:
+            conds.append("(rel_path=? OR rel_path LIKE ?)")
+            params.extend([pref, pref + "/%"])
+        rows = conn.execute(
+            f"""
+            SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            WHERE ({" OR ".join(conds)})
+              AND thumb_name IS NOT NULL
+              AND TRIM(thumb_name) <> ''
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+            LIMIT 80
+            """,
+            params,
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            WHERE thumb_name IS NOT NULL
+              AND TRIM(thumb_name) <> ''
+            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+
+    for row in rows:
+        try:
+            photo_id = int(row["id"])
+        except Exception:
+            continue
+        rel_path = str(row["rel_path"] or "")
+        if not _photoframe_record_allows_photo(rec, photo_id, rel_path):
+            continue
+        thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(row["thumb_name"] or ""))
+        if not thumb_name:
+            continue
+        return {
+            "preview_photo_id": photo_id,
+            "preview_thumb_url": f"/api/thumbs/{thumb_name}",
+            "preview_updated_at": _sanitize_photoframe_text(row["updated_at"], 40),
+        }
+    return {}
+
+
 def _photoframe_token_lookup(token_plain: str) -> tuple[list[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
     token_hash = _share_token_digest(token_plain)
     if not token_hash:
@@ -7386,46 +7470,51 @@ def api_photoframes_status():
         key=lambda r: str(r.get("created_at") or ""),
     )
     items: list[Dict[str, Any]] = []
-    for idx, rec in enumerate(records_sorted, start=1):
-        token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
-        token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
-        scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
-        last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
-        seen_ts = _parse_iso_to_epoch(last_seen_at)
-        online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
-        device_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
-        name = device_name or (f"Fotoramme {idx}")
-        error = ""
-        if not last_seen_at:
-            error = "Ingen forbindelse endnu"
-        elif not online:
-            error = "Offline"
+    with closing(get_conn()) as conn:
+        for idx, rec in enumerate(records_sorted, start=1):
+            token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
+            token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
+            scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
+            last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
+            seen_ts = _parse_iso_to_epoch(last_seen_at)
+            online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
+            device_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
+            name = device_name or (f"Fotoramme {idx}")
+            error = ""
+            if not last_seen_at:
+                error = "Ingen forbindelse endnu"
+            elif not online:
+                error = "Offline"
+            preview = _photoframe_status_preview(conn, rec)
 
-        items.append(
-            {
-                "id": str(rec.get("id") or f"pf-token-{idx}"),
-                "name": name,
-                "base_url": "",
-                "info_url": "",
-                "location": "",
-                "note": "",
-                "online": online,
-                "http_status": 200 if online else None,
-                "latency_ms": None,
-                "error": error,
-                "ip": _sanitize_photoframe_text(rec.get("last_ip"), 120),
-                "feed_url": "",
-                "setup_complete": None,
-                "checked_at": checked_at,
-                "token_hint": token_hint,
-                "token_available": bool(token_plain),
-                "scope_mode": scope_mode,
-                "allowed_folder_count": len(scope_folders),
-                "allowed_photo_count": len(scope_photo_ids),
-                "last_seen_at": last_seen_at,
-                "created_at": _sanitize_photoframe_text(rec.get("created_at"), 40),
-            }
-        )
+            items.append(
+                {
+                    "id": str(rec.get("id") or f"pf-token-{idx}"),
+                    "name": name,
+                    "base_url": "",
+                    "info_url": "",
+                    "location": "",
+                    "note": "",
+                    "online": online,
+                    "http_status": 200 if online else None,
+                    "latency_ms": None,
+                    "error": error,
+                    "ip": _sanitize_photoframe_text(rec.get("last_ip"), 120),
+                    "feed_url": "",
+                    "setup_complete": None,
+                    "checked_at": checked_at,
+                    "token_hint": token_hint,
+                    "token_available": bool(token_plain),
+                    "scope_mode": scope_mode,
+                    "allowed_folder_count": len(scope_folders),
+                    "allowed_photo_count": len(scope_photo_ids),
+                    "last_seen_at": last_seen_at,
+                    "created_at": _sanitize_photoframe_text(rec.get("created_at"), 40),
+                    "preview_photo_id": preview.get("preview_photo_id"),
+                    "preview_thumb_url": _sanitize_photoframe_text(preview.get("preview_thumb_url"), 300),
+                    "preview_updated_at": _sanitize_photoframe_text(preview.get("preview_updated_at"), 40),
+                }
+            )
 
     return jsonify(
         {
@@ -7611,6 +7700,7 @@ def api_photoframes_available_photos():
 
     q = str(request.args.get("q") or "").strip()
     ids_raw = str(request.args.get("ids") or "").strip()
+    folder_raw = str(request.args.get("folder") or "").strip()
     try:
         limit = int(request.args.get("limit", "120") or 120)
     except Exception:
@@ -7634,20 +7724,39 @@ def api_photoframes_available_photos():
                 break
 
     params: list[Any] = []
-    where_sql = ""
+    where_parts: list[str] = []
     if q:
         q_like = f"%{q}%"
         if q.isdigit():
-            where_sql = "WHERE id=? OR rel_path LIKE ?"
+            where_parts.append("(id=? OR rel_path LIKE ?)")
             params.extend([int(q), q_like])
         else:
-            where_sql = "WHERE rel_path LIKE ?"
+            where_parts.append("rel_path LIKE ?")
             params.append(q_like)
+
+    folder = ""
+    if folder_raw:
+        try:
+            folder = _normalize_folder_acl_path(folder_raw)
+        except Exception:
+            folder = ""
+        prefixes = _photoframe_scope_rel_prefixes(folder) if folder else []
+        if prefixes:
+            conds: list[str] = []
+            for pref in prefixes:
+                conds.append("(rel_path=? OR rel_path LIKE ?)")
+                params.extend([pref, pref + "/%"])
+            where_parts.append("(" + " OR ".join(conds) + ")")
+        else:
+            # Explicit folder provided but no valid prefixes -> no rows.
+            where_parts.append("0")
+
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
     with closing(get_conn()) as conn:
         rows = conn.execute(
             f"""
-            SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
             FROM photos
             {where_sql}
             ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
@@ -7661,7 +7770,7 @@ def api_photoframes_available_photos():
             ph = ",".join(["?"] * len(selected_ids))
             extra_rows = conn.execute(
                 f"""
-                SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
                 FROM photos
                 WHERE id IN ({ph})
                 ORDER BY id DESC
@@ -7681,12 +7790,14 @@ def api_photoframes_available_photos():
                 continue
             rel = str(r["rel_path"] or "").replace("\\", "/")
             label = rel.rsplit("/", 1)[-1] if "/" in rel else rel
+            thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(r["thumb_name"] or ""))
             by_id[pid] = {
                 "id": pid,
                 "rel_path": rel,
                 "label": label or f"Photo #{pid}",
                 "updated_at": _sanitize_photoframe_text(r["updated_at"], 40),
                 "selected": pid in selected_ids,
+                "thumb_url": f"/api/thumbs/{thumb_name}" if thumb_name else "",
             }
             ordered.append(pid)
 
