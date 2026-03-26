@@ -3717,6 +3717,21 @@ def _sanitize_photoframe_text(raw: Any, max_len: int = 120) -> str:
     return value
 
 
+def _sanitize_photoframe_photo_id(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except Exception:
+        try:
+            value = int(str(raw or "").strip())
+        except Exception:
+            return 0
+    if value <= 0:
+        return 0
+    if value > 2_147_483_647:
+        return 0
+    return value
+
+
 def _sanitize_photoframe_token_plain(raw: Any) -> str:
     token = str(raw or "").strip()
     if not token:
@@ -3935,6 +3950,8 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         last_ip = _sanitize_photoframe_text(it.get("last_ip"), 120)
         device_name = _sanitize_photoframe_text(it.get("device_name"), 80)
         last_user_agent = _sanitize_photoframe_text(it.get("last_user_agent"), 180)
+        last_photo_id = _sanitize_photoframe_photo_id(it.get("last_photo_id"))
+        last_photo_at = _sanitize_photoframe_text(it.get("last_photo_at"), 40)
         out.append(
             {
                 "id": rec_id,
@@ -3949,6 +3966,8 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "last_ip": last_ip,
                 "device_name": device_name,
                 "last_user_agent": last_user_agent,
+                "last_photo_id": last_photo_id,
+                "last_photo_at": last_photo_at,
             }
         )
     return out
@@ -3976,6 +3995,8 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "last_ip": _sanitize_photoframe_text(it.get("last_ip"), 120),
                 "device_name": _sanitize_photoframe_text(it.get("device_name"), 80),
                 "last_user_agent": _sanitize_photoframe_text(it.get("last_user_agent"), 180),
+                "last_photo_id": _sanitize_photoframe_photo_id(it.get("last_photo_id")),
+                "last_photo_at": _sanitize_photoframe_text(it.get("last_photo_at"), 40),
             }
         )
 
@@ -4087,6 +4108,30 @@ def _photoframe_record_allows_photo(rec: Optional[Dict[str, Any]], photo_id: int
 def _photoframe_status_preview(conn: sqlite3.Connection, rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
     rows: list[sqlite3.Row] = []
+    last_photo_id = _sanitize_photoframe_photo_id((rec or {}).get("last_photo_id") if isinstance(rec, dict) else 0)
+    last_photo_at = _sanitize_photoframe_text((rec or {}).get("last_photo_at"), 40) if isinstance(rec, dict) else ""
+
+    if last_photo_id:
+        row = conn.execute(
+            """
+            SELECT id, rel_path, thumb_name, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+            FROM photos
+            WHERE id=?
+            LIMIT 1
+            """,
+            (last_photo_id,),
+        ).fetchone()
+        if row:
+            rel_path = str(row["rel_path"] or "")
+            if _photoframe_record_allows_photo(rec, last_photo_id, rel_path):
+                thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(row["thumb_name"] or ""))
+                if thumb_name:
+                    preview_at = last_photo_at or _sanitize_photoframe_text(row["updated_at"], 40)
+                    return {
+                        "preview_photo_id": last_photo_id,
+                        "preview_thumb_url": f"/api/thumbs/{thumb_name}",
+                        "preview_updated_at": preview_at,
+                    }
 
     if mode == "photos":
         ids_for_query = _normalize_photoframe_scope_photo_ids(scope_photo_ids)[:900]
@@ -4189,6 +4234,42 @@ def _parse_iso_to_epoch(value: Any) -> float:
         return float(datetime.fromisoformat(raw).timestamp())
     except Exception:
         return 0.0
+
+
+def _photoframe_update_presence_fields(rec: Dict[str, Any], req: Any, seen_at: str) -> None:
+    if not isinstance(rec, dict):
+        return
+    rec["last_seen_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    rec["last_ip"] = _request_client_ip()
+    rec["last_user_agent"] = _sanitize_photoframe_text(req.headers.get("User-Agent"), 180)
+    frame_name = _sanitize_photoframe_text(
+        req.headers.get("X-Photoframe-Name") or req.args.get("name"),
+        80,
+    )
+    if frame_name:
+        rec["device_name"] = frame_name
+
+
+def _photoframe_try_set_current_photo(
+    conn: sqlite3.Connection,
+    rec: Optional[Dict[str, Any]],
+    photo_id_raw: Any,
+    seen_at: str,
+) -> int:
+    if not isinstance(rec, dict):
+        return 0
+    photo_id = _sanitize_photoframe_photo_id(photo_id_raw)
+    if photo_id <= 0:
+        return 0
+    row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return 0
+    rel_path = str(row["rel_path"] or "")
+    if not _photoframe_record_allows_photo(rec, photo_id, rel_path):
+        return 0
+    rec["last_photo_id"] = photo_id
+    rec["last_photo_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    return photo_id
 
 
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
@@ -7861,17 +7942,10 @@ def api_frame_feed(token: str):
         return jsonify({"ok": False, "error": "Invalid token"}), 404
 
     now = now_iso()
-    records[rec_idx]["last_seen_at"] = now
-    records[rec_idx]["last_ip"] = _request_client_ip()
-    records[rec_idx]["last_user_agent"] = _sanitize_photoframe_text(request.headers.get("User-Agent"), 180)
-    frame_name = _sanitize_photoframe_text(
-        request.headers.get("X-Photoframe-Name") or request.args.get("name"),
-        80,
-    )
-    if frame_name:
-        records[rec_idx]["device_name"] = frame_name
-    _save_photoframe_token_records(records)
     active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
+    _photoframe_update_presence_fields(active_record, request, now)
+    _save_photoframe_token_records(records)
+    current_photo_raw = request.args.get("current_photo_id") or request.headers.get("X-Photoframe-Current-Photo-Id")
     scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(active_record)
 
     request_base = _request_public_base_url() or request.url_root.rstrip("/")
@@ -7895,7 +7969,9 @@ def api_frame_feed(token: str):
             }
         )
 
+    updated_current_photo_id = 0
     with closing(get_conn()) as conn:
+        updated_current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
         if scope_mode == "photos":
             ids_for_query = _normalize_photoframe_scope_photo_ids(scope_photo_ids)[:900]
             if not ids_for_query:
@@ -7953,6 +8029,8 @@ def api_frame_feed(token: str):
                 """,
                 (PHOTOFRAME_FEED_MAX_IMAGES,),
             ).fetchall()
+    if updated_current_photo_id > 0:
+        _save_photoframe_token_records(records)
 
     if rows:
         safe_rows = []
@@ -7999,6 +8077,33 @@ def api_frame_feed(token: str):
             "count": len(images),
             "generated_at": now,
             "message": feed_message,
+        }
+    )
+
+
+@app.route("/api/frame/<token>/heartbeat", methods=["GET"])
+def api_frame_heartbeat(token: str):
+    records, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Invalid token"}), 404
+
+    now = now_iso()
+    active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
+    _photoframe_update_presence_fields(active_record, request, now)
+    current_photo_raw = request.args.get("photo_id") or request.headers.get("X-Photoframe-Current-Photo-Id")
+    current_photo_id = 0
+    with closing(get_conn()) as conn:
+        current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
+    _save_photoframe_token_records(records)
+
+    latest_photo_id = _sanitize_photoframe_photo_id(active_record.get("last_photo_id") if isinstance(active_record, dict) else 0)
+    if latest_photo_id <= 0:
+        latest_photo_id = current_photo_id
+    return jsonify(
+        {
+            "ok": True,
+            "seen_at": now,
+            "photo_id": latest_photo_id or None,
         }
     )
 

@@ -1694,6 +1694,9 @@ let state = {
   sharedFolderOptions: [],
 };
 
+const PHOTOFRAME_STATUS_POLL_MS = 7000;
+let photoframeStatusPollTimer = null;
+
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
 
 function _loadMapperTreeUiState() {
@@ -2068,6 +2071,12 @@ function renderPhotoframePanel() {
     const previewThumbUrl = String(item.preview_thumb_url || '').trim();
     const previewUpdatedRaw = String(item.preview_updated_at || '').trim();
     const previewUpdatedLabel = previewUpdatedRaw ? fmtDate(previewUpdatedRaw) : '';
+    const previewVersionSeed = String(
+      previewUpdatedRaw || item.preview_photo_id || checkedItemText || state.photoframeCheckedAt || ''
+    ).trim();
+    const previewThumbSrc = previewThumbUrl
+      ? `${previewThumbUrl}${previewThumbUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(previewVersionSeed || '0')}`
+      : '';
     return `
       <article class="photoframe-card ${online ? 'is-online' : 'is-offline'}">
         <div class="photoframe-card-head">
@@ -2116,8 +2125,8 @@ function renderPhotoframePanel() {
             ` : ''}
           </div>
           <aside class="photoframe-preview" aria-label="Preview">
-            ${previewThumbUrl
-              ? `<img src="${escapeHtml(previewThumbUrl)}" alt="${escapeHtml(frameName)}" loading="lazy" decoding="async">`
+            ${previewThumbSrc
+              ? `<img src="${escapeHtml(previewThumbSrc)}" alt="${escapeHtml(frameName)}" loading="lazy" decoding="async">`
               : `<div class="photoframe-preview-empty">${escapeHtml(tr('no_thumb'))}</div>`
             }
             ${previewUpdatedLabel ? `<div class="photoframe-preview-meta">${escapeHtml(previewUpdatedLabel)}</div>` : ''}
@@ -4430,6 +4439,23 @@ function nextViewer(step=1) {
   viewerTransitionRunning = true;
   state.selectedIndex = targetIndex;
   animateViewerSlideTransition(step, () => openViewer(state.selectedIndex));
+}
+
+function stopPhotoframeStatusPolling() {
+  if (photoframeStatusPollTimer) {
+    clearInterval(photoframeStatusPollTimer);
+    photoframeStatusPollTimer = null;
+  }
+}
+
+function startPhotoframeStatusPolling() {
+  stopPhotoframeStatusPolling();
+  photoframeStatusPollTimer = setInterval(async () => {
+    if (state.view !== 'photoframe' || state.photoframeLoading) return;
+    try {
+      await loadPhotoframeStatus();
+    } catch {}
+  }, PHOTOFRAME_STATUS_POLL_MS);
 }
 
 async function loadPhotoframeStatus() {
@@ -7959,6 +7985,8 @@ async function setView(view, opts = {}) {
     if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
     els.mapperTreeNav.classList.add('hidden');
   }
+  if (nextView === 'photoframe') startPhotoframeStatusPolling();
+  else stopPhotoframeStatusPolling();
   if (syncUrl) _syncRouteStateToUrl();
 
   if (nextView === "settings") {
