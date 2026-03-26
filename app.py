@@ -8110,17 +8110,27 @@ def api_frame_heartbeat(token: str):
 
 @app.route("/api/frame/<token>/view/<int:photo_id>", methods=["GET"])
 def api_frame_viewable(token: str, photo_id: int):
-    _, rec_idx, rec = _photoframe_token_lookup(token)
+    records, rec_idx, rec = _photoframe_token_lookup(token)
     if rec_idx < 0 or not rec:
         return ("Forbidden", 403)
 
+    active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
+    now = now_iso()
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
         return ("Not found", 404)
     rel_path = str(row["rel_path"] or "")
-    if not _photoframe_record_allows_photo(rec, int(photo_id), rel_path):
+    if not _photoframe_record_allows_photo(active_record, int(photo_id), rel_path):
         return ("Forbidden", 403)
+
+    try:
+        with closing(get_conn()) as conn:
+            _photoframe_update_presence_fields(active_record, request, now)
+            _photoframe_try_set_current_photo(conn, active_record, int(photo_id), now)
+        _save_photoframe_token_records(records)
+    except Exception:
+        pass
 
     safe_rel = rel_path.replace("..", "").lstrip("/")
     if not safe_rel:

@@ -2569,7 +2569,7 @@ function renderPhotoframePanel() {
       const label = String(it && it.label ? it.label : `Photo #${pid}`).trim();
       const thumb = String(it && it.thumb_url ? it.thumb_url : '').trim();
       return `
-        <article class="photo-card photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
+        <article class="photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
           <div class="card-thumb">
             ${thumb ? `<img loading="lazy" decoding="async" src="${escapeHtml(thumb)}" alt="">` : `<div class="photoframe-scope-photo-placeholder">${escapeHtml(tr('no_thumb'))}</div>`}
             <span class="photo-select-badge">&#10003;</span>
@@ -4448,10 +4448,20 @@ function stopPhotoframeStatusPolling() {
   }
 }
 
+function isPhotoframeModalOpen() {
+  if (state.view !== 'photoframe') return false;
+  const ids = ['photoframeCreateModal', 'photoframeShowTokenModal', 'photoframeScopeModal'];
+  for (const id of ids) {
+    const modal = document.getElementById(id);
+    if (modal && !modal.classList.contains('hidden')) return true;
+  }
+  return false;
+}
+
 function startPhotoframeStatusPolling() {
   stopPhotoframeStatusPolling();
   photoframeStatusPollTimer = setInterval(async () => {
-    if (state.view !== 'photoframe' || state.photoframeLoading) return;
+    if (state.view !== 'photoframe' || state.photoframeLoading || isPhotoframeModalOpen()) return;
     try {
       await loadPhotoframeStatus();
     } catch {}
@@ -4462,7 +4472,7 @@ async function loadPhotoframeStatus() {
   if (state.photoframeLoading) return;
   state.photoframeLoading = true;
   state.photoframeError = '';
-  if (state.view === 'photoframe') renderGrid();
+  if (state.view === 'photoframe' && !isPhotoframeModalOpen()) renderGrid();
 
   try {
     const res = await fetch('/api/photoframes/status');
@@ -4487,7 +4497,7 @@ async function loadPhotoframeStatus() {
     state.photoframeCheckedAt = new Date().toISOString();
   } finally {
     state.photoframeLoading = false;
-    if (state.view === 'photoframe') renderGrid();
+    if (state.view === 'photoframe' && !isPhotoframeModalOpen()) renderGrid();
   }
 }
 
