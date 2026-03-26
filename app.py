@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sqlite3
+import zipfile
 from contextlib import closing
 from datetime import datetime, timedelta
 import time
@@ -77,6 +78,13 @@ except Exception:
     PHOTOFRAME_FEED_MAX_IMAGES = 1200
 PHOTOFRAME_FEED_MAX_IMAGES = max(10, min(5000, PHOTOFRAME_FEED_MAX_IMAGES))
 PHOTOFRAME_TEXT_ONLY = (str(os.environ.get("PHOTOFRAME_TEXT_ONLY", "0") or "0").strip().lower() in {"1", "true", "yes", "on"})
+PHOTOFRAME_UPDATE_SOURCE_DIR_ENV = str(os.environ.get("PHOTOFRAME_UPDATE_SOURCE_DIR", "") or "").strip()
+PHOTOFRAME_UPDATE_UPLOAD_DIR = DATA_DIR / "photoframe_updates"
+try:
+    PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = int(os.environ.get("PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES", str(300 * 1024 * 1024)) or (300 * 1024 * 1024))
+except Exception:
+    PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = 300 * 1024 * 1024
+PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = max(5 * 1024 * 1024, min(2 * 1024 * 1024 * 1024, PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES))
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -101,7 +109,7 @@ TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
         "setup_fill_fields": "Udfyld felterne",
         "setup_password_mismatch": "Adgangskoder matcher ikke",
         "invalid_code": "Ugyldig kode",
-        "share_invalid_or_expired": "Share link er ugyldigt eller udløbet.",
+        "share_invalid_or_expired": "Share link er ugyldigt eller udlÃ¸bet.",
         "admin_user_created": "Bruger oprettet",
         "admin_cannot_delete_self": "Du kan ikke slette din egen bruger",
         "admin_user_not_found": "Bruger findes ikke",
@@ -976,16 +984,16 @@ def _classify_labels(img_vec: list[float], top_k: int = 5, thr: float = 0.24) ->
 
 
 AI_DESC_PROMPTS: list[Dict[str, Any]] = [
-    {"prompt": "people swimming in water", "tags": ["personer", "svømning", "vand"]},
-    {"prompt": "a person swimming at the beach", "tags": ["personer", "svømning", "strand"]},
-    {"prompt": "a person running outdoors", "tags": ["personer", "løb", "udendørs"]},
+    {"prompt": "people swimming in water", "tags": ["personer", "svÃ¸mning", "vand"]},
+    {"prompt": "a person swimming at the beach", "tags": ["personer", "svÃ¸mning", "strand"]},
+    {"prompt": "a person running outdoors", "tags": ["personer", "lÃ¸b", "udendÃ¸rs"]},
     {"prompt": "a person riding a bicycle", "tags": ["personer", "cykling"]},
     {"prompt": "people hiking in nature", "tags": ["personer", "natur", "vandring"]},
     {"prompt": "a family having dinner", "tags": ["familie", "mad"]},
     {"prompt": "people on a beach", "tags": ["personer", "strand"]},
     {"prompt": "a person in the sea", "tags": ["personer", "hav", "vand"]},
-    {"prompt": "an indoor photo", "tags": ["indendørs"]},
-    {"prompt": "an outdoor photo", "tags": ["udendørs"]},
+    {"prompt": "an indoor photo", "tags": ["indendÃ¸rs"]},
+    {"prompt": "an outdoor photo", "tags": ["udendÃ¸rs"]},
 ]
 _DESC_PROMPT_VECS: Optional[list[Tuple[str, list[str], list[float]]]] = None
 
@@ -1039,12 +1047,12 @@ def _build_desc_caption(tags: list[str]) -> Optional[str]:
     if not vals:
         return None
     s = set(vals)
-    if "personer" in s and "svømning" in s:
+    if "personer" in s and "svÃ¸mning" in s:
         if "strand" in s:
-            return "personer der svømmer på stranden"
+            return "personer der svÃ¸mmer pÃ¥ stranden"
         if "hav" in s:
-            return "personer der svømmer i havet"
-        return "personer der svømmer"
+            return "personer der svÃ¸mmer i havet"
+        return "personer der svÃ¸mmer"
     return ", ".join(vals[:4])
 
 
@@ -1184,6 +1192,7 @@ def ensure_dirs() -> None:
     CONVERT_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    PHOTOFRAME_UPDATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     try:
         # Canonical upload subfolders used by the app
         (UPLOAD_DIR / "originals").mkdir(parents=True, exist_ok=True)
@@ -1504,7 +1513,7 @@ def _postprocess_uploaded_rels(
                     conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
                     conv_dir.mkdir(parents=True, exist_ok=True)
                     new_path = conv_dir / leaf_jpg
-                    # Avoid clobbering existing .jpg — add numeric suffix
+                    # Avoid clobbering existing .jpg â€” add numeric suffix
                     if new_path.exists():
                         stem = new_path.stem
                         parent = new_path.parent
@@ -1532,7 +1541,7 @@ def _postprocess_uploaded_rels(
                                 save_kwargs["exif"] = exif_bytes
                             rgb.save(new_path, **save_kwargs)
                     else:
-                        # RAW → JPEG via rawpy with ffmpeg fallback
+                        # RAW â†’ JPEG via rawpy with ffmpeg fallback
                         _raw_to_jpeg(disk_path, new_path)
                     # Preserve timestamps
                     try:
@@ -2696,7 +2705,7 @@ def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Opt
         with closing(get_conn()) as conn2:
             rows = _load(conn2)
     if not rows:
-        # No explicit ACLs → no access (non-admin users)
+        # No explicit ACLs â†’ no access (non-admin users)
         return []
     return rows
 
@@ -3043,14 +3052,14 @@ def _sanitize_folder_part_allow_spaces(part: str) -> str:
     """Sanitize a single folder segment while preserving spaces.
     - Disallow empty, '.' and '..'
     - Collapse whitespace to single spaces
-    - Allow letters (incl. Danish ÆØÅæøå), digits, space, '-', '_', '.', '()', '[]', '&', '+', ',', ';', '@', '!', '~', "'", '`', '^', '='
+    - Allow letters (incl. Danish Ã†Ã˜Ã…Ã¦Ã¸Ã¥), digits, space, '-', '_', '.', '()', '[]', '&', '+', ',', ';', '@', '!', '~', "'", '`', '^', '='
     - Strip trailing dot/space to avoid Windows quirks when developing locally
     """
     p = str(part or "").strip()
     if not p or p in {".", ".."}:
         raise ValueError("Ugyldig mappe")
     p = re.sub(r"\s+", " ", p)
-    p = re.sub(r"[^0-9A-Za-zÆØÅæøå _\-\.\(\)\[\]&\+,;@!~'`^=]", "", p)
+    p = re.sub(r"[^0-9A-Za-zÃ†Ã˜Ã…Ã¦Ã¸Ã¥ _\-\.\(\)\[\]&\+,;@!~'`^=]", "", p)
     p = p.rstrip(" .")
     if not p:
         raise ValueError("Ugyldig mappe")
@@ -3195,8 +3204,8 @@ def _upload_settings_payload(destination: str) -> dict:
         "upload_dir": str(UPLOAD_DIR),
         "note": "Scan bruger filer direkte fra biblioteket og kopierer ikke.",
         "options": [
-            {"value": UPLOAD_DEST_UPLOADS, "label": "Kopiér til uploads-mappen"},
-            {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
+            {"value": UPLOAD_DEST_UPLOADS, "label": "KopiÃ©r til uploads-mappen"},
+            {"value": UPLOAD_DEST_LIBRARY, "label": "KopiÃ©r til fotobiblioteket"},
         ],
     }
 
@@ -3544,13 +3553,13 @@ def _share_expires_at_from_body(
         try:
             expires_value = int(raw_text)
         except Exception:
-            return None, "Ugyldig udløbsværdi"
+            return None, "Ugyldig udlÃ¸bsvÃ¦rdi"
         if expires_value < 0:
-            return None, "Ugyldig udløbsværdi"
+            return None, "Ugyldig udlÃ¸bsvÃ¦rdi"
         if expires_value == 0:
             return None, None
         if expires_value < 1:
-            return None, "Ugyldig udløbsværdi"
+            return None, "Ugyldig udlÃ¸bsvÃ¦rdi"
 
     expires_unit = str(body.get("expires_unit") or default_unit).strip().lower()
     if expires_unit not in {"hours", "days"}:
@@ -3746,6 +3755,31 @@ def _sanitize_photoframe_token_plain(raw: Any) -> str:
 def _normalize_photoframe_token_hash(raw: Any) -> str:
     value = str(raw or "").strip().lower()
     if re.match(r"^[a-f0-9]{64}$", value):
+        return value
+    return ""
+
+
+def _sanitize_photoframe_update_job_id(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if len(value) > 80:
+        value = value[:80].strip()
+    if not re.match(r"^[A-Za-z0-9._-]{4,80}$", value):
+        return ""
+    return value
+
+
+def _sanitize_photoframe_update_sha256(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if re.match(r"^[a-f0-9]{64}$", value):
+        return value
+    return ""
+
+
+def _sanitize_photoframe_update_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"queued", "downloading", "installing", "restarting", "success", "failed"}:
         return value
     return ""
 
@@ -3952,6 +3986,16 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         last_user_agent = _sanitize_photoframe_text(it.get("last_user_agent"), 180)
         last_photo_id = _sanitize_photoframe_photo_id(it.get("last_photo_id"))
         last_photo_at = _sanitize_photoframe_text(it.get("last_photo_at"), 40)
+        update_job_id = _sanitize_photoframe_update_job_id(it.get("update_job_id"))
+        update_status = _sanitize_photoframe_update_status(it.get("update_status"))
+        update_message = _sanitize_photoframe_text(it.get("update_message"), 240)
+        update_requested_at = _sanitize_photoframe_text(it.get("update_requested_at"), 40)
+        update_started_at = _sanitize_photoframe_text(it.get("update_started_at"), 40)
+        update_finished_at = _sanitize_photoframe_text(it.get("update_finished_at"), 40)
+        update_last_report_at = _sanitize_photoframe_text(it.get("update_last_report_at"), 40)
+        update_version = _sanitize_photoframe_text(it.get("update_version"), 80)
+        update_package_url = _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or ""
+        update_package_sha256 = _sanitize_photoframe_update_sha256(it.get("update_package_sha256"))
         out.append(
             {
                 "id": rec_id,
@@ -3968,6 +4012,16 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "last_user_agent": last_user_agent,
                 "last_photo_id": last_photo_id,
                 "last_photo_at": last_photo_at,
+                "update_job_id": update_job_id,
+                "update_status": update_status,
+                "update_message": update_message,
+                "update_requested_at": update_requested_at,
+                "update_started_at": update_started_at,
+                "update_finished_at": update_finished_at,
+                "update_last_report_at": update_last_report_at,
+                "update_version": update_version,
+                "update_package_url": update_package_url,
+                "update_package_sha256": update_package_sha256,
             }
         )
     return out
@@ -3997,6 +4051,16 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "last_user_agent": _sanitize_photoframe_text(it.get("last_user_agent"), 180),
                 "last_photo_id": _sanitize_photoframe_photo_id(it.get("last_photo_id")),
                 "last_photo_at": _sanitize_photoframe_text(it.get("last_photo_at"), 40),
+                "update_job_id": _sanitize_photoframe_update_job_id(it.get("update_job_id")),
+                "update_status": _sanitize_photoframe_update_status(it.get("update_status")),
+                "update_message": _sanitize_photoframe_text(it.get("update_message"), 240),
+                "update_requested_at": _sanitize_photoframe_text(it.get("update_requested_at"), 40),
+                "update_started_at": _sanitize_photoframe_text(it.get("update_started_at"), 40),
+                "update_finished_at": _sanitize_photoframe_text(it.get("update_finished_at"), 40),
+                "update_last_report_at": _sanitize_photoframe_text(it.get("update_last_report_at"), 40),
+                "update_version": _sanitize_photoframe_text(it.get("update_version"), 80),
+                "update_package_url": _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or "",
+                "update_package_sha256": _sanitize_photoframe_update_sha256(it.get("update_package_sha256")),
             }
         )
 
@@ -4272,6 +4336,179 @@ def _photoframe_try_set_current_photo(
     return photo_id
 
 
+def _photoframe_update_command_payload(rec: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(rec, dict):
+        return None
+    job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+    if not job_id:
+        return None
+    status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if status not in {"queued", "downloading", "installing", "restarting"}:
+        return None
+    package_url = _normalize_photoframe_http_url(rec.get("update_package_url"))
+    if not package_url:
+        return None
+    out = {
+        "job_id": job_id,
+        "package_url": package_url,
+    }
+    package_sha = _sanitize_photoframe_update_sha256(rec.get("update_package_sha256"))
+    if package_sha:
+        out["package_sha256"] = package_sha
+    version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+    if version:
+        out["version"] = version
+    return out
+
+
+def _photoframe_apply_update_report(
+    rec: Optional[Dict[str, Any]],
+    job_id_raw: Any,
+    status_raw: Any,
+    message_raw: Any,
+    version_raw: Any,
+    seen_at: str,
+) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    expected_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+    job_id = _sanitize_photoframe_update_job_id(job_id_raw)
+    if (not expected_job_id) or (not job_id) or (job_id != expected_job_id):
+        return False
+    status = _sanitize_photoframe_update_status(status_raw)
+    if not status:
+        return False
+
+    rec["update_status"] = status
+    rec["update_last_report_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    message = _sanitize_photoframe_text(message_raw, 240)
+    if message:
+        rec["update_message"] = message
+    version = _sanitize_photoframe_text(version_raw, 80)
+    if version:
+        rec["update_version"] = version
+    if status in {"downloading", "installing", "restarting", "success", "failed"} and not _sanitize_photoframe_text(rec.get("update_started_at"), 40):
+        rec["update_started_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    if status in {"success", "failed"}:
+        rec["update_finished_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+        if status == "success":
+            rec["update_package_sha256"] = ""
+    return True
+
+
+def _is_photoframe_package_root(path: Path) -> bool:
+    try:
+        if not path.exists() or not path.is_dir():
+            return False
+        return (path / "app").is_dir() and (path / "viewer").is_dir() and (path / "scripts").is_dir()
+    except Exception:
+        return False
+
+
+def _resolve_photoframe_package_root() -> Optional[Path]:
+    candidates: list[Path] = []
+    env_raw = PHOTOFRAME_UPDATE_SOURCE_DIR_ENV
+    if env_raw:
+        try:
+            candidates.append(Path(env_raw).expanduser().resolve())
+        except Exception:
+            pass
+
+    here = Path(__file__).resolve().parent
+    candidates.extend(
+        [
+            here / "photoframe",
+            here.parent / "photoframe",
+            Path("/opt/photoframe"),
+        ]
+    )
+    for cand in candidates:
+        if _is_photoframe_package_root(cand):
+            return cand
+    return None
+
+
+def _photoframe_uploaded_package_path(job_id: str) -> Optional[Path]:
+    safe_job_id = _sanitize_photoframe_update_job_id(job_id)
+    if not safe_job_id:
+        return None
+    return PHOTOFRAME_UPDATE_UPLOAD_DIR / f"{safe_job_id}.zip"
+
+
+def _photoframe_cleanup_uploaded_packages(max_keep: int = 60, max_age_sec: int = 45 * 86400) -> None:
+    try:
+        PHOTOFRAME_UPDATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+    try:
+        files = [p for p in PHOTOFRAME_UPDATE_UPLOAD_DIR.glob("*.zip") if p.is_file()]
+    except Exception:
+        return
+    if not files:
+        return
+    now_ts = time.time()
+    try:
+        files_sorted = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    except Exception:
+        files_sorted = files
+    for idx, fp in enumerate(files_sorted):
+        try:
+            st = fp.stat()
+            age = max(0.0, now_ts - float(st.st_mtime))
+            if idx >= max_keep or age > float(max_age_sec):
+                fp.unlink(missing_ok=True)
+        except Exception:
+            continue
+
+
+def _save_uploaded_photoframe_package(file_obj: Any, job_id: str) -> Tuple[Optional[Path], str, int, str]:
+    dst_path = _photoframe_uploaded_package_path(job_id)
+    if dst_path is None:
+        return None, "", 0, "Ugyldigt update-id"
+
+    try:
+        PHOTOFRAME_UPDATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return None, "", 0, "Kunne ikke oprette upload-mappe"
+
+    src_stream = getattr(file_obj, "stream", None) or file_obj
+    if src_stream is None:
+        return None, "", 0, "Upload mangler data"
+
+    tmp_path = PHOTOFRAME_UPDATE_UPLOAD_DIR / f".{dst_path.stem}.{secrets.token_hex(4)}.tmp"
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        with open(tmp_path, "wb") as out:
+            while True:
+                chunk = src_stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                if not isinstance(chunk, (bytes, bytearray)):
+                    chunk = bytes(chunk)
+                total += len(chunk)
+                if total > PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES:
+                    raise RuntimeError(f"Zip er for stor (max {PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES // (1024 * 1024)} MB)")
+                hasher.update(chunk)
+                out.write(chunk)
+        if total <= 0:
+            raise RuntimeError("Zip-filen er tom")
+        if not zipfile.is_zipfile(tmp_path):
+            raise RuntimeError("Filen er ikke en gyldig zip")
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            if not zf.namelist():
+                raise RuntimeError("Zip-filen er tom")
+        os.replace(tmp_path, dst_path)
+        _photoframe_cleanup_uploaded_packages()
+        return dst_path, hasher.hexdigest().lower(), total, ""
+    except Exception as exc:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None, "", 0, str(exc)
+
+
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
     info_url = str(entry.get("info_url") or "").strip()
     start = time.perf_counter()
@@ -4328,7 +4565,7 @@ def _build_share_link(token: str, use_duckdns: bool) -> Tuple[Optional[str], Opt
         configured = _get_setting("share_duckdns_base_url", SHARE_DUCKDNS_BASE_URL) or SHARE_DUCKDNS_BASE_URL
         base = _normalize_share_base_url(configured)
         if not base:
-            return None, "DuckDNS-base URL mangler. Sæt SHARE_DUCKDNS_BASE_URL i miljøvariabler."
+            return None, "DuckDNS-base URL mangler. SÃ¦t SHARE_DUCKDNS_BASE_URL i miljÃ¸variabler."
         return f"{base}{share_path}", None
     return url_for("shared_folder_view", token=token, _external=True), None
 
@@ -4443,7 +4680,7 @@ def _rational_to_float(v: Any) -> Optional[float]:
         # Hvis det bare er et tal
         if isinstance(v, (int, float)):
             return float(v)
-        # Hvis det er en string, prøv at konvertere
+        # Hvis det er en string, prÃ¸v at konvertere
         if isinstance(v, str):
             return float(v)
     except Exception:
@@ -4994,7 +5231,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         log_event("error", rel_path=rel_path, error=f"geocode_outer: {e}")
 
     # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
-    # try to enrich from a sibling HEIC/HEIF with same basename — but ONLY if the images
+    # try to enrich from a sibling HEIC/HEIF with same basename â€” but ONLY if the images
     # are visually the same (verified via perceptual hash distance threshold).
     try:
         if (not metadata.get("gps_lat") and not metadata.get("gps_lon")) or (not metadata.get("lens_model")):
@@ -5117,7 +5354,7 @@ def reverse_geocode_with_cache(lat: float, lon: float) -> tuple[Optional[str], O
 
 
 def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Optional[str]]:
-    """Try configured provider first, then fallbacks (Offline RG → Nominatim → BigDataCloud → Photon)."""
+    """Try configured provider first, then fallbacks (Offline RG â†’ Nominatim â†’ BigDataCloud â†’ Photon)."""
     order: list[str] = []
     pref = GEOCODE_PROVIDER or "rg"
     if pref not in ("rg", "nominatim", "bigdatacloud", "photon"):
@@ -6305,7 +6542,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 QUERY_STOPWORDS_DA = {
-    "der", "som", "og", "i", "på", "ved", "til", "af", "for", "med",
+    "der", "som", "og", "i", "pÃ¥", "ved", "til", "af", "for", "med",
     "en", "et", "den", "det", "de", "er", "at", "om",
 }
 
@@ -6324,10 +6561,10 @@ DANISH_SYNONYM_GROUPS = [
     {"solnedgang", "sunset", "aftenhimmel"},
     {"kamera", "camera"},
     {"familie", "family", "jul", "middag"},
-    {"løber", "løb", "loeb", "running", "runner", "jogging"},
+    {"lÃ¸ber", "lÃ¸b", "loeb", "running", "runner", "jogging"},
     {"cykler", "cykle", "cykel", "cycling", "bicycle", "bike"},
     {
-        "svømmer", "svøm", "svømme", "svømning", "bader", "bade", "badning",
+        "svÃ¸mmer", "svÃ¸m", "svÃ¸mme", "svÃ¸mning", "bader", "bade", "badning",
         "svommer", "svoemmer", "swim", "swimming", "bathing",
     },
 ]
@@ -6337,9 +6574,9 @@ def _fold_danish(text: str) -> str:
     return (
         (text or "")
         .lower()
-        .replace("æ", "ae")
-        .replace("ø", "oe")
-        .replace("å", "aa")
+        .replace("Ã¦", "ae")
+        .replace("Ã¸", "oe")
+        .replace("Ã¥", "aa")
     )
 
 
@@ -6358,7 +6595,7 @@ def _query_term_groups(q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -
         return []
     lang = _normalize_language(search_language, DEFAULT_SEARCH_LANGUAGE)
     stopwords = QUERY_STOPWORDS_DA if lang == LANG_DA else QUERY_STOPWORDS_EN
-    raw_words = [w for w in re.findall(r"[0-9a-zA-ZæøåÆØÅ]+", q) if w]
+    raw_words = [w for w in re.findall(r"[0-9a-zA-ZÃ¦Ã¸Ã¥Ã†Ã˜Ã…]+", q) if w]
     words = [w.lower() for w in raw_words if w.lower() not in stopwords]
     groups: list[set[str]] = []
     for w in words:
@@ -6878,11 +7115,11 @@ def shared_folder_view(token: str):
 def api_share_auth(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
     body = request.get_json(silent=True) or {}
     visitor_name = _sanitize_share_visitor_name(body.get("visitor_name") or "")
     if _share_requires_visitor_name(share) and not visitor_name:
-        return jsonify({"ok": False, "error": "Navn er påkrævet"}), 400
+        return jsonify({"ok": False, "error": "Navn er pÃ¥krÃ¦vet"}), 400
 
     if not _share_is_password_protected(share):
         session[_share_session_key(share)] = 1
@@ -6927,7 +7164,7 @@ def api_create_share():
         if fp and fp not in folder_paths:
             folder_paths.append(fp)
     if not folder_paths:
-        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+        return jsonify({"ok": False, "error": "VÃ¦lg mindst Ã©n mappe"}), 400
 
     base = UPLOAD_DIR.resolve()
     for folder_path in folder_paths:
@@ -6982,7 +7219,7 @@ def api_create_share():
     password_hash = None
     if password_enabled:
         if len(password_raw) < 4:
-            return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+            return jsonify({"ok": False, "error": "Adgangskode skal vÃ¦re mindst 4 tegn"}), 400
         password_hash = generate_password_hash(password_raw)
 
     token = secrets.token_urlsafe(24)
@@ -7043,13 +7280,13 @@ def api_create_share():
 def api_share_info(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
     if not _share_is_authorized(share):
         return jsonify({
             "ok": False,
             "password_required": _share_is_password_protected(share),
             "name_required": _share_requires_visitor_name(share),
-            "error": "Adgang kræves",
+            "error": "Adgang krÃ¦ves",
         }), 401
     with closing(get_conn()) as conn:
         folder_paths = _share_folder_paths(conn, share)
@@ -7081,13 +7318,13 @@ def api_share_info(token: str):
 def api_share_photos(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
     if not _share_is_authorized(share):
         return jsonify({
             "ok": False,
             "password_required": _share_is_password_protected(share),
             "name_required": _share_requires_visitor_name(share),
-            "error": "Adgang kræves",
+            "error": "Adgang krÃ¦ves",
         }), 401
 
     with closing(get_conn()) as conn:
@@ -7172,13 +7409,13 @@ def api_share_viewable(token: str, photo_id: int):
 def api_share_upload(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
     if not _share_is_authorized(share):
         return jsonify({
             "ok": False,
             "password_required": _share_is_password_protected(share),
             "name_required": _share_requires_visitor_name(share),
-            "error": "Adgang kræves",
+            "error": "Adgang krÃ¦ves",
         }), 401
     if int(share["can_upload"] or 0) != 1:
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
@@ -7190,7 +7427,7 @@ def api_share_upload(token: str):
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
     uploader_name = _share_get_visitor_name(share)
     if _share_requires_visitor_name(share) and not uploader_name:
-        return jsonify({"ok": False, "name_required": True, "error": "Navn er påkrævet"}), 401
+        return jsonify({"ok": False, "name_required": True, "error": "Navn er pÃ¥krÃ¦vet"}), 401
     uploader_label = uploader_name or "Share-bruger"
 
     # Store physical files under internal originals root, mirroring user uploads
@@ -7274,13 +7511,13 @@ def api_share_tus_create(token: str):
 
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404, _tus_headers()
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404, _tus_headers()
     if not _share_is_authorized(share):
         return jsonify({
             "ok": False,
             "password_required": _share_is_password_protected(share),
             "name_required": _share_requires_visitor_name(share),
-            "error": "Adgang kræves",
+            "error": "Adgang krÃ¦ves",
         }), 401, _tus_headers()
     if int(share["can_upload"] or 0) != 1:
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403, _tus_headers()
@@ -7494,13 +7731,13 @@ def api_share_tus_file_override(token: str, upload_id: str):
 def api_share_delete(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
-        return jsonify({"ok": False, "error": "Share ugyldig eller udløbet"}), 404
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
     if not _share_is_authorized(share):
         return jsonify({
             "ok": False,
             "password_required": _share_is_password_protected(share),
             "name_required": _share_requires_visitor_name(share),
-            "error": "Adgang kræves",
+            "error": "Adgang krÃ¦ves",
         }), 401
     if int(share["can_delete"] or 0) != 1:
         return jsonify({"ok": False, "error": "Sletning ikke tilladt"}), 403
@@ -7561,6 +7798,14 @@ def api_photoframes_status():
             online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
             device_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
             name = device_name or (f"Fotoramme {idx}")
+            update_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+            update_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+            update_message = _sanitize_photoframe_text(rec.get("update_message"), 240)
+            update_requested_at = _sanitize_photoframe_text(rec.get("update_requested_at"), 40)
+            update_started_at = _sanitize_photoframe_text(rec.get("update_started_at"), 40)
+            update_finished_at = _sanitize_photoframe_text(rec.get("update_finished_at"), 40)
+            update_last_report_at = _sanitize_photoframe_text(rec.get("update_last_report_at"), 40)
+            update_version = _sanitize_photoframe_text(rec.get("update_version"), 80)
             error = ""
             if not last_seen_at:
                 error = "Ingen forbindelse endnu"
@@ -7594,6 +7839,14 @@ def api_photoframes_status():
                     "preview_photo_id": preview.get("preview_photo_id"),
                     "preview_thumb_url": _sanitize_photoframe_text(preview.get("preview_thumb_url"), 300),
                     "preview_updated_at": _sanitize_photoframe_text(preview.get("preview_updated_at"), 40),
+                    "update_job_id": update_job_id,
+                    "update_status": update_status,
+                    "update_message": update_message,
+                    "update_requested_at": update_requested_at,
+                    "update_started_at": update_started_at,
+                    "update_finished_at": update_finished_at,
+                    "update_last_report_at": update_last_report_at,
+                    "update_version": update_version,
                 }
             )
 
@@ -7629,6 +7882,16 @@ def api_photoframes_create():
             "allowed_folders": [],
             "allowed_photo_ids": [],
             "created_at": created_at,
+            "update_job_id": "",
+            "update_status": "",
+            "update_message": "",
+            "update_requested_at": "",
+            "update_started_at": "",
+            "update_finished_at": "",
+            "update_last_report_at": "",
+            "update_version": "",
+            "update_package_url": "",
+            "update_package_sha256": "",
         }
     )
     _save_photoframe_token_records(records)
@@ -7676,6 +7939,110 @@ def api_photoframes_get_token(token_id: str):
 
     return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
 
+
+@app.route("/api/photoframes/<token_id>/update", methods=["POST"])
+@login_required
+def api_photoframes_trigger_update(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    body: Dict[str, Any] = {}
+    upload_zip = None
+    content_type = str(request.content_type or "").lower()
+    if "multipart/form-data" in content_type:
+        try:
+            body = dict(request.form or {})
+        except Exception:
+            body = {}
+        upload_zip = (
+            request.files.get("package_zip")
+            or request.files.get("package")
+            or request.files.get("file")
+        )
+    else:
+        body_json = request.get_json(silent=True)
+        if isinstance(body_json, dict):
+            body = body_json
+
+    requested_version = _sanitize_photoframe_text(body.get("version"), 80)
+    requested_sha = _sanitize_photoframe_update_sha256(body.get("package_sha256"))
+    requested_url = _normalize_photoframe_http_url(body.get("package_url"))
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfupd-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return jsonify({"ok": False, "error": "Kunne ikke oprette update-id"}), 500
+
+    token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
+    if not token_plain:
+        return jsonify({"ok": False, "error": "Token kan ikke bruges til update-link. Opret ny token."}), 400
+    request_base = _request_public_base_url() or request.url_root.rstrip("/")
+
+    package_url = requested_url or ""
+    upload_mode = False
+    upload_bytes = 0
+    if upload_zip is not None:
+        filename = secure_filename(str(getattr(upload_zip, "filename", "") or ""))
+        if not filename:
+            return jsonify({"ok": False, "error": "Vaelg en zip-fil foerst"}), 400
+        _, uploaded_sha, upload_bytes, upload_err = _save_uploaded_photoframe_package(upload_zip, job_id)
+        if upload_err:
+            return jsonify({"ok": False, "error": f"Zip upload fejlede: {upload_err}"}), 400
+        requested_sha = uploaded_sha
+        package_url = f"{request_base}{url_for('api_frame_uploaded_update_package', token=token_plain, job_id=job_id, _external=False)}"
+        upload_mode = True
+    elif not package_url:
+        package_root = _resolve_photoframe_package_root()
+        if not package_root:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Ingen opdateringskilde fundet. Saet PHOTOFRAME_UPDATE_SOURCE_DIR, upload zip, eller send package_url i request body.",
+                }
+            ), 400
+        package_url = f"{request_base}{url_for('api_frame_update_package', token=token_plain, job_id=job_id, _external=False)}"
+
+    now = now_iso()
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Venter paa enheden"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = requested_version
+    rec["update_package_url"] = package_url
+    rec["update_package_sha256"] = requested_sha
+    _save_photoframe_token_records(records)
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "job_id": job_id,
+            "status": "queued",
+            "package_url": package_url,
+            "source": "upload" if upload_mode else ("custom-url" if requested_url else "source-dir"),
+            "upload_bytes": upload_bytes if upload_mode else 0,
+            "version": requested_version or None,
+            "requested_at": now,
+        }
+    )
 
 @app.route("/api/photoframes/<token_id>", methods=["DELETE"])
 @login_required
@@ -7935,6 +8302,91 @@ def api_frame_status_card(token: str):
     return resp
 
 
+@app.route("/api/frame/<token>/update-package/<job_id>.zip", methods=["GET"])
+def api_frame_update_package(token: str, job_id: str):
+    records, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return ("Forbidden", 403)
+    safe_job_id = _sanitize_photoframe_update_job_id(job_id)
+    rec_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+    if (not safe_job_id) or (not rec_job_id) or (safe_job_id != rec_job_id):
+        return ("Not found", 404)
+
+    package_root = _resolve_photoframe_package_root()
+    if not package_root:
+        return ("No update package source available", 404)
+
+    wanted_entries = [
+        "app",
+        "viewer",
+        "scripts",
+        "config",
+        "systemd",
+        "update.sh",
+        "README.txt",
+        "install.sh",
+    ]
+
+    tmp = tempfile.TemporaryFile()
+    with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for rel_name in wanted_entries:
+            source = package_root / rel_name
+            if not source.exists():
+                continue
+            if source.is_file():
+                try:
+                    zf.write(str(source), arcname=str(rel_name))
+                except Exception:
+                    continue
+                continue
+            for fp in source.rglob("*"):
+                if not fp.is_file():
+                    continue
+                try:
+                    arcname = str(fp.relative_to(package_root)).replace("\\", "/")
+                    zf.write(str(fp), arcname=arcname)
+                except Exception:
+                    continue
+    tmp.seek(0)
+    resp = send_file(
+        tmp,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"photoframe-update-{safe_job_id}.zip",
+    )
+    try:
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    except Exception:
+        pass
+    return resp
+
+
+@app.route("/api/frame/<token>/update-upload/<job_id>.zip", methods=["GET"])
+def api_frame_uploaded_update_package(token: str, job_id: str):
+    records, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return ("Forbidden", 403)
+    safe_job_id = _sanitize_photoframe_update_job_id(job_id)
+    rec_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+    if (not safe_job_id) or (not rec_job_id) or (safe_job_id != rec_job_id):
+        return ("Not found", 404)
+
+    pkg_path = _photoframe_uploaded_package_path(safe_job_id)
+    if pkg_path is None or (not pkg_path.exists()) or (not pkg_path.is_file()):
+        return ("Not found", 404)
+    resp = send_file(
+        str(pkg_path),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"photoframe-upload-{safe_job_id}.zip",
+    )
+    try:
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+    except Exception:
+        pass
+    return resp
+
+
 @app.route("/api/frame/<token>/feed", methods=["GET"])
 def api_frame_feed(token: str):
     records, rec_idx, rec = _photoframe_token_lookup(token)
@@ -7952,6 +8404,7 @@ def api_frame_feed(token: str):
 
     if PHOTOFRAME_TEXT_ONLY:
         status_url = f"{request_base}{url_for('api_frame_status_card', token=token, _external=False)}?t={int(time.time())}"
+        update_cmd = _photoframe_update_command_payload(active_record)
         return jsonify(
             {
                 "ok": True,
@@ -7966,6 +8419,7 @@ def api_frame_feed(token: str):
                 "generated_at": now,
                 "mode": "text-only",
                 "message": "FjordLens connection OK",
+                "update": update_cmd,
             }
         )
 
@@ -8070,6 +8524,7 @@ def api_frame_feed(token: str):
         else:
             feed_message = "Ingen billeder i feedet endnu"
 
+    update_cmd = _photoframe_update_command_payload(active_record)
     return jsonify(
         {
             "ok": True,
@@ -8077,6 +8532,7 @@ def api_frame_feed(token: str):
             "count": len(images),
             "generated_at": now,
             "message": feed_message,
+            "update": update_cmd,
         }
     )
 
@@ -8091,19 +8547,35 @@ def api_frame_heartbeat(token: str):
     active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
     _photoframe_update_presence_fields(active_record, request, now)
     current_photo_raw = request.args.get("photo_id") or request.headers.get("X-Photoframe-Current-Photo-Id")
+    update_job_raw = request.args.get("update_job_id") or request.headers.get("X-Photoframe-Update-Job-Id")
+    update_status_raw = request.args.get("update_status") or request.headers.get("X-Photoframe-Update-Status")
+    update_message_raw = request.args.get("update_message") or request.headers.get("X-Photoframe-Update-Message")
+    update_version_raw = request.args.get("update_version") or request.headers.get("X-Photoframe-Update-Version")
     current_photo_id = 0
     with closing(get_conn()) as conn:
         current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
+    _photoframe_apply_update_report(
+        active_record,
+        update_job_raw,
+        update_status_raw,
+        update_message_raw,
+        update_version_raw,
+        now,
+    )
     _save_photoframe_token_records(records)
 
     latest_photo_id = _sanitize_photoframe_photo_id(active_record.get("last_photo_id") if isinstance(active_record, dict) else 0)
     if latest_photo_id <= 0:
         latest_photo_id = current_photo_id
+    update_cmd = _photoframe_update_command_payload(active_record)
     return jsonify(
         {
             "ok": True,
             "seen_at": now,
             "photo_id": latest_photo_id or None,
+            "update_job_id": _sanitize_photoframe_update_job_id(active_record.get("update_job_id") if isinstance(active_record, dict) else ""),
+            "update_status": _sanitize_photoframe_update_status(active_record.get("update_status") if isinstance(active_record, dict) else ""),
+            "update": update_cmd,
         }
     )
 
@@ -9256,7 +9728,7 @@ def api_filters():
         "places": places,
         "cameras": cameras,
         "ai_search_ready": False,
-        "ai_note": "AI søgning/ansigter er klargjort i data-modellen, men ONNX/CLIP service er næste trin.",
+        "ai_note": "AI sÃ¸gning/ansigter er klargjort i data-modellen, men ONNX/CLIP service er nÃ¦ste trin.",
     })
 
 
@@ -9357,7 +9829,7 @@ def api_original(rel_path: str):
 
 @app.route("/api/viewable/<path:rel_path>")
 def api_viewable(rel_path: str):
-    # Return a browser/AI-friendly version; convert HEIC→JPEG into CONVERT_DIR when needed
+    # Return a browser/AI-friendly version; convert HEICâ†’JPEG into CONVERT_DIR when needed
     safe_rel = rel_path.replace("..", "").lstrip("/")
     if not _is_rel_path_allowed_for_current_user(safe_rel):
         return ("Forbidden", 403)
@@ -9613,7 +10085,7 @@ def api_settings_upload_destination():
             pass
         try:
             opts = [
-                {"value": "uploads", "label": "Kopiér til uploads-mappen"},
+                {"value": "uploads", "label": "KopiÃ©r til uploads-mappen"},
                 {"value": "library", "label": "Flyt (hurtigt) til bibliotek"},
             ]
         except Exception:
@@ -9715,7 +10187,7 @@ def api_settings_upload_folder_delete():
     body = request.get_json(silent=True) or {}
     destination = str(body.get("destination") or "uploads").strip().lower()
     if destination != UPLOAD_DEST_UPLOADS:
-        return jsonify({"ok": False, "error": "Sletning understøttes kun i uploads-mappen"}), 400
+        return jsonify({"ok": False, "error": "Sletning understÃ¸ttes kun i uploads-mappen"}), 400
 
     raw_paths = body.get("paths")
     if isinstance(raw_paths, str):
@@ -9741,7 +10213,7 @@ def api_settings_upload_folder_delete():
         if safe:
             normalized.append(safe)
     if not normalized:
-        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+        return jsonify({"ok": False, "error": "VÃ¦lg mindst Ã©n mappe"}), 400
 
     # Keep top-most selected folders only (children of selected parents are redundant)
     normalized = sorted(set(normalized), key=lambda x: (x.count("/"), x.lower()))
@@ -9772,7 +10244,7 @@ def api_settings_upload_folder_delete():
                 legacy_root = None
                 legacy_base = None
     except Exception:
-        return jsonify({"ok": False, "error": "Upload-rodmappe kunne ikke læses"}), 500
+        return jsonify({"ok": False, "error": "Upload-rodmappe kunne ikke lÃ¦ses"}), 500
 
     deleted: list[str] = []
     missing: list[str] = []
@@ -10091,7 +10563,7 @@ def api_settings_upload_folder_rename():
     body = request.get_json(silent=True) or {}
     destination = str(body.get("destination") or "uploads").strip().lower()
     if destination != UPLOAD_DEST_UPLOADS:
-        return jsonify({"ok": False, "error": "Omdøbning understøttes kun i uploads-mappen"}), 400
+        return jsonify({"ok": False, "error": "OmdÃ¸bning understÃ¸ttes kun i uploads-mappen"}), 400
 
     try:
         old_subdir = _normalize_upload_subdir(str(body.get("path") or ""))
@@ -10104,7 +10576,7 @@ def api_settings_upload_folder_rename():
     elif old_subdir.startswith("converted/"):
         old_subdir = old_subdir[len("converted/"):]
     if not old_subdir:
-        return jsonify({"ok": False, "error": "Rodmappen kan ikke omdøbes"}), 400
+        return jsonify({"ok": False, "error": "Rodmappen kan ikke omdÃ¸bes"}), 400
 
     new_name_raw = str(body.get("new_name") or "").strip()
     if not new_name_raw:
@@ -10122,12 +10594,12 @@ def api_settings_upload_folder_rename():
         return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
 
     if old_subdir.lower() == new_subdir.lower():
-        return jsonify({"ok": False, "error": "Det nye navn skal være anderledes"}), 400
+        return jsonify({"ok": False, "error": "Det nye navn skal vÃ¦re anderledes"}), 400
 
     base_rel = f"uploads/{old_subdir}"
     perm = _current_user_folder_permission_for_rel(base_rel)
     if not _perm_allows(perm, "edit"):
-        return jsonify({"ok": False, "error": f"Ingen omdøb-adgang til '{old_subdir}'"}), 403
+        return jsonify({"ok": False, "error": f"Ingen omdÃ¸b-adgang til '{old_subdir}'"}), 403
 
     roots = [UPLOAD_DIR / "originals", UPLOAD_DIR / "converted", UPLOAD_DIR]
     operations: list[tuple[Path, Path]] = []
@@ -10144,7 +10616,7 @@ def api_settings_upload_folder_rename():
             return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
         if src.exists() and src.is_dir():
             if dst.exists():
-                return jsonify({"ok": False, "error": f"Målmappen findes allerede: {new_subdir}"}), 409
+                return jsonify({"ok": False, "error": f"MÃ¥lmappen findes allerede: {new_subdir}"}), 409
             operations.append((src, dst))
 
     if not operations:
@@ -10164,7 +10636,7 @@ def api_settings_upload_folder_rename():
                     dst.rename(src)
             except Exception:
                 pass
-        return jsonify({"ok": False, "error": f"Kunne ikke omdøbe mappe: {e}"}), 400
+        return jsonify({"ok": False, "error": f"Kunne ikke omdÃ¸be mappe: {e}"}), 400
 
     try:
         db_stats = _apply_upload_folder_rename_db(old_subdir, new_subdir)
@@ -10503,7 +10975,7 @@ def api_heic_convert_existing():
         return jsonify(fb[0]), fb[1]
     global heic_convert_thread, last_heic_convert_result, heic_convert_progress
     if heic_convert_thread and heic_convert_thread.is_alive():
-        return jsonify({"ok": False, "error": "HEIC-konvertering kører allerede"}), 409
+        return jsonify({"ok": False, "error": "HEIC-konvertering kÃ¸rer allerede"}), 409
     scan_stop_event.clear()
     last_heic_convert_result = None
     try:
@@ -10595,7 +11067,7 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 new_rel = str(Path(orig_rel).with_suffix(".jpg")).replace("\\", "/")
 
-            # RAW → JPEG
+            # RAW â†’ JPEG
             if rawpy is None:
                 raise RuntimeError("RAW conversion requires rawpy")
             with rawpy.imread(str(src)) as raw:  # type: ignore
@@ -10664,7 +11136,7 @@ def api_raw_convert_existing():
         return jsonify(fb[0]), fb[1]
     global raw_convert_thread, last_raw_convert_result, raw_convert_progress
     if raw_convert_thread and raw_convert_thread.is_alive():
-        return jsonify({"ok": False, "error": "RAW-konvertering kører allerede"}), 409
+        return jsonify({"ok": False, "error": "RAW-konvertering kÃ¸rer allerede"}), 409
     scan_stop_event.clear()
     last_raw_convert_result = None
     try:
@@ -11707,7 +12179,7 @@ def api_admin_shares_update(share_id: int):
         if fp and fp not in folder_paths:
             folder_paths.append(fp)
     if not folder_paths:
-        return jsonify({"ok": False, "error": "Vælg mindst én mappe"}), 400
+        return jsonify({"ok": False, "error": "VÃ¦lg mindst Ã©n mappe"}), 400
 
     base = UPLOAD_DIR.resolve()
     for folder_path in folder_paths:
@@ -11773,12 +12245,12 @@ def api_admin_shares_update(share_id: int):
         else:
             if password_raw:
                 if len(password_raw) < 4:
-                    return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+                    return jsonify({"ok": False, "error": "Adgangskode skal vÃ¦re mindst 4 tegn"}), 400
                 password_hash = generate_password_hash(password_raw)
             elif existing_password_hash:
                 password_hash = existing_password_hash
             else:
-                return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+                return jsonify({"ok": False, "error": "Adgangskode skal vÃ¦re mindst 4 tegn"}), 400
 
         now = now_iso()
         primary_folder_path = folder_paths[0]
@@ -12184,3 +12656,4 @@ def api_me_2fa():
 if __name__ == "__main__":
     init_db()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)
+

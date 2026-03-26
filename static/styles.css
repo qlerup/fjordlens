@@ -1812,6 +1812,58 @@ body.view-photoframe .photoframe-header-actions {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.photoframe-update-row strong {
+  text-align: right;
+}
+.photoframe-update-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.photoframe-update-pill .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.photoframe-update-pill.busy {
+  border-color: rgba(122,176,255,0.45);
+  color: #cfe2ff;
+}
+.photoframe-update-pill.busy .icon {
+  color: #9cc0ff;
+  animation: photoframe-update-spin 1.1s linear infinite;
+}
+.photoframe-update-pill.ok {
+  border-color: rgba(52,211,153,0.45);
+  color: #b9f4dc;
+}
+.photoframe-update-pill.ok .icon {
+  color: #34d399;
+}
+.photoframe-update-pill.err {
+  border-color: rgba(255,107,107,0.45);
+  color: #ffd2d2;
+}
+.photoframe-update-pill.err .icon {
+  color: #ff6b6b;
+}
+@keyframes photoframe-update-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 .photoframe-card-actions {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1880,16 +1932,34 @@ body.view-photoframe .photoframe-header-actions {
 .photoframe-scope-folder-item > div:first-child {
   font-size: 0.83rem;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .photoframe-scope-folder-item .mini-label {
   margin-top: 2px;
   font-size: 0.68rem;
-  white-space: nowrap;
+}
+.photoframe-scope-folder-line {
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.photoframe-scope-folder-marquee-text {
+  display: inline-block;
+  min-width: 100%;
+  max-width: none;
+  transform: translateX(0);
+  will-change: transform;
+}
+.photoframe-scope-folder-item:hover .photoframe-scope-folder-line.is-overflow .photoframe-scope-folder-marquee-text,
+.photoframe-scope-folder-item:focus-visible .photoframe-scope-folder-line.is-overflow .photoframe-scope-folder-marquee-text {
+  animation: photoframe-scope-marquee var(--scroll-duration, 6s) linear infinite alternate;
+}
+@keyframes photoframe-scope-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-1 * var(--scroll-distance, 0px)));
+  }
 }
 .photoframe-scope-photos-pane {
   min-width: 0;
