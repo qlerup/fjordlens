@@ -2570,19 +2570,35 @@ function renderPhotoframePanel() {
       const thumb = String(it && it.thumb_url ? it.thumb_url : '').trim();
       return `
         <article class="photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
-          <div class="card-thumb">
-            ${thumb ? `<img loading="lazy" decoding="async" src="${escapeHtml(thumb)}" alt="">` : `<div class="photoframe-scope-photo-placeholder">${escapeHtml(tr('no_thumb'))}</div>`}
-            <span class="photo-select-badge">&#10003;</span>
+          <div class="photoframe-scope-photo-thumb">
+            ${thumb ? `<img class="photoframe-scope-photo-img" loading="lazy" decoding="async" src="${escapeHtml(thumb)}" alt="" data-photoframe-scope-thumb="1">` : ''}
+            <div class="photoframe-scope-photo-placeholder${thumb ? ' hidden' : ''}">${escapeHtml(tr('no_thumb'))}</div>
+            <span class="photoframe-scope-select-badge">&#10003;</span>
           </div>
-          <div class="card-body">
-            <h4 class="card-title">#${pid} - ${escapeHtml(label || `Photo #${pid}`)}</h4>
-            <div class="card-meta">
+          <div class="photoframe-scope-photo-body">
+            <h4 class="photoframe-scope-photo-title">#${pid} - ${escapeHtml(label || `Photo #${pid}`)}</h4>
+            <div class="photoframe-scope-photo-meta">
               <span>${escapeHtml(rel || '-')}</span>
             </div>
           </div>
         </article>
       `;
     }).join('');
+
+    scopePhotosList.querySelectorAll('img[data-photoframe-scope-thumb]').forEach((img) => {
+      img.addEventListener('error', () => {
+        img.classList.add('hidden');
+        const wrap = img.closest('.photoframe-scope-photo-thumb');
+        const ph = wrap ? wrap.querySelector('.photoframe-scope-photo-placeholder') : null;
+        if (ph) ph.classList.remove('hidden');
+      });
+      img.addEventListener('load', () => {
+        const wrap = img.closest('.photoframe-scope-photo-thumb');
+        const ph = wrap ? wrap.querySelector('.photoframe-scope-photo-placeholder') : null;
+        if (ph) ph.classList.add('hidden');
+        img.classList.remove('hidden');
+      });
+    });
 
     scopePhotosList.querySelectorAll('[data-photoframe-scope-photo-card]').forEach((card) => {
       const pid = Number(card.getAttribute('data-photoframe-scope-photo-card') || 0) || 0;
