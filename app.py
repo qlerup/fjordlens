@@ -4325,6 +4325,13 @@ def _photoframe_update_presence_fields(rec: Dict[str, Any], req: Any, seen_at: s
     )
     if frame_version:
         rec["device_version"] = frame_version
+    try:
+        base = _request_public_base_url() or str(getattr(req, "url_root", "")).rstrip("/")
+    except Exception:
+        base = ""
+    base = _normalize_photoframe_base_url(base)
+    if base:
+        rec["last_server_base_url"] = base
 
 
 def _photoframe_try_set_current_photo(
@@ -8037,7 +8044,8 @@ def api_photoframes_trigger_update(token_id: str):
     token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
     if not token_plain:
         return jsonify({"ok": False, "error": "Token kan ikke bruges til update-link. Opret ny token."}), 400
-    request_base = _request_public_base_url() or request.url_root.rstrip("/")
+    frame_preferred_base = _normalize_photoframe_base_url(rec.get("last_server_base_url"))
+    request_base = frame_preferred_base or _request_public_base_url() or request.url_root.rstrip("/")
 
     package_url = requested_url or ""
     upload_mode = False
@@ -8197,7 +8205,7 @@ def api_photoframes_trigger_update_all():
     if upload_err:
         return jsonify({"ok": False, "error": f"Zip upload fejlede: {upload_err}"}), 400
 
-    request_base = _request_public_base_url() or request.url_root.rstrip("/")
+    request_base_default = _request_public_base_url() or request.url_root.rstrip("/")
     now = now_iso()
     queued = 0
     skipped = 0
@@ -8209,6 +8217,8 @@ def api_photoframes_trigger_update_all():
         if not token_plain:
             skipped += 1
             continue
+        frame_preferred_base = _normalize_photoframe_base_url(rec.get("last_server_base_url"))
+        request_base = frame_preferred_base or request_base_default
         package_url = f"{request_base}{url_for('api_frame_uploaded_update_package', token=token_plain, job_id=job_id, _external=False)}"
         rec["update_job_id"] = job_id
         rec["update_status"] = "queued"
