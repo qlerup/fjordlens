@@ -2887,8 +2887,11 @@ def enforce_login_for_app():
         "api_share_tus_file_override",
         "api_share_delete",
         "api_frame_feed",
+        "api_frame_heartbeat",
         "api_frame_viewable",
         "api_frame_status_card",
+        "api_frame_update_package",
+        "api_frame_uploaded_update_package",
     }
     if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
         return None
