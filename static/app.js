@@ -573,14 +573,22 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Fejl',
     photoframe_card_update: 'Opdatering',
+    photoframe_card_version: 'Version',
+    photoframe_version_latest: 'Nyeste',
+    photoframe_version_outdated: 'Skal opdateres',
+    photoframe_version_unknown: 'Ukendt',
     photoframe_update_btn: 'Opdater enhed',
     photoframe_update_upload_btn: 'Upload zip',
+    photoframe_update_upload_all_btn: 'Upload zip til alle',
     photoframe_update_confirm: 'Start baggrundsopdatering af {name}?',
     photoframe_update_upload_confirm: 'Start opdatering af {name} med zip-filen {file}?',
+    photoframe_update_upload_all_confirm: 'Start opdatering af alle ({count}) med zip-filen {file}?',
     photoframe_update_queued: 'Opdatering sat i ko.',
     photoframe_update_upload_queued: 'Zip uploadet og opdatering sat i ko.',
+    photoframe_update_upload_all_queued: 'Zip uploadet. {count} fotorammer sat i ko.',
     photoframe_update_failed: 'Kunne ikke starte opdatering.',
     photoframe_update_upload_failed: 'Kunne ikke uploade update-zip.',
+    photoframe_update_upload_all_failed: 'Kunne ikke starte opdatering til alle.',
     photoframe_update_state_queued: 'Venter pÃ¥ enhed',
     photoframe_update_state_downloading: 'Henter pakke',
     photoframe_update_state_installing: 'Installerer',
@@ -1118,14 +1126,22 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Error',
     photoframe_card_update: 'Update',
+    photoframe_card_version: 'Version',
+    photoframe_version_latest: 'Latest',
+    photoframe_version_outdated: 'Needs update',
+    photoframe_version_unknown: 'Unknown',
     photoframe_update_btn: 'Update device',
     photoframe_update_upload_btn: 'Upload zip',
+    photoframe_update_upload_all_btn: 'Upload zip to all',
     photoframe_update_confirm: 'Start background update for {name}?',
     photoframe_update_upload_confirm: 'Start update for {name} using zip file {file}?',
+    photoframe_update_upload_all_confirm: 'Start update for all ({count}) using zip file {file}?',
     photoframe_update_queued: 'Update queued.',
     photoframe_update_upload_queued: 'Zip uploaded and update queued.',
+    photoframe_update_upload_all_queued: 'Zip uploaded. {count} frames queued.',
     photoframe_update_failed: 'Could not start update.',
     photoframe_update_upload_failed: 'Could not upload update zip.',
+    photoframe_update_upload_all_failed: 'Could not start update for all.',
     photoframe_update_state_queued: 'Waiting for device',
     photoframe_update_state_downloading: 'Downloading',
     photoframe_update_state_installing: 'Installing',
@@ -1717,6 +1733,8 @@ let state = {
   photoframeCheckedAt: '',
   photoframeSource: 'none',
   photoframeConfigPath: '',
+  photoframeLatestVersion: '',
+  photoframeLatestVersionAt: '',
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
@@ -2117,9 +2135,36 @@ function photoframeUpdateStatusUi(item) {
   return { status, cls, icon, text: fullText };
 }
 
+function photoframeVersionUi(item) {
+  const latestVersion = String(state.photoframeLatestVersion || '').trim();
+  const deviceVersion = String(item && item.device_version ? item.device_version : '').trim();
+  let status = String(item && item.version_status ? item.version_status : '').trim().toLowerCase();
+  if (!latestVersion) status = 'unknown';
+  if (!['latest', 'outdated', 'unknown'].includes(status)) status = 'unknown';
+
+  let statusText = tr('photoframe_version_unknown');
+  let cls = 'unknown';
+  let fillPct = 18;
+  if (status === 'latest') {
+    statusText = tr('photoframe_version_latest');
+    cls = 'latest';
+    fillPct = 100;
+  } else if (status === 'outdated') {
+    statusText = tr('photoframe_version_outdated');
+    cls = 'outdated';
+    fillPct = 52;
+  }
+
+  const deviceText = deviceVersion || '-';
+  const targetText = latestVersion || '-';
+  const text = `${statusText} (${deviceText} -> ${targetText})`;
+  return { status, cls, text, fillPct };
+}
+
 function renderPhotoframePanel() {
   if (!els.grid) return;
   const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
+  const hasFrames = items.length > 0;
   const canCreateFrame = String((state.currentUser && state.currentUser.role) || '').toLowerCase() === 'admin';
   const checkedText = state.photoframeCheckedAt ? fmtDate(state.photoframeCheckedAt) : '-';
   const sourceText = photoframeSourceLabel(String(state.photoframeSource || 'none'));
@@ -2142,6 +2187,7 @@ function renderPhotoframePanel() {
     const checkedLabel = checkedItemText ? fmtDate(checkedItemText) : checkedText;
     const lastSeenRaw = String(item.last_seen_at || '').trim();
     const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
+    const versionUi = photoframeVersionUi(item);
     const updateUi = photoframeUpdateStatusUi(item);
     const updateBusy = !!(updateUi && ['queued', 'downloading', 'installing', 'restarting'].includes(updateUi.status));
     const previewThumbUrl = String(item.preview_thumb_url || '').trim();
@@ -2171,6 +2217,13 @@ function renderPhotoframePanel() {
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
+              <div class="photoframe-row photoframe-version-row">
+                <span>${escapeHtml(tr('photoframe_card_version'))}</span>
+                <strong>
+                  <span class="photoframe-version-pill ${escapeHtml(versionUi.cls)}">${escapeHtml(versionUi.text)}</span>
+                  <span class="photoframe-version-track ${escapeHtml(versionUi.cls)}" aria-hidden="true"><span style="width:${escapeHtml(String(versionUi.fillPct))}%;"></span></span>
+                </strong>
+              </div>
               ${updateUi ? `
                 <div class="photoframe-row photoframe-update-row">
                   <span>${escapeHtml(tr('photoframe_card_update'))}</span>
@@ -2194,14 +2247,6 @@ function renderPhotoframePanel() {
                   data-frame-id="${escapeHtml(frameId)}"
                   data-frame-name="${escapeHtml(frameName)}"
                 >${escapeHtml(tr('photoframe_scope_btn'))}</button>
-                <button
-                  class="btn small"
-                  type="button"
-                  data-photoframe-action="trigger-update"
-                  data-frame-id="${escapeHtml(frameId)}"
-                  data-frame-name="${escapeHtml(frameName)}"
-                  ${updateBusy ? ' disabled' : ''}
-                >${escapeHtml(tr('photoframe_update_btn'))}</button>
                 <button
                   class="btn small"
                   type="button"
@@ -2263,6 +2308,14 @@ function renderPhotoframePanel() {
     }
     headerActions.innerHTML = `
       ${canCreateFrame ? `<button id="photoframeCreateBtn" class="btn small" type="button">${escapeHtml(tr('photoframe_create_btn'))}</button>` : ''}
+      ${canCreateFrame ? `
+        <button
+          id="photoframeUploadAllBtn"
+          class="btn small"
+          type="button"
+          ${(!hasFrames || state.photoframeLoading) ? ' disabled' : ''}
+        >${escapeHtml(tr('photoframe_update_upload_all_btn'))}</button>
+      ` : ''}
       <button
         id="photoframeRefreshBtn"
         class="btn small photoframe-refresh-btn"
@@ -2383,6 +2436,7 @@ function renderPhotoframePanel() {
   }
 
   const createBtn = document.getElementById('photoframeCreateBtn');
+  const uploadAllBtn = document.getElementById('photoframeUploadAllBtn');
   const createModal = document.getElementById('photoframeCreateModal');
   const createCloseBtn = document.getElementById('photoframeCreateCloseBtn');
   const createCancelBtn = document.getElementById('photoframeCreateCancelBtn');
@@ -2944,6 +2998,53 @@ function renderPhotoframePanel() {
   if (createBtn) {
     createBtn.addEventListener('click', openCreateModal);
   }
+  if (uploadAllBtn) {
+    uploadAllBtn.addEventListener('click', async () => {
+      const totalCount = Array.isArray(state.photoframeItems) ? state.photoframeItems.length : 0;
+      if (totalCount <= 0) return;
+
+      const file = await pickPhotoframeUpdateZip();
+      if (!file) return;
+      const question = tr('photoframe_update_upload_all_confirm')
+        .replace('{count}', String(totalCount))
+        .replace('{file}', String(file.name || 'update.zip'));
+      if (!window.confirm(question)) return;
+
+      uploadAllBtn.disabled = true;
+      uploadAllBtn.classList.add('loading');
+      try {
+        const formData = new FormData();
+        formData.append('package_zip', file, String(file.name || 'update.zip'));
+        const res = await fetch('/api/photoframes/update-all', {
+          method: 'POST',
+          body: formData,
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_update_upload_all_failed');
+          throw new Error(message);
+        }
+        const queuedCount = Number(data && data.queued_count);
+        const safeCount = Number.isFinite(queuedCount) && queuedCount >= 0 ? queuedCount : totalCount;
+        showStatus(
+          tr('photoframe_update_upload_all_queued').replace('{count}', String(safeCount)),
+          'ok'
+        );
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showStatus(String((e && e.message) || tr('photoframe_update_upload_all_failed')), 'err');
+      } finally {
+        uploadAllBtn.disabled = false;
+        uploadAllBtn.classList.remove('loading');
+      }
+    });
+  }
   if (createCloseBtn) createCloseBtn.addEventListener('click', closeCreateModal);
   if (createCancelBtn) createCancelBtn.addEventListener('click', closeCreateModal);
   if (createModal) {
@@ -3122,43 +3223,6 @@ function renderPhotoframePanel() {
       const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
       const frameName = String(btn.getAttribute('data-frame-name') || '').trim();
       await openShowTokenModal(frameId, frameName);
-    });
-  });
-  document.querySelectorAll('[data-photoframe-action="trigger-update"]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
-      const frameName = String(btn.getAttribute('data-frame-name') || 'Photoframe').trim();
-      if (!frameId) return;
-      const question = tr('photoframe_update_confirm').replace('{name}', frameName || 'Photoframe');
-      if (!window.confirm(question)) return;
-
-      btn.disabled = true;
-      btn.classList.add('loading');
-      try {
-        const res = await fetch(`/api/photoframes/${encodeURIComponent(frameId)}/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        let data = null;
-        try {
-          const ct = String(res.headers.get('content-type') || '');
-          data = ct.includes('application/json') ? await res.json() : null;
-        } catch (_) {
-          data = null;
-        }
-        if (!res.ok || !data || !data.ok) {
-          const message = (data && data.error) ? String(data.error) : tr('photoframe_update_failed');
-          throw new Error(message);
-        }
-        showStatus(tr('photoframe_update_queued'), 'ok');
-        await loadPhotoframeStatus();
-      } catch (e) {
-        showStatus(String((e && e.message) || tr('photoframe_update_failed')), 'err');
-      } finally {
-        btn.disabled = false;
-        btn.classList.remove('loading');
-      }
     });
   });
   document.querySelectorAll('[data-photoframe-action="trigger-update-upload"]').forEach((btn) => {
@@ -4741,10 +4805,14 @@ async function loadPhotoframeStatus() {
     state.photoframeCheckedAt = String(data.checked_at || new Date().toISOString());
     state.photoframeSource = String(data.source || 'none');
     state.photoframeConfigPath = String(data.config_path || '');
+    state.photoframeLatestVersion = String(data.latest_version || '').trim();
+    state.photoframeLatestVersionAt = String(data.latest_version_at || '').trim();
   } catch (e) {
     state.photoframeError = `${tr('photoframe_card_error')}: ${String((e && e.message) || e || tr('photoframe_status_unknown'))}`;
     state.photoframeItems = [];
     state.photoframeCheckedAt = new Date().toISOString();
+    state.photoframeLatestVersion = '';
+    state.photoframeLatestVersionAt = '';
   } finally {
     state.photoframeLoading = false;
     if (state.view === 'photoframe' && !isPhotoframeModalOpen()) renderGrid();

@@ -249,24 +249,22 @@ Key environment variables (see `.env.example`):
 - `AI_URL`: Internal backend -> AI service URL (compose default uses service name)
 - `AI_INGEST_THROTTLE_SEC`: Pause between each embedding item (default `0.04`) to reduce UI impact during background ingest
 - `FACES_INDEX_THROTTLE_SEC`: Pause between each face-index item (default `0.06`) to reduce UI impact during face indexing
-- `PHOTOFRAME_UPDATE_SOURCE_DIR_HOST`: Optional host path containing photoframe source files (default `../photoframe`)
-- `PHOTOFRAME_UPDATE_SOURCE_DIR`: In-container mount path for that source (default `/photoframe-update-source`)
 - `PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES`: Max zip upload size for UI-triggered updates (default `314572800` = 300 MB)
 
 ### Remote photoframe background updates
 
 FjordLens can trigger a background update on each photoframe device:
 
-1. Choose one update source:
-   - Upload a zip directly from UI (`Photoframe` -> `Upload zip`) or
-   - Configure `PHOTOFRAME_UPDATE_SOURCE_DIR_HOST` with photoframe source files.
-2. Restart FjordLens after env/compose changes (only needed for source-dir mode):
+1. Upload a zip directly from UI:
+   - Per frame card: `Upload zip`
+   - Global rollout: `Upload zip til alle`
+2. Restart FjordLens after env/compose changes (if you changed env values):
    - `docker compose up -d --build`
-3. In FjordLens UI:
-   - `Upload zip` for a specific zip package, or
-   - `Opdater enhed` for source-dir/default package mode.
-4. The device fetches the update package from FjordLens and installs it in the background.
+3. FjordLens queues update jobs and stores one uploaded zip package.
+4. Each device fetches the update package from FjordLens and installs it in the background when it checks in (heartbeat/feed sync).
 5. Card status shows progress (`queued`, `downloading`, `installing`, `restarting`, `success`/`failed`) with an animated icon while busy.
+6. Version bar compares each frame's reported version with latest uploaded version.
+   Zip uploads auto-generate version label from upload timestamp in FjordLens (example: `v27-03-2026_20:05:41`).
 
 ### Geocoding / behavior flags
 

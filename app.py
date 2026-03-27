@@ -85,6 +85,8 @@ try:
 except Exception:
     PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = 300 * 1024 * 1024
 PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = max(5 * 1024 * 1024, min(2 * 1024 * 1024 * 1024, PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES))
+PHOTOFRAME_LATEST_VERSION_KEY = "photoframe_latest_version"
+PHOTOFRAME_LATEST_VERSION_AT_KEY = "photoframe_latest_version_at"
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -3986,6 +3988,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         last_user_agent = _sanitize_photoframe_text(it.get("last_user_agent"), 180)
         last_photo_id = _sanitize_photoframe_photo_id(it.get("last_photo_id"))
         last_photo_at = _sanitize_photoframe_text(it.get("last_photo_at"), 40)
+        device_version = _sanitize_photoframe_text(it.get("device_version"), 80)
         update_job_id = _sanitize_photoframe_update_job_id(it.get("update_job_id"))
         update_status = _sanitize_photoframe_update_status(it.get("update_status"))
         update_message = _sanitize_photoframe_text(it.get("update_message"), 240)
@@ -3994,6 +3997,8 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         update_finished_at = _sanitize_photoframe_text(it.get("update_finished_at"), 40)
         update_last_report_at = _sanitize_photoframe_text(it.get("update_last_report_at"), 40)
         update_version = _sanitize_photoframe_text(it.get("update_version"), 80)
+        if (not device_version) and update_version:
+            device_version = update_version
         update_package_url = _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or ""
         update_package_sha256 = _sanitize_photoframe_update_sha256(it.get("update_package_sha256"))
         out.append(
@@ -4012,6 +4017,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "last_user_agent": last_user_agent,
                 "last_photo_id": last_photo_id,
                 "last_photo_at": last_photo_at,
+                "device_version": device_version,
                 "update_job_id": update_job_id,
                 "update_status": update_status,
                 "update_message": update_message,
@@ -4051,6 +4057,7 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "last_user_agent": _sanitize_photoframe_text(it.get("last_user_agent"), 180),
                 "last_photo_id": _sanitize_photoframe_photo_id(it.get("last_photo_id")),
                 "last_photo_at": _sanitize_photoframe_text(it.get("last_photo_at"), 40),
+                "device_version": _sanitize_photoframe_text(it.get("device_version"), 80),
                 "update_job_id": _sanitize_photoframe_update_job_id(it.get("update_job_id")),
                 "update_status": _sanitize_photoframe_update_status(it.get("update_status")),
                 "update_message": _sanitize_photoframe_text(it.get("update_message"), 240),
@@ -4312,6 +4319,12 @@ def _photoframe_update_presence_fields(rec: Dict[str, Any], req: Any, seen_at: s
     )
     if frame_name:
         rec["device_name"] = frame_name
+    frame_version = _sanitize_photoframe_text(
+        req.headers.get("X-Photoframe-Version") or req.args.get("version"),
+        80,
+    )
+    if frame_version:
+        rec["device_version"] = frame_version
 
 
 def _photoframe_try_set_current_photo(
@@ -4387,6 +4400,8 @@ def _photoframe_apply_update_report(
     version = _sanitize_photoframe_text(version_raw, 80)
     if version:
         rec["update_version"] = version
+        if status == "success":
+            rec["device_version"] = version
     if status in {"downloading", "installing", "restarting", "success", "failed"} and not _sanitize_photoframe_text(rec.get("update_started_at"), 40):
         rec["update_started_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
     if status in {"success", "failed"}:
@@ -4507,6 +4522,23 @@ def _save_uploaded_photoframe_package(file_obj: Any, job_id: str) -> Tuple[Optio
         except Exception:
             pass
         return None, "", 0, str(exc)
+
+
+def _infer_photoframe_version_from_filename(filename: Any) -> str:
+    name = secure_filename(str(filename or "").strip())
+    if not name:
+        return ""
+    stem = str(Path(name).stem or "").strip()
+    if not stem:
+        return ""
+    stem = re.sub(r"(?i)^photoframe[-_. ]*", "", stem).strip(" ._-")
+    return _sanitize_photoframe_text(stem, 80)
+
+
+def _autogen_photoframe_upload_version() -> str:
+    # Use local server time so the label directly reflects upload timestamp in FjordLens.
+    now_local = datetime.now().astimezone()
+    return _sanitize_photoframe_text(now_local.strftime("v%d-%m-%Y_%H:%M:%S"), 80)
 
 
 def _probe_photoframe_status(entry: Dict[str, Any], checked_at: str) -> Dict[str, Any]:
@@ -7783,6 +7815,8 @@ def api_photoframes_status():
     checked_at = now_iso()
     now_ts = time.time()
     records = _load_photoframe_token_records()
+    latest_version = _sanitize_photoframe_text(_get_setting(PHOTOFRAME_LATEST_VERSION_KEY, ""), 80)
+    latest_version_at = _sanitize_photoframe_text(_get_setting(PHOTOFRAME_LATEST_VERSION_AT_KEY, ""), 40)
     records_sorted = sorted(
         records,
         key=lambda r: str(r.get("created_at") or ""),
@@ -7806,6 +7840,13 @@ def api_photoframes_status():
             update_finished_at = _sanitize_photoframe_text(rec.get("update_finished_at"), 40)
             update_last_report_at = _sanitize_photoframe_text(rec.get("update_last_report_at"), 40)
             update_version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+            device_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+            version_status = "unknown"
+            if latest_version:
+                if device_version and (device_version == latest_version):
+                    version_status = "latest"
+                elif device_version:
+                    version_status = "outdated"
             error = ""
             if not last_seen_at:
                 error = "Ingen forbindelse endnu"
@@ -7847,6 +7888,8 @@ def api_photoframes_status():
                     "update_finished_at": update_finished_at,
                     "update_last_report_at": update_last_report_at,
                     "update_version": update_version,
+                    "device_version": device_version,
+                    "version_status": version_status,
                 }
             )
 
@@ -7859,6 +7902,8 @@ def api_photoframes_status():
             "source": "tokens",
             "config_path": "settings:photoframe_tokens",
             "timeout_sec": PHOTOFRAME_STATUS_TIMEOUT_SEC,
+            "latest_version": latest_version,
+            "latest_version_at": latest_version_at,
         }
     )
 
@@ -7882,6 +7927,7 @@ def api_photoframes_create():
             "allowed_folders": [],
             "allowed_photo_ids": [],
             "created_at": created_at,
+            "device_version": "",
             "update_job_id": "",
             "update_status": "",
             "update_message": "",
@@ -8000,6 +8046,8 @@ def api_photoframes_trigger_update(token_id: str):
         filename = secure_filename(str(getattr(upload_zip, "filename", "") or ""))
         if not filename:
             return jsonify({"ok": False, "error": "Vaelg en zip-fil foerst"}), 400
+        # Upload-based updates always get an auto-generated timestamp version.
+        requested_version = _autogen_photoframe_upload_version()
         _, uploaded_sha, upload_bytes, upload_err = _save_uploaded_photoframe_package(upload_zip, job_id)
         if upload_err:
             return jsonify({"ok": False, "error": f"Zip upload fejlede: {upload_err}"}), 400
@@ -8029,6 +8077,9 @@ def api_photoframes_trigger_update(token_id: str):
     rec["update_package_url"] = package_url
     rec["update_package_sha256"] = requested_sha
     _save_photoframe_token_records(records)
+    if requested_version:
+        _set_setting(PHOTOFRAME_LATEST_VERSION_KEY, requested_version)
+        _set_setting(PHOTOFRAME_LATEST_VERSION_AT_KEY, now)
 
     return jsonify(
         {
@@ -8043,6 +8094,95 @@ def api_photoframes_trigger_update(token_id: str):
             "requested_at": now,
         }
     )
+
+
+@app.route("/api/photoframes/update-all", methods=["POST"])
+@login_required
+def api_photoframes_trigger_update_all():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    records = _load_photoframe_token_records()
+    if not records:
+        return jsonify({"ok": False, "error": "Ingen fotorammer fundet"}), 400
+
+    content_type = str(request.content_type or "").lower()
+    if "multipart/form-data" not in content_type:
+        return jsonify({"ok": False, "error": "Upload zip som multipart/form-data"}), 400
+
+    try:
+        body = dict(request.form or {})
+    except Exception:
+        body = {}
+    upload_zip = (
+        request.files.get("package_zip")
+        or request.files.get("package")
+        or request.files.get("file")
+    )
+    if upload_zip is None:
+        return jsonify({"ok": False, "error": "Vaelg en zip-fil foerst"}), 400
+
+    filename = secure_filename(str(getattr(upload_zip, "filename", "") or ""))
+    if not filename:
+        return jsonify({"ok": False, "error": "Vaelg en zip-fil foerst"}), 400
+
+    # Global zip rollout always gets an auto-generated timestamp version.
+    requested_version = _autogen_photoframe_upload_version()
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfupd-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return jsonify({"ok": False, "error": "Kunne ikke oprette update-id"}), 500
+
+    _, uploaded_sha, upload_bytes, upload_err = _save_uploaded_photoframe_package(upload_zip, job_id)
+    if upload_err:
+        return jsonify({"ok": False, "error": f"Zip upload fejlede: {upload_err}"}), 400
+
+    request_base = _request_public_base_url() or request.url_root.rstrip("/")
+    now = now_iso()
+    queued = 0
+    skipped = 0
+    for rec in records:
+        if not isinstance(rec, dict):
+            skipped += 1
+            continue
+        token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
+        if not token_plain:
+            skipped += 1
+            continue
+        package_url = f"{request_base}{url_for('api_frame_uploaded_update_package', token=token_plain, job_id=job_id, _external=False)}"
+        rec["update_job_id"] = job_id
+        rec["update_status"] = "queued"
+        rec["update_message"] = "Venter paa enheden"
+        rec["update_requested_at"] = now
+        rec["update_started_at"] = ""
+        rec["update_finished_at"] = ""
+        rec["update_last_report_at"] = now
+        rec["update_version"] = requested_version
+        rec["update_package_url"] = package_url
+        rec["update_package_sha256"] = uploaded_sha
+        queued += 1
+
+    if queued <= 0:
+        return jsonify({"ok": False, "error": "Ingen gyldige tokens at opdatere"}), 400
+
+    _save_photoframe_token_records(records)
+    if requested_version:
+        _set_setting(PHOTOFRAME_LATEST_VERSION_KEY, requested_version)
+        _set_setting(PHOTOFRAME_LATEST_VERSION_AT_KEY, now)
+
+    return jsonify(
+        {
+            "ok": True,
+            "job_id": job_id,
+            "status": "queued",
+            "queued_count": queued,
+            "skipped_count": skipped,
+            "upload_bytes": upload_bytes,
+            "version": requested_version or None,
+            "requested_at": now,
+        }
+    )
+
 
 @app.route("/api/photoframes/<token_id>", methods=["DELETE"])
 @login_required
