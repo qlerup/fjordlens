@@ -1,4 +1,4 @@
-const els = {
+﻿const els = {
   grid: document.getElementById("galleryGrid"),
   searchShell: document.getElementById("searchShell"),
   searchToggleBtn: document.getElementById("searchToggleBtn"),
@@ -589,6 +589,10 @@ const I18N = {
     photoframe_update_failed: 'Kunne ikke starte opdatering.',
     photoframe_update_upload_failed: 'Kunne ikke uploade update-zip.',
     photoframe_update_upload_all_failed: 'Kunne ikke starte opdatering til alle.',
+    photoframe_update_cancel_btn: 'Stop opdatering',
+    photoframe_update_cancel_confirm: 'Stop opdatering for {name}?',
+    photoframe_update_cancel_done: 'Opdatering stoppet.',
+    photoframe_update_cancel_failed: 'Kunne ikke stoppe opdatering.',
     photoframe_update_state_queued: 'Venter på enhed',
     photoframe_update_state_downloading: 'Henter pakke',
     photoframe_update_state_installing: 'Installerer',
@@ -1142,6 +1146,10 @@ const I18N = {
     photoframe_update_failed: 'Could not start update.',
     photoframe_update_upload_failed: 'Could not upload update zip.',
     photoframe_update_upload_all_failed: 'Could not start update for all.',
+    photoframe_update_cancel_btn: 'Stop update',
+    photoframe_update_cancel_confirm: 'Stop update for {name}?',
+    photoframe_update_cancel_done: 'Update stopped.',
+    photoframe_update_cancel_failed: 'Could not stop update.',
     photoframe_update_state_queued: 'Waiting for device',
     photoframe_update_state_downloading: 'Downloading',
     photoframe_update_state_installing: 'Installing',
@@ -2095,7 +2103,7 @@ function photoframeUpdateStatusUi(item) {
   const status = String(item && item.update_status ? item.update_status : '').trim().toLowerCase();
   let message = String(item && item.update_message ? item.update_message : '').trim();
   if (message.toLowerCase() === 'venter paa enheden') {
-    message = 'Venter på enheden';
+    message = 'Venter p\u00e5 enheden';
   }
   const requestedRaw = String(item && item.update_requested_at ? item.update_requested_at : '').trim();
   const requestedLabel = requestedRaw ? fmtDate(requestedRaw) : '';
@@ -2258,6 +2266,15 @@ function renderPhotoframePanel() {
                   data-frame-name="${escapeHtml(frameName)}"
                   ${updateBusy ? ' disabled' : ''}
                 >${escapeHtml(tr('photoframe_update_upload_btn'))}</button>
+                ${updateBusy ? `
+                  <button
+                    class="btn small danger"
+                    type="button"
+                    data-photoframe-action="cancel-update"
+                    data-frame-id="${escapeHtml(frameId)}"
+                    data-frame-name="${escapeHtml(frameName)}"
+                  >${escapeHtml(tr('photoframe_update_cancel_btn'))}</button>
+                ` : ''}
                 <button
                   class="btn small"
                   type="button"
@@ -3265,6 +3282,43 @@ function renderPhotoframePanel() {
         await loadPhotoframeStatus();
       } catch (e) {
         showStatus(String((e && e.message) || tr('photoframe_update_upload_failed')), 'err');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="cancel-update"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || 'Photoframe').trim();
+      if (!frameId) return;
+
+      const question = tr('photoframe_update_cancel_confirm')
+        .replace('{name}', frameName || 'Photoframe');
+      if (!window.confirm(question)) return;
+
+      btn.disabled = true;
+      btn.classList.add('loading');
+      try {
+        const res = await fetch(`/api/photoframes/${encodeURIComponent(frameId)}/update/cancel`, {
+          method: 'POST',
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_update_cancel_failed');
+          throw new Error(message);
+        }
+        showStatus(tr('photoframe_update_cancel_done'), 'ok');
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showStatus(String((e && e.message) || tr('photoframe_update_cancel_failed')), 'err');
       } finally {
         btn.disabled = false;
         btn.classList.remove('loading');
@@ -12156,4 +12210,5 @@ els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
+
 

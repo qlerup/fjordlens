@@ -8096,6 +8096,66 @@ def api_photoframes_trigger_update(token_id: str):
     )
 
 
+@app.route("/api/photoframes/<token_id>/update/cancel", methods=["POST"])
+@login_required
+def api_photoframes_cancel_update(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    current_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if (not current_job_id) and (not current_status):
+        return jsonify(
+            {
+                "ok": True,
+                "id": target_id,
+                "status": "idle",
+                "message": "Ingen aktiv opdatering",
+            }
+        )
+
+    now = now_iso()
+    prev_status = current_status or "queued"
+
+    # Cancel command delivery and mark as stopped in UI.
+    rec["update_job_id"] = ""
+    rec["update_status"] = "failed"
+    rec["update_message"] = "Stoppet manuelt fra FjordLens"
+    rec["update_last_report_at"] = now
+    if not _sanitize_photoframe_text(rec.get("update_started_at"), 40):
+        rec["update_started_at"] = now
+    rec["update_finished_at"] = now
+    rec["update_package_url"] = ""
+    rec["update_package_sha256"] = ""
+
+    _save_photoframe_token_records(records)
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "status": "cancelled",
+            "previous_status": prev_status,
+            "finished_at": now,
+        }
+    )
+
+
 @app.route("/api/photoframes/update-all", methods=["POST"])
 @login_required
 def api_photoframes_trigger_update_all():
