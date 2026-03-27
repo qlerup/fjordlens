@@ -4325,11 +4325,18 @@ def _photoframe_update_presence_fields(rec: Dict[str, Any], req: Any, seen_at: s
     )
     if frame_version:
         rec["device_version"] = frame_version
+    # Prefer the exact base URL the frame is currently using for feed/heartbeat.
+    # This avoids generating update package URLs on a different public host that
+    # may enforce extra auth (401/403) compared to the frame's direct endpoint.
     try:
-        base = _request_public_base_url() or str(getattr(req, "url_root", "")).rstrip("/")
+        req_base = _normalize_photoframe_base_url(str(getattr(req, "url_root", "")).rstrip("/"))
     except Exception:
-        base = ""
-    base = _normalize_photoframe_base_url(base)
+        req_base = ""
+    try:
+        public_base = _normalize_photoframe_base_url(_request_public_base_url())
+    except Exception:
+        public_base = ""
+    base = req_base or public_base
     if base:
         rec["last_server_base_url"] = base
 
