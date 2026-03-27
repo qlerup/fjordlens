@@ -8695,6 +8695,17 @@ def api_frame_feed(token: str):
                 continue
             rel = str(row["rel_path"] or "")
             if _photoframe_record_allows_photo(active_record, pid, rel):
+                try:
+                    src = _disk_path_from_rel_path(rel)
+                    if not src.exists():
+                        safe_rel = rel.replace("..", "").lstrip("/")
+                        if not safe_rel:
+                            continue
+                        converted = CONVERT_DIR / safe_rel
+                        if not converted.exists():
+                            continue
+                except Exception:
+                    continue
                 safe_rows.append(row)
         rows = safe_rows
 
