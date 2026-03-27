@@ -2093,7 +2093,10 @@ function photoframeScopeSummary(item) {
 
 function photoframeUpdateStatusUi(item) {
   const status = String(item && item.update_status ? item.update_status : '').trim().toLowerCase();
-  const message = String(item && item.update_message ? item.update_message : '').trim();
+  let message = String(item && item.update_message ? item.update_message : '').trim();
+  if (message.toLowerCase() === 'venter paa enheden') {
+    message = 'Venter på enheden';
+  }
   const requestedRaw = String(item && item.update_requested_at ? item.update_requested_at : '').trim();
   const requestedLabel = requestedRaw ? fmtDate(requestedRaw) : '';
   const versionText = String(item && item.update_version ? item.update_version : '').trim();

@@ -8068,7 +8068,7 @@ def api_photoframes_trigger_update(token_id: str):
     now = now_iso()
     rec["update_job_id"] = job_id
     rec["update_status"] = "queued"
-    rec["update_message"] = "Venter paa enheden"
+    rec["update_message"] = "Venter p\u00e5 enheden"
     rec["update_requested_at"] = now
     rec["update_started_at"] = ""
     rec["update_finished_at"] = ""
@@ -8152,7 +8152,7 @@ def api_photoframes_trigger_update_all():
         package_url = f"{request_base}{url_for('api_frame_uploaded_update_package', token=token_plain, job_id=job_id, _external=False)}"
         rec["update_job_id"] = job_id
         rec["update_status"] = "queued"
-        rec["update_message"] = "Venter paa enheden"
+        rec["update_message"] = "Venter p\u00e5 enheden"
         rec["update_requested_at"] = now
         rec["update_started_at"] = ""
         rec["update_finished_at"] = ""
