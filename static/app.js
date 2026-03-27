@@ -1,4 +1,4 @@
-﻿const els = {
+const els = {
   grid: document.getElementById("galleryGrid"),
   searchShell: document.getElementById("searchShell"),
   searchToggleBtn: document.getElementById("searchToggleBtn"),
@@ -497,17 +497,17 @@ function initThemeControls(){
 
 const I18N = {
   da: {
-    nav_timeline: 'ðŸ“… Tidlinje',
-    nav_favorites: 'â­ Favoritter',
-    nav_places: 'ðŸ“ Steder',
-    nav_cameras: 'ðŸ“¸ Kameraer',
-    nav_folders: 'ðŸ—‚ï¸ Mapper',
-    nav_photoframe: 'ðŸ–¼ï¸ Photoframe',
-    nav_people: 'ðŸ™‚ Personer',
-    nav_settings: 'âš™ï¸ Indstillinger',
+    nav_timeline: '📅 Tidlinje',
+    nav_favorites: '⭐ Favoritter',
+    nav_places: '📍 Steder',
+    nav_cameras: '📸 Kameraer',
+    nav_folders: '🗂️ Mapper',
+    nav_photoframe: '🖼️ Photoframe',
+    nav_people: '🙂 Personer',
+    nav_settings: '⚙️ Indstillinger',
     profile_link: 'Profil',
     logout_link: 'Log ud',
-    search_placeholder: 'SÃ¸g pÃ¥ dansk: strand, bil, skov, kamera, dato, filnavn...',
+    search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
     tab_maint: 'Vedligeholdelse',
     tab_ai: 'AI',
     tab_dns: 'DNS',
@@ -519,42 +519,42 @@ const I18N = {
     tab_profile: 'Profil',
     tab_other: 'Andet',
     view_timeline_title: 'Tidlinje',
-    view_timeline_sub: 'Dato-grupperet oversigt (Ã¥r/mÃ¥ned)',
+    view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
     view_favorites_title: 'Favoritter',
     view_favorites_sub: 'Markerede billeder',
     view_steder_title: 'Steder',
     view_steder_sub: 'Billeder med GPS/placeringsdata',
     view_kameraer_title: 'Kameraer',
-    view_kameraer_sub: 'Filtreret pÃ¥ billeder med kameradata',
+    view_kameraer_sub: 'Filtreret på billeder med kameradata',
     view_mapper_title: 'Mapper',
     view_mapper_sub: 'Grupperet efter kilde-mappe',
     view_photoframe_title: 'Photoframe',
-    view_photoframe_sub: 'Status pÃ¥ dine fotorammer',
+    view_photoframe_sub: 'Status på dine fotorammer',
     view_personer_title: 'Personer',
     view_personer_sub: '',
     view_settings_title: 'Indstillinger',
     view_settings_sub: 'Vedligeholdelse, scan og administration',
-    sort_date_desc: 'Nyeste fÃ¸rst',
-    sort_date_asc: 'Ã†ldste fÃ¸rst',
-    sort_name_asc: 'Navn A-Ã…',
-    sort_name_desc: 'Navn Ã…-A',
-    sort_size_desc: 'StÃ¸rst fÃ¸rst',
-    sort_size_asc: 'Mindst fÃ¸rst',
+    sort_date_desc: 'Nyeste først',
+    sort_date_asc: 'Ældste først',
+    sort_name_asc: 'Navn A-Å',
+    sort_name_desc: 'Navn Å-A',
+    sort_size_desc: 'Størst først',
+    sort_size_asc: 'Mindst først',
     stat_photos: 'Billeder',
     stat_people: 'Personer',
     stat_favorites: 'Favoritter',
     stat_selected: 'Valgt',
     stat_show_hidden: 'Vis skjulte',
-    empty_people: 'Ingen personer endnu. Upload billeder med ansigter eller kÃ¸r ansigtsindeksering.',
+    empty_people: 'Ingen personer endnu. Upload billeder med ansigter eller kør ansigtsindeksering.',
     empty_no_photos: 'Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.',
-    empty_no_matches: "Ingen billeder matcher filteret endnu. PrÃ¸v 'Scan bibliotek'.",
+    empty_no_matches: "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.",
     empty_mapper_tree: 'Ingen mapper endnu.',
     photoframe_intro_title: 'Photoframe',
     photoframe_intro_sub: 'Overblik over fotorammer og om de er online.',
     photoframe_loading: 'Tjekker fotorammer...',
     photoframe_refresh: 'Opdater',
     photoframe_empty_title: 'Ingen fotorammer konfigureret endnu.',
-    photoframe_empty_sub: 'Generer en token med \"Opret fotoramme\", indsÃ¦t den pÃ¥ rammen, og vent pÃ¥ fÃ¸rste forbindelse.',
+    photoframe_empty_sub: 'Generer en token med \"Opret fotoramme\", indsæt den på rammen, og vent på første forbindelse.',
     photoframe_status_online: 'Online',
     photoframe_status_offline: 'Offline',
     photoframe_status_unknown: 'Ukendt',
@@ -567,7 +567,7 @@ const I18N = {
     photoframe_scope_summary_folders: 'Mapper ({count})',
     photoframe_scope_summary_photos: 'Billeder ({count})',
     photoframe_card_last_seen: 'Sidst online',
-    photoframe_card_setup: 'OpsÃ¦tning',
+    photoframe_card_setup: 'Opsætning',
     photoframe_setup_ready: 'Klar',
     photoframe_setup_pending: 'Mangler setup',
     photoframe_card_feed: 'Feed',
@@ -589,7 +589,7 @@ const I18N = {
     photoframe_update_failed: 'Kunne ikke starte opdatering.',
     photoframe_update_upload_failed: 'Kunne ikke uploade update-zip.',
     photoframe_update_upload_all_failed: 'Kunne ikke starte opdatering til alle.',
-    photoframe_update_state_queued: 'Venter pÃ¥ enhed',
+    photoframe_update_state_queued: 'Venter på enhed',
     photoframe_update_state_downloading: 'Henter pakke',
     photoframe_update_state_installing: 'Installerer',
     photoframe_update_state_restarting: 'Genstarter',
@@ -607,23 +607,23 @@ const I18N = {
     photoframe_show_token_unavailable: 'Token kan ikke vises for denne post.',
     photoframe_show_token_failed: 'Kunne ikke hente token.',
     photoframe_show_token_close: 'Luk',
-    photoframe_scope_title: 'VÃ¦lg indhold',
+    photoframe_scope_title: 'Vælg indhold',
     photoframe_scope_target: 'Adgang for {name}',
-    photoframe_scope_mode_label: 'Hvad mÃ¥ rammen vise?',
+    photoframe_scope_mode_label: 'Hvad må rammen vise?',
     photoframe_scope_mode_all: 'Alle billeder',
     photoframe_scope_mode_folders: 'Kun valgte mapper',
     photoframe_scope_mode_photos: 'Kun valgte billeder',
     photoframe_scope_folders_label: 'Mapper',
     photoframe_scope_photos_label: 'Billeder',
-    photoframe_scope_search_placeholder: 'SÃ¸g i billeder eller id',
-    photoframe_scope_search_btn: 'SÃ¸g',
-    photoframe_scope_select_mode: 'VÃ¦lg',
-    photoframe_scope_done_mode: 'FÃ¦rdig',
-    photoframe_scope_select_visible: 'VÃ¦lg synlige',
-    photoframe_scope_unselect_visible: 'FravÃ¦lg synlige',
+    photoframe_scope_search_placeholder: 'Søg i billeder eller id',
+    photoframe_scope_search_btn: 'Søg',
+    photoframe_scope_select_mode: 'Vælg',
+    photoframe_scope_done_mode: 'Færdig',
+    photoframe_scope_select_visible: 'Vælg synlige',
+    photoframe_scope_unselect_visible: 'Fravælg synlige',
     photoframe_scope_selected_count: '{count} valgt',
     photoframe_scope_folder_all: 'Alle mapper',
-    photoframe_scope_hold_hint: 'Hold pÃ¥ et billede for at starte valg',
+    photoframe_scope_hold_hint: 'Hold på et billede for at starte valg',
     photoframe_scope_empty_folders: 'Ingen mapper fundet.',
     photoframe_scope_empty_photos: 'Ingen billeder fundet.',
     photoframe_scope_save: 'Gem',
@@ -631,13 +631,13 @@ const I18N = {
     photoframe_scope_save_failed: 'Kunne ikke gemme adgang.',
     photoframe_scope_load_failed: 'Kunne ikke hente adgangsdata.',
     photoframe_source_setting: 'Kilde: app-indstilling',
-    photoframe_source_env: 'Kilde: miljÃ¸variabel',
+    photoframe_source_env: 'Kilde: miljøvariabel',
     photoframe_source_file: 'Kilde: konfig-fil',
     photoframe_source_tokens: 'Kilde: tokens',
     photoframe_source_none: 'Kilde: ingen',
     photoframe_create_btn: 'Opret fotoramme',
     photoframe_create_title: 'Opret fotoramme',
-    photoframe_create_intro: 'Generer et nyt token/link til en fotoramme. Det er tokenet, du indsÃ¦tter pÃ¥ rammen.',
+    photoframe_create_intro: 'Generer et nyt token/link til en fotoramme. Det er tokenet, du indsætter på rammen.',
     photoframe_create_name_label: 'Navn',
     photoframe_create_name_placeholder: 'Fx Stue-ramme',
     photoframe_create_url_label: 'Ramme URL',
@@ -658,7 +658,7 @@ const I18N = {
     photoframe_create_copy_ok: 'Kopieret til udklipsholder',
     photoframe_create_copy_failed: 'Kunne ikke kopiere automatisk.',
     photoframe_create_saved_ok: 'Fotoramme oprettet.',
-    photoframe_create_name_required: 'Indtast navn pÃ¥ fotorammen.',
+    photoframe_create_name_required: 'Indtast navn på fotorammen.',
     photoframe_create_url_required: 'Indtast URL til fotorammen.',
     photoframe_create_failed: 'Kunne ikke oprette fotoramme.',
     no_thumb: 'Ingen thumbnail',
@@ -669,11 +669,11 @@ const I18N = {
     ai_embed_title: 'AI-embeddings',
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
     ai_desc_title: 'AI beskrivelser',
-    ai_desc_desc: 'Finder handlinger/scener (fx personer der svÃ¸mmer) til bedre sÃ¸gning.',
+    ai_desc_desc: 'Finder handlinger/scener (fx personer der svømmer) til bedre søgning.',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
-    dns_desc: 'OpsÃ¦t ekstern base-URL til delte links (f.eks. https://photos.mitdomÃ¦ne.dk).',
+    dns_desc: 'Opsæt ekstern base-URL til delte links (f.eks. https://photos.mitdomæne.dk).',
     dns_duckdns_base_url: 'Ekstern base-URL',
     dns_duckdns_placeholder: 'https://photos.eksempel.dk',
     dns_save: 'Gem DNS',
@@ -681,13 +681,13 @@ const I18N = {
     dns_load_failed: 'Kunne ikke hente DNS-indstillinger.',
     dns_save_failed: 'Kunne ikke gemme DNS-indstillinger.',
     dns_shares_title: 'Aktive delinger',
-    dns_shares_desc: 'Se aktive share-links, kopiÃ©r linket igen, tilbagekald dem eller forlÃ¦ng udlÃ¸b.',
-    dns_shares_loading: 'IndlÃ¦ser delingerâ€¦',
+    dns_shares_desc: 'Se aktive share-links, kopiér linket igen, tilbagekald dem eller forlæng udløb.',
+    dns_shares_loading: 'Indlæser delinger…',
     dns_shares_empty: 'Ingen aktive delinger.',
     dns_shares_load_failed: 'Kunne ikke hente delinger.',
     dns_shares_col_folder: 'Navn',
     dns_shares_col_access: 'Adgang',
-    dns_shares_col_expires: 'UdlÃ¸ber',
+    dns_shares_col_expires: 'Udløber',
     dns_shares_col_last_used: 'Sidst brugt',
     dns_shares_col_link: 'Link',
     dns_shares_col_actions: 'Handlinger',
@@ -695,17 +695,17 @@ const I18N = {
     dns_shares_revoke: 'Tilbagekald',
     dns_shares_deactivate: 'Deaktiver',
     dns_shares_activate: 'Aktiver',
-    dns_shares_extend: 'ForlÃ¦ng',
-    dns_shares_copy: 'KopiÃ©r',
+    dns_shares_extend: 'Forlæng',
+    dns_shares_copy: 'Kopiér',
     dns_shares_copy_ok: 'Share-link kopieret.',
     dns_shares_copy_failed: 'Kunne ikke kopiere share-link.',
-    dns_shares_link_unavailable: 'Link ikke tilgÃ¦ngeligt (opret nyt for gammel deling).',
+    dns_shares_link_unavailable: 'Link ikke tilgængeligt (opret nyt for gammel deling).',
     dns_shares_revoke_confirm: 'Tilbagekald dette share-link?',
     dns_shares_revoke_ok: 'Share-link tilbagekaldt.',
     dns_shares_revoke_failed: 'Kunne ikke tilbagekalde share-link.',
     dns_shares_deactivate_confirm: 'Deaktiver dette share-link?',
     dns_shares_deactivate_ok: 'Share-link deaktiveret.',
-    dns_shares_activate_prompt: 'AktivÃ©r link i antal dage (0 eller tom = aldrig):',
+    dns_shares_activate_prompt: 'Aktivér link i antal dage (0 eller tom = aldrig):',
     dns_shares_activate_ok: 'Share-link aktiveret.',
     dns_shares_activate_failed: 'Kunne ikke aktivere share-link.',
     dns_shares_delete: 'Slet',
@@ -719,22 +719,22 @@ const I18N = {
     dns_shares_edit_no_folders: 'Ingen mapper fundet.',
     dns_shares_edit_expire_value: 'Gyldig i',
     dns_shares_edit_expire_unit: 'Enhed',
-    dns_shares_edit_never: 'UdlÃ¸ber aldrig',
+    dns_shares_edit_never: 'Udløber aldrig',
     dns_shares_edit_permission: 'Adgang',
     dns_shares_edit_password_toggle: 'Kodebeskyt link',
     dns_shares_edit_password_label: 'Adgangskode',
-    dns_shares_edit_password_placeholder: 'Tom = behold nuvÃ¦rende kode',
-    dns_shares_edit_require_name: 'KrÃ¦v navn ved Ã¥bning',
-    dns_shares_edit_save: 'Gem Ã¦ndringer',
+    dns_shares_edit_password_placeholder: 'Tom = behold nuværende kode',
+    dns_shares_edit_require_name: 'Kræv navn ved åbning',
+    dns_shares_edit_save: 'Gem ændringer',
     dns_shares_edit_saving: 'Gemmer...',
     dns_shares_edit_saved: 'Deling opdateret.',
     dns_shares_edit_failed: 'Kunne ikke opdatere deling.',
-    dns_shares_edit_select_folder: 'VÃ¦lg mindst Ã©n mappe.',
+    dns_shares_edit_select_folder: 'Vælg mindst én mappe.',
     dns_shares_edit_load_folders_failed: 'Kunne ikke hente mapper til redigering.',
-    dns_shares_edit_invalid_expiry: 'Ugyldig udlÃ¸bsvÃ¦rdi.',
-    dns_shares_extend_prompt: 'ForlÃ¦ng med antal dage (0 eller tom = aldrig):',
-    dns_shares_extend_ok: 'Share-link forlÃ¦nget.',
-    dns_shares_extend_failed: 'Kunne ikke forlÃ¦nge share-link.',
+    dns_shares_edit_invalid_expiry: 'Ugyldig udløbsværdi.',
+    dns_shares_extend_prompt: 'Forlæng med antal dage (0 eller tom = aldrig):',
+    dns_shares_extend_ok: 'Share-link forlænget.',
+    dns_shares_extend_failed: 'Kunne ikke forlænge share-link.',
     btn_scan_library: 'Scan bibliotek',
     btn_stop_scan: 'Stop scan',
     btn_rescan_metadata: 'Rescan metadata',
@@ -756,8 +756,8 @@ const I18N = {
     status_described_label: 'beskrevet',
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
-    status_running: 'kÃ¸rer',
-    status_dash: 'â€”',
+    status_running: 'kører',
+    status_dash: '—',
     upload_new_folder_placeholder: 'Ny mappe (fx ferie eller 2026/rejse)',
     upload_create_folder: 'Opret mappe',
     logs_label: 'Logs:',
@@ -768,11 +768,11 @@ const I18N = {
     mapper_root_folder: 'uploads (rodmappe)',
     mapper_drop_here: 'Slip filer eller mapper her for at uploade til',
     mapper_up: 'Tilbage',
-    mapper_done: 'FÃ¦rdig',
-    mapper_edit: 'â‹®',
+    mapper_done: 'Færdig',
+    mapper_edit: '⋮',
     mapper_edit_title: 'Flere indstillinger',
     mapper_done_title: 'Luk flere indstillinger',
-    mapper_menu_edit: 'VÃ¦lg',
+    mapper_menu_edit: 'Vælg',
     mapper_menu_done: 'Luk redigering',
     mapper_menu_share: 'Del',
     mapper_menu_upload: 'Upload',
@@ -798,22 +798,22 @@ const I18N = {
     download_status_ready: 'Download: Klar',
     download_status_preparing: 'Download: Forbereder...',
     download_status_fetching_one: 'Downloader billede...',
-    download_status_zipping: 'Pakker ZIP pÃ¥ server...',
+    download_status_zipping: 'Pakker ZIP på server...',
     download_status_receiving: 'Henter fil... {pct}%',
     download_status_done: 'Download klar',
     download_status_failed: 'Download fejlede',
     download_status_cancel_title: 'Stop download',
     download_status_cancelled: 'Download annulleret',
-    download_status_already_running: 'Der kÃ¸rer allerede en download.',
-    mapper_select_all: 'VÃ¦lg alle',
+    download_status_already_running: 'Der kører allerede en download.',
+    mapper_select_all: 'Vælg alle',
     mapper_clear_selection: 'Fjern valgte',
     mapper_cancel: 'Annuller',
-    mapper_create_name_required: 'Skriv mappenavn fÃ¸rst.',
+    mapper_create_name_required: 'Skriv mappenavn først.',
     mapper_create_failed: 'Kunne ikke oprette mappe',
     mapper_create_error: 'Fejl ved oprettelse af mappe.',
     mapper_created_status: 'Mappe oprettet',
-    mapper_select_delete_none: 'VÃ¦lg mindst Ã©n mappe at slette.',
-    mapper_select_download_none: 'VÃ¦lg mindst Ã©t billede at downloade.',
+    mapper_select_delete_none: 'Vælg mindst én mappe at slette.',
+    mapper_select_download_none: 'Vælg mindst ét billede at downloade.',
     mapper_delete_confirm: 'Slet {count} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.',
     mapper_delete_pending: 'Sletter...',
     mapper_delete_failed: 'Kunne ikke slette mapper',
@@ -836,12 +836,12 @@ const I18N = {
     mapper_share_duckdns_toggle: 'Brug ekstern base-URL',
     mapper_share_duckdns_not_configured: 'Ekstern base-URL er ikke konfigureret under DNS.',
     mapper_share_password_toggle: 'Kodebeskyt link',
-    mapper_share_require_name_toggle: 'KrÃ¦v navn ved Ã¥bning',
+    mapper_share_require_name_toggle: 'Kræv navn ved åbning',
     mapper_share_password_label: 'Adgangskode',
     mapper_share_password_placeholder: 'Mindst 4 tegn',
     mapper_share_result_label: 'Share-link',
-    mapper_share_copy: 'KopiÃ©r',
-    mapper_share_select_one: 'VÃ¦lg mindst Ã©n mappe fÃ¸rst.',
+    mapper_share_copy: 'Kopiér',
+    mapper_share_select_one: 'Vælg mindst én mappe først.',
     mapper_share_create_failed: 'Kunne ikke oprette share-link',
     mapper_share_created: 'Share-link oprettet.',
     mapper_share_copy_ok: 'Share-link kopieret.',
@@ -852,13 +852,13 @@ const I18N = {
     profile_password_new_optional: 'Nyt password (valgfrit)',
     profile_password_repeat: 'Gentag nyt password',
     profile_password_repeat_placeholder: 'Gentag password',
-    profile_password_unchanged_placeholder: 'Tom = uÃ¦ndret',
+    profile_password_unchanged_placeholder: 'Tom = uændret',
     profile_ui_lang: 'UI-sprog',
-    profile_search_lang: 'SÃ¸gesprog',
+    profile_search_lang: 'Søgesprog',
     profile_theme: 'Tema',
     theme_auto: 'Auto',
     theme_light: 'Lys',
-    theme_dark: 'MÃ¸rk',
+    theme_dark: 'Mørk',
     profile_save: 'Gem profil',
     profile_saved: 'Profil opdateret',
     status_errors_label: 'fejl',
@@ -872,44 +872,44 @@ const I18N = {
     ai_scope_title_ai: 'Start AI-embeddings',
     ai_scope_title_desc: 'Start AI beskrivelser',
     ai_scope_title_faces: 'Start ansigtsindeksering',
-    ai_scope_text: 'Vil du kÃ¸re pÃ¥ alle eksisterende filer, eller kun pÃ¥ nye uploads fremover?',
+    ai_scope_text: 'Vil du køre på alle eksisterende filer, eller kun på nye uploads fremover?',
     ai_scope_all: 'Alle eksisterende',
     ai_scope_new: 'Kun nye uploads fremover',
     ai_scope_cancel: 'Annuller',
-    users_loading: 'IndlÃ¦serâ€¦',
+    users_loading: 'Indlæser…',
     users_load_error: 'Kan ikke hente brugere.',
     users_panel_title: 'Brugere',
-    users_add_user: 'TilfÃ¸j bruger',
+    users_add_user: 'Tilføj bruger',
     users_no_users: 'Ingen brugere',
     users_col_id: 'ID',
     users_col_username: 'Brugernavn',
     users_col_role: 'Rolle',
-    users_col_language: 'Sprog (UI/SÃ¸gning)',
+    users_col_language: 'Sprog (UI/Søgning)',
     users_col_2fa: '2FA',
     users_btn_folders: 'Mapper',
     users_btn_edit: 'Rediger',
     users_btn_delete: 'Slet',
-    users_create_title: 'TilfÃ¸j bruger',
+    users_create_title: 'Tilføj bruger',
     users_edit_title: 'Rediger bruger',
     users_folders_title: 'Mappeadgang',
-    users_folders_hint: 'VÃ¦lg mapper brugeren mÃ¥ se. Hvis du vÃ¦lger en undermappe, vises overmapper automatisk kun som sti.',
+    users_folders_hint: 'Vælg mapper brugeren må se. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti.',
     users_save_access: 'Gem adgang',
     users_label_username: 'Brugernavn',
     users_label_password: 'Adgangskode',
     users_label_new_password_optional: 'Nyt password (valgfrit)',
     users_label_role: 'Rolle',
     users_label_ui_language: 'UI-sprog',
-    users_label_search_language: 'SÃ¸gesprog',
+    users_label_search_language: 'Søgesprog',
     users_role_user: 'Bruger',
     users_role_manager: 'Manager',
     users_role_admin: 'Admin',
-    users_enable_2fa_start: 'AktivÃ©r 2FA fra start',
+    users_enable_2fa_start: 'Aktivér 2FA fra start',
     users_close: 'Luk',
     users_cancel: 'Annuller',
     users_create: 'Opret',
     users_save: 'Gem',
     users_acl_none_found: 'Ingen mapper fundet endnu.',
-    users_acl_all_folders: 'Alle mapper (ingen begrÃ¦nsning)',
+    users_acl_all_folders: 'Alle mapper (ingen begrænsning)',
     users_acl_selected_suffix: 'valgte mapper',
     users_acl_user_prefix: 'Bruger',
     users_status_acl_save_failed: 'Kunne ikke gemme mappeadgang:',
@@ -917,25 +917,25 @@ const I18N = {
     users_confirm_delete: 'Slet bruger',
     users_status_delete_failed: 'Kunne ikke slette:',
     users_status_deleted: 'Bruger slettet',
-    users_status_username_required: 'Brugernavn mÃ¥ ikke vÃ¦re tomt.',
+    users_status_username_required: 'Brugernavn må ikke være tomt.',
     users_status_update_failed: 'Kunne ikke gemme bruger:',
     users_status_updated: 'Bruger opdateret',
     users_status_username_password_required: 'Udfyld brugernavn og adgangskode.',
     users_status_create_failed: 'Kunne ikke oprette:',
     users_status_created: 'Bruger oprettet',
     users_login_log_title: 'Login-log',
-    users_login_log_empty: 'Ingen login-forsÃ¸g endnu.',
+    users_login_log_empty: 'Ingen login-forsøg endnu.',
     users_login_col_time: 'Tidspunkt',
     users_login_col_user: 'Bruger',
     users_login_col_status: 'Status',
-    users_login_col_reason: 'HÃ¦ndelse',
+    users_login_col_reason: 'Hændelse',
     users_login_col_ip: 'IP',
     users_login_col_country: 'Land',
     users_login_col_device: 'Enhed',
     users_login_status_ok: 'OK',
     users_login_status_fail: 'Fejl',
     users_login_unknown: 'Ukendt',
-    users_select_all: 'MarkÃ©r alle',
+    users_select_all: 'Markér alle',
     users_clear_all: 'Fjern alle markeringer',
     mapper_tree_expand: 'Fold mappe ud',
     mapper_tree_collapse: 'Fold mappe sammen',
@@ -945,7 +945,7 @@ const I18N = {
     person_rename_merged: 'Person flettet til',
     person_name_updated: 'Navn opdateret',
     person_rename_merge_error: 'Fejl ved navngivning/merge',
-    person_unknown_cannot_rename: 'Ukendte kan ikke omdÃ¸bes',
+    person_unknown_cannot_rename: 'Ukendte kan ikke omdøbes',
     person_rename_title: 'Navngiv / merge person',
     person_rename_new_placeholder: 'Opret ny person',
     person_rename_save: 'Gem',
@@ -963,26 +963,26 @@ const I18N = {
     person_unhide_failed: 'Kunne ikke gendanne',
     person_unhidden_ok: 'Person vist igen',
     person_unhide_error: 'Fejl ved gendannelse',
-    people_match_btn: 'Match scan (ukendte â†’ kendte)',
-    people_match_running: 'Scannerâ€¦',
+    people_match_btn: 'Match scan (ukendte → kendte)',
+    people_match_running: 'Scanner…',
     people_match_failed: 'Match scan fejlede',
-    people_match_done: 'Match scan fÃ¦rdig: {matched} matchet ud af {scanned}',
+    people_match_done: 'Match scan færdig: {matched} matchet ud af {scanned}',
     users_panel_render_error: 'Fejl',
-    twofa_loading: 'IndlÃ¦serâ€¦',
+    twofa_loading: 'Indlæser…',
     twofa_load_failed: 'Kan ikke hente 2FA-status.',
     twofa_remember_days: 'Husk dage',
     twofa_onetime_code: 'Engangskode',
     twofa_code_placeholder: '6-cifret kode',
-    twofa_disable: 'DeaktivÃ©r',
-    twofa_enable: 'AktivÃ©r',
-    twofa_regen: 'Forny QR / nÃ¸gle',
+    twofa_disable: 'Deaktivér',
+    twofa_enable: 'Aktivér',
+    twofa_regen: 'Forny QR / nøgle',
     twofa_save_btn: 'Gem',
     twofa_status_label: 'Status',
     twofa_status_enabled: 'Aktiveret',
     twofa_status_disabled: 'Deaktiveret',
     twofa_error_prefix: '2FA-fejl:',
     twofa_updated: '2FA opdateret',
-    scan_done_or_stopped: 'Scan fÃ¦rdig eller stoppet.',
+    scan_done_or_stopped: 'Scan færdig eller stoppet.',
     scan_stop_failed: 'Kunne ikke stoppe scan.',
     scan_stopping: 'Stopper scan...',
     scan_stop_error: 'Fejl ved stop scan.',
@@ -992,23 +992,23 @@ const I18N = {
     rescan_starting: 'Rescanner metadata for eksisterende billeder...',
     rescan_failed: 'Rescan fejlede',
     rescan_error: 'Fejl ved rescan.',
-    rescan_done_prefix: 'Rescan fÃ¦rdig. GennemgÃ¥et',
+    rescan_done_prefix: 'Rescan færdig. Gennemgået',
     rethumb_starting: 'Genbygger thumbnails (kan tage lidt tid)...',
     rethumb_failed: 'Genbyg thumbnails fejlede',
     rethumb_error: 'Fejl ved genbyg thumbnails.',
-    rethumb_done_prefix: 'Genbyg thumbnails fÃ¦rdig. Behandlet',
-    clear_confirm: 'Nulstil indeks? Dette sletter data, thumbnails og konverterede kopier i FjordLens (ikke dine originale billeder). FortsÃ¦t?',
+    rethumb_done_prefix: 'Genbyg thumbnails færdig. Behandlet',
+    clear_confirm: 'Nulstil indeks? Dette sletter data, thumbnails og konverterede kopier i FjordLens (ikke dine originale billeder). Fortsæt?',
     clear_starting: 'Sletter indeks og thumbnails...',
     clear_failed: 'Fejl ved nulstilling:',
     clear_unknown: 'ukendt',
     clear_error: 'Fejl ved nulstilling.',
     clear_done_prefix: 'Indeks nulstillet. Slettet',
-    factory_confirm: 'Fabriksnulstil? Dette sletter alt INDHOLD: indeksering, personer/ansigter, thumbnails, konverterede kopier, uploads og midlertidige filer. Brugere og indstillinger bevares. Originale billeder rÃ¸res ikke. FortsÃ¦t?',
-    factory_starting: 'UdfÃ¸rer fabriksnulstilling af indholdâ€¦',
+    factory_confirm: 'Fabriksnulstil? Dette sletter alt INDHOLD: indeksering, personer/ansigter, thumbnails, konverterede kopier, uploads og midlertidige filer. Brugere og indstillinger bevares. Originale billeder røres ikke. Fortsæt?',
+    factory_starting: 'Udfører fabriksnulstilling af indhold…',
     factory_failed: 'Fabriksnulstilling fejlede:',
     factory_error: 'Fejl ved fabriksnulstilling.',
-    factory_done: 'Fabriksnulstilling gennemfÃ¸rt. Indhold slettet â€“ brugere bevaret.',
-    file_picker_open_failed: 'Kunne ikke Ã¥bne filvÃ¦lger.',
+    factory_done: 'Fabriksnulstilling gennemført. Indhold slettet – brugere bevaret.',
+    file_picker_open_failed: 'Kunne ikke åbne filvælger.',
     ai_starting: 'Starter AI-indeksering (embeddings)...',
     ai_start_failed: 'Kunne ikke starte AI-indeksering.',
     ai_enabled_new_uploads: 'AI aktiveret for nye uploads fremover.',
@@ -1017,7 +1017,7 @@ const I18N = {
     ai_stop_failed: 'Kunne ikke stoppe AI-indeksering.',
     ai_stopped: 'AI-indeksering stoppet.',
     ai_stop_error: 'Fejl ved stop af AI-indeksering.',
-    ai_desc_starting: 'Starter AI-beskrivelserâ€¦',
+    ai_desc_starting: 'Starter AI-beskrivelser…',
     ai_desc_start_failed: 'Kunne ikke starte AI-beskrivelser.',
     ai_desc_enabled_new_uploads: 'AI-beskrivelser aktiveret for nye uploads fremover.',
     ai_desc_started_bg: 'AI-beskrivelser er startet i baggrunden.',
@@ -1025,10 +1025,10 @@ const I18N = {
     ai_desc_stop_failed: 'Kunne ikke stoppe AI-beskrivelser.',
     ai_desc_stopped: 'AI-beskrivelser stoppet.',
     ai_desc_stop_error: 'Fejl ved stop af AI-beskrivelser.',
-    faces_starting: 'Starter ansigtsindekseringâ€¦',
+    faces_starting: 'Starter ansigtsindeksering…',
     faces_start_failed: 'Kunne ikke starte ansigtsindeksering',
     faces_enabled_new_uploads: 'Ansigtsindeksering aktiveret for nye uploads fremover.',
-    faces_started_bg: 'Ansigtsindeksering kÃ¸rer i baggrunden.',
+    faces_started_bg: 'Ansigtsindeksering kører i baggrunden.',
     faces_start_error: 'Fejl ved start af ansigtsindeksering',
     faces_stop_failed: 'Kunne ikke stoppe ansigtsindeksering.',
     faces_stopped: 'Ansigtsindeksering stoppet.',
@@ -1042,22 +1042,22 @@ const I18N = {
     similar_fetch_error: 'Fejl ved hentning af lignende',
     similar_view_title: 'Lignende billeder',
     similar_view_subtitle: 'Fundet via billed-embedding',
-    similar_modal_title: 'Lignende billeder (pHash nÃ¦r)',
+    similar_modal_title: 'Lignende billeder (pHash nær)',
     similar_modal_loading: 'Finder lignende billeder...',
-    similar_modal_empty: 'Ingen lignende billeder fundet med nuvÃ¦rende pHash-afstand.',
-    similar_modal_count: 'Fundet {count} lignende billeder (afstand â‰¤ {distance}).',
-    raw_meta_show: 'Vis rÃ¥ metadata (JSON)',
-    raw_meta_hide: 'Skjul rÃ¥ metadata (JSON)',
+    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende pHash-afstand.',
+    similar_modal_count: 'Fundet {count} lignende billeder (afstand ≤ {distance}).',
+    raw_meta_show: 'Vis rå metadata (JSON)',
+    raw_meta_hide: 'Skjul rå metadata (JSON)',
   },
   en: {
-    nav_timeline: 'ðŸ“… Timeline',
-    nav_favorites: 'â­ Favorites',
-    nav_places: 'ðŸ“ Places',
-    nav_cameras: 'ðŸ“¸ Cameras',
-    nav_folders: 'ðŸ—‚ï¸ Folders',
-    nav_photoframe: 'ðŸ–¼ï¸ Photoframe',
-    nav_people: 'ðŸ™‚ People',
-    nav_settings: 'âš™ï¸ Settings',
+    nav_timeline: '📅 Timeline',
+    nav_favorites: '⭐ Favorites',
+    nav_places: '📍 Places',
+    nav_cameras: '📸 Cameras',
+    nav_folders: '🗂️ Folders',
+    nav_photoframe: '🖼️ Photoframe',
+    nav_people: '🙂 People',
+    nav_settings: '⚙️ Settings',
     profile_link: 'Profile',
     logout_link: 'Log out',
     search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
@@ -1235,7 +1235,7 @@ const I18N = {
     dns_save_failed: 'Could not save DNS settings.',
     dns_shares_title: 'Active shares',
     dns_shares_desc: 'View active share links, copy links again, revoke them, or extend expiry.',
-    dns_shares_loading: 'Loading sharesâ€¦',
+    dns_shares_loading: 'Loading shares…',
     dns_shares_empty: 'No active shares.',
     dns_shares_load_failed: 'Could not load shares.',
     dns_shares_col_folder: 'Name',
@@ -1310,7 +1310,7 @@ const I18N = {
     status_processed_label: 'processed',
     status_stopped: 'stopped',
     status_running: 'running',
-    status_dash: 'â€”',
+    status_dash: '—',
     upload_new_folder_placeholder: 'New folder (e.g. holiday or 2026/trip)',
     upload_create_folder: 'Create folder',
     logs_label: 'Logs:',
@@ -1322,7 +1322,7 @@ const I18N = {
     mapper_drop_here: 'Drop files or folders here to upload to',
     mapper_up: 'Back',
     mapper_done: 'Done',
-    mapper_edit: 'â‹®',
+    mapper_edit: '⋮',
     mapper_edit_title: 'More options',
     mapper_done_title: 'Close more options',
     mapper_menu_edit: 'Select',
@@ -1429,7 +1429,7 @@ const I18N = {
     ai_scope_all: 'All existing',
     ai_scope_new: 'Only new uploads from now on',
     ai_scope_cancel: 'Cancel',
-    users_loading: 'Loadingâ€¦',
+    users_loading: 'Loading…',
     users_load_error: 'Could not load users.',
     users_panel_title: 'Users',
     users_add_user: 'Add user',
@@ -1516,12 +1516,12 @@ const I18N = {
     person_unhide_failed: 'Could not restore',
     person_unhidden_ok: 'Person shown again',
     person_unhide_error: 'Error while restoring',
-    people_match_btn: 'Match scan (unknown â†’ known)',
-    people_match_running: 'Scanningâ€¦',
+    people_match_btn: 'Match scan (unknown → known)',
+    people_match_running: 'Scanning…',
     people_match_failed: 'Match scan failed',
     people_match_done: 'Match scan done: {matched} matched of {scanned}',
     users_panel_render_error: 'Error',
-    twofa_loading: 'Loadingâ€¦',
+    twofa_loading: 'Loading…',
     twofa_load_failed: 'Could not load 2FA status.',
     twofa_remember_days: 'Remember days',
     twofa_onetime_code: 'One-time code',
@@ -1557,7 +1557,7 @@ const I18N = {
     clear_error: 'Error while resetting index.',
     clear_done_prefix: 'Index reset. Removed',
     factory_confirm: 'Factory reset? This deletes all CONTENT: indexing, people/faces, thumbnails, converted copies, uploads and temp files. Users and settings are kept. Original photos are not touched. Continue?',
-    factory_starting: 'Performing content-only factory resetâ€¦',
+    factory_starting: 'Performing content-only factory reset…',
     factory_failed: 'Factory reset failed:',
     factory_error: 'Error during factory reset.',
     factory_done: 'Factory reset complete. Content cleared; users kept.',
@@ -1570,7 +1570,7 @@ const I18N = {
     ai_stop_failed: 'Could not stop AI indexing.',
     ai_stopped: 'AI indexing stopped.',
     ai_stop_error: 'Error while stopping AI indexing.',
-    ai_desc_starting: 'Starting AI descriptionsâ€¦',
+    ai_desc_starting: 'Starting AI descriptions…',
     ai_desc_start_failed: 'Could not start AI descriptions.',
     ai_desc_enabled_new_uploads: 'AI descriptions enabled for new uploads from now on.',
     ai_desc_started_bg: 'AI descriptions started in the background.',
@@ -1578,7 +1578,7 @@ const I18N = {
     ai_desc_stop_failed: 'Could not stop AI descriptions.',
     ai_desc_stopped: 'AI descriptions stopped.',
     ai_desc_stop_error: 'Error while stopping AI descriptions.',
-    faces_starting: 'Starting face indexingâ€¦',
+    faces_starting: 'Starting face indexing…',
     faces_start_failed: 'Could not start face indexing',
     faces_enabled_new_uploads: 'Face indexing enabled for new uploads from now on.',
     faces_started_bg: 'Face indexing is running in the background.',
@@ -1598,7 +1598,7 @@ const I18N = {
     similar_modal_title: 'Similar photos (pHash near)',
     similar_modal_loading: 'Finding similar photos...',
     similar_modal_empty: 'No similar photos found with current pHash distance.',
-    similar_modal_count: 'Found {count} similar photos (distance â‰¤ {distance}).',
+    similar_modal_count: 'Found {count} similar photos (distance ≤ {distance}).',
     raw_meta_show: 'Show raw metadata (JSON)',
     raw_meta_hide: 'Hide raw metadata (JSON)',
   },
@@ -1847,7 +1847,7 @@ function renderMapperTree() {
     const caret = document.createElement('button');
     caret.className = 'mapper-tree-caret';
     caret.type = 'button';
-    caret.textContent = hasChildren ? (isExpanded ? 'â–¾' : 'â–¸') : '';
+    caret.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '';
     caret.disabled = !hasChildren;
     if (!hasChildren) caret.style.visibility = 'hidden';
     if (hasChildren) {
@@ -1971,7 +1971,7 @@ function fmtBytes(bytes) {
 
 function fmtDims(w, h) {
   if (!w || !h) return "-";
-  return `${w} Ã— ${h}`;
+  return `${w} × ${h}`;
 }
 
 function escapeHtml(s) {
@@ -3407,7 +3407,7 @@ function setDetail(item) {
   els.detailCountry.textContent = geo.country || "-";
   els.detailCity.textContent = geo.city || "-";
   els.rawMeta.textContent = JSON.stringify(item.metadata_json || {}, null, 2);
-  els.favoriteBtn.textContent = item.favorite ? "â˜…" : "â˜†";
+  els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
 
   // Click on thumbnail in detail opens viewer
   els.detailThumb.onclick = () => {
@@ -3431,10 +3431,10 @@ function getSizeLabel(w, h) {
 function cardHTML(item) {
   const extRaw = String((item && (item.ext || item.filename || item.rel_path)) || '').toLowerCase();
   const isGif = extRaw.endsWith('.gif');
-  const selectBadge = `<span class="photo-select-badge">âœ“</span>`;
+  const selectBadge = `<span class="photo-select-badge">✓</span>`;
   const thumb = item.thumb_url
     ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt="">${selectBadge}</div>`
-    : `<div class="card-thumb placeholder">${item.is_video ? 'ðŸŽ¬ Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}${selectBadge}</div>`;
+    : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}${selectBadge}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
     : "";
@@ -3444,10 +3444,10 @@ function cardHTML(item) {
   const uploadedByRaw = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
   const uploadedBy = uploadedByRaw ? escapeHtml(uploadedByRaw) : '';
   const uploaderTag = uploadedBy
-    ? `<div class="uploader-badge" title="Uploadet af ${uploadedBy}">ðŸ‘¤ ${uploadedBy}</div>`
+    ? `<div class="uploader-badge" title="Uploadet af ${uploadedBy}">👤 ${uploadedBy}</div>`
     : "";
 
-  // Gridkort uden extra tekst/metadata â€“ kun selve billedet
+  // Gridkort uden extra tekst/metadata – kun selve billedet
   return `${thumb}${videoOverlay}${gifOverlay}${uploaderTag}`;
 }
 
@@ -3572,7 +3572,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const faceAttr = faceMatch ? ` data-face-id="${faceMatch[1]}"` : '';
       const imgHtml = p.thumb_url
         ? `<img data-src="${p.thumb_url}"${faceAttr} alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
-        : `<div class="card-thumb placeholder">ðŸ™‚</div>`;
+        : `<div class="card-thumb placeholder">🙂</div>`;
       card.innerHTML = `
         <div class="card-thumb">${imgHtml}</div>
         <div class="card-body">
@@ -3743,7 +3743,7 @@ function renderGrid() {
       const head = document.createElement('div');
       head.className = 'timeline-header';
       head.style.cursor = 'pointer';
-      head.textContent = `â† ${state.personView.personName || 'Person'}`;
+      head.textContent = `← ${state.personView.personName || 'Person'}`;
       head.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
       els.grid.appendChild(head);
       const wrap = document.createElement('div');
@@ -4118,7 +4118,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   const stored = Array.isArray(store[folder]) ? store[folder] : null;
   const intersect = (want, avail) => want.filter(u => avail.includes(u));
 
-  // Decide variant: 1 image â†’ full; 2 or 3 images â†’ 2 tall columns; 4+ â†’ 2Ã—2 grid
+  // Decide variant: 1 image → full; 2 or 3 images → 2 tall columns; 4+ → 2×2 grid
   let variant = 'v4';
   let useUrls = [];
   const pickFresh = () => {
@@ -4145,7 +4145,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   }
   const cells = useUrls.map(u => `<img src="${u}" alt="">`).join("");
   const title = opts.title || folder;
-  const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? 'âœ“' : ''}</span>` : '';
+  const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
   const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
   const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
@@ -4463,7 +4463,7 @@ function openPersonRenameMenu(anchorBtn, person) {
 function appendPersonCard(p) {
   const card = document.createElement('article');
   card.className = 'photo-card';
-  const img = p.thumb_url ? `<img src="${p.thumb_url}" alt="${p.name}" loading="lazy" decoding="async">` : `<div class="card-thumb placeholder">ðŸ™‚</div>`;
+  const img = p.thumb_url ? `<img src="${p.thumb_url}" alt="${p.name}" loading="lazy" decoding="async">` : `<div class="card-thumb placeholder">🙂</div>`;
   card.innerHTML = `
     <div class="card-thumb">${img}</div>
     <div class="card-body">
@@ -4479,7 +4479,7 @@ function appendPersonCard(p) {
   card.querySelectorAll('img').forEach((el) => {
     el.setAttribute('draggable', 'false');
   });
-  // Klik pÃ¥ hele kortet Ã¥bner personens billeder (undtagen nÃ¥r man klikker pÃ¥ en knap)
+  // Klik på hele kortet åbner personens billeder (undtagen når man klikker på en knap)
   card.addEventListener('click', (e)=>{
     if (e.target && e.target.closest('[data-act]')) return;
     if (p.id === 'unknown') loadPersonPhotos('unknown', tr('person_unknown'));
@@ -4688,7 +4688,7 @@ function openViewer(index) {
   try {
     const title = (it.filename || it.rel_path || "-");
     const date = fmtDate(it.captured_at || it.modified_fs || it.created_fs);
-    const dims = it.width && it.height ? `${it.width} Ã— ${it.height}` : "-";
+    const dims = it.width && it.height ? `${it.width} × ${it.height}` : "-";
     const dev = it.device_label || [it.camera_make, it.camera_model].filter(Boolean).join(" ");
     const lens = it.lens_label || it.lens_model || "-";
     const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
@@ -4709,18 +4709,18 @@ function openViewer(index) {
     setText('viDevice', dev || '-');
     setText('viLens', lens);
     setText('viGps', gps);
-    setText('viUploader', uploader || 'â€”');
+    setText('viUploader', uploader || '—');
     setText('viTags', tags);
     const convRow = q('viConvertedRow');
     if (convRow) convRow.classList.toggle('hidden', !conversion.converted);
-    setText('viConverted', conversion.converted ? conversion.label : 'â€”');
+    setText('viConverted', conversion.converted ? conversion.label : '—');
     try {
       const geo = (it.metadata_json && it.metadata_json.geo) ? it.metadata_json.geo : {};
       setText('viCountry', geo.country || '-');
       setText('viCity', geo.city || '-');
     } catch {}
     const viDL = q('viDownload'); if (viDL) viDL.href = dl;
-    try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? 'â˜…' : 'â˜†'; } catch {}
+    try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
   } catch {}
 
   // Keep panel + info icon anchored to the active media.
@@ -4909,7 +4909,7 @@ async function fetchUploadDestinationConfig(destination = null) {
     data = null;
   }
   if (!data) {
-    // Fald tilbage: undgÃ¥ at crashe hvis backend sender HTML (fx login/fejlside)
+    // Fald tilbage: undgå at crashe hvis backend sender HTML (fx login/fejlside)
     const text = await res.text().catch(()=> '');
     console.warn('upload-destination non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
     data = { ok: false, error: 'invalid_json', note: 'non-json', status: res.status };
@@ -5073,7 +5073,7 @@ function _announceUploadResumeDraftIfNeeded() {
   if (!draft || !(draft.pending || []).length) return;
   const pathTxt = String(draft.subdir || '').trim() || 'root';
   showStatus(
-    `Upload kan genoptages: vÃ¦lg de samme ${draft.pending.length} fil(er) igen (${pathTxt}) for at fortsÃ¦tte via TUS.`,
+    `Upload kan genoptages: vælg de samme ${draft.pending.length} fil(er) igen (${pathTxt}) for at fortsætte via TUS.`,
     'ok'
   );
 }
@@ -5090,7 +5090,7 @@ function _maybeAnnounceAutoResumeForBatch(files, destination = '', subdir = '') 
     if (pending.has(_uploadFileSignature(file))) matched += 1;
   }
   if (matched > 0) {
-    showStatus(`Genoptager upload via TUS for ${matched} fil(er)â€¦`, 'ok');
+    showStatus(`Genoptager upload via TUS for ${matched} fil(er)…`, 'ok');
   }
 }
 
@@ -5152,7 +5152,7 @@ function setUploadStopButtonState() {
   if (!els.uploadMonitorStop) return;
   const running = isUploadRunning();
   els.uploadMonitorStop.disabled = !running || uploadStopRequested;
-  els.uploadMonitorStop.textContent = uploadStopRequested ? 'Stopperâ€¦' : 'Stop upload';
+  els.uploadMonitorStop.textContent = uploadStopRequested ? 'Stopper…' : 'Stop upload';
 }
 
 function _uploadItemKey(name, index = null) {
@@ -5174,7 +5174,7 @@ function updateUploadMonitorItem(key, ok, detail = '', progressPct = null) {
   if (!ref || !ref.statusEl) return;
   ref.statusEl.classList.remove('ok', 'err', 'work');
   ref.statusEl.classList.add(ok === null ? 'work' : (ok ? 'ok' : 'err'));
-  ref.statusEl.textContent = String(detail || (ok === null ? 'Arbejderâ€¦' : (ok ? 'OK' : 'Fejl')));
+  ref.statusEl.textContent = String(detail || (ok === null ? 'Arbejder…' : (ok ? 'OK' : 'Fejl')));
   if (progressPct !== null && progressPct !== undefined) {
     _setUploadMonitorItemProgress(key, progressPct);
   }
@@ -5184,7 +5184,7 @@ function requestStopUpload() {
   if (!isUploadRunning() || uploadStopRequested) return;
   uploadStopRequested = true;
   uploadWasStopped = true;
-  uploadUiState.currentFileName = 'Stopper uploadâ€¦';
+  uploadUiState.currentFileName = 'Stopper upload…';
   try {
     if (activeTusUpload && typeof activeTusUpload.abort === 'function') {
       activeTusUpload.abort();
@@ -5209,7 +5209,7 @@ function renderUploadMonitor() {
     : 0;
   const stageTxt = uploadUiState.currentTotal > 0
     ? `${uploadUiState.currentLoaded}/${uploadUiState.currentTotal}`
-    : 'venterâ€¦';
+    : 'venter…';
 
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
@@ -5217,8 +5217,8 @@ function renderUploadMonitor() {
       const activePct = isPostprocess ? stagePct : overallPct;
       const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
       const topLabel = isPostprocess
-        ? `${uploadUiState.currentPhaseLabel} Â· ${stageTxt} Â· ${activePct}%`
-        : `Uploader Â· ${visibleProcessed}/${uploadUiState.totalFiles} Â· ${activePct}%`;
+        ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
+        : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%`;
       els.uploadTopStatus.classList.remove('hidden');
       if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
       if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
@@ -5280,12 +5280,12 @@ function renderUploadMonitor() {
 
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
   if (els.uploadMonitorSummary) {
-    const failedTxt = uploadUiState.failedFiles ? ` Â· fejl: ${uploadUiState.failedFiles}` : '';
-    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer Â· ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} Â· ${overallPct}%${failedTxt}`;
+    const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : '';
+    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
   }
   if (els.uploadMonitorCurrent) {
     if (isPostprocess) {
-      els.uploadMonitorCurrent.textContent = 'Upload fuldfÃ¸rt';
+      els.uploadMonitorCurrent.textContent = 'Upload fuldført';
     } else if (uploadUiState.currentFileName) {
       const filePct = uploadUiState.currentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
@@ -5294,7 +5294,7 @@ function renderUploadMonitor() {
       els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
     } else {
       els.uploadMonitorCurrent.textContent = uploadUiState.totalFiles
-        ? 'Upload fuldfÃ¸rt'
+        ? 'Upload fuldført'
         : 'Ingen aktiv upload';
     }
   }
@@ -5399,7 +5399,7 @@ function uploadSingleFile(file, options = {}, onProgress = null) {
       const errorMsg = (payload && payload.error) || (errors[0] && (errors[0].error || errors[0].name)) || '';
       resolve({ ok, saved, errorMsg });
     };
-    xhr.onerror = () => resolve({ ok: false, saved: 0, errorMsg: 'NetvÃ¦rksfejl' });
+    xhr.onerror = () => resolve({ ok: false, saved: 0, errorMsg: 'Netværksfejl' });
     xhr.upload.onprogress = (evt) => {
       if (typeof onProgress === 'function') {
         onProgress(Number(evt && evt.loaded ? evt.loaded : 0), Number(evt && evt.total ? evt.total : 0));
@@ -5422,7 +5422,7 @@ function postprocessPhaseLabel(phase) {
   if (key === 'embeddings') return 'AI embeddings';
   if (key === 'descriptions') return 'AI beskrivelser';
   if (key === 'starting') return 'Starter efterbehandling';
-  if (key === 'done') return 'Efterbehandling fÃ¦rdig';
+  if (key === 'done') return 'Efterbehandling færdig';
   if (key === 'error') return 'Efterbehandling fejl';
   return 'Efterbehandler';
 }
@@ -5540,7 +5540,7 @@ async function resumeUploadPostprocessAfterRefresh() {
       if (stageProcessed > 0) uploadUiState.processedFiles = Math.max(uploadUiState.processedFiles, stageProcessed);
 
       uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
-      uploadUiState.currentFileName = shortRelName(status.current_rel) || 'Arbejderâ€¦';
+      uploadUiState.currentFileName = shortRelName(status.current_rel) || 'Arbejder…';
       uploadUiState.currentLoaded = stageProcessed;
       uploadUiState.currentTotal = stageTotal;
       renderUploadMonitor();
@@ -5695,7 +5695,7 @@ async function uploadFiles(fileList, options = {}) {
 
     if (els.uploadOverlay) {
       const titleEl = document.querySelector('#uploadOverlay .upload-title');
-      if (titleEl) titleEl.textContent = 'Starter uploadâ€¦';
+      if (titleEl) titleEl.textContent = 'Starter upload…';
       els.uploadOverlay.classList.remove('hidden');
       els.uploadOverlay.classList.add('active', 'upload-ready');
       if (uploadOverlayHideTimer) {
@@ -5714,7 +5714,7 @@ async function uploadFiles(fileList, options = {}) {
   uploadUiState.totalBytes += totalSize;
   if (els.uploadProgressText) {
     const queuedCount = Math.max(0, uploadUiState.totalFiles - uploadUiState.processedFiles);
-    els.uploadProgressText.textContent = `${queuedCount} filer i kÃ¸ Â· ${fmtBytes(uploadUiState.totalBytes)}`;
+    els.uploadProgressText.textContent = `${queuedCount} filer i kø · ${fmtBytes(uploadUiState.totalBytes)}`;
   }
   renderUploadMonitor();
   if (!isSmallMobile()) showUploadMonitor();
@@ -5749,14 +5749,14 @@ async function uploadFiles(fileList, options = {}) {
               uploadUiState.currentFileName = file.name || 'fil';
               uploadUiState.currentLoaded = 0;
               uploadUiState.currentTotal = Number(file.size || 0);
-              addUploadMonitorItem(file.name, null, 'Uploaderâ€¦ 0%', itemKey, 0);
+              addUploadMonitorItem(file.name, null, 'Uploader… 0%', itemKey, 0);
               renderUploadMonitor();
 
               if (!hasTusClient()) {
                 throw new Error('TUS client mangler i browseren');
               }
               let result;
-              const useTus = hasTusClient() && Number(file && file.size || 0) > (1024 * 1024); // >1MB â†’ TUS
+              const useTus = hasTusClient() && Number(file && file.size || 0) > (1024 * 1024); // >1MB → TUS
               if (useTus) {
                 result = await uploadSingleFileTusWithAutoResume(
                   file,
@@ -5767,12 +5767,12 @@ async function uploadFiles(fileList, options = {}) {
                     const pct = Number(total || file.size || 0) > 0
                       ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
                       : 0;
-                    updateUploadMonitorItem(itemKey, null, `Uploaderâ€¦ ${pct}%`, pct);
+                    updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
                     renderUploadMonitor();
                   },
                   (attempt, maxAttempts) => {
                     if (attempt <= 1) return;
-                    updateUploadMonitorItem(itemKey, null, `Genoptager uploadâ€¦ (${attempt}/${maxAttempts})`, null);
+                    updateUploadMonitorItem(itemKey, null, `Genoptager upload… (${attempt}/${maxAttempts})`, null);
                     renderUploadMonitor();
                   }
                 );
@@ -5786,7 +5786,7 @@ async function uploadFiles(fileList, options = {}) {
                     const pct = Number(total || file.size || 0) > 0
                       ? Math.max(0, Math.min(100, Math.round((Number(loaded || 0) / Number(total || file.size || 0)) * 100)))
                       : 0;
-                    updateUploadMonitorItem(itemKey, null, `Uploaderâ€¦ ${pct}%`, pct);
+                    updateUploadMonitorItem(itemKey, null, `Uploader… ${pct}%`, pct);
                     renderUploadMonitor();
                   }
                 );
@@ -5808,7 +5808,7 @@ async function uploadFiles(fileList, options = {}) {
                 batchSaved += saved;
                 uploadSessionSavedTotal += saved;
                 _markUploadDraftFileDone(file);
-                updateUploadMonitorItem(itemKey, true, `Uploadet Â· ${fmtBytes(file.size || 0)}`, 100);
+                updateUploadMonitorItem(itemKey, true, `Uploadet · ${fmtBytes(file.size || 0)}`, 100);
                 // Do not refresh grid during raw upload; wait until metadata/thumbnails phase
                 // so the flow is strictly: upload -> metadata -> thumbnails -> faces/AI.
                 // Refreshes now happen from the postprocess progress callback below.
@@ -5843,7 +5843,7 @@ async function uploadFiles(fileList, options = {}) {
           }
 
           uploadUiState.currentPhaseLabel = 'Efterbehandler';
-          uploadUiState.currentFileName = 'KlargÃ¸râ€¦';
+          uploadUiState.currentFileName = 'Klargør…';
           uploadUiState.currentLoaded = 0;
           uploadUiState.currentTotal = 0;
           renderUploadMonitor();
@@ -5852,7 +5852,7 @@ async function uploadFiles(fileList, options = {}) {
             post = await runUploadPostprocess((status) => {
               uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
               const n = shortRelName(status.current_rel);
-              uploadUiState.currentFileName = n || 'Arbejderâ€¦';
+              uploadUiState.currentFileName = n || 'Arbejder…';
               uploadUiState.currentLoaded = Number(status.stage_processed || 0);
               uploadUiState.currentTotal = Number(status.stage_total || 0);
               if (['metadata','thumbnails','faces'].includes(String(status.phase || '').toLowerCase())) {
@@ -5862,7 +5862,7 @@ async function uploadFiles(fileList, options = {}) {
             });
           } catch (postErr) {
             console.error(postErr);
-            showStatus(`Upload fÃ¦rdig, men efterbehandling fejlede: ${postErr && postErr.message ? postErr.message : 'ukendt fejl'}`, 'err');
+            showStatus(`Upload færdig, men efterbehandling fejlede: ${postErr && postErr.message ? postErr.message : 'ukendt fejl'}`, 'err');
           }
 
           if (uploadQueue.length) {
@@ -5891,12 +5891,12 @@ async function uploadFiles(fileList, options = {}) {
             `beskrivelser: ${Number(post.ai_desc_done || 0)}${Number(post.ai_desc_errors || 0) ? ` (fejl: ${Number(post.ai_desc_errors || 0)})` : ''}`,
           ];
           showStatus(
-            `${uploadWasStopped ? 'Upload stoppet' : 'Upload fÃ¦rdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} Â· ${postParts.filter(Boolean).join(' Â· ')}`,
+            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.filter(Boolean).join(' · ')}`,
             (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0) || Number(post.ai_desc_errors || 0)) ? 'err' : 'ok'
           );
         } else {
           showStatus(
-            `${uploadWasStopped ? 'Upload stoppet' : 'Upload fÃ¦rdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''}`,
+            `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''}`,
             uploadUiState.failedFiles ? 'err' : 'ok'
           );
         }
@@ -6861,7 +6861,7 @@ async function saveAiPerformanceSettings() {
     }
     els.aiIngestThrottleInput.value = String(data.ai_ingest_throttle_sec ?? els.aiIngestThrottleInput.value);
     els.facesThrottleInput.value = String(data.faces_index_throttle_sec ?? els.facesThrottleInput.value);
-    showAiPerfStatus('AI-ydelse gemt (gÃ¦lder med det samme).', 'ok');
+    showAiPerfStatus('AI-ydelse gemt (gælder med det samme).', 'ok');
   } catch {
     showAiPerfStatus('Kunne ikke gemme AI-ydelse.', 'err');
   } finally {
@@ -7328,7 +7328,7 @@ function toggleMapperFolderSelection(folderPath) {
         badge.className = 'folder-select-badge';
         if (thumb) thumb.appendChild(badge);
       }
-      if (badge) badge.textContent = !wasSelected ? 'âœ“' : '';
+      if (badge) badge.textContent = !wasSelected ? '✓' : '';
     }
   } catch {}
   // Update header/context counters, but do not re-render grid
@@ -7428,7 +7428,7 @@ function mapperSelectAll() {
   // Attempt to select all visible photo cards in current folder
   const current = String(state.mapperPath || '');
   const items = Array.isArray(state.items) ? state.items.slice() : [];
-  // Normalize rel_path â†’ folder path like in renderGrid()
+  // Normalize rel_path → folder path like in renderGrid()
   const folderOf = (rel) => {
     let f = String(rel || '');
     f = f.includes('/') ? f.split('/').slice(0, -1).join('/') : '';
@@ -7453,7 +7453,7 @@ function mapperSelectAll() {
         card.classList.add('selected');
         let badge = card.querySelector('.folder-select-badge');
         if (!badge) { const t = card.querySelector('.card-thumb'); badge = document.createElement('span'); badge.className = 'folder-select-badge'; if (t) t.appendChild(badge); }
-        if (badge) badge.textContent = 'âœ“';
+        if (badge) badge.textContent = '✓';
       });
     } catch {}
   }
@@ -7641,7 +7641,7 @@ function _showGlobalDropOverlay() {
   if (titleEl) {
     titleEl.textContent = canUploadHere
       ? 'Slip filer for at uploade'
-      : 'GÃ¥ til Mapper for at uploade';
+      : 'Gå til Mapper for at uploade';
   }
   if (els.uploadProgressText) {
     els.uploadProgressText.textContent = canUploadHere
@@ -7734,7 +7734,7 @@ function initOrUpdatePlacesMap() {
   // Lazy init map
   if (typeof window.maplibregl === 'undefined') {
     // Try to load on demand; then re-enter
-    ensureMaplibre().then((ok)=>{ if (ok) initOrUpdatePlacesMap(); else showStatus('Kortkode kunne ikke indlÃ¦ses (MapLibre blokeret).', 'err'); });
+    ensureMaplibre().then((ok)=>{ if (ok) initOrUpdatePlacesMap(); else showStatus('Kortkode kunne ikke indlæses (MapLibre blokeret).', 'err'); });
     return;
   }
   if (!placesMap) {
@@ -7845,7 +7845,7 @@ function addOrUpdatePlacesSource(geo) {
     type: "geojson",
     data: geo,
     cluster: true,
-      // Klynger bevares ved tÃ¦t zoom; stÃ¸rre radius gÃ¸r dem mere stabile
+      // Klynger bevares ved tæt zoom; større radius gør dem mere stabile
       clusterMaxZoom: 20,
       clusterRadius: 80,
       clusterMinPoints: 2,
@@ -7897,7 +7897,7 @@ function addPlacesLayers() {
   });
 }
 
-// HTML-baserede markÃ¸rer (smÃ¥ thumbs + tÃ¦ller) â€“ deaktiveret for stabilitet.
+// HTML-baserede markører (små thumbs + tæller) – deaktiveret for stabilitet.
 // Vi bruger i stedet MapLibres egne cluster/point-lag ovenfor.
 let placesHtmlMarkers = [];
 function clearPlacesMarkers() {
@@ -7989,7 +7989,7 @@ function openClusterSheet(clusterId) {
           if (p.thumb) img.src = p.thumb;
           img.title = p.name || "";
           img.addEventListener("click", () => {
-            // Ã…bn viewer pÃ¥ dette billede hvis muligt
+            // Åbn viewer på dette billede hvis muligt
             const idx = state.items.findIndex(i => i.id === p.id);
             if (idx >= 0) {
               state.viewerItems = null;
@@ -8004,7 +8004,7 @@ function openClusterSheet(clusterId) {
   } catch {}
 }
 
-// Luk sheet nÃ¥r man klikker pÃ¥ baggrund eller trykker Escape
+// Luk sheet når man klikker på baggrund eller trykker Escape
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     const sheet = document.getElementById("clusterSheet");
@@ -8175,7 +8175,7 @@ async function clearIndex() {
     }
     const r = data.removed || {};
     showStatus(`${tr('clear_done_prefix')}: ${r.photos || 0} photos, ${r.faces || 0} faces, ${r.people || 0} people, ${r.thumbs || 0} thumbs, ${r.converted || 0} converted.`, "ok");
-    // TÃ¸m UI og hent frisk
+    // Tøm UI og hent frisk
     state.items = [];
     await loadPhotos();
   } catch (e) {
@@ -9277,7 +9277,7 @@ async function pollFacesStatus() {
       const source = (!s.running && s.last) ? s.last : s;
       const processed = Number(source && source.processed) || 0;
       const total = Number(source && source.total) || 0;
-      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} Â· ${tr('status_processed_label')} ${processed}/${total}`;
+      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} · ${tr('status_processed_label')} ${processed}/${total}`;
     }
     if (s && s.running) {
       // While faces are indexing, refresh People view incrementally when progress increases
@@ -9384,7 +9384,7 @@ async function pollAiStatus() {
         const embedded = Number(source && source.embedded) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} Â· ${tr('status_embedded_label')} ${embedded}/${total} Â· ${tr('status_errors_label')} ${failed}`;
+        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · ${tr('status_embedded_label')} ${embedded}/${total} · ${tr('status_errors_label')} ${failed}`;
       }
     }
   } catch {
@@ -9393,7 +9393,7 @@ async function pollAiStatus() {
     updateAiToggleButton();
     if (els.aiStatus) els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`;
   }
-  // Poll mens der kÃ¸rer noget
+  // Poll mens der kører noget
   try {
     const r2 = await fetch('/api/ai/status');
     const s2 = await r2.json();
@@ -9417,7 +9417,7 @@ async function pollAiDescribeStatus() {
         const described = Number(source && source.described) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} Â· ${tr('status_described_label')} ${described}/${total} Â· ${tr('status_errors_label')} ${failed}`;
+        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
       }
     }
   } catch {
@@ -9433,7 +9433,7 @@ async function pollAiDescribeStatus() {
   } catch {}
 }
 
-// Start med at vise status hvis noget kÃ¸rer allerede
+// Start med at vise status hvis noget kører allerede
 pollAiStatus();
 pollAiDescribeStatus();
 pollFacesStatus();
@@ -9536,7 +9536,7 @@ function initGpsMap(item) {
   } else {
     if (gpsMarker) { gpsMarker.remove(); gpsMarker=null; }
     gpsLat=gpsLon=null;
-    if (els.gpsCoordText) els.gpsCoordText.textContent = 'Klik pÃ¥ kortet for at vÃ¦lge';
+    if (els.gpsCoordText) els.gpsCoordText.textContent = 'Klik på kortet for at vælge';
     try { gpsMap.jumpTo({ center:[10,56], zoom:4 }); } catch {}
   }
 }
@@ -9595,7 +9595,7 @@ function setGpsPoint(lon, lat, opts={}){
       src.setData({ type:'FeatureCollection', features:[{ type:'Feature', geometry:{ type:'Point', coordinates:[lon,lat] } }] });
     }
   } catch {}
-  // TilfÃ¸j eller flyt markÃ¸r pÃ¥ kortet
+  // Tilføj eller flyt markør på kortet
   try {
     if (gpsMarker) { gpsMarker.remove(); gpsMarker = null; }
     gpsMarker = new maplibregl.Marker({ color: '#d00', draggable: false })
@@ -9761,7 +9761,7 @@ if (els.mobileNavItems && els.mobileNavItems.length) {
           uploadUiState.collapsed = false;
           showUploadMonitor();
         } else {
-          // Toggle detaljer: Ã©t tryk minimerer/udfolder
+          // Toggle detaljer: ét tryk minimerer/udfolder
           els.uploadMonitor.classList.toggle('collapsed');
         }
         return;
@@ -9958,7 +9958,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   });
 });
 
-// Mobile tab selector â†’ switch tab
+// Mobile tab selector → switch tab
 (function(){
   const sel = document.getElementById('settingsTabSelect');
   if (!sel) return;
@@ -10401,7 +10401,7 @@ const __mainEl = document.querySelector('main.main');
 if (__mainEl) {
   __mainEl.addEventListener('click', (e) => {
     if (!document.body.classList.contains('detail-open')) return;
-    // Bevar Ã¥ben hvis man klikker pÃ¥ info-ikon eller inde i panelet
+    // Bevar åben hvis man klikker på info-ikon eller inde i panelet
     const t = e.target;
     if (t && (t.closest('.detail-panel') || t.closest('.info-icon-overlay'))) return;
     document.body.classList.remove('detail-open');
@@ -10683,10 +10683,10 @@ if (viFavoriteBtn) {
       const viewerItems = getViewerItems();
       const current = viewerItems[state.selectedIndex] || null;
       if (selected) {
-        viFavoriteBtn.textContent = selected.favorite ? 'â˜…' : 'â˜†';
+        viFavoriteBtn.textContent = selected.favorite ? '★' : '☆';
       } else if (current) {
         current.favorite = !current.favorite;
-        viFavoriteBtn.textContent = current.favorite ? 'â˜…' : 'â˜†';
+        viFavoriteBtn.textContent = current.favorite ? '★' : '☆';
       }
     } catch {}
   });
@@ -10902,7 +10902,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
             const total = Number(pr.total || 0);
             const done = Number(pr.processed || 0);
             const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `RAW/HEIC-konvertering Â· ${done}/${total}${pct!==null?` Â· ${pct}%`:''}` : 'RAW/HEIC-konvertering kÃ¸rerâ€¦';
+            const lbl = total > 0 ? `RAW/HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW/HEIC-konvertering kører…';
             showTopStatusMessage(lbl, pct);
           }
         } catch {}
@@ -10959,17 +10959,17 @@ try {
     try {
       const btn = els.heicBulkConvertBtn;
       const originalText = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konvertererâ€¦'; }
+      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
       const r = await fetch('/api/heic/convert-existing', { method:'POST' });
       if (!r.ok) {
         const d = await r.json().catch(()=>({}));
         showStatus(d && d.error ? d.error : 'Kunne ikke starte HEIC-konvertering', 'err');
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'KonvertÃ©r eksisterende HEIC â†’ JPEG'; }
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
         return;
       }
-      showStatus('Starter konvertering af eksisterende HEICâ€¦', 'ok');
-      showTopStatusMessage('HEIC-konvertering starterâ€¦', 0);
-      // Poll status; when done, refresh grid so visning peger pÃ¥ JPEG
+      showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
+      showTopStatusMessage('HEIC-konvertering starter…', 0);
+      // Poll status; when done, refresh grid so visning peger på JPEG
       const poll = async () => {
         try {
           const s = await fetch('/api/heic/convert-existing/status');
@@ -10979,12 +10979,12 @@ try {
               if (d.result) {
                 const p = Number(d.result.processed || 0);
                 const e = Number(d.result.errors || 0);
-                showStatus(`HEIC-konvertering fÃ¦rdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
+                showStatus(`HEIC-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
               }
               await loadPhotos();
               if (state.view === 'mapper') loadMapperTools();
               hideTopStatusMessage();
-              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'KonvertÃ©r eksisterende HEIC â†’ JPEG'; }
+              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
               return;
             }
             // While running, if progress is available, reflect it in the top bar
@@ -10992,7 +10992,7 @@ try {
             const total = Number(pr.total || 0);
             const done = Number(pr.processed || 0);
             const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `HEIC-konvertering Â· ${done}/${total}${pct!==null?` Â· ${pct}%`:''}` : 'HEIC-konvertering kÃ¸rerâ€¦';
+            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
             showTopStatusMessage(lbl, pct);
           }
         } catch {}
@@ -11017,16 +11017,16 @@ try {
     try {
       const btn = els.rawBulkConvertBtn;
       const originalText = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konvertererâ€¦'; }
+      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
       const r = await fetch('/api/raw/convert-existing', { method:'POST' });
       if (!r.ok) {
         const d = await r.json().catch(()=>({}));
         showStatus(d && d.error ? d.error : 'Kunne ikke starte RAW-konvertering', 'err');
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'KonvertÃ©r eksisterende RAW/DNG â†’ JPEG'; }
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/DNG → JPEG'; }
         return;
       }
-      showStatus('Starter konvertering af eksisterende RAW/DNGâ€¦', 'ok');
-      showTopStatusMessage('RAW-konvertering starterâ€¦', 0);
+      showStatus('Starter konvertering af eksisterende RAW/DNG…', 'ok');
+      showTopStatusMessage('RAW-konvertering starter…', 0);
       const poll = async () => {
         try {
           const s = await fetch('/api/raw/convert-existing/status');
@@ -11036,19 +11036,19 @@ try {
               if (d.result) {
                 const p = Number(d.result.processed || 0);
                 const e = Number(d.result.errors || 0);
-                showStatus(`RAW-konvertering fÃ¦rdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
+                showStatus(`RAW-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
               }
               await loadPhotos();
               if (state.view === 'mapper') loadMapperTools();
               hideTopStatusMessage();
-              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'KonvertÃ©r eksisterende RAW/DNG â†’ JPEG'; }
+              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/DNG → JPEG'; }
               return;
             }
             const pr = d.progress || {};
             const total = Number(pr.total || 0);
             const done = Number(pr.processed || 0);
             const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `RAW-konvertering Â· ${done}/${total}${pct!==null?` Â· ${pct}%`:''}` : 'RAW-konvertering kÃ¸rerâ€¦';
+            const lbl = total > 0 ? `RAW-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW-konvertering kører…';
             showTopStatusMessage(lbl, pct);
           }
         } catch {}
@@ -11063,7 +11063,7 @@ try {
 async function renderUsersPanel(){
   const wrap = document.getElementById('usersPanelInner');
   if (!wrap) return;
-  wrap.textContent = 'IndlÃ¦serâ€¦';
+  wrap.textContent = 'Indlæser…';
   try{
     const r = await fetch('/api/admin/users');
     const raw = await r.text();
@@ -11092,7 +11092,7 @@ async function renderUsersPanel(){
         <td class="col-user"><strong>${u.username}</strong></td>
         <td class="col-role">${u.role}</td>
         <td class="col-lang">${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
-        <td class="col-2fa">${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">â€”</span>'}</td>
+        <td class="col-2fa">${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
         <td class="col-actions" style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">
           ${aclButton}
           <button data-edit="${u.id}" class="btn small" aria-label="Rediger bruger">Rediger</button>
@@ -11113,7 +11113,7 @@ async function renderUsersPanel(){
       const status = entry && entry.success ? tr('users_login_status_ok') : tr('users_login_status_fail');
       const statusClass = entry && entry.success ? 'ok' : 'err';
       const userTxt = (entry && entry.username) || (entry && entry.username_input) || tr('users_login_unknown');
-      const reasonTxt = (entry && entry.reason) || (entry && entry.event_type) || 'â€”';
+      const reasonTxt = (entry && entry.reason) || (entry && entry.event_type) || '—';
       const targetId = `log_${start + idx}`;
       return `
       <tr>
@@ -11125,7 +11125,7 @@ async function renderUsersPanel(){
       <tr class="log-details hidden" id="${targetId}">
         <td colspan="4">
           <div class="mini-label">Begrundelse: ${escapeHtml(reasonTxt)}</div>
-          <div class="mini-label">IP: ${escapeHtml((entry && entry.ip) || 'â€”')} Â· Land: ${escapeHtml((entry && entry.country) || 'â€”')} Â· Enhed: ${escapeHtml((entry && entry.device) || 'â€”')}</div>
+          <div class="mini-label">IP: ${escapeHtml((entry && entry.ip) || '—')} · Land: ${escapeHtml((entry && entry.country) || '—')} · Enhed: ${escapeHtml((entry && entry.device) || '—')}</div>
         </td>
       </tr>`;
     }).join('');
@@ -11154,13 +11154,13 @@ async function renderUsersPanel(){
       <div class="pager" id="loginLogPager" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin:6px 0 12px;">
         <button id="log_prev" class="btn small" ${(typeof totalPages!=='undefined' && totalPages>1 && window.usersLogPage>1)?'':'disabled'}>Forrige</button>
         <span class="mini-label">Side <strong>${(typeof totalPages!=='undefined') ? Math.min(window.usersLogPage||1,totalPages) : 1}</strong> / ${(typeof totalPages!=='undefined') ? totalPages : 1}</span>
-        <button id="log_next" class="btn small" ${(typeof totalPages!=='undefined' && (window.usersLogPage||1) < totalPages)?'':'disabled'}>NÃ¦ste</button>
+        <button id="log_next" class="btn small" ${(typeof totalPages!=='undefined' && (window.usersLogPage||1) < totalPages)?'':'disabled'}>Næste</button>
       </div>
       <!-- Create user modal -->
       <div id="nu_modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
         <div style="width:520px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <h3 style="margin:0;">TilfÃ¸j bruger</h3>
+            <h3 style="margin:0;">Tilføj bruger</h3>
             <button id="nu_close" class="btn">Luk</button>
           </div>
           <div class="form-row"><label for="nu_username">Brugernavn</label><input id="nu_username" placeholder="Brugernavn"></div>
@@ -11184,19 +11184,19 @@ async function renderUsersPanel(){
               <option value="en">English</option>
             </select>
           </div>
-          <div class="form-row"><label for="nu_search_language">SÃ¸gesprog</label>
+          <div class="form-row"><label for="nu_search_language">Søgesprog</label>
             <select id="nu_search_language" class="select">
               <option value="da">Dansk</option>
               <option value="en">English</option>
             </select>
           </div>
           <div class="toolbar" style="gap:8px;margin:8px 0;align-items:center;">
-            <button id="nu_acl" class="btn">Mappeadgangâ€¦</button>
+            <button id="nu_acl" class="btn">Mappeadgang…</button>
             <div id="nu_acl_count" class="mini-label" style="opacity:.8;">Ingen mapper valgt</div>
           </div>
           <label style="display:flex;align-items:center;gap:8px;margin:6px 0 2px;">
             <input type="checkbox" id="nu_2fa" />
-            <span>AktivÃ©r 2FA fra start</span>
+            <span>Aktivér 2FA fra start</span>
           </label>
           <div class="actions" style="justify-content:flex-end;">
             <button id="nu_cancel" class="btn">Annuller</button>
@@ -11213,7 +11213,7 @@ async function renderUsersPanel(){
             <button id="eu_close" class="btn">Luk</button>
           </div>
           <div class="form-row"><label for="eu_username">Brugernavn</label><input id="eu_username" placeholder="Brugernavn"></div>
-          <div class="form-row"><label for="eu_password">Nyt password (valgfrit)</label><input id="eu_password" placeholder="Tom = uÃ¦ndret" type="password"></div>
+          <div class="form-row"><label for="eu_password">Nyt password (valgfrit)</label><input id="eu_password" placeholder="Tom = uændret" type="password"></div>
           <div class="form-row"><label for="eu_role">Rolle</label>
             <select id="eu_role" class="select">
               <option value="user">Bruger</option>
@@ -11226,7 +11226,7 @@ async function renderUsersPanel(){
               <option value="en">English</option>
             </select>
           </div>
-          <div class="form-row"><label for="eu_search_language">SÃ¸gesprog</label>
+          <div class="form-row"><label for="eu_search_language">Søgesprog</label>
             <select id="eu_search_language" class="select">
               <option value="da">Dansk</option>
               <option value="en">English</option>
@@ -11458,7 +11458,7 @@ async function renderUsersPanel(){
         aclEditingUserId = user.id;
         if (aclUserLabel) {
           const count = Array.isArray(user.allowed_folders) ? user.allowed_folders.length : 0;
-          aclUserLabel.textContent = `${tr('users_acl_user_prefix')}: ${user.username} (#${user.id}) â€” ${count ? `${count} ${tr('users_acl_selected_suffix')}` : tr('users_acl_all_folders')}`;
+          aclUserLabel.textContent = `${tr('users_acl_user_prefix')}: ${user.username} (#${user.id}) — ${count ? `${count} ${tr('users_acl_selected_suffix')}` : tr('users_acl_all_folders')}`;
         }
         setFolderSelection('ua_folder_access', user.allowed_folders || [], availableFolders);
         bindAclHierarchy('ua_folder_access');
@@ -11853,7 +11853,7 @@ async function renderProfilePanel() {
         const ui_language = document.getElementById('pf_ui_language').value || 'da';
         const search_language = document.getElementById('pf_search_language').value || 'da';
         const theme_mode = (document.getElementById('pf_theme_mode').value || 'system');
-        if (!username) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Username cannot be empty.' : 'Brugernavn mÃ¥ ikke vÃ¦re tomt.', 'err'); return; }
+        if (!username) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Username cannot be empty.' : 'Brugernavn må ikke være tomt.', 'err'); return; }
         if (password && password !== password2) { setProfileInlineStatus(state.uiLanguage === 'en' ? 'Passwords do not match.' : 'Password matcher ikke.', 'err'); return; }
 
         setProfileInlineStatus('', 'ok');
@@ -11895,14 +11895,14 @@ async function fetchDuplicates() {
   const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
   try {
-    if (els.dupeStatus) { els.dupeStatus.textContent = `SÃ¸ger efter dupletter (afstand=${dist}, min=${min})...`; els.dupeStatus.classList.remove("hidden", "err"); els.dupeStatus.classList.add("ok"); }
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Søger efter dupletter (afstand=${dist}, min=${min})...`; els.dupeStatus.classList.remove("hidden", "err"); els.dupeStatus.classList.add("ok"); }
     if (els.dupeResults) els.dupeResults.innerHTML = "";
     const res = await fetch(`/api/duplicates?distance=${encodeURIComponent(dist)}&min=${encodeURIComponent(min)}`);
     const data = await res.json();
     renderDuplicates(data);
-    if (els.dupeStatus) { els.dupeStatus.textContent = `FÃ¦rdig. Checksum-grupper: ${data?.counts?.checksum || 0}, pHash-lige: ${data?.counts?.phash_equal || 0}, pHash-nÃ¦re: ${data?.counts?.phash_near || 0}`; }
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Færdig. Checksum-grupper: ${data?.counts?.checksum || 0}, pHash-lige: ${data?.counts?.phash_equal || 0}, pHash-nære: ${data?.counts?.phash_near || 0}`; }
   } catch (e) {
-    if (els.dupeStatus) { els.dupeStatus.textContent = `Fejl ved duplet-sÃ¸gning.`; els.dupeStatus.classList.remove("ok"); els.dupeStatus.classList.add("err"); }
+    if (els.dupeStatus) { els.dupeStatus.textContent = `Fejl ved duplet-søgning.`; els.dupeStatus.classList.remove("ok"); els.dupeStatus.classList.add("err"); }
   }
 }
 
@@ -11914,7 +11914,7 @@ function renderDuplicates(data) {
     wrap.innerHTML = "<div class='empty'>Ingen resultater.</div>";
     return;
   }
-  // Build quick lookup of group pairs for intersection (checksum âˆ© phash_equal)
+  // Build quick lookup of group pairs for intersection (checksum ∩ phash_equal)
   const checksumPairs = new Set();
   const phashPairs = new Set();
   try {
@@ -11936,7 +11936,7 @@ function renderDuplicates(data) {
     const sec = document.createElement('section');
     sec.className = 'dupe-group';
     const title = document.createElement('h4');
-    title.textContent = `100% match Â· ${intersectionPairs.length} par`;
+    title.textContent = `100% match · ${intersectionPairs.length} par`;
     title.style.cursor = 'pointer';
     const content = document.createElement('div');
     content.style.display = 'none';
@@ -11998,10 +11998,10 @@ function renderDuplicates(data) {
     if (!sets.length) continue;
     const sec = document.createElement("section");
     sec.className = "dupe-group";
-    const titleMap = { checksum: "Checksum", phash_equal: "pHash (ens)", phash_near: `pHash (nÃ¦r)` };
+    const titleMap = { checksum: "Checksum", phash_equal: "pHash (ens)", phash_near: `pHash (nær)` };
     const name = titleMap[grp.reason] || grp.reason;
     const header = document.createElement('h4');
-    header.textContent = `${name} Â· ${sets.length} grupper`;
+    header.textContent = `${name} · ${sets.length} grupper`;
     header.style.cursor = 'pointer';
     sec.appendChild(header);
     const content = document.createElement('div');
@@ -12099,7 +12099,7 @@ async function pollLogs() {
       for (const it of data.items) {
         let extra = "";
         if (it.rel_path) extra += ` :: ${it.rel_path}`;
-        if (it.from_path) extra += ` â† ${it.from_path}`;
+        if (it.from_path) extra += ` ← ${it.from_path}`;
         if (typeof it.distance !== "undefined") extra += ` [d=${it.distance}]`;
         if (typeof it.scanned !== "undefined") extra += ` scanned=${it.scanned}`;
         if (typeof it.updated !== "undefined") extra += ` updated=${it.updated}`;
