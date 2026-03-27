@@ -4363,7 +4363,11 @@ def _photoframe_try_set_current_photo(
     return photo_id
 
 
-def _photoframe_update_command_payload(rec: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _photoframe_update_command_payload(
+    rec: Optional[Dict[str, Any]],
+    token: str = "",
+    request_base: str = "",
+) -> Optional[Dict[str, Any]]:
     if not isinstance(rec, dict):
         return None
     job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
@@ -4373,6 +4377,22 @@ def _photoframe_update_command_payload(rec: Optional[Dict[str, Any]]) -> Optiona
     if status not in {"queued", "downloading", "installing", "restarting"}:
         return None
     package_url = _normalize_photoframe_http_url(rec.get("update_package_url"))
+    package_mode = str(rec.get("update_package_mode") or "").strip().lower()
+    if (not package_mode) and package_url:
+        path_lower = str(urlparse(package_url).path or "").strip().lower()
+        if "/update-upload/" in path_lower:
+            package_mode = "upload"
+        elif "/update-package/" in path_lower:
+            package_mode = "source-dir"
+        elif package_url:
+            package_mode = "custom-url"
+
+    safe_token = _sanitize_photoframe_token_plain(token)
+    safe_base = _normalize_photoframe_base_url(request_base)
+    if safe_token and safe_base and package_mode in {"upload", "source-dir"}:
+        endpoint = "api_frame_uploaded_update_package" if package_mode == "upload" else "api_frame_update_package"
+        package_url = f"{safe_base}{url_for(endpoint, token=safe_token, job_id=job_id, _external=False)}"
+
     if not package_url:
         return None
     out = {
@@ -8055,6 +8075,7 @@ def api_photoframes_trigger_update(token_id: str):
     request_base = frame_preferred_base or _request_public_base_url() or request.url_root.rstrip("/")
 
     package_url = requested_url or ""
+    package_mode = "custom-url" if requested_url else "source-dir"
     upload_mode = False
     upload_bytes = 0
     if upload_zip is not None:
@@ -8069,6 +8090,7 @@ def api_photoframes_trigger_update(token_id: str):
         requested_sha = uploaded_sha
         package_url = f"{request_base}{url_for('api_frame_uploaded_update_package', token=token_plain, job_id=job_id, _external=False)}"
         upload_mode = True
+        package_mode = "upload"
     elif not package_url:
         package_root = _resolve_photoframe_package_root()
         if not package_root:
@@ -8090,6 +8112,7 @@ def api_photoframes_trigger_update(token_id: str):
     rec["update_last_report_at"] = now
     rec["update_version"] = requested_version
     rec["update_package_url"] = package_url
+    rec["update_package_mode"] = package_mode
     rec["update_package_sha256"] = requested_sha
     _save_photoframe_token_records(records)
     if requested_version:
@@ -8157,6 +8180,7 @@ def api_photoframes_cancel_update(token_id: str):
         rec["update_started_at"] = now
     rec["update_finished_at"] = now
     rec["update_package_url"] = ""
+    rec["update_package_mode"] = ""
     rec["update_package_sha256"] = ""
 
     _save_photoframe_token_records(records)
@@ -8236,6 +8260,7 @@ def api_photoframes_trigger_update_all():
         rec["update_last_report_at"] = now
         rec["update_version"] = requested_version
         rec["update_package_url"] = package_url
+        rec["update_package_mode"] = "upload"
         rec["update_package_sha256"] = uploaded_sha
         queued += 1
 
@@ -8617,11 +8642,11 @@ def api_frame_feed(token: str):
     current_photo_raw = request.args.get("current_photo_id") or request.headers.get("X-Photoframe-Current-Photo-Id")
     scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(active_record)
 
-    request_base = _request_public_base_url() or request.url_root.rstrip("/")
+    request_base = str(request.url_root or "").rstrip("/") or _request_public_base_url()
 
     if PHOTOFRAME_TEXT_ONLY:
         status_url = f"{request_base}{url_for('api_frame_status_card', token=token, _external=False)}?t={int(time.time())}"
-        update_cmd = _photoframe_update_command_payload(active_record)
+        update_cmd = _photoframe_update_command_payload(active_record, token=token, request_base=request_base)
         return jsonify(
             {
                 "ok": True,
@@ -8752,7 +8777,7 @@ def api_frame_feed(token: str):
         else:
             feed_message = "Ingen billeder i feedet endnu"
 
-    update_cmd = _photoframe_update_command_payload(active_record)
+    update_cmd = _photoframe_update_command_payload(active_record, token=token, request_base=request_base)
     return jsonify(
         {
             "ok": True,
@@ -8795,7 +8820,8 @@ def api_frame_heartbeat(token: str):
     latest_photo_id = _sanitize_photoframe_photo_id(active_record.get("last_photo_id") if isinstance(active_record, dict) else 0)
     if latest_photo_id <= 0:
         latest_photo_id = current_photo_id
-    update_cmd = _photoframe_update_command_payload(active_record)
+    heartbeat_base = str(request.url_root or "").rstrip("/")
+    update_cmd = _photoframe_update_command_payload(active_record, token=token, request_base=heartbeat_base)
     return jsonify(
         {
             "ok": True,
