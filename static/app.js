@@ -2155,21 +2155,18 @@ function photoframeVersionUi(item) {
 
   let statusText = tr('photoframe_version_unknown');
   let cls = 'unknown';
-  let fillPct = 18;
   if (status === 'latest') {
     statusText = tr('photoframe_version_latest');
     cls = 'latest';
-    fillPct = 100;
   } else if (status === 'outdated') {
     statusText = tr('photoframe_version_outdated');
     cls = 'outdated';
-    fillPct = 52;
   }
 
   const deviceText = deviceVersion || '-';
   const targetText = latestVersion || '-';
   const text = `${statusText} (${deviceText} -> ${targetText})`;
-  return { status, cls, text, fillPct };
+  return { status, cls, text };
 }
 
 function renderPhotoframePanel() {
@@ -2232,7 +2229,6 @@ function renderPhotoframePanel() {
                 <span>${escapeHtml(tr('photoframe_card_version'))}</span>
                 <strong>
                   <span class="photoframe-version-pill ${escapeHtml(versionUi.cls)}">${escapeHtml(versionUi.text)}</span>
-                  <span class="photoframe-version-track ${escapeHtml(versionUi.cls)}" aria-hidden="true"><span style="width:${escapeHtml(String(versionUi.fillPct))}%;"></span></span>
                 </strong>
               </div>
               ${updateUi ? `
@@ -2771,11 +2767,18 @@ function renderPhotoframePanel() {
       const rel = String(it && it.rel_path ? it.rel_path : '').trim();
       const label = String(it && it.label ? it.label : `Photo #${pid}`).trim();
       const thumb = String(it && it.thumb_url ? it.thumb_url : '').trim();
+      const extRaw = String((it && (it.ext || rel || label)) || '').toLowerCase();
+      const isVideo = !!(it && it.is_video) || ['.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.3gp'].some((ext) => extRaw.endsWith(ext));
+      const isGif = (!!(it && it.is_gif) || extRaw.endsWith('.gif')) && !isVideo;
+      const mediaBadge = isVideo
+        ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
+        : (isGif ? `<div class="gif-badge" aria-label="GIF" title="GIF">GIF</div>` : '');
       return `
         <article class="photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
           <div class="photoframe-scope-photo-thumb">
             ${thumb ? `<img class="photoframe-scope-photo-img" loading="lazy" decoding="async" src="${escapeHtml(thumb)}" alt="" data-photoframe-scope-thumb="1">` : ''}
             <div class="photoframe-scope-photo-placeholder${thumb ? ' hidden' : ''}">${escapeHtml(tr('no_thumb'))}</div>
+            ${mediaBadge}
             <span class="photoframe-scope-select-badge">&#10003;</span>
           </div>
           <div class="photoframe-scope-photo-body">

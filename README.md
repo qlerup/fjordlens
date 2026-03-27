@@ -266,6 +266,23 @@ FjordLens can trigger a background update on each photoframe device:
 6. Version bar compares each frame's reported version with latest uploaded version.
    Zip uploads auto-generate version label from upload timestamp in FjordLens (example: `v27-03-2026_20:05:41`).
 
+### Fresh photoframe install (one command)
+
+On a new Raspberry Pi (SSH as normal user), run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qlerup/fjordlens/main/photoframe/scripts/bootstrap_install.sh | bash
+```
+
+This bootstrap script:
+- installs missing prerequisites (`git`, `curl`) if needed
+- clones/updates this repo to `~/fjordlens`
+- runs `photoframe/install.sh` with correct owner user
+
+After install:
+- open `http://<frame-ip>:5001`
+- complete setup (Wi-Fi + server URL + token from FjordLens)
+
 ### Geocoding / behavior flags
 
 - `GEOCODE_ENABLE`

@@ -8484,10 +8484,14 @@ def api_photoframes_available_photos():
             rel = str(r["rel_path"] or "").replace("\\", "/")
             label = rel.rsplit("/", 1)[-1] if "/" in rel else rel
             thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(r["thumb_name"] or ""))
+            ext = str(Path(rel).suffix or "").lower()
             by_id[pid] = {
                 "id": pid,
                 "rel_path": rel,
                 "label": label or f"Photo #{pid}",
+                "ext": ext,
+                "is_video": bool(ext in VIDEO_EXTS),
+                "is_gif": bool(ext == ".gif"),
                 "updated_at": _sanitize_photoframe_text(r["updated_at"], 40),
                 "selected": pid in selected_ids,
                 "thumb_url": f"/api/thumbs/{thumb_name}" if thumb_name else "",
@@ -8658,6 +8662,8 @@ def api_frame_feed(token: str):
                         "id": "connection-status",
                         "url": status_url,
                         "updated_at": now,
+                        "media_type": "image",
+                        "ext": ".png",
                     }
                 ],
                 "count": 1,
@@ -8760,12 +8766,17 @@ def api_frame_feed(token: str):
             photo_id = int(row["id"])
         except Exception:
             continue
+        rel_path = str(row["rel_path"] or "")
+        media_ext = str(Path(rel_path).suffix or "").lower()
+        media_type = "video" if media_ext in VIDEO_EXTS else "image"
         updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
         images.append(
             {
                 "id": str(photo_id),
                 "url": f"{request_base}{url_for('api_frame_viewable', token=token, photo_id=photo_id, _external=False)}",
                 "updated_at": updated_at or now,
+                "media_type": media_type,
+                "ext": media_ext,
             }
         )
 
