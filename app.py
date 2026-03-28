@@ -4268,13 +4268,16 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
 
     existing_job = _sanitize_photoframe_update_job_id(existing.get("update_job_id"))
     candidate_job = _sanitize_photoframe_update_job_id(candidate.get("update_job_id"))
+    candidate_status = _sanitize_photoframe_update_status(candidate.get("update_status"))
     if not existing_job:
+        return candidate
+    # A freshly queued new job must win over stale persisted state.
+    if candidate_job and (candidate_job != existing_job) and (candidate_status == "queued"):
         return candidate
 
     existing_rev = _photoframe_update_state_rev(existing)
     candidate_rev = _photoframe_update_state_rev(candidate)
     existing_status = _sanitize_photoframe_update_status(existing.get("update_status"))
-    candidate_status = _sanitize_photoframe_update_status(candidate.get("update_status"))
     rank = {
         "": 0,
         "queued": 1,

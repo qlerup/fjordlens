@@ -637,6 +637,7 @@ const I18N = {
     photoframe_scope_select_visible: 'Vælg synlige',
     photoframe_scope_unselect_visible: 'Fravælg synlige',
     photoframe_scope_selected_count: '{count} valgt',
+    photoframe_scope_folder_selected: 'Valgte billeder',
     photoframe_scope_folder_all: 'Alle mapper',
     photoframe_scope_hold_hint: 'Hold på et billede for at starte valg',
     photoframe_scope_empty_folders: 'Ingen mapper fundet.',
@@ -1206,6 +1207,7 @@ const I18N = {
     photoframe_scope_select_visible: 'Select visible',
     photoframe_scope_unselect_visible: 'Unselect visible',
     photoframe_scope_selected_count: '{count} selected',
+    photoframe_scope_folder_selected: 'Selected photos',
     photoframe_scope_folder_all: 'All folders',
     photoframe_scope_hold_hint: 'Long-press an image to start selecting',
     photoframe_scope_empty_folders: 'No folders found.',
@@ -2569,6 +2571,8 @@ function renderPhotoframePanel() {
   let scopePhotoSelectMode = false;
   let scopePhotoDragSession = null;
   let scopePhotoDragSuppressClickUntil = 0;
+  const SCOPE_SELECTED_FOLDER_KEY = '__selected__';
+  let scopePhotoQueryText = '';
 
   const showCreateError = (text) => {
     if (!createErrorEl) return;
@@ -2668,6 +2672,10 @@ function renderPhotoframePanel() {
     if (!pid) return;
     if (shouldSelect) scopePhotosSelected.add(pid);
     else scopePhotosSelected.delete(pid);
+    if (String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY && !shouldSelect && !scopePhotoDragSession) {
+      renderScopePhotos();
+      return;
+    }
     const card = cardEl || (scopePhotosList ? scopePhotosList.querySelector(`[data-photoframe-scope-photo-card="${pid}"]`) : null);
     if (card) card.classList.toggle('selected', !!shouldSelect);
     updateScopeSelectedCount();
@@ -2697,6 +2705,10 @@ function renderPhotoframePanel() {
       else scopePhotosSelected.delete(pid);
       card.classList.toggle('selected', nextState);
     });
+    if (touched && String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY && !nextState) {
+      renderScopePhotos();
+      return;
+    }
     if (touched) updateScopeSelectedCount();
   };
 
@@ -2738,20 +2750,24 @@ function renderPhotoframePanel() {
     const session = scopePhotoDragSession;
     if (!session) return;
     if (ev && ev.pointerId != null && Number(ev.pointerId) !== Number(session.pointerId)) return;
+    const selectedOnly = String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY;
     scopePhotoDragSuppressClickUntil = Date.now() + 220;
     stopScopePhotoDragSelection();
+    if (selectedOnly) renderScopePhotos();
   }
 
   const renderScopeFolderNav = () => {
     if (!scopeFolderNav) return;
-    const opts = [''].concat(Array.isArray(scopeFolderOptions) ? scopeFolderOptions : []);
+    const folderOpts = Array.isArray(scopeFolderOptions) ? scopeFolderOptions : [];
+    const opts = [SCOPE_SELECTED_FOLDER_KEY, ...folderOpts];
     scopeFolderNav.innerHTML = opts.map((path) => {
       const p = String(path || '').trim();
       const active = p === scopePhotoFolderPath ? ' active' : '';
-      const label = p ? (p.split('/').filter(Boolean).pop() || p) : tr('photoframe_scope_folder_all');
+      const isSelectedBucket = p === SCOPE_SELECTED_FOLDER_KEY;
+      const label = isSelectedBucket ? tr('photoframe_scope_folder_selected') : (p.split('/').filter(Boolean).pop() || p);
       const labelSafe = escapeHtml(label);
       const pathSafe = escapeHtml(p);
-      const sub = p
+      const sub = (!isSelectedBucket && p)
         ? `<div class="photoframe-scope-folder-line is-sub mini-label" title="${pathSafe}">
              <span class="photoframe-scope-folder-marquee-text">${pathSafe}</span>
            </div>`
@@ -2826,7 +2842,9 @@ function renderPhotoframePanel() {
 
   const renderScopePhotos = () => {
     if (!scopePhotosList) return;
-    const photoItems = Array.isArray(scopePhotoOptions)
+    const selectedOnly = String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY;
+    const q = String(scopePhotoQueryText || '').trim().toLowerCase();
+    let photoItems = Array.isArray(scopePhotoOptions)
       ? scopePhotoOptions.filter((it) => {
           const rel = String(it && it.rel_path ? it.rel_path : '').toLowerCase();
           const extRaw = String((it && (it.ext || rel)) || '').toLowerCase();
@@ -2834,6 +2852,20 @@ function renderPhotoframePanel() {
           return !isVideo;
         })
       : [];
+    if (selectedOnly) {
+      photoItems = photoItems.filter((it) => {
+        const pid = Number(it && it.id ? it.id : 0) || 0;
+        return !!pid && scopePhotosSelected.has(pid);
+      });
+    }
+    if (q) {
+      photoItems = photoItems.filter((it) => {
+        const pid = Number(it && it.id ? it.id : 0) || 0;
+        const rel = String(it && it.rel_path ? it.rel_path : '').toLowerCase();
+        const label = String(it && it.label ? it.label : '').toLowerCase();
+        return String(pid).includes(q) || rel.includes(q) || label.includes(q);
+      });
+    }
     if (!photoItems.length) {
       scopePhotosList.innerHTML = `<div class="mini-label">${escapeHtml(tr('photoframe_scope_empty_photos'))}</div>`;
       updateScopeSelectedCount();
@@ -2963,10 +2995,24 @@ function renderPhotoframePanel() {
   };
 
   const loadScopePhotos = async (queryText = '') => {
+    scopePhotoQueryText = String(queryText || '').trim();
     const qs = new URLSearchParams();
     qs.set('limit', '220');
-    if (String(queryText || '').trim()) qs.set('q', String(queryText || '').trim());
-    if (String(scopePhotoFolderPath || '').trim()) qs.set('folder', String(scopePhotoFolderPath || '').trim());
+    const selectedOnly = String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY;
+    if (selectedOnly) {
+      const ids = Array.from(scopePhotosSelected || [])
+        .map((v) => Number(v))
+        .filter((v) => Number.isFinite(v) && v > 0)
+        .slice(0, 900);
+      if (!ids.length) {
+        scopePhotoOptions = [];
+        return;
+      }
+      qs.set('ids', ids.join(','));
+    } else {
+      if (scopePhotoQueryText) qs.set('q', scopePhotoQueryText);
+      if (String(scopePhotoFolderPath || '').trim()) qs.set('folder', String(scopePhotoFolderPath || '').trim());
+    }
     const res = await fetch(`/api/photoframes/available-photos?${qs.toString()}`);
     let data = null;
     try {
@@ -2997,7 +3043,8 @@ function renderPhotoframePanel() {
     scopePhotosSelected = new Set();
     scopeFolderOptions = [];
     scopePhotoOptions = [];
-    scopePhotoFolderPath = '';
+    scopePhotoFolderPath = SCOPE_SELECTED_FOLDER_KEY;
+    scopePhotoQueryText = '';
     scopePhotoDragSuppressClickUntil = 0;
     setScopePhotoSelectMode(false);
     showScopeError('');
