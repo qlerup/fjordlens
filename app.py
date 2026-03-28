@@ -250,6 +250,12 @@ try:
 except Exception:
     PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX = 240
 PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX = max(0, min(5000, PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX))
+PHOTOFRAME_VIDEO_PREPARE_REQUEUE_ON_STATUS = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_REQUEUE_ON_STATUS", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+try:
+    PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX", "4") or 4)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX = 4
+PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX = max(1, min(24, PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX))
 PHOTOFRAME_VIDEO_PREPARE_PRESET = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_PRESET", "veryfast") or "veryfast").strip() or "veryfast"
 try:
     PHOTOFRAME_VIDEO_PREPARE_CRF = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_CRF", "24") or 24)
@@ -4458,6 +4464,7 @@ def _photoframe_video_prepare_progress(scope_mode: str, scope_folders: list[str]
         "active": False,
         "capped": False,
         "sample_limit": int(PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX),
+        "requeued": 0,
     }
     if (not PHOTOFRAME_VIDEO_PREPARE_ENABLED) or PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX <= 0:
         return out
@@ -4484,13 +4491,30 @@ def _photoframe_video_prepare_progress(scope_mode: str, scope_folders: list[str]
 
     ready = 0
     queued = 0
+    pending_rels: list[str] = []
     for rel in rels:
+        is_prepared = _is_photoframe_video_prepared(rel)
+        if is_prepared:
+            ready += 1
+            continue
+        pending_rels.append(rel)
         if rel in queued_rels:
             queued += 1
-        if _is_photoframe_video_prepared(rel):
-            ready += 1
 
     pending = max(0, total - ready)
+    requeued = 0
+    if pending > 0 and queued <= 0:
+        max_requeue = min(PHOTOFRAME_VIDEO_PREPARE_REQUEUE_MAX, pending)
+        for rel in pending_rels:
+            if requeued >= max_requeue:
+                break
+            try:
+                if _queue_photoframe_video_prepare(rel):
+                    requeued += 1
+            except Exception:
+                continue
+        if requeued > 0:
+            queued += requeued
     if queued > pending:
         queued = pending
     waiting = max(0, pending - queued)
@@ -4502,6 +4526,7 @@ def _photoframe_video_prepare_progress(scope_mode: str, scope_folders: list[str]
     out["pending"] = int(pending)
     out["pct"] = max(0, min(100, pct))
     out["active"] = bool(pending > 0)
+    out["requeued"] = int(requeued)
     return out
 
 
@@ -8308,6 +8333,7 @@ def api_photoframes_status():
                     "video_prepare_active": bool(video_prepare.get("active")),
                     "video_prepare_capped": bool(video_prepare.get("capped")),
                     "video_prepare_sample_limit": int(video_prepare.get("sample_limit") or 0),
+                    "video_prepare_requeued": int(video_prepare.get("requeued") or 0),
                 }
             )
 
@@ -9205,6 +9231,7 @@ def api_frame_feed(token: str):
 
     images: list[Dict[str, Any]] = []
     queued_prepare_from_feed = 0
+    hidden_unprepared_videos = 0
     for row in rows:
         try:
             photo_id = int(row["id"])
@@ -9213,15 +9240,22 @@ def api_frame_feed(token: str):
         rel_path = str(row["rel_path"] or "")
         media_ext = str(Path(rel_path).suffix or "").lower()
         media_type = "video" if media_ext in VIDEO_EXTS else "image"
-        if (
-            media_type == "video"
-            and queued_prepare_from_feed < PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED
-        ):
+        if media_type == "video":
+            is_prepared = False
             try:
-                if _queue_photoframe_video_prepare(rel_path):
-                    queued_prepare_from_feed += 1
+                is_prepared = _is_photoframe_video_prepared(rel_path)
             except Exception:
-                pass
+                is_prepared = False
+            if not is_prepared:
+                hidden_unprepared_videos += 1
+                if queued_prepare_from_feed < PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED:
+                    try:
+                        if _queue_photoframe_video_prepare(rel_path):
+                            queued_prepare_from_feed += 1
+                    except Exception:
+                        pass
+                # Do not expose unprepared videos to the frame yet.
+                continue
         updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
         images.append(
             {
@@ -9235,7 +9269,9 @@ def api_frame_feed(token: str):
 
     feed_message = ""
     if not images:
-        if scope_mode == "folders" and not _normalize_photoframe_scope_folders(scope_folders):
+        if hidden_unprepared_videos > 0:
+            feed_message = f"Klargør videoer ({hidden_unprepared_videos}) - vises når klar"
+        elif scope_mode == "folders" and not _normalize_photoframe_scope_folders(scope_folders):
             feed_message = "Ingen mapper valgt til denne fotoramme endnu"
         elif scope_mode == "photos" and not _normalize_photoframe_scope_photo_ids(scope_photo_ids):
             feed_message = "Ingen billeder valgt til denne fotoramme endnu"
@@ -9336,7 +9372,26 @@ def api_frame_viewable(token: str, photo_id: int):
         return ("Not found", 404)
 
     if src.suffix.lower() in VIDEO_EXTS:
-        view_path = _prepare_video_for_photoframe(src, safe_rel)
+        # Only expose prepared videos to the frame. If not ready yet, keep it queued.
+        try:
+            if not _is_photoframe_video_prepared(safe_rel):
+                _queue_photoframe_video_prepare(safe_rel)
+                resp = make_response("Video klargøres", 425)
+                try:
+                    resp.headers["Retry-After"] = "5"
+                    resp.headers["Cache-Control"] = "no-store, max-age=0"
+                except Exception:
+                    pass
+                return resp
+        except Exception:
+            resp = make_response("Video klargøres", 425)
+            try:
+                resp.headers["Retry-After"] = "5"
+                resp.headers["Cache-Control"] = "no-store, max-age=0"
+            except Exception:
+                pass
+            return resp
+        view_path = _photoframe_video_prepared_path(safe_rel)
     else:
         view_path = ensure_viewable_copy(src, safe_rel)
     try:

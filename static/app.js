@@ -577,6 +577,7 @@ const I18N = {
     photoframe_card_video_prepare: 'Video klargøring',
     photoframe_video_prepare_processing: 'Klargør videoer',
     photoframe_video_prepare_pending: 'Afventer klargøring',
+    photoframe_video_prepare_retrying: 'Starter klargøring',
     photoframe_video_prepare_ready: 'Klar',
     photoframe_video_prepare_progress: '{ready}/{total} klar - {queued} i kø - {waiting} mangler',
     photoframe_video_prepare_capped: '(udsnit)',
@@ -1145,6 +1146,7 @@ const I18N = {
     photoframe_card_video_prepare: 'Video prepare',
     photoframe_video_prepare_processing: 'Preparing videos',
     photoframe_video_prepare_pending: 'Waiting to prepare',
+    photoframe_video_prepare_retrying: 'Starting prepare',
     photoframe_video_prepare_ready: 'Ready',
     photoframe_video_prepare_progress: '{ready}/{total} ready - {queued} queued - {waiting} missing',
     photoframe_video_prepare_capped: '(sample)',
@@ -2195,10 +2197,12 @@ function photoframeVideoPrepareUi(item) {
   const total = Number(item && item.video_prepare_total ? item.video_prepare_total : 0) || 0;
   const ready = Number(item && item.video_prepare_ready ? item.video_prepare_ready : 0) || 0;
   const queued = Number(item && item.video_prepare_queued ? item.video_prepare_queued : 0) || 0;
+  const requeued = Number(item && item.video_prepare_requeued ? item.video_prepare_requeued : 0) || 0;
   const waiting = Number(item && item.video_prepare_waiting ? item.video_prepare_waiting : 0) || 0;
   const capped = !!(item && item.video_prepare_capped);
   if (total <= 0) return null;
 
+  const queuedVisible = Math.max(0, queued, requeued);
   const pctRaw = Number(item && item.video_prepare_pct ? item.video_prepare_pct : 0);
   const pct = Math.max(0, Math.min(100, Number.isFinite(pctRaw) ? Math.round(pctRaw) : Math.round((ready / Math.max(1, total)) * 100)));
   let cls = 'busy';
@@ -2208,16 +2212,20 @@ function photoframeVideoPrepareUi(item) {
     cls = 'ok';
     icon = '\u2713';
     stateText = tr('photoframe_video_prepare_ready');
-  } else if (queued <= 0) {
+  } else if (queuedVisible <= 0) {
     cls = 'pending';
     icon = '\u2026';
     stateText = tr('photoframe_video_prepare_pending');
+  } else if (queued <= 0 && requeued > 0) {
+    cls = 'busy';
+    icon = '\u21bb';
+    stateText = tr('photoframe_video_prepare_retrying');
   }
 
   let detail = tr('photoframe_video_prepare_progress')
     .replace('{ready}', String(Math.max(0, ready)))
     .replace('{total}', String(Math.max(0, total)))
-    .replace('{queued}', String(Math.max(0, queued)))
+    .replace('{queued}', String(Math.max(0, queuedVisible)))
     .replace('{waiting}', String(Math.max(0, waiting)));
   if (capped) detail = `${detail} ${tr('photoframe_video_prepare_capped')}`;
   const text = `${stateText} (${pct}%)`;
