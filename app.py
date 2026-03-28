@@ -3978,6 +3978,32 @@ def _normalize_photoframe_update_package_mode(raw: Any) -> str:
     return ""
 
 
+def _sanitize_photoframe_feed_rev(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if not value:
+        return ""
+    if len(value) > 64:
+        value = value[:64]
+    if re.match(r"^[a-f0-9]{8,64}$", value):
+        return value
+    return ""
+
+
+def _sanitize_photoframe_feed_sync_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"sending", "sent"}:
+        return value
+    return ""
+
+
+def _sanitize_photoframe_feed_sync_count(raw: Any) -> int:
+    try:
+        value = int(raw or 0)
+    except Exception:
+        value = 0
+    return max(0, min(100_000, value))
+
+
 def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]:
     name = ""
     base_candidate = ""
@@ -4201,6 +4227,12 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 update_package_mode = "source-dir"
         update_package_sha256 = _sanitize_photoframe_update_sha256(it.get("update_package_sha256"))
         last_server_base_url = _normalize_photoframe_base_url(it.get("last_server_base_url")) or ""
+        feed_sync_status = _sanitize_photoframe_feed_sync_status(it.get("feed_sync_status"))
+        feed_sync_sent_rev = _sanitize_photoframe_feed_rev(it.get("feed_sync_sent_rev"))
+        feed_sync_sent_at = _sanitize_photoframe_text(it.get("feed_sync_sent_at"), 40)
+        feed_sync_acked_rev = _sanitize_photoframe_feed_rev(it.get("feed_sync_acked_rev"))
+        feed_sync_acked_at = _sanitize_photoframe_text(it.get("feed_sync_acked_at"), 40)
+        feed_sync_count = _sanitize_photoframe_feed_sync_count(it.get("feed_sync_count"))
         out.append(
             {
                 "id": rec_id,
@@ -4230,6 +4262,12 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "update_package_mode": update_package_mode,
                 "update_package_sha256": update_package_sha256,
                 "last_server_base_url": last_server_base_url,
+                "feed_sync_status": feed_sync_status,
+                "feed_sync_sent_rev": feed_sync_sent_rev,
+                "feed_sync_sent_at": feed_sync_sent_at,
+                "feed_sync_acked_rev": feed_sync_acked_rev,
+                "feed_sync_acked_at": feed_sync_acked_at,
+                "feed_sync_count": feed_sync_count,
             }
         )
     return out
@@ -4351,6 +4389,12 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "update_package_mode": _normalize_photoframe_update_package_mode(it.get("update_package_mode")),
                 "update_package_sha256": _sanitize_photoframe_update_sha256(it.get("update_package_sha256")),
                 "last_server_base_url": _normalize_photoframe_base_url(it.get("last_server_base_url")) or "",
+                "feed_sync_status": _sanitize_photoframe_feed_sync_status(it.get("feed_sync_status")),
+                "feed_sync_sent_rev": _sanitize_photoframe_feed_rev(it.get("feed_sync_sent_rev")),
+                "feed_sync_sent_at": _sanitize_photoframe_text(it.get("feed_sync_sent_at"), 40),
+                "feed_sync_acked_rev": _sanitize_photoframe_feed_rev(it.get("feed_sync_acked_rev")),
+                "feed_sync_acked_at": _sanitize_photoframe_text(it.get("feed_sync_acked_at"), 40),
+                "feed_sync_count": _sanitize_photoframe_feed_sync_count(it.get("feed_sync_count")),
             }
 
             existing = existing_by_hash.get(token_hash)
@@ -4887,6 +4931,103 @@ def _photoframe_try_set_current_photo(
     rec["last_photo_id"] = photo_id
     rec["last_photo_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
     return photo_id
+
+
+def _photoframe_compute_feed_revision(images: list[Dict[str, Any]], scope_mode: str = "") -> str:
+    h = hashlib.sha256()
+    h.update(str(scope_mode or "").strip().lower().encode("utf-8", errors="ignore"))
+    for item in images or []:
+        pid = str((item or {}).get("id") or "").strip()
+        updated_at = str((item or {}).get("updated_at") or "").strip()
+        media_type = str((item or {}).get("media_type") or "").strip().lower()
+        ext = str((item or {}).get("ext") or "").strip().lower()
+        if not pid:
+            continue
+        h.update(b"|")
+        h.update(pid.encode("utf-8", errors="ignore"))
+        h.update(b"@")
+        h.update(updated_at.encode("utf-8", errors="ignore"))
+        h.update(b"#")
+        h.update(media_type.encode("utf-8", errors="ignore"))
+        h.update(b":")
+        h.update(ext.encode("utf-8", errors="ignore"))
+    return _sanitize_photoframe_feed_rev(h.hexdigest()[:16])
+
+
+def _photoframe_mark_feed_sync_sent(rec: Optional[Dict[str, Any]], feed_rev: str, feed_count: int, seen_at: str) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    rev = _sanitize_photoframe_feed_rev(feed_rev)
+    if not rev:
+        return False
+    now_clean = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    count = _sanitize_photoframe_feed_sync_count(feed_count)
+    sent_rev = _sanitize_photoframe_feed_rev(rec.get("feed_sync_sent_rev"))
+    acked_rev = _sanitize_photoframe_feed_rev(rec.get("feed_sync_acked_rev"))
+    status = _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status"))
+
+    # If the frame already acknowledged this exact feed revision, keep "sent".
+    if acked_rev and (acked_rev == rev):
+        changed = False
+        if status != "sent":
+            rec["feed_sync_status"] = "sent"
+            changed = True
+        if sent_rev != rev:
+            rec["feed_sync_sent_rev"] = rev
+            changed = True
+        if _sanitize_photoframe_feed_sync_count(rec.get("feed_sync_count")) != count:
+            rec["feed_sync_count"] = count
+            changed = True
+        if not _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40):
+            rec["feed_sync_acked_at"] = now_clean
+            changed = True
+        return changed
+
+    changed = False
+    if status != "sending":
+        rec["feed_sync_status"] = "sending"
+        changed = True
+    if sent_rev != rev:
+        rec["feed_sync_sent_rev"] = rev
+        changed = True
+    if _sanitize_photoframe_feed_sync_count(rec.get("feed_sync_count")) != count:
+        rec["feed_sync_count"] = count
+        changed = True
+    if _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40) != now_clean:
+        rec["feed_sync_sent_at"] = now_clean
+        changed = True
+    return changed
+
+
+def _photoframe_apply_feed_sync_ack(rec: Optional[Dict[str, Any]], feed_rev_raw: Any, seen_at: str, allow_fallback: bool = False) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    now_clean = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    sent_rev = _sanitize_photoframe_feed_rev(rec.get("feed_sync_sent_rev"))
+    rev = _sanitize_photoframe_feed_rev(feed_rev_raw)
+    if not rev:
+        if allow_fallback and sent_rev:
+            rev = sent_rev
+        else:
+            return False
+    # Ignore stale acknowledgements for older revisions.
+    if sent_rev and rev and (rev != sent_rev):
+        return False
+
+    changed = False
+    if _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status")) != "sent":
+        rec["feed_sync_status"] = "sent"
+        changed = True
+    if _sanitize_photoframe_feed_rev(rec.get("feed_sync_acked_rev")) != rev:
+        rec["feed_sync_acked_rev"] = rev
+        changed = True
+    if sent_rev != rev:
+        rec["feed_sync_sent_rev"] = rev
+        changed = True
+    if _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40) != now_clean:
+        rec["feed_sync_acked_at"] = now_clean
+        changed = True
+    return changed
 
 
 def _photoframe_update_command_payload(
@@ -8409,6 +8550,10 @@ def api_photoframes_status():
             update_finished_at = _sanitize_photoframe_text(rec.get("update_finished_at"), 40)
             update_last_report_at = _sanitize_photoframe_text(rec.get("update_last_report_at"), 40)
             update_version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+            feed_sync_status = _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status"))
+            feed_sync_sent_at = _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40)
+            feed_sync_acked_at = _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40)
+            feed_sync_count = _sanitize_photoframe_feed_sync_count(rec.get("feed_sync_count"))
             device_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
             version_status = "unknown"
             if latest_version:
@@ -8459,6 +8604,10 @@ def api_photoframes_status():
                     "update_version": update_version,
                     "device_version": device_version,
                     "version_status": version_status,
+                    "content_sync_status": feed_sync_status,
+                    "content_sync_sent_at": feed_sync_sent_at,
+                    "content_sync_acked_at": feed_sync_acked_at,
+                    "content_sync_count": feed_sync_count,
                 }
             )
 
@@ -8507,6 +8656,12 @@ def api_photoframes_create():
             "update_version": "",
             "update_package_url": "",
             "update_package_sha256": "",
+            "feed_sync_status": "",
+            "feed_sync_sent_rev": "",
+            "feed_sync_sent_at": "",
+            "feed_sync_acked_rev": "",
+            "feed_sync_acked_at": "",
+            "feed_sync_count": 0,
         }
     )
     _save_photoframe_token_records(records)
@@ -9391,12 +9546,17 @@ def api_frame_feed(token: str):
         else:
             feed_message = "Ingen billeder i feedet endnu"
 
+    feed_rev = _photoframe_compute_feed_revision(images, scope_mode=scope_mode)
+    if _photoframe_mark_feed_sync_sent(active_record, feed_rev, len(images), now):
+        _save_photoframe_token_records(records)
+
     update_cmd = _photoframe_update_command_payload(active_record, token=token, request_base=request_base)
     return jsonify(
         {
             "ok": True,
             "images": images,
             "count": len(images),
+            "feed_rev": feed_rev,
             "generated_at": now,
             "message": feed_message,
             "update": update_cmd,
@@ -9418,6 +9578,7 @@ def api_frame_heartbeat(token: str):
     update_status_raw = request.args.get("update_status") or request.headers.get("X-Photoframe-Update-Status")
     update_message_raw = request.args.get("update_message") or request.headers.get("X-Photoframe-Update-Message")
     update_version_raw = request.args.get("update_version") or request.headers.get("X-Photoframe-Update-Version")
+    feed_rev_raw = request.args.get("feed_rev") or request.headers.get("X-Photoframe-Feed-Rev")
     current_photo_id = 0
     with closing(get_conn()) as conn:
         current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
@@ -9428,6 +9589,12 @@ def api_frame_heartbeat(token: str):
         update_message_raw,
         update_version_raw,
         now,
+    )
+    _photoframe_apply_feed_sync_ack(
+        active_record,
+        feed_rev_raw,
+        now,
+        allow_fallback=(current_photo_id > 0),
     )
     _save_photoframe_token_records(records)
 
@@ -9443,6 +9610,8 @@ def api_frame_heartbeat(token: str):
             "photo_id": latest_photo_id or None,
             "update_job_id": _sanitize_photoframe_update_job_id(active_record.get("update_job_id") if isinstance(active_record, dict) else ""),
             "update_status": _sanitize_photoframe_update_status(active_record.get("update_status") if isinstance(active_record, dict) else ""),
+            "content_sync_status": _sanitize_photoframe_feed_sync_status(active_record.get("feed_sync_status") if isinstance(active_record, dict) else ""),
+            "content_sync_rev": _sanitize_photoframe_feed_rev(active_record.get("feed_sync_sent_rev") if isinstance(active_record, dict) else ""),
             "update": update_cmd,
         }
     )

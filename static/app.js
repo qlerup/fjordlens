@@ -573,6 +573,7 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Fejl',
     photoframe_card_update: 'Opdatering',
+    photoframe_card_sync: 'Synk',
     photoframe_card_version: 'Version',
     photoframe_card_video_prepare: 'Video klargøring',
     photoframe_video_prepare_processing: 'Klargør videoer',
@@ -610,6 +611,8 @@ const I18N = {
     photoframe_update_state_restarting: 'Genstarter',
     photoframe_update_state_success: 'Opdateret',
     photoframe_update_state_failed: 'Fejlet',
+    photoframe_sync_state_sending: 'Sender billeder',
+    photoframe_sync_state_sent: 'Billeder sendt',
     photoframe_show_token_btn: 'Vis token',
     photoframe_scope_btn: 'Indhold',
     photoframe_delete_btn: 'Slet',
@@ -1143,6 +1146,7 @@ const I18N = {
     photoframe_card_feed: 'Feed',
     photoframe_card_error: 'Error',
     photoframe_card_update: 'Update',
+    photoframe_card_sync: 'Sync',
     photoframe_card_version: 'Version',
     photoframe_card_video_prepare: 'Video prepare',
     photoframe_video_prepare_processing: 'Preparing videos',
@@ -1180,6 +1184,8 @@ const I18N = {
     photoframe_update_state_restarting: 'Restarting',
     photoframe_update_state_success: 'Updated',
     photoframe_update_state_failed: 'Failed',
+    photoframe_sync_state_sending: 'Sending photos',
+    photoframe_sync_state_sent: 'Photos sent',
     photoframe_show_token_btn: 'Show token',
     photoframe_scope_btn: 'Content',
     photoframe_delete_btn: 'Delete',
@@ -2172,6 +2178,28 @@ function photoframeUpdateStatusUi(item) {
   return { status, cls, icon, text: fullText };
 }
 
+function photoframeContentSyncUi(item) {
+  const status = String(item && item.content_sync_status ? item.content_sync_status : '').trim().toLowerCase();
+  const count = Number(item && item.content_sync_count ? item.content_sync_count : 0) || 0;
+  const sentAtRaw = String(item && item.content_sync_sent_at ? item.content_sync_sent_at : '').trim();
+  const ackAtRaw = String(item && item.content_sync_acked_at ? item.content_sync_acked_at : '').trim();
+  if (!status) return null;
+
+  if (status === 'sending') {
+    let text = tr('photoframe_sync_state_sending');
+    if (count > 0) text = `${text} (${count})`;
+    if (sentAtRaw) text = `${text} - ${fmtDate(sentAtRaw)}`;
+    return { cls: 'busy', icon: '\u21bb', text };
+  }
+  if (status === 'sent') {
+    let text = tr('photoframe_sync_state_sent');
+    if (count > 0) text = `${text} (${count})`;
+    if (ackAtRaw) text = `${text} - ${fmtDate(ackAtRaw)}`;
+    return { cls: 'ok', icon: '\u2713', text };
+  }
+  return null;
+}
+
 function photoframeVersionUi(item) {
   const latestVersion = String(state.photoframeLatestVersion || '').trim();
   const deviceVersion = String(item && item.device_version ? item.device_version : '').trim();
@@ -2262,6 +2290,7 @@ function renderPhotoframePanel() {
     const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
     const versionUi = photoframeVersionUi(item);
     const updateUi = photoframeUpdateStatusUi(item);
+    const contentSyncUi = photoframeContentSyncUi(item);
     const updateBusy = !!(updateUi && ['queued', 'downloading', 'installing', 'restarting'].includes(updateUi.status));
     const previewThumbUrl = String(item.preview_thumb_url || '').trim();
     const previewUpdatedRaw = String(item.preview_updated_at || '').trim();
@@ -2303,6 +2332,17 @@ function renderPhotoframePanel() {
                     <span class="photoframe-update-pill ${escapeHtml(updateUi.cls)}">
                       <span class="icon" aria-hidden="true">${escapeHtml(updateUi.icon)}</span>
                       ${escapeHtml(updateUi.text)}
+                    </span>
+                  </strong>
+                </div>
+              ` : ''}
+              ${contentSyncUi ? `
+                <div class="photoframe-row photoframe-update-row">
+                  <span>${escapeHtml(tr('photoframe_card_sync'))}</span>
+                  <strong>
+                    <span class="photoframe-update-pill ${escapeHtml(contentSyncUi.cls)}">
+                      <span class="icon" aria-hidden="true">${escapeHtml(contentSyncUi.icon)}</span>
+                      ${escapeHtml(contentSyncUi.text)}
                     </span>
                   </strong>
                 </div>
@@ -2573,6 +2613,7 @@ function renderPhotoframePanel() {
   let scopePhotoDragSuppressClickUntil = 0;
   const SCOPE_SELECTED_FOLDER_KEY = '__selected__';
   let scopePhotoQueryText = '';
+  let scopeSelectedBucketIds = new Set();
 
   const showCreateError = (text) => {
     if (!createErrorEl) return;
@@ -2670,11 +2711,11 @@ function renderPhotoframePanel() {
   const setScopePhotoSelection = (photoId, shouldSelect, cardEl = null) => {
     const pid = Number(photoId || 0) || 0;
     if (!pid) return;
-    if (shouldSelect) scopePhotosSelected.add(pid);
-    else scopePhotosSelected.delete(pid);
-    if (String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY && !shouldSelect && !scopePhotoDragSession) {
-      renderScopePhotos();
-      return;
+    if (shouldSelect) {
+      scopePhotosSelected.add(pid);
+      scopeSelectedBucketIds.add(pid);
+    } else {
+      scopePhotosSelected.delete(pid);
     }
     const card = cardEl || (scopePhotosList ? scopePhotosList.querySelector(`[data-photoframe-scope-photo-card="${pid}"]`) : null);
     if (card) card.classList.toggle('selected', !!shouldSelect);
@@ -2701,14 +2742,13 @@ function renderPhotoframePanel() {
       const current = scopePhotosSelected.has(pid);
       if (current === nextState) return;
       touched = true;
-      if (nextState) scopePhotosSelected.add(pid);
+      if (nextState) {
+        scopePhotosSelected.add(pid);
+        scopeSelectedBucketIds.add(pid);
+      }
       else scopePhotosSelected.delete(pid);
       card.classList.toggle('selected', nextState);
     });
-    if (touched && String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY && !nextState) {
-      renderScopePhotos();
-      return;
-    }
     if (touched) updateScopeSelectedCount();
   };
 
@@ -2750,10 +2790,8 @@ function renderPhotoframePanel() {
     const session = scopePhotoDragSession;
     if (!session) return;
     if (ev && ev.pointerId != null && Number(ev.pointerId) !== Number(session.pointerId)) return;
-    const selectedOnly = String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY;
     scopePhotoDragSuppressClickUntil = Date.now() + 220;
     stopScopePhotoDragSelection();
-    if (selectedOnly) renderScopePhotos();
   }
 
   const renderScopeFolderNav = () => {
@@ -2855,7 +2893,7 @@ function renderPhotoframePanel() {
     if (selectedOnly) {
       photoItems = photoItems.filter((it) => {
         const pid = Number(it && it.id ? it.id : 0) || 0;
-        return !!pid && scopePhotosSelected.has(pid);
+        return !!pid && scopeSelectedBucketIds.has(pid);
       });
     }
     if (q) {
@@ -3000,7 +3038,7 @@ function renderPhotoframePanel() {
     qs.set('limit', '220');
     const selectedOnly = String(scopePhotoFolderPath || '').trim() === SCOPE_SELECTED_FOLDER_KEY;
     if (selectedOnly) {
-      const ids = Array.from(scopePhotosSelected || [])
+      const ids = Array.from(scopeSelectedBucketIds || [])
         .map((v) => Number(v))
         .filter((v) => Number.isFinite(v) && v > 0)
         .slice(0, 900);
@@ -3045,6 +3083,7 @@ function renderPhotoframePanel() {
     scopePhotoOptions = [];
     scopePhotoFolderPath = SCOPE_SELECTED_FOLDER_KEY;
     scopePhotoQueryText = '';
+    scopeSelectedBucketIds = new Set();
     scopePhotoDragSuppressClickUntil = 0;
     setScopePhotoSelectMode(false);
     showScopeError('');
@@ -3075,6 +3114,7 @@ function renderPhotoframePanel() {
       const photoIds = Array.isArray(data.allowed_photo_ids) ? data.allowed_photo_ids : [];
       scopeFoldersSelected = new Set(folders.map((v) => String(v || '').trim()).filter(Boolean));
       scopePhotosSelected = new Set(photoIds.map((v) => Number(v || 0)).filter((v) => Number.isFinite(v) && v > 0));
+      scopeSelectedBucketIds = new Set(scopePhotosSelected);
       if (scopeModeSel) scopeModeSel.value = scopeMode;
       updateScopeSelectedCount();
       updateScopeModeVisibility();
