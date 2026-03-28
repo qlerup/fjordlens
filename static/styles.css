@@ -1821,6 +1821,14 @@ body.view-photoframe .photoframe-header-actions {
   justify-items: end;
   min-width: 0;
 }
+.photoframe-video-prepare-row strong {
+  display: inline-grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 0;
+  text-align: right;
+  white-space: normal;
+}
 .photoframe-version-pill {
   display: inline-flex;
   align-items: center;
@@ -1846,6 +1854,76 @@ body.view-photoframe .photoframe-header-actions {
 .photoframe-version-pill.unknown {
   border-color: rgba(122,176,255,0.32);
   color: #c7d7f2;
+}
+.photoframe-video-prepare-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.photoframe-video-prepare-pill .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.photoframe-video-prepare-pill.busy {
+  border-color: rgba(122,176,255,0.45);
+  color: #cfe2ff;
+}
+.photoframe-video-prepare-pill.busy .icon {
+  color: #9cc0ff;
+  animation: photoframe-update-spin 1.1s linear infinite;
+}
+.photoframe-video-prepare-pill.ok {
+  border-color: rgba(52,211,153,0.45);
+  color: #b9f4dc;
+}
+.photoframe-video-prepare-pill.ok .icon {
+  color: #34d399;
+}
+.photoframe-video-prepare-pill.pending {
+  border-color: rgba(245,158,11,0.48);
+  color: #fde68a;
+}
+.photoframe-video-prepare-pill.pending .icon {
+  color: #fbbf24;
+}
+.photoframe-video-prepare-sub {
+  font-size: 0.67rem;
+  color: var(--muted);
+  max-width: min(52vw, 320px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photoframe-video-prepare-bar {
+  position: relative;
+  width: min(52vw, 320px);
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(122,176,255,0.25);
+  background: rgba(26,34,53,0.95);
+  overflow: hidden;
+}
+.photoframe-video-prepare-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4f83ff 0%, #34d399 100%);
+  transition: width .25s ease;
 }
 .photoframe-update-pill {
   display: inline-flex;

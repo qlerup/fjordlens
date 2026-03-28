@@ -574,6 +574,12 @@ const I18N = {
     photoframe_card_error: 'Fejl',
     photoframe_card_update: 'Opdatering',
     photoframe_card_version: 'Version',
+    photoframe_card_video_prepare: 'Video klargøring',
+    photoframe_video_prepare_processing: 'Klargør videoer',
+    photoframe_video_prepare_pending: 'Afventer klargøring',
+    photoframe_video_prepare_ready: 'Klar',
+    photoframe_video_prepare_progress: '{ready}/{total} klar - {queued} i kø - {waiting} mangler',
+    photoframe_video_prepare_capped: '(udsnit)',
     photoframe_version_latest: 'Nyeste',
     photoframe_version_outdated: 'Skal opdateres',
     photoframe_version_unknown: 'Ukendt',
@@ -593,6 +599,10 @@ const I18N = {
     photoframe_update_cancel_confirm: 'Stop opdatering for {name}?',
     photoframe_update_cancel_done: 'Opdatering stoppet.',
     photoframe_update_cancel_failed: 'Kunne ikke stoppe opdatering.',
+    photoframe_restart_kiosk_btn: 'Genstart kiosk',
+    photoframe_restart_kiosk_confirm: 'Genstarte kioskmode for {name}?',
+    photoframe_restart_kiosk_queued: 'Kiosk-genstart sendt til enhed.',
+    photoframe_restart_kiosk_failed: 'Kunne ikke sende kiosk-genstart.',
     photoframe_update_state_queued: 'Venter på enhed',
     photoframe_update_state_downloading: 'Henter pakke',
     photoframe_update_state_installing: 'Installerer',
@@ -632,6 +642,7 @@ const I18N = {
     photoframe_scope_empty_photos: 'Ingen billeder fundet.',
     photoframe_scope_save: 'Gem',
     photoframe_scope_saved: 'Adgang gemt.',
+    photoframe_scope_saved_with_video_prepare: 'Adgang gemt. Video klargøring startet for {count} videoer.',
     photoframe_scope_save_failed: 'Kunne ikke gemme adgang.',
     photoframe_scope_load_failed: 'Kunne ikke hente adgangsdata.',
     photoframe_source_setting: 'Kilde: app-indstilling',
@@ -1131,6 +1142,12 @@ const I18N = {
     photoframe_card_error: 'Error',
     photoframe_card_update: 'Update',
     photoframe_card_version: 'Version',
+    photoframe_card_video_prepare: 'Video prepare',
+    photoframe_video_prepare_processing: 'Preparing videos',
+    photoframe_video_prepare_pending: 'Waiting to prepare',
+    photoframe_video_prepare_ready: 'Ready',
+    photoframe_video_prepare_progress: '{ready}/{total} ready - {queued} queued - {waiting} missing',
+    photoframe_video_prepare_capped: '(sample)',
     photoframe_version_latest: 'Latest',
     photoframe_version_outdated: 'Needs update',
     photoframe_version_unknown: 'Unknown',
@@ -1150,6 +1167,10 @@ const I18N = {
     photoframe_update_cancel_confirm: 'Stop update for {name}?',
     photoframe_update_cancel_done: 'Update stopped.',
     photoframe_update_cancel_failed: 'Could not stop update.',
+    photoframe_restart_kiosk_btn: 'Restart kiosk',
+    photoframe_restart_kiosk_confirm: 'Restart kiosk mode for {name}?',
+    photoframe_restart_kiosk_queued: 'Kiosk restart queued for device.',
+    photoframe_restart_kiosk_failed: 'Could not queue kiosk restart.',
     photoframe_update_state_queued: 'Waiting for device',
     photoframe_update_state_downloading: 'Downloading',
     photoframe_update_state_installing: 'Installing',
@@ -1189,6 +1210,7 @@ const I18N = {
     photoframe_scope_empty_photos: 'No photos found.',
     photoframe_scope_save: 'Save',
     photoframe_scope_saved: 'Access saved.',
+    photoframe_scope_saved_with_video_prepare: 'Access saved. Video preparation started for {count} videos.',
     photoframe_scope_save_failed: 'Could not save access.',
     photoframe_scope_load_failed: 'Could not load access data.',
     photoframe_source_setting: 'Source: app setting',
@@ -2169,6 +2191,39 @@ function photoframeVersionUi(item) {
   return { status, cls, text };
 }
 
+function photoframeVideoPrepareUi(item) {
+  const total = Number(item && item.video_prepare_total ? item.video_prepare_total : 0) || 0;
+  const ready = Number(item && item.video_prepare_ready ? item.video_prepare_ready : 0) || 0;
+  const queued = Number(item && item.video_prepare_queued ? item.video_prepare_queued : 0) || 0;
+  const waiting = Number(item && item.video_prepare_waiting ? item.video_prepare_waiting : 0) || 0;
+  const capped = !!(item && item.video_prepare_capped);
+  if (total <= 0) return null;
+
+  const pctRaw = Number(item && item.video_prepare_pct ? item.video_prepare_pct : 0);
+  const pct = Math.max(0, Math.min(100, Number.isFinite(pctRaw) ? Math.round(pctRaw) : Math.round((ready / Math.max(1, total)) * 100)));
+  let cls = 'busy';
+  let icon = '\u21bb';
+  let stateText = tr('photoframe_video_prepare_processing');
+  if (ready >= total) {
+    cls = 'ok';
+    icon = '\u2713';
+    stateText = tr('photoframe_video_prepare_ready');
+  } else if (queued <= 0) {
+    cls = 'pending';
+    icon = '\u2026';
+    stateText = tr('photoframe_video_prepare_pending');
+  }
+
+  let detail = tr('photoframe_video_prepare_progress')
+    .replace('{ready}', String(Math.max(0, ready)))
+    .replace('{total}', String(Math.max(0, total)))
+    .replace('{queued}', String(Math.max(0, queued)))
+    .replace('{waiting}', String(Math.max(0, waiting)));
+  if (capped) detail = `${detail} ${tr('photoframe_video_prepare_capped')}`;
+  const text = `${stateText} (${pct}%)`;
+  return { cls, icon, text, detail, pct };
+}
+
 function renderPhotoframePanel() {
   if (!els.grid) return;
   const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
@@ -2196,6 +2251,7 @@ function renderPhotoframePanel() {
     const lastSeenRaw = String(item.last_seen_at || '').trim();
     const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
     const versionUi = photoframeVersionUi(item);
+    const videoPrepareUi = photoframeVideoPrepareUi(item);
     const updateUi = photoframeUpdateStatusUi(item);
     const updateBusy = !!(updateUi && ['queued', 'downloading', 'installing', 'restarting'].includes(updateUi.status));
     const previewThumbUrl = String(item.preview_thumb_url || '').trim();
@@ -2231,6 +2287,26 @@ function renderPhotoframePanel() {
                   <span class="photoframe-version-pill ${escapeHtml(versionUi.cls)}">${escapeHtml(versionUi.text)}</span>
                 </strong>
               </div>
+              ${videoPrepareUi ? `
+                <div class="photoframe-row photoframe-video-prepare-row">
+                  <span>${escapeHtml(tr('photoframe_card_video_prepare'))}</span>
+                  <strong>
+                    <span class="photoframe-video-prepare-pill ${escapeHtml(videoPrepareUi.cls)}">
+                      <span class="icon" aria-hidden="true">${escapeHtml(videoPrepareUi.icon)}</span>
+                      ${escapeHtml(videoPrepareUi.text)}
+                    </span>
+                    <span class="photoframe-video-prepare-sub">${escapeHtml(videoPrepareUi.detail)}</span>
+                    <span
+                      class="photoframe-video-prepare-bar"
+                      role="progressbar"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      aria-valuenow="${Number(videoPrepareUi.pct) || 0}"
+                      aria-label="${escapeHtml(tr('photoframe_card_video_prepare'))}"
+                    ><span style="width:${Math.max(0, Math.min(100, Number(videoPrepareUi.pct) || 0))}%"></span></span>
+                  </strong>
+                </div>
+              ` : ''}
               ${updateUi ? `
                 <div class="photoframe-row photoframe-update-row">
                   <span>${escapeHtml(tr('photoframe_card_update'))}</span>
@@ -2262,6 +2338,14 @@ function renderPhotoframePanel() {
                   data-frame-name="${escapeHtml(frameName)}"
                   ${updateBusy ? ' disabled' : ''}
                 >${escapeHtml(tr('photoframe_update_upload_btn'))}</button>
+                <button
+                  class="btn small"
+                  type="button"
+                  data-photoframe-action="restart-kiosk"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-frame-name="${escapeHtml(frameName)}"
+                  ${updateBusy ? ' disabled' : ''}
+                >${escapeHtml(tr('photoframe_restart_kiosk_btn'))}</button>
                 ${updateBusy ? `
                   <button
                     class="btn small danger"
@@ -3197,7 +3281,15 @@ function renderPhotoframePanel() {
         if (!res.ok || !data || !data.ok) {
           throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_save_failed'));
         }
-        showStatus(tr('photoframe_scope_saved'), 'ok');
+        const queuedVideoPrepare = Number(data && data.queued_video_prepare ? data.queued_video_prepare : 0) || 0;
+        if (queuedVideoPrepare > 0) {
+          showStatus(
+            tr('photoframe_scope_saved_with_video_prepare').replace('{count}', String(queuedVideoPrepare)),
+            'ok'
+          );
+        } else {
+          showStatus(tr('photoframe_scope_saved'), 'ok');
+        }
         closeScopeModal();
         await loadPhotoframeStatus();
       } catch (e) {
@@ -3285,6 +3377,43 @@ function renderPhotoframePanel() {
         await loadPhotoframeStatus();
       } catch (e) {
         showStatus(String((e && e.message) || tr('photoframe_update_upload_failed')), 'err');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="restart-kiosk"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || 'Photoframe').trim();
+      if (!frameId) return;
+
+      const question = tr('photoframe_restart_kiosk_confirm')
+        .replace('{name}', frameName || 'Photoframe');
+      if (!window.confirm(question)) return;
+
+      btn.disabled = true;
+      btn.classList.add('loading');
+      try {
+        const res = await fetch(`/api/photoframes/${encodeURIComponent(frameId)}/restart`, {
+          method: 'POST',
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_restart_kiosk_failed');
+          throw new Error(message);
+        }
+        showStatus(tr('photoframe_restart_kiosk_queued'), 'ok');
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showStatus(String((e && e.message) || tr('photoframe_restart_kiosk_failed')), 'err');
       } finally {
         btn.disabled = false;
         btn.classList.remove('loading');

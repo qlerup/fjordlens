@@ -234,6 +234,33 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
         raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, exiftool={exiftool_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
+PHOTOFRAME_VIDEO_PREPARE_ENABLED = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+try:
+    PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE", "80") or 80)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE = 80
+PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE = max(0, min(800, PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE))
+try:
+    PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED", "24") or 24)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED = 24
+PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED = max(0, min(200, PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED))
+try:
+    PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX", "240") or 240)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX = 240
+PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX = max(0, min(5000, PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX))
+PHOTOFRAME_VIDEO_PREPARE_PRESET = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_PRESET", "veryfast") or "veryfast").strip() or "veryfast"
+try:
+    PHOTOFRAME_VIDEO_PREPARE_CRF = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_CRF", "24") or 24)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_CRF = 24
+PHOTOFRAME_VIDEO_PREPARE_CRF = max(18, min(36, PHOTOFRAME_VIDEO_PREPARE_CRF))
+try:
+    PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC", "1800") or 1800)
+except Exception:
+    PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = 1800
+PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC))
 THUMB_SIZE = (600, 600)
 FACE_THUMB_VERSION = 3
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
@@ -460,6 +487,10 @@ UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
 UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
 UPLOAD_POSTPROCESS_LOCK = threading.Lock()
+PHOTOFRAME_VIDEO_PREPARE_QUEUE: "queue.Queue[str]" = queue.Queue()
+PHOTOFRAME_VIDEO_PREPARE_LOCK = threading.Lock()
+PHOTOFRAME_VIDEO_PREPARE_QUEUED: set[str] = set()
+PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED = False
 
 
 def log_event(event: str, **data: Any) -> None:
@@ -3046,6 +3077,148 @@ def _disk_path_from_rel_path(rel_path: str) -> Path:
     return PHOTO_DIR / rel
 
 
+def _photoframe_video_prepared_path(rel_path: str) -> Path:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    stem = Path(rel).with_suffix("")
+    dest_rel = Path(f"{stem}_PF.mp4")
+    return CONVERT_DIR / "photoframe_video" / dest_rel
+
+
+def _prepare_video_for_photoframe(src: Path, rel_path: str) -> Path:
+    ext = str(src.suffix or "").lower()
+    if ext not in VIDEO_EXTS:
+        return src
+    if not PHOTOFRAME_VIDEO_PREPARE_ENABLED:
+        return src
+    if not src.exists():
+        return src
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return src
+
+    dest = _photoframe_video_prepared_path(rel_path)
+    try:
+        src_mtime = src.stat().st_mtime
+    except Exception:
+        src_mtime = 0.0
+
+    try:
+        if dest.exists() and dest.stat().st_size > 0 and dest.stat().st_mtime >= src_mtime:
+            return dest
+    except Exception:
+        pass
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    try:
+        cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            PHOTOFRAME_VIDEO_PREPARE_PRESET,
+            "-crf",
+            str(PHOTOFRAME_VIDEO_PREPARE_CRF),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+        subprocess.run(cmd, check=True, timeout=PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC)
+        if (not tmp.exists()) or tmp.stat().st_size <= 0:
+            raise RuntimeError("ffmpeg produced empty output")
+        os.replace(tmp, dest)
+        try:
+            log_event("photoframe_video_prepared", rel_path=rel_path, prepared_path=str(dest))
+        except Exception:
+            pass
+        return dest
+    except Exception as e:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        try:
+            log_event("error", rel_path=rel_path, error=f"photoframe_video_prepare: {e}")
+        except Exception:
+            pass
+        return src
+
+
+def _prepare_video_for_photoframe_rel(rel_path: str) -> None:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if not rel:
+        return
+    if Path(rel).suffix.lower() not in VIDEO_EXTS:
+        return
+    src = _disk_path_from_rel_path(rel)
+    if not src.exists():
+        return
+    _prepare_video_for_photoframe(src, rel)
+
+
+def _photoframe_video_prepare_worker_loop() -> None:
+    while True:
+        rel_path = str(PHOTOFRAME_VIDEO_PREPARE_QUEUE.get() or "").strip()
+        try:
+            if rel_path:
+                _prepare_video_for_photoframe_rel(rel_path)
+        except Exception as e:
+            try:
+                log_event("error", rel_path=rel_path, error=f"photoframe_video_prepare_worker: {e}")
+            except Exception:
+                pass
+        finally:
+            with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+                if rel_path:
+                    PHOTOFRAME_VIDEO_PREPARE_QUEUED.discard(rel_path)
+            PHOTOFRAME_VIDEO_PREPARE_QUEUE.task_done()
+
+
+def _ensure_photoframe_video_prepare_worker() -> None:
+    global PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED
+    if PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED:
+        return
+    with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+        if PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED:
+            return
+        threading.Thread(target=_photoframe_video_prepare_worker_loop, daemon=True).start()
+        PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED = True
+
+
+def _queue_photoframe_video_prepare(rel_path: str) -> bool:
+    if not PHOTOFRAME_VIDEO_PREPARE_ENABLED:
+        return False
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if not rel:
+        return False
+    if Path(rel).suffix.lower() not in VIDEO_EXTS:
+        return False
+    _ensure_photoframe_video_prepare_worker()
+    with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+        if rel in PHOTOFRAME_VIDEO_PREPARE_QUEUED:
+            return False
+        PHOTOFRAME_VIDEO_PREPARE_QUEUED.add(rel)
+    PHOTOFRAME_VIDEO_PREPARE_QUEUE.put(rel)
+    return True
+
+
 def get_upload_destination() -> str:
     v = (_get_setting("upload_destination", UPLOAD_DEST_DEFAULT) or "").strip().lower()
     if v not in UPLOAD_DEST_CHOICES:
@@ -4143,6 +4316,195 @@ def _photoframe_record_scope(rec: Optional[Dict[str, Any]]) -> tuple[str, list[s
     return (mode, folders, photos)
 
 
+def _collect_photoframe_scope_video_rels(scope_mode: str, scope_folders: list[str], scope_photo_ids: list[int], limit: int) -> list[str]:
+    max_items = max(0, int(limit or 0))
+    if max_items <= 0:
+        return []
+    rels: list[str] = []
+    seen: set[str] = set()
+
+    with closing(get_conn()) as conn:
+        rows: list[sqlite3.Row] = []
+        mode = _normalize_photoframe_scope_mode(scope_mode)
+        if mode == "photos":
+            ids_for_query = _normalize_photoframe_scope_photo_ids(scope_photo_ids)
+            if ids_for_query:
+                rows_acc: list[sqlite3.Row] = []
+                chunk_size = 800
+                for offset in range(0, len(ids_for_query), chunk_size):
+                    batch = ids_for_query[offset: offset + chunk_size]
+                    if not batch:
+                        continue
+                    ph = ",".join(["?"] * len(batch))
+                    rows_acc.extend(
+                        conn.execute(
+                            f"""
+                            SELECT rel_path
+                            FROM photos
+                            WHERE id IN ({ph})
+                            ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                            """,
+                            tuple(batch),
+                        ).fetchall()
+                    )
+                    if len(rows_acc) >= max(100, max_items * 8):
+                        break
+                rows = rows_acc
+        elif mode == "folders":
+            prefixes: list[str] = []
+            seen_prefixes: set[str] = set()
+            for folder in _normalize_photoframe_scope_folders(scope_folders):
+                for pref in _photoframe_scope_rel_prefixes(folder):
+                    if pref in seen_prefixes:
+                        continue
+                    seen_prefixes.add(pref)
+                    prefixes.append(pref)
+                    if len(prefixes) >= 300:
+                        break
+                if len(prefixes) >= 300:
+                    break
+            if prefixes:
+                conds: list[str] = []
+                params: list[Any] = []
+                for pref in prefixes:
+                    conds.append("(rel_path=? OR rel_path LIKE ?)")
+                    params.extend([pref, pref + "/%"])
+                rows = conn.execute(
+                    f"""
+                    SELECT rel_path
+                    FROM photos
+                    WHERE {" OR ".join(conds)}
+                    ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (*params, max(50, max_items * 6)),
+                ).fetchall()
+        else:
+            ext_params = [f"%{ext}" for ext in sorted(VIDEO_EXTS)]
+            ext_sql = " OR ".join(["LOWER(rel_path) LIKE ?"] * len(ext_params))
+            rows = conn.execute(
+                f"""
+                SELECT rel_path
+                FROM photos
+                WHERE ({ext_sql})
+                ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
+                LIMIT ?
+                """,
+                (*ext_params, max_items),
+            ).fetchall()
+
+    for row in rows:
+        rel = str(row["rel_path"] or "").replace("\\", "/").lstrip("/")
+        if not rel or rel in seen:
+            continue
+        if Path(rel).suffix.lower() not in VIDEO_EXTS:
+            continue
+        seen.add(rel)
+        rels.append(rel)
+        if len(rels) >= max_items:
+            break
+    return rels
+
+
+def _queue_photoframe_scope_video_prepare(scope_mode: str, scope_folders: list[str], scope_photo_ids: list[int]) -> int:
+    if not PHOTOFRAME_VIDEO_PREPARE_ENABLED:
+        return 0
+    if _normalize_photoframe_scope_mode(scope_mode) not in {"photos", "folders"}:
+        return 0
+    try:
+        rels = _collect_photoframe_scope_video_rels(
+            scope_mode,
+            scope_folders,
+            scope_photo_ids,
+            PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE,
+        )
+    except Exception:
+        return 0
+    queued = 0
+    for rel in rels:
+        try:
+            if _queue_photoframe_video_prepare(rel):
+                queued += 1
+        except Exception:
+            continue
+    return queued
+
+
+def _is_photoframe_video_prepared(rel_path: str) -> bool:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if (not rel) or (Path(rel).suffix.lower() not in VIDEO_EXTS):
+        return False
+    src = _disk_path_from_rel_path(rel)
+    if not src.exists():
+        return False
+    dest = _photoframe_video_prepared_path(rel)
+    try:
+        if (not dest.exists()) or (dest.stat().st_size <= 0):
+            return False
+        return dest.stat().st_mtime >= src.stat().st_mtime
+    except Exception:
+        return False
+
+
+def _photoframe_video_prepare_progress(scope_mode: str, scope_folders: list[str], scope_photo_ids: list[int]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "enabled": bool(PHOTOFRAME_VIDEO_PREPARE_ENABLED),
+        "total": 0,
+        "ready": 0,
+        "queued": 0,
+        "waiting": 0,
+        "pending": 0,
+        "pct": 0,
+        "active": False,
+        "capped": False,
+        "sample_limit": int(PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX),
+    }
+    if (not PHOTOFRAME_VIDEO_PREPARE_ENABLED) or PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX <= 0:
+        return out
+    try:
+        rels = _collect_photoframe_scope_video_rels(
+            scope_mode,
+            scope_folders,
+            scope_photo_ids,
+            PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX,
+        )
+    except Exception:
+        rels = []
+
+    total = int(len(rels))
+    out["total"] = total
+    out["capped"] = bool(
+        PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX > 0 and total >= PHOTOFRAME_VIDEO_PREPARE_PROGRESS_MAX
+    )
+    if total <= 0:
+        return out
+
+    with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+        queued_rels = set(PHOTOFRAME_VIDEO_PREPARE_QUEUED)
+
+    ready = 0
+    queued = 0
+    for rel in rels:
+        if rel in queued_rels:
+            queued += 1
+        if _is_photoframe_video_prepared(rel):
+            ready += 1
+
+    pending = max(0, total - ready)
+    if queued > pending:
+        queued = pending
+    waiting = max(0, pending - queued)
+    pct = int(round((ready / max(1, total)) * 100))
+
+    out["ready"] = int(ready)
+    out["queued"] = int(queued)
+    out["waiting"] = int(waiting)
+    out["pending"] = int(pending)
+    out["pct"] = max(0, min(100, pct))
+    out["active"] = bool(pending > 0)
+    return out
+
+
 def _photoframe_scope_rel_prefixes(folder: str) -> list[str]:
     try:
         p = _normalize_folder_acl_path(folder)
@@ -4389,6 +4751,15 @@ def _photoframe_update_command_payload(
             package_mode = "source-dir"
         elif package_url:
             package_mode = "custom-url"
+    if package_mode in {"restart-kiosk", "restart_kiosk", "restartkiosk"}:
+        out = {
+            "job_id": job_id,
+            "action": "restart_kiosk",
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
 
     safe_token = _sanitize_photoframe_token_plain(token)
     safe_base = _normalize_photoframe_base_url(request_base)
@@ -7884,6 +8255,7 @@ def api_photoframes_status():
                     version_status = "latest"
                 elif device_version:
                     version_status = "outdated"
+            video_prepare = _photoframe_video_prepare_progress(scope_mode, scope_folders, scope_photo_ids)
             error = ""
             if not last_seen_at:
                 error = "Ingen forbindelse endnu"
@@ -7927,6 +8299,15 @@ def api_photoframes_status():
                     "update_version": update_version,
                     "device_version": device_version,
                     "version_status": version_status,
+                    "video_prepare_total": int(video_prepare.get("total") or 0),
+                    "video_prepare_ready": int(video_prepare.get("ready") or 0),
+                    "video_prepare_queued": int(video_prepare.get("queued") or 0),
+                    "video_prepare_waiting": int(video_prepare.get("waiting") or 0),
+                    "video_prepare_pending": int(video_prepare.get("pending") or 0),
+                    "video_prepare_pct": int(video_prepare.get("pct") or 0),
+                    "video_prepare_active": bool(video_prepare.get("active")),
+                    "video_prepare_capped": bool(video_prepare.get("capped")),
+                    "video_prepare_sample_limit": int(video_prepare.get("sample_limit") or 0),
                 }
             )
 
@@ -8132,6 +8513,62 @@ def api_photoframes_trigger_update(token_id: str):
             "source": "upload" if upload_mode else ("custom-url" if requested_url else "source-dir"),
             "upload_bytes": upload_bytes if upload_mode else 0,
             "version": requested_version or None,
+            "requested_at": now,
+        }
+    )
+
+
+@app.route("/api/photoframes/<token_id>/restart", methods=["POST"])
+@login_required
+def api_photoframes_restart_kiosk(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if current_status in {"downloading", "installing"}:
+        return jsonify({"ok": False, "error": "En opdatering kører allerede på enheden"}), 409
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfrst-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return jsonify({"ok": False, "error": "Kunne ikke oprette restart-id"}), 500
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Kiosk-genstart afventer enhed"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "restart-kiosk"
+    rec["update_package_sha256"] = ""
+    _save_photoframe_token_records(records)
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "job_id": job_id,
+            "status": "queued",
             "requested_at": now,
         }
     )
@@ -8361,6 +8798,11 @@ def api_photoframes_scope(token_id: str):
     records[rec_idx]["allowed_folders"] = allowed_folders
     records[rec_idx]["allowed_photo_ids"] = allowed_photo_ids
     _save_photoframe_token_records(records)
+    queued_video_prepare = 0
+    try:
+        queued_video_prepare = _queue_photoframe_scope_video_prepare(scope_mode, allowed_folders, allowed_photo_ids)
+    except Exception:
+        queued_video_prepare = 0
 
     return jsonify(
         {
@@ -8371,6 +8813,7 @@ def api_photoframes_scope(token_id: str):
             "allowed_photo_ids": allowed_photo_ids,
             "allowed_folder_count": len(allowed_folders),
             "allowed_photo_count": len(allowed_photo_ids),
+            "queued_video_prepare": int(queued_video_prepare),
         }
     )
 
@@ -8761,6 +9204,7 @@ def api_frame_feed(token: str):
         rows = safe_rows
 
     images: list[Dict[str, Any]] = []
+    queued_prepare_from_feed = 0
     for row in rows:
         try:
             photo_id = int(row["id"])
@@ -8769,6 +9213,15 @@ def api_frame_feed(token: str):
         rel_path = str(row["rel_path"] or "")
         media_ext = str(Path(rel_path).suffix or "").lower()
         media_type = "video" if media_ext in VIDEO_EXTS else "image"
+        if (
+            media_type == "video"
+            and queued_prepare_from_feed < PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED
+        ):
+            try:
+                if _queue_photoframe_video_prepare(rel_path):
+                    queued_prepare_from_feed += 1
+            except Exception:
+                pass
         updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
         images.append(
             {
@@ -8882,7 +9335,10 @@ def api_frame_viewable(token: str, photo_id: int):
             return send_from_directory(CONVERT_DIR, safe_rel)
         return ("Not found", 404)
 
-    view_path = ensure_viewable_copy(src, safe_rel)
+    if src.suffix.lower() in VIDEO_EXTS:
+        view_path = _prepare_video_for_photoframe(src, safe_rel)
+    else:
+        view_path = ensure_viewable_copy(src, safe_rel)
     try:
         vp = str(view_path)
         if vp.startswith(str(CONVERT_DIR)):
