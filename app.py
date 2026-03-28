@@ -5030,6 +5030,51 @@ def _photoframe_apply_feed_sync_ack(rec: Optional[Dict[str, Any]], feed_rev_raw:
     return changed
 
 
+def _photoframe_mark_feed_sync_pending(rec: Optional[Dict[str, Any]], seen_at: str) -> bool:
+    """Mark content sync as pending right after scope/content is saved.
+
+    This shows "sending" immediately in FjordLens and prevents stale heartbeat
+    acknowledgements from older feed revisions from flipping the state to sent.
+    """
+    if not isinstance(rec, dict):
+        return False
+
+    now_clean = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
+    marker_payload = {
+        "at": now_clean,
+        "scope_mode": scope_mode,
+        "folders": scope_folders[:400],
+        "photo_ids": scope_photo_ids[:1200],
+        "token_hash": _normalize_photoframe_token_hash(rec.get("token_hash")),
+    }
+    marker_raw = json.dumps(marker_payload, ensure_ascii=False, separators=(",", ":"))
+    marker_rev = _sanitize_photoframe_feed_rev(hashlib.sha256(marker_raw.encode("utf-8", errors="ignore")).hexdigest()[:16])
+    if not marker_rev:
+        marker_rev = _sanitize_photoframe_feed_rev(hashlib.sha256(now_clean.encode("utf-8", errors="ignore")).hexdigest()[:16])
+
+    changed = False
+    if _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status")) != "sending":
+        rec["feed_sync_status"] = "sending"
+        changed = True
+    if _sanitize_photoframe_feed_rev(rec.get("feed_sync_sent_rev")) != marker_rev:
+        rec["feed_sync_sent_rev"] = marker_rev
+        changed = True
+    if _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40) != now_clean:
+        rec["feed_sync_sent_at"] = now_clean
+        changed = True
+    if _sanitize_photoframe_feed_rev(rec.get("feed_sync_acked_rev")):
+        rec["feed_sync_acked_rev"] = ""
+        changed = True
+    if _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40):
+        rec["feed_sync_acked_at"] = ""
+        changed = True
+    if _sanitize_photoframe_feed_sync_count(rec.get("feed_sync_count")) != 0:
+        rec["feed_sync_count"] = 0
+        changed = True
+    return changed
+
+
 def _photoframe_update_command_payload(
     rec: Optional[Dict[str, Any]],
     token: str = "",
@@ -9110,6 +9155,7 @@ def api_photoframes_scope(token_id: str):
     records[rec_idx]["scope_mode"] = scope_mode
     records[rec_idx]["allowed_folders"] = allowed_folders
     records[rec_idx]["allowed_photo_ids"] = allowed_photo_ids
+    _photoframe_mark_feed_sync_pending(records[rec_idx], now_iso())
     _save_photoframe_token_records(records)
 
     return jsonify(
@@ -9594,7 +9640,7 @@ def api_frame_heartbeat(token: str):
         active_record,
         feed_rev_raw,
         now,
-        allow_fallback=(current_photo_id > 0),
+        allow_fallback=False,
     )
     _save_photoframe_token_records(records)
 
