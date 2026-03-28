@@ -493,6 +493,7 @@ UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
 UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
 UPLOAD_POSTPROCESS_LOCK = threading.Lock()
+PHOTOFRAME_TOKENS_LOCK = threading.RLock()
 PHOTOFRAME_VIDEO_PREPARE_QUEUE: "queue.Queue[str]" = queue.Queue()
 PHOTOFRAME_VIDEO_PREPARE_LOCK = threading.Lock()
 PHOTOFRAME_VIDEO_PREPARE_QUEUED: set[str] = set()
@@ -3968,6 +3969,15 @@ def _sanitize_photoframe_update_status(raw: Any) -> str:
     return ""
 
 
+def _normalize_photoframe_update_package_mode(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"restart_kiosk", "restartkiosk"}:
+        return "restart-kiosk"
+    if value in {"upload", "source-dir", "custom-url", "restart-kiosk"}:
+        return value
+    return ""
+
+
 def _build_photoframe_entry(raw_item: Any, idx: int) -> Optional[Dict[str, Any]]:
     name = ""
     base_candidate = ""
@@ -4182,7 +4192,15 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         if (not device_version) and update_version:
             device_version = update_version
         update_package_url = _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or ""
+        update_package_mode = _normalize_photoframe_update_package_mode(it.get("update_package_mode"))
+        if (not update_package_mode) and update_package_url:
+            path_lower = str(urlparse(update_package_url).path or "").strip().lower()
+            if "/update-upload/" in path_lower:
+                update_package_mode = "upload"
+            elif "/update-package/" in path_lower:
+                update_package_mode = "source-dir"
         update_package_sha256 = _sanitize_photoframe_update_sha256(it.get("update_package_sha256"))
+        last_server_base_url = _normalize_photoframe_base_url(it.get("last_server_base_url")) or ""
         out.append(
             {
                 "id": rec_id,
@@ -4209,22 +4227,100 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "update_last_report_at": update_last_report_at,
                 "update_version": update_version,
                 "update_package_url": update_package_url,
+                "update_package_mode": update_package_mode,
                 "update_package_sha256": update_package_sha256,
+                "last_server_base_url": last_server_base_url,
             }
         )
     return out
 
 
+def _photoframe_update_field_names() -> tuple[str, ...]:
+    return (
+        "update_job_id",
+        "update_status",
+        "update_message",
+        "update_requested_at",
+        "update_started_at",
+        "update_finished_at",
+        "update_last_report_at",
+        "update_version",
+        "update_package_url",
+        "update_package_mode",
+        "update_package_sha256",
+    )
+
+
+def _photoframe_update_state_rev(rec: Dict[str, Any]) -> float:
+    if not isinstance(rec, dict):
+        return 0.0
+    return max(
+        _parse_iso_to_epoch(rec.get("update_last_report_at")),
+        _parse_iso_to_epoch(rec.get("update_finished_at")),
+        _parse_iso_to_epoch(rec.get("update_started_at")),
+        _parse_iso_to_epoch(rec.get("update_requested_at")),
+    )
+
+
+def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
+        return candidate
+
+    existing_job = _sanitize_photoframe_update_job_id(existing.get("update_job_id"))
+    candidate_job = _sanitize_photoframe_update_job_id(candidate.get("update_job_id"))
+    if not existing_job:
+        return candidate
+
+    existing_rev = _photoframe_update_state_rev(existing)
+    candidate_rev = _photoframe_update_state_rev(candidate)
+    existing_status = _sanitize_photoframe_update_status(existing.get("update_status"))
+    candidate_status = _sanitize_photoframe_update_status(candidate.get("update_status"))
+    rank = {
+        "": 0,
+        "queued": 1,
+        "downloading": 2,
+        "installing": 3,
+        "restarting": 4,
+        "success": 5,
+        "failed": 5,
+    }
+
+    use_existing = False
+    if existing_rev > (candidate_rev + 0.001):
+        use_existing = True
+    elif (existing_job == candidate_job) and (existing_rev >= (candidate_rev - 0.001)):
+        if rank.get(existing_status, 0) > rank.get(candidate_status, 0):
+            use_existing = True
+
+    if use_existing:
+        for key in _photoframe_update_field_names():
+            candidate[key] = existing.get(key)
+
+    if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
+        candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
+    return candidate
+
+
 def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
-    clean: list[Dict[str, Any]] = []
-    seen_hashes: set[str] = set()
-    for it in records:
-        token_hash = _normalize_photoframe_token_hash(it.get("token_hash"))
-        if (not token_hash) or (token_hash in seen_hashes):
-            continue
-        seen_hashes.add(token_hash)
-        clean.append(
-            {
+    with PHOTOFRAME_TOKENS_LOCK:
+        existing_by_hash: Dict[str, Dict[str, Any]] = {}
+        try:
+            for prev in _load_photoframe_token_records():
+                h = _normalize_photoframe_token_hash(prev.get("token_hash"))
+                if h and h not in existing_by_hash:
+                    existing_by_hash[h] = prev
+        except Exception:
+            existing_by_hash = {}
+
+        clean: list[Dict[str, Any]] = []
+        seen_hashes: set[str] = set()
+        for it in records:
+            token_hash = _normalize_photoframe_token_hash(it.get("token_hash"))
+            if (not token_hash) or (token_hash in seen_hashes):
+                continue
+            seen_hashes.add(token_hash)
+
+            item = {
                 "id": _sanitize_photoframe_text(it.get("id"), 64) or f"pf-token-{len(clean) + 1}",
                 "token_hash": token_hash,
                 "token_hint": _sanitize_photoframe_text(it.get("token_hint"), 16),
@@ -4249,13 +4345,18 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "update_last_report_at": _sanitize_photoframe_text(it.get("update_last_report_at"), 40),
                 "update_version": _sanitize_photoframe_text(it.get("update_version"), 80),
                 "update_package_url": _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or "",
+                "update_package_mode": _normalize_photoframe_update_package_mode(it.get("update_package_mode")),
                 "update_package_sha256": _sanitize_photoframe_update_sha256(it.get("update_package_sha256")),
+                "last_server_base_url": _normalize_photoframe_base_url(it.get("last_server_base_url")) or "",
             }
-        )
 
-    if len(clean) > 500:
-        clean = clean[-500:]
-    _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
+            existing = existing_by_hash.get(token_hash)
+            item = _photoframe_merge_update_state(item, existing)
+            clean.append(item)
+
+        if len(clean) > 500:
+            clean = clean[-500:]
+        _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
 
 
 def _normalize_photoframe_scope_mode(raw: Any) -> str:
