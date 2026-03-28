@@ -4309,6 +4309,38 @@ def _normalize_photoframe_scope_photo_ids(raw: Any) -> list[int]:
     return out
 
 
+def _filter_photoframe_scope_photo_ids_to_images(photo_ids: list[int]) -> list[int]:
+    ids = _normalize_photoframe_scope_photo_ids(photo_ids)
+    if not ids:
+        return []
+    keep: set[int] = set()
+    with closing(get_conn()) as conn:
+        chunk_size = 800
+        for offset in range(0, len(ids), chunk_size):
+            batch = ids[offset: offset + chunk_size]
+            if not batch:
+                continue
+            ph = ",".join(["?"] * len(batch))
+            rows = conn.execute(
+                f"""
+                SELECT id, rel_path
+                FROM photos
+                WHERE id IN ({ph})
+                """,
+                tuple(batch),
+            ).fetchall()
+            for row in rows:
+                try:
+                    pid = int(row["id"])
+                except Exception:
+                    continue
+                rel = str(row["rel_path"] or "")
+                if Path(rel).suffix.lower() in VIDEO_EXTS:
+                    continue
+                keep.add(pid)
+    return [pid for pid in ids if pid in keep]
+
+
 def _photoframe_record_scope(rec: Optional[Dict[str, Any]]) -> tuple[str, list[str], list[int]]:
     if not isinstance(rec, dict):
         return ("all", [], [])
@@ -8280,7 +8312,6 @@ def api_photoframes_status():
                     version_status = "latest"
                 elif device_version:
                     version_status = "outdated"
-            video_prepare = _photoframe_video_prepare_progress(scope_mode, scope_folders, scope_photo_ids)
             error = ""
             if not last_seen_at:
                 error = "Ingen forbindelse endnu"
@@ -8324,16 +8355,6 @@ def api_photoframes_status():
                     "update_version": update_version,
                     "device_version": device_version,
                     "version_status": version_status,
-                    "video_prepare_total": int(video_prepare.get("total") or 0),
-                    "video_prepare_ready": int(video_prepare.get("ready") or 0),
-                    "video_prepare_queued": int(video_prepare.get("queued") or 0),
-                    "video_prepare_waiting": int(video_prepare.get("waiting") or 0),
-                    "video_prepare_pending": int(video_prepare.get("pending") or 0),
-                    "video_prepare_pct": int(video_prepare.get("pct") or 0),
-                    "video_prepare_active": bool(video_prepare.get("active")),
-                    "video_prepare_capped": bool(video_prepare.get("capped")),
-                    "video_prepare_sample_limit": int(video_prepare.get("sample_limit") or 0),
-                    "video_prepare_requeued": int(video_prepare.get("requeued") or 0),
                 }
             )
 
@@ -8795,6 +8816,12 @@ def api_photoframes_scope(token_id: str):
 
     if request.method == "GET":
         scope_mode, folders, photo_ids = _photoframe_record_scope(rec)
+        if scope_mode == "photos":
+            filtered_photo_ids = _filter_photoframe_scope_photo_ids_to_images(photo_ids)
+            if filtered_photo_ids != photo_ids:
+                records[rec_idx]["allowed_photo_ids"] = filtered_photo_ids
+                _save_photoframe_token_records(records)
+                photo_ids = filtered_photo_ids
         return jsonify(
             {
                 "ok": True,
@@ -8819,16 +8846,12 @@ def api_photoframes_scope(token_id: str):
         allowed_photo_ids = []
     elif scope_mode == "photos":
         allowed_folders = []
+        allowed_photo_ids = _filter_photoframe_scope_photo_ids_to_images(allowed_photo_ids)
 
     records[rec_idx]["scope_mode"] = scope_mode
     records[rec_idx]["allowed_folders"] = allowed_folders
     records[rec_idx]["allowed_photo_ids"] = allowed_photo_ids
     _save_photoframe_token_records(records)
-    queued_video_prepare = 0
-    try:
-        queued_video_prepare = _queue_photoframe_scope_video_prepare(scope_mode, allowed_folders, allowed_photo_ids)
-    except Exception:
-        queued_video_prepare = 0
 
     return jsonify(
         {
@@ -8839,7 +8862,6 @@ def api_photoframes_scope(token_id: str):
             "allowed_photo_ids": allowed_photo_ids,
             "allowed_folder_count": len(allowed_folders),
             "allowed_photo_count": len(allowed_photo_ids),
-            "queued_video_prepare": int(queued_video_prepare),
         }
     )
 
@@ -8868,6 +8890,7 @@ def api_photoframes_available_photos():
     except Exception:
         limit = 120
     limit = max(20, min(500, limit))
+    db_limit = min(2000, max(limit, limit * 4))
 
     selected_ids: list[int] = []
     if ids_raw:
@@ -8924,7 +8947,7 @@ def api_photoframes_available_photos():
             ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
             LIMIT ?
             """,
-            (*params, limit),
+            (*params, db_limit),
         ).fetchall()
 
         extra_rows: list[sqlite3.Row] = []
@@ -8954,12 +8977,14 @@ def api_photoframes_available_photos():
             label = rel.rsplit("/", 1)[-1] if "/" in rel else rel
             thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(r["thumb_name"] or ""))
             ext = str(Path(rel).suffix or "").lower()
+            if ext in VIDEO_EXTS:
+                continue
             by_id[pid] = {
                 "id": pid,
                 "rel_path": rel,
                 "label": label or f"Photo #{pid}",
                 "ext": ext,
-                "is_video": bool(ext in VIDEO_EXTS),
+                "is_video": False,
                 "is_gif": bool(ext == ".gif"),
                 "updated_at": _sanitize_photoframe_text(r["updated_at"], 40),
                 "selected": pid in selected_ids,
@@ -8967,7 +8992,8 @@ def api_photoframes_available_photos():
             }
             ordered.append(pid)
 
-    items = [by_id[pid] for pid in ordered]
+    max_items = min(3000, limit + len(selected_ids))
+    items = [by_id[pid] for pid in ordered[:max_items]]
     return jsonify({"ok": True, "items": items, "count": len(items)})
 
 
@@ -9230,8 +9256,6 @@ def api_frame_feed(token: str):
         rows = safe_rows
 
     images: list[Dict[str, Any]] = []
-    queued_prepare_from_feed = 0
-    hidden_unprepared_videos = 0
     for row in rows:
         try:
             photo_id = int(row["id"])
@@ -9239,39 +9263,22 @@ def api_frame_feed(token: str):
             continue
         rel_path = str(row["rel_path"] or "")
         media_ext = str(Path(rel_path).suffix or "").lower()
-        media_type = "video" if media_ext in VIDEO_EXTS else "image"
-        if media_type == "video":
-            is_prepared = False
-            try:
-                is_prepared = _is_photoframe_video_prepared(rel_path)
-            except Exception:
-                is_prepared = False
-            if not is_prepared:
-                hidden_unprepared_videos += 1
-                if queued_prepare_from_feed < PHOTOFRAME_VIDEO_PREPARE_MAX_PER_FEED:
-                    try:
-                        if _queue_photoframe_video_prepare(rel_path):
-                            queued_prepare_from_feed += 1
-                    except Exception:
-                        pass
-                # Do not expose unprepared videos to the frame yet.
-                continue
+        if media_ext in VIDEO_EXTS:
+            continue
         updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
         images.append(
             {
                 "id": str(photo_id),
                 "url": f"{request_base}{url_for('api_frame_viewable', token=token, photo_id=photo_id, _external=False)}",
                 "updated_at": updated_at or now,
-                "media_type": media_type,
+                "media_type": "image",
                 "ext": media_ext,
             }
         )
 
     feed_message = ""
     if not images:
-        if hidden_unprepared_videos > 0:
-            feed_message = f"Klargør videoer ({hidden_unprepared_videos}) - vises når klar"
-        elif scope_mode == "folders" and not _normalize_photoframe_scope_folders(scope_folders):
+        if scope_mode == "folders" and not _normalize_photoframe_scope_folders(scope_folders):
             feed_message = "Ingen mapper valgt til denne fotoramme endnu"
         elif scope_mode == "photos" and not _normalize_photoframe_scope_photo_ids(scope_photo_ids):
             feed_message = "Ingen billeder valgt til denne fotoramme endnu"
@@ -9372,28 +9379,8 @@ def api_frame_viewable(token: str, photo_id: int):
         return ("Not found", 404)
 
     if src.suffix.lower() in VIDEO_EXTS:
-        # Only expose prepared videos to the frame. If not ready yet, keep it queued.
-        try:
-            if not _is_photoframe_video_prepared(safe_rel):
-                _queue_photoframe_video_prepare(safe_rel)
-                resp = make_response("Video klargøres", 425)
-                try:
-                    resp.headers["Retry-After"] = "5"
-                    resp.headers["Cache-Control"] = "no-store, max-age=0"
-                except Exception:
-                    pass
-                return resp
-        except Exception:
-            resp = make_response("Video klargøres", 425)
-            try:
-                resp.headers["Retry-After"] = "5"
-                resp.headers["Cache-Control"] = "no-store, max-age=0"
-            except Exception:
-                pass
-            return resp
-        view_path = _photoframe_video_prepared_path(safe_rel)
-    else:
-        view_path = ensure_viewable_copy(src, safe_rel)
+        return ("Not found", 404)
+    view_path = ensure_viewable_copy(src, safe_rel)
     try:
         vp = str(view_path)
         if vp.startswith(str(CONVERT_DIR)):
@@ -9953,81 +9940,43 @@ def api_similar_phash(photo_id: int):
     except Exception:
         dist_thr = 12
     dist_thr = max(0, min(20, dist_thr))
-    try:
-        emb_min = float(request.args.get("emb_min", "0.90"))
-    except Exception:
-        emb_min = 0.90
-    emb_min = max(0.0, min(0.999, emb_min))
 
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id, rel_path, phash, embedding_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+        row = conn.execute("SELECT id, rel_path, phash FROM photos WHERE id=?", (photo_id,)).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
         seed_phash = str(row["phash"] or "").strip().lower()
-        seed_emb = None
-        try:
-            seed_emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
-        except Exception:
-            seed_emb = None
-
-        # Best effort: compute and persist missing source embedding so fallback can work.
-        if not seed_emb:
-            try:
-                src_path = _disk_path_from_rel_path(str(row["rel_path"] or ""))
-                if src_path.exists():
-                    emb_now = _ai_embed_image_path(src_path)
-                    if emb_now:
-                        seed_emb = emb_now
-                        conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb_now), photo_id))
-                        conn.commit()
-            except Exception:
-                seed_emb = None
-
-        if (not seed_phash) and (not seed_emb):
+        if not seed_phash:
             return jsonify({
                 "ok": True,
                 "items": [],
                 "count": 0,
                 "distance": dist_thr,
-                "source": "phash_near+embedding",
+                "source": "phash_near",
             })
 
-        # More sensitive than strict prefix buckets:
-        # evaluate all pHash/embedding candidates, then keep by thresholds.
         candidates = conn.execute(
-            "SELECT id, rel_path, phash, embedding_json FROM photos WHERE id<>?",
+            "SELECT id, rel_path, phash FROM photos WHERE id<>? AND phash IS NOT NULL AND phash != ''",
             (photo_id,),
         ).fetchall()
 
         phash_scored: list[tuple[int, int]] = []
-        emb_scored: list[tuple[float, int]] = []
         for r in candidates:
             rel = str(r["rel_path"] or "")
             if not _is_rel_path_allowed_for_current_user(rel, conn):
                 continue
             pid = int(r["id"])
-            if seed_phash:
-                p = str(r["phash"] or "").strip().lower()
-                if p:
-                    d = _hamdist_hex(seed_phash, p)
-                    if d <= dist_thr:
-                        phash_scored.append((d, pid))
-            if seed_emb:
-                try:
-                    e2 = json.loads(r["embedding_json"]) if r["embedding_json"] else None
-                except Exception:
-                    e2 = None
-                if e2:
-                    s = _cosine(seed_emb, e2)
-                    if s >= emb_min:
-                        emb_scored.append((float(s), pid))
+            p = str(r["phash"] or "").strip().lower()
+            if not p:
+                continue
+            d = _hamdist_hex(seed_phash, p)
+            if d <= dist_thr:
+                phash_scored.append((d, pid))
 
-        # Order: strict pHash-near first, then embedding-only matches by cosine score.
         phash_scored.sort(key=lambda x: (x[0], -x[1]))
-        emb_scored.sort(key=lambda x: (-x[0], -x[1]))
 
         phash_by_id: dict[int, int] = {}
         ordered_ids: list[int] = []
@@ -10039,23 +9988,13 @@ def api_similar_phash(photo_id: int):
             if len(ordered_ids) >= limit:
                 break
 
-        emb_by_id: dict[int, float] = {}
-        if len(ordered_ids) < limit:
-            for s, pid in emb_scored:
-                emb_by_id[pid] = float(s)
-                if pid in phash_by_id:
-                    continue
-                ordered_ids.append(pid)
-                if len(ordered_ids) >= limit:
-                    break
-
         if not ordered_ids:
             return jsonify({
                 "ok": True,
                 "items": [],
                 "count": 0,
                 "distance": dist_thr,
-                "source": "phash_near+embedding",
+                "source": "phash_near",
             })
 
         top_ids = ordered_ids
@@ -10071,8 +10010,6 @@ def api_similar_phash(photo_id: int):
             pub = row_to_public(r)
             if pid in phash_by_id:
                 pub["distance"] = int(phash_by_id[pid])
-            if pid in emb_by_id:
-                pub["similarity"] = round(float(emb_by_id[pid]), 4)
             items.append(pub)
 
     return jsonify({
@@ -10080,8 +10017,7 @@ def api_similar_phash(photo_id: int):
         "items": items,
         "count": len(items),
         "distance": dist_thr,
-        "embedding_min": emb_min,
-        "source": "phash_near+embedding",
+        "source": "phash_near",
     })
 
 

@@ -2259,7 +2259,6 @@ function renderPhotoframePanel() {
     const lastSeenRaw = String(item.last_seen_at || '').trim();
     const lastSeenLabel = lastSeenRaw ? fmtDate(lastSeenRaw) : '-';
     const versionUi = photoframeVersionUi(item);
-    const videoPrepareUi = photoframeVideoPrepareUi(item);
     const updateUi = photoframeUpdateStatusUi(item);
     const updateBusy = !!(updateUi && ['queued', 'downloading', 'installing', 'restarting'].includes(updateUi.status));
     const previewThumbUrl = String(item.preview_thumb_url || '').trim();
@@ -2295,26 +2294,6 @@ function renderPhotoframePanel() {
                   <span class="photoframe-version-pill ${escapeHtml(versionUi.cls)}">${escapeHtml(versionUi.text)}</span>
                 </strong>
               </div>
-              ${videoPrepareUi ? `
-                <div class="photoframe-row photoframe-video-prepare-row">
-                  <span>${escapeHtml(tr('photoframe_card_video_prepare'))}</span>
-                  <strong>
-                    <span class="photoframe-video-prepare-pill ${escapeHtml(videoPrepareUi.cls)}">
-                      <span class="icon" aria-hidden="true">${escapeHtml(videoPrepareUi.icon)}</span>
-                      ${escapeHtml(videoPrepareUi.text)}
-                    </span>
-                    <span class="photoframe-video-prepare-sub">${escapeHtml(videoPrepareUi.detail)}</span>
-                    <span
-                      class="photoframe-video-prepare-bar"
-                      role="progressbar"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                      aria-valuenow="${Number(videoPrepareUi.pct) || 0}"
-                      aria-label="${escapeHtml(tr('photoframe_card_video_prepare'))}"
-                    ><span style="width:${Math.max(0, Math.min(100, Number(videoPrepareUi.pct) || 0))}%"></span></span>
-                  </strong>
-                </div>
-              ` : ''}
               ${updateUi ? `
                 <div class="photoframe-row photoframe-update-row">
                   <span>${escapeHtml(tr('photoframe_card_update'))}</span>
@@ -2847,12 +2826,20 @@ function renderPhotoframePanel() {
 
   const renderScopePhotos = () => {
     if (!scopePhotosList) return;
-    if (!Array.isArray(scopePhotoOptions) || !scopePhotoOptions.length) {
+    const photoItems = Array.isArray(scopePhotoOptions)
+      ? scopePhotoOptions.filter((it) => {
+          const rel = String(it && it.rel_path ? it.rel_path : '').toLowerCase();
+          const extRaw = String((it && (it.ext || rel)) || '').toLowerCase();
+          const isVideo = !!(it && it.is_video) || ['.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.3gp'].some((ext) => extRaw.endsWith(ext));
+          return !isVideo;
+        })
+      : [];
+    if (!photoItems.length) {
       scopePhotosList.innerHTML = `<div class="mini-label">${escapeHtml(tr('photoframe_scope_empty_photos'))}</div>`;
       updateScopeSelectedCount();
       return;
     }
-    scopePhotosList.innerHTML = scopePhotoOptions.map((it) => {
+    scopePhotosList.innerHTML = photoItems.map((it) => {
       const pid = Number(it && it.id ? it.id : 0) || 0;
       if (!pid) return '';
       const selected = scopePhotosSelected.has(pid);
@@ -2860,11 +2847,8 @@ function renderPhotoframePanel() {
       const label = String(it && it.label ? it.label : `Photo #${pid}`).trim();
       const thumb = String(it && it.thumb_url ? it.thumb_url : '').trim();
       const extRaw = String((it && (it.ext || rel || label)) || '').toLowerCase();
-      const isVideo = !!(it && it.is_video) || ['.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.3gp'].some((ext) => extRaw.endsWith(ext));
-      const isGif = (!!(it && it.is_gif) || extRaw.endsWith('.gif')) && !isVideo;
-      const mediaBadge = isVideo
-        ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`
-        : (isGif ? `<div class="gif-badge" aria-label="GIF" title="GIF">GIF</div>` : '');
+      const isGif = !!(it && it.is_gif) || extRaw.endsWith('.gif');
+      const mediaBadge = isGif ? `<div class="gif-badge" aria-label="GIF" title="GIF">GIF</div>` : '';
       return `
         <article class="photoframe-scope-photo-card${selected ? ' selected' : ''}" data-photoframe-scope-photo-card="${pid}">
           <div class="photoframe-scope-photo-thumb">
@@ -2994,7 +2978,13 @@ function renderPhotoframePanel() {
     if (!res.ok || !data || !data.ok) {
       throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_load_failed'));
     }
-    scopePhotoOptions = Array.isArray(data.items) ? data.items : [];
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    scopePhotoOptions = rawItems.filter((it) => {
+      const rel = String(it && it.rel_path ? it.rel_path : '').toLowerCase();
+      const extRaw = String((it && (it.ext || rel)) || '').toLowerCase();
+      const isVideo = !!(it && it.is_video) || ['.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.3gp'].some((ext) => extRaw.endsWith(ext));
+      return !isVideo;
+    });
   };
 
   const openScopeModal = async (frameId, frameName) => {
@@ -3289,15 +3279,7 @@ function renderPhotoframePanel() {
         if (!res.ok || !data || !data.ok) {
           throw new Error((data && data.error) ? String(data.error) : tr('photoframe_scope_save_failed'));
         }
-        const queuedVideoPrepare = Number(data && data.queued_video_prepare ? data.queued_video_prepare : 0) || 0;
-        if (queuedVideoPrepare > 0) {
-          showStatus(
-            tr('photoframe_scope_saved_with_video_prepare').replace('{count}', String(queuedVideoPrepare)),
-            'ok'
-          );
-        } else {
-          showStatus(tr('photoframe_scope_saved'), 'ok');
-        }
+        showStatus(tr('photoframe_scope_saved'), 'ok');
         closeScopeModal();
         await loadPhotoframeStatus();
       } catch (e) {
@@ -10957,7 +10939,6 @@ async function openSimilarForSelected(){
   if (!sourceId) return;
   // Recommended balanced profile for "Lignende".
   const distance = 12;
-  const embMin = 0.90;
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
@@ -10968,7 +10949,7 @@ async function openSimilarForSelected(){
   renderSimilarModalGrid([], { showEmpty: false });
   openSimilarModal();
   try {
-    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}&emb_min=${encodeURIComponent(embMin)}`);
+    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) {
       _setSimilarModalStatus((data && data.error) ? String(data.error) : tr('similar_fetch_failed'), 'err');
