@@ -4307,15 +4307,24 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     existing_job = _sanitize_photoframe_update_job_id(existing.get("update_job_id"))
     candidate_job = _sanitize_photoframe_update_job_id(candidate.get("update_job_id"))
     candidate_status = _sanitize_photoframe_update_status(candidate.get("update_status"))
+    existing_status = _sanitize_photoframe_update_status(existing.get("update_status"))
+    active_states = {"queued", "downloading", "installing", "restarting"}
     if not existing_job:
         return candidate
     # A freshly queued new job must win over stale persisted state.
     if candidate_job and (candidate_job != existing_job) and (candidate_status == "queued"):
         return candidate
+    # Protect an active persisted job from stale candidate snapshots that carry
+    # no job id or a different (older) job id.
+    if (existing_status in active_states) and (candidate_job != existing_job):
+        for key in _photoframe_update_field_names():
+            candidate[key] = existing.get(key)
+        if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
+            candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
+        return candidate
 
     existing_rev = _photoframe_update_state_rev(existing)
     candidate_rev = _photoframe_update_state_rev(candidate)
-    existing_status = _sanitize_photoframe_update_status(existing.get("update_status"))
     rank = {
         "": 0,
         "queued": 1,
