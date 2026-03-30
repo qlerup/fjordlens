@@ -1150,6 +1150,13 @@ body.view-mapper .mapper-header-actions {
   content-visibility: visible;
   contain-intrinsic-size: auto;
 }
+/* Mapper view on mobile: avoid scroll-triggered repaint glitches from lazy card rendering. */
+@media (max-width: 760px) {
+  body.view-mapper .photo-card {
+    content-visibility: visible;
+    contain-intrinsic-size: auto;
+  }
+}
 .photo-card:hover {
   transform: translateY(-2px);
   border-color: rgba(91, 140, 255, 0.55);

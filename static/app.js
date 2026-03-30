@@ -10924,6 +10924,7 @@ closeViewer = function(){
 // Keep the slide-out anchored to the media edge on resize
 window.addEventListener('resize', ()=>{
   try {
+    if (!els.viewer || els.viewer.classList.contains('hidden')) return;
     positionViewerInfoPanel();
     positionViewerInfoTrigger();
   } catch {}
