@@ -1698,8 +1698,8 @@ body.view-photoframe .photoframe-header-actions {
   display: grid;
   gap: 10px;
   min-height: 250px;
-  width: min(100%, 1180px);
-  max-width: 1180px;
+  width: min(100%, 980px);
+  max-width: 980px;
   min-width: 0;
   justify-self: start;
 }
