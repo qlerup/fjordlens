@@ -1823,6 +1823,10 @@ body.view-photoframe .photoframe-header-actions {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.photoframe-row-token .photoframe-token-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0.02em;
+}
 .photoframe-update-row strong {
   text-align: right;
 }
@@ -1989,6 +1993,19 @@ body.view-photoframe .photoframe-header-actions {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.photoframe-modal {
+  padding: 12px;
+}
+.photoframe-modal-card {
+  width: min(96vw, 560px);
+  max-width: 96vw;
+}
+.photoframe-token-field {
+  width: 100%;
+}
+.photoframe-token-field .mapper-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 .photoframe-scope-list {
   max-height: 38vh;
@@ -2971,12 +2988,89 @@ body.view-mapper .mapper-header-actions { display: flex; }
     width: 100%;
     max-width: none;
     flex: 1 1 auto;
+    min-height: 0;
+    padding: 10px;
+    gap: 8px;
   }
   .photoframe-card-body {
     grid-template-columns: 1fr;
+    gap: 10px;
   }
   .photoframe-preview {
-    max-width: 240px;
+    max-width: none;
+    width: 100%;
+    min-height: 160px;
+  }
+  .photoframe-card-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .photoframe-card-title {
+    font-size: 0.95rem;
+    line-height: 1.25;
+  }
+  .photoframe-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 4px;
+    padding: 8px 9px;
+  }
+  .photoframe-row span {
+    font-size: 0.72rem;
+    opacity: 0.92;
+  }
+  .photoframe-row strong {
+    text-align: left;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: break-word;
+  }
+  .photoframe-version-row strong,
+  .photoframe-video-prepare-row strong {
+    justify-items: start;
+    text-align: left;
+  }
+  .photoframe-version-pill,
+  .photoframe-update-pill,
+  .photoframe-video-prepare-pill {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .photoframe-video-prepare-sub {
+    max-width: 100%;
+  }
+  .photoframe-video-prepare-bar {
+    width: 100%;
+  }
+  .photoframe-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .photoframe-card-actions .btn {
+    width: 100%;
+    min-width: 0;
+  }
+  .photoframe-modal {
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+  .photoframe-modal-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 14px 14px 0 0 !important;
+    max-height: 88vh;
+    overflow: auto;
+    padding: 14px !important;
+  }
+  .photoframe-token-field {
+    display: grid !important;
+    grid-template-columns: 1fr;
+    gap: 8px !important;
   }
   .photoframe-scope-toolbar-row #photoframeScopeSelectedCount {
     width: 100%;

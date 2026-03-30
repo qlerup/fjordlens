@@ -2314,7 +2314,7 @@ function renderPhotoframePanel() {
           <div class="photoframe-card-main">
             ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
             <div class="photoframe-meta">
-              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong>${escapeHtml(tokenText)}</strong></div>
+              <div class="photoframe-row photoframe-row-token"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong class="photoframe-token-value">${escapeHtml(tokenText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_scope'))}</span><strong>${escapeHtml(scopeText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
@@ -2466,8 +2466,8 @@ function renderPhotoframePanel() {
       ${emptyBlock}
       <div class="photoframe-grid">${cardsHtml}</div>
     </section>
-    <div id="photoframeCreateModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
-      <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+    <div id="photoframeCreateModal" class="hidden photoframe-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+      <div class="photoframe-modal-card" style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
           <h3 style="margin:0;">${escapeHtml(tr('photoframe_create_title'))}</h3>
           <button id="photoframeCreateCloseBtn" class="btn">${escapeHtml(tr('scan_modal_close'))}</button>
@@ -2482,7 +2482,7 @@ function renderPhotoframePanel() {
           <div class="mini-label" style="margin-bottom:8px;font-weight:700;">${escapeHtml(tr('photoframe_create_result_title'))}</div>
           <div class="form-row" style="margin-bottom:0;">
             <label for="photoframeCreateToken">${escapeHtml(tr('photoframe_create_token_label'))}</label>
-            <div class="toolbar" style="gap:8px;align-items:stretch;">
+            <div class="toolbar photoframe-token-field" style="gap:8px;align-items:stretch;">
               <input id="photoframeCreateToken" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
               <button id="photoframeCreateCopyTokenBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
             </div>
@@ -2491,15 +2491,15 @@ function renderPhotoframePanel() {
         </div>
       </div>
     </div>
-    <div id="photoframeShowTokenModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10001;">
-      <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+    <div id="photoframeShowTokenModal" class="hidden photoframe-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10001;">
+      <div class="photoframe-modal-card" style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
           <h3 id="photoframeShowTokenTitle" style="margin:0;">${escapeHtml(tr('photoframe_show_token_title'))}</h3>
           <button id="photoframeShowTokenCloseBtn" class="btn">${escapeHtml(tr('photoframe_show_token_close'))}</button>
         </div>
         <div class="form-row" style="margin-bottom:0;">
           <label for="photoframeShowTokenInput">${escapeHtml(tr('photoframe_create_token_label'))}</label>
-          <div class="toolbar" style="gap:8px;align-items:stretch;">
+          <div class="toolbar photoframe-token-field" style="gap:8px;align-items:stretch;">
             <input id="photoframeShowTokenInput" class="mapper-input" type="text" readonly style="min-width:0;width:100%;">
             <button id="photoframeShowTokenCopyBtn" class="btn" type="button">${escapeHtml(tr('photoframe_create_copy'))}</button>
           </div>
