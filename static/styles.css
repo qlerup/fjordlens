@@ -1684,11 +1684,10 @@ body.view-photoframe .photoframe-header-actions {
   to { transform: rotate(360deg); }
 }
 .photoframe-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
   gap: 12px;
-  align-items: stretch;
-  justify-content: flex-start;
+  align-items: start;
 }
 .photoframe-card {
   border: 1px solid var(--border);
@@ -1698,13 +1697,13 @@ body.view-photoframe .photoframe-header-actions {
   display: grid;
   gap: 10px;
   min-height: 250px;
-  flex: 0 1 700px;
-  width: min(100%, 700px);
-  max-width: 700px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 .photoframe-card-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(210px, 24vw, 270px);
+  grid-template-columns: minmax(0, 1fr) clamp(220px, 28vw, 320px);
   gap: 12px;
   align-items: start;
 }
@@ -1805,11 +1804,16 @@ body.view-photoframe .photoframe-header-actions {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--panel-2);
   padding: 7px 9px;
   font-size: 0.78rem;
+}
+.photoframe-row > span,
+.photoframe-row > strong {
+  min-width: 0;
 }
 .photoframe-row span {
   color: var(--muted);
@@ -1829,12 +1833,16 @@ body.view-photoframe .photoframe-header-actions {
 }
 .photoframe-update-row strong {
   text-align: right;
+  max-width: 100%;
+  overflow: hidden;
 }
 .photoframe-version-row strong {
   display: inline-grid;
   gap: 4px;
   justify-items: end;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .photoframe-video-prepare-row strong {
   display: inline-grid;
@@ -1945,12 +1953,16 @@ body.view-photoframe .photoframe-header-actions {
   align-items: center;
   gap: 6px;
   max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 8px;
   background: var(--panel);
   color: var(--muted);
   font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .photoframe-update-pill .icon {
   display: inline-flex;
@@ -2006,6 +2018,16 @@ body.view-photoframe .photoframe-header-actions {
 }
 .photoframe-token-field .mapper-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (max-width: 1080px) {
+  .photoframe-card-body {
+    grid-template-columns: 1fr;
+  }
+  .photoframe-preview {
+    max-width: none;
+    width: 100%;
+    min-height: 170px;
+  }
 }
 .photoframe-scope-list {
   max-height: 38vh;
