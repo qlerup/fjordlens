@@ -1688,6 +1688,7 @@ body.view-photoframe .photoframe-header-actions {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
   gap: 12px;
   align-items: start;
+  justify-items: start;
 }
 .photoframe-card {
   border: 1px solid var(--border);
@@ -1697,9 +1698,10 @@ body.view-photoframe .photoframe-header-actions {
   display: grid;
   gap: 10px;
   min-height: 250px;
-  width: 100%;
-  max-width: none;
+  width: min(100%, 1180px);
+  max-width: 1180px;
   min-width: 0;
+  justify-self: start;
 }
 .photoframe-card-body {
   display: grid;
