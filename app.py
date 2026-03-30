@@ -3755,8 +3755,48 @@ def _share_expires_at_from_body(
     return expires_at, None
 
 
+def _normalize_share_folder_path(value: Any) -> str:
+    """Normalize share folder paths to canonical user-subdir form.
+
+    Accepts legacy variants like:
+    - uploads/<subdir>
+    - originals/<subdir>
+    - converted/<subdir>
+    - uploads/originals/<subdir>
+    - uploads/converted/<subdir>
+    """
+    try:
+        folder = _normalize_upload_subdir(str(value or ""))
+    except Exception:
+        return ""
+    if not folder:
+        return ""
+
+    prefixes = (
+        "uploads/originals/",
+        "uploads/converted/",
+        "uploads/",
+        "originals/",
+        "converted/",
+    )
+    for pref in prefixes:
+        if folder.startswith(pref):
+            folder = folder[len(pref):]
+            break
+
+    try:
+        folder = _normalize_upload_subdir(folder)
+    except Exception:
+        return ""
+    if not folder:
+        return ""
+    if folder.lower() in {"uploads", "originals", "converted"}:
+        return ""
+    return folder
+
+
 def _share_folder_rel_prefix(folder_path: str) -> str:
-    folder = _normalize_upload_subdir(folder_path)
+    folder = _normalize_share_folder_path(folder_path)
     return f"uploads/{folder}" if folder else "uploads"
 
 
@@ -3768,12 +3808,12 @@ def _share_folder_paths(conn: sqlite3.Connection, share_row: sqlite3.Row) -> lis
     ).fetchall()
     values: list[str] = []
     for r in rows:
-        fp = _normalize_upload_subdir(str(r["folder_path"] or ""))
+        fp = _normalize_share_folder_path(r["folder_path"])
         if fp and fp not in values:
             values.append(fp)
     if values:
         return values
-    fallback = _normalize_upload_subdir(str(share_row["folder_path"] or ""))
+    fallback = _normalize_share_folder_path(share_row["folder_path"])
     return [fallback] if fallback else []
 
 
@@ -3803,6 +3843,17 @@ def _share_scope_sql(prefixes: list[str]) -> tuple[str, list[Any]]:
     return " OR ".join(clauses), params
 
 
+def _load_share_row_from_token(token: str) -> Optional[sqlite3.Row]:
+    token_hash = _share_token_digest(token)
+    if not token_hash:
+        return None
+    with closing(get_conn()) as conn:
+        return conn.execute(
+            "SELECT * FROM share_links WHERE token_hash=? LIMIT 1",
+            (token_hash,),
+        ).fetchone()
+
+
 def _load_share_from_token(token: str, touch: bool = False) -> Optional[sqlite3.Row]:
     token_hash = _share_token_digest(token)
     if not token_hash:
@@ -3825,6 +3876,27 @@ def _load_share_from_token(token: str, touch: bool = False) -> Optional[sqlite3.
             except Exception:
                 pass
     return row
+
+
+def _share_redirect_for_authenticated_user(token: str):
+    """If a share is inactive, route logged-in users to normal app access when possible."""
+    try:
+        if not bool(getattr(current_user, "is_authenticated", False)):
+            return None
+    except Exception:
+        return None
+
+    share_row = _load_share_row_from_token(token)
+    if not share_row:
+        return None
+
+    with closing(get_conn()) as conn:
+        folder_paths = _share_folder_paths(conn, share_row)
+        for fp in folder_paths:
+            rel = f"uploads/{fp}" if fp else "uploads"
+            if _is_rel_visible_for_current_user(rel, conn):
+                return redirect(url_for("index", view="mapper", mappe=fp))
+    return None
 
 
 def _share_session_key(share_row: sqlite3.Row) -> str:
@@ -7903,6 +7975,9 @@ def index():
 def shared_folder_view(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
+        fallback = _share_redirect_for_authenticated_user(token)
+        if fallback is not None:
+            return fallback
         return render_template("login.html", error=_ui_text("share_invalid_or_expired")), 404
     return render_template("shared_folder.html", share_token=token)
 
@@ -7954,7 +8029,7 @@ def api_create_share():
     folder_paths: list[str] = []
     for raw in folder_paths_raw:
         try:
-            fp = _normalize_upload_subdir(raw)
+            fp = _normalize_share_folder_path(raw)
         except Exception:
             fp = ""
         if fp and fp not in folder_paths:
@@ -8339,7 +8414,7 @@ def api_share_tus_create(token: str):
         folder_paths = _share_folder_paths(conn, share)
     folder_path = folder_paths[0] if folder_paths else ""
     try:
-        subdir = _normalize_upload_subdir(folder_path)
+        subdir = _normalize_share_folder_path(folder_path)
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400, _tus_headers()
     # Store physical files under internal originals root to mirror user uploads
@@ -13071,7 +13146,7 @@ def api_admin_shares_list():
             sid = int(fr["share_id"] or 0)
         except Exception:
             continue
-        fp = _normalize_upload_subdir(str(fr["folder_path"] or ""))
+        fp = _normalize_share_folder_path(fr["folder_path"])
         if not sid or not fp:
             continue
         bucket = folders_by_share.setdefault(sid, [])
@@ -13097,7 +13172,7 @@ def api_admin_shares_list():
         share_id = int(r["id"])
         folder_paths = list(folders_by_share.get(share_id, []))
         if not folder_paths:
-            fallback = _normalize_upload_subdir(str(r["folder_path"] or ""))
+            fallback = _normalize_share_folder_path(r["folder_path"])
             if fallback:
                 folder_paths = [fallback]
         share_name = str(r["share_name"] or "").strip()
@@ -13113,7 +13188,7 @@ def api_admin_shares_list():
             {
                 "id": share_id,
                 "share_name": share_name,
-                "folder_path": str(r["folder_path"] or ""),
+                "folder_path": (folder_paths[0] if folder_paths else _normalize_share_folder_path(r["folder_path"])),
                 "folder_paths": folder_paths,
                 "folder_count": len(folder_paths),
                 "permission": permission,
@@ -13216,7 +13291,7 @@ def api_admin_shares_update(share_id: int):
     folder_paths: list[str] = []
     for raw in folder_paths_raw:
         try:
-            fp = _normalize_upload_subdir(raw)
+            fp = _normalize_share_folder_path(raw)
         except Exception:
             fp = ""
         if fp and fp not in folder_paths:
