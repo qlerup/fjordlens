@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import zipfile
+import unicodedata
 from contextlib import closing
 from datetime import datetime, timedelta
 import time
@@ -3234,22 +3235,30 @@ def get_upload_destination() -> str:
 
 
 def _sanitize_folder_part_allow_spaces(part: str) -> str:
-    """Sanitize a single folder segment while preserving spaces.
-    - Disallow empty, '.' and '..'
-    - Collapse whitespace to single spaces
-    - Allow letters (incl. Danish Ã†Ã˜Ã…Ã¦Ã¸Ã¥), digits, space, '-', '_', '.', '()', '[]', '&', '+', ',', ';', '@', '!', '~', "'", '`', '^', '='
+    """
+    Keep folder names readable while preventing traversal and weird control chars.
+    - Allow Unicode letters/numbers, space, '-', '_', '.', '()', '[]', '&', '+', ',', ';', '@', '!', '~', "'", '`', '^', '='
     - Strip trailing dot/space to avoid Windows quirks when developing locally
     """
     p = str(part or "").strip()
     if not p or p in {".", ".."}:
         raise ValueError("Ugyldig mappe")
     p = re.sub(r"\s+", " ", p)
-    p = re.sub(r"[^0-9A-Za-zÃ†Ã˜Ã…Ã¦Ã¸Ã¥ _\-\.\(\)\[\]&\+,;@!~'`^=]", "", p)
+    allowed_symbols = set(" _-().[]&+,;@!~'`^=")
+    cleaned_chars: list[str] = []
+    for ch in p:
+        if ch in allowed_symbols:
+            cleaned_chars.append(ch)
+            continue
+        # Keep all Unicode letters and numbers (e.g. Danish letters).
+        cat = unicodedata.category(ch)
+        if cat and cat[0] in {"L", "N"}:
+            cleaned_chars.append(ch)
+    p = "".join(cleaned_chars)
     p = p.rstrip(" .")
     if not p:
         raise ValueError("Ugyldig mappe")
     return p
-
 
 def _normalize_upload_subdir(raw: Optional[str]) -> str:
     value = (raw or "").strip().replace("\\", "/")
