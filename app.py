@@ -5023,6 +5023,76 @@ def _photoframe_try_set_current_photo(
     return photo_id
 
 
+def _photoframe_location_from_row(row: Any) -> tuple[str, str, str]:
+    city = ""
+    country = ""
+    location = ""
+    gps_name = _sanitize_photoframe_text((row["gps_name"] if row is not None else ""), 120)
+
+    mj_raw = ""
+    try:
+        mj_raw = str((row["metadata_json"] if row is not None else "") or "").strip()
+    except Exception:
+        mj_raw = ""
+    if mj_raw:
+        try:
+            mj = json.loads(mj_raw)
+            if isinstance(mj, dict):
+                geo = mj.get("geo")
+                if isinstance(geo, dict):
+                    city = _sanitize_photoframe_text(geo.get("city"), 80)
+                    country = _sanitize_photoframe_text(geo.get("country"), 80)
+        except Exception:
+            pass
+
+    if city or country:
+        location = ", ".join([x for x in [city, country] if x])
+    elif gps_name:
+        location = gps_name
+        # Best effort split when gps_name already looks like "City, Country".
+        parts = [p.strip() for p in gps_name.split(",") if p and p.strip()]
+        if len(parts) >= 2:
+            if not city:
+                city = _sanitize_photoframe_text(parts[0], 80)
+            if not country:
+                country = _sanitize_photoframe_text(parts[-1], 80)
+
+    return (
+        _sanitize_photoframe_text(location, 120),
+        _sanitize_photoframe_text(city, 80),
+        _sanitize_photoframe_text(country, 80),
+    )
+
+
+def _photoframe_date_from_row(row: Any) -> str:
+    captured_at = _sanitize_photoframe_text((row["captured_at"] if row is not None else ""), 40)
+    if not captured_at:
+        return ""
+
+    # Prefer dates that clearly come from photo metadata.
+    exif_raw = ""
+    try:
+        exif_raw = str((row["exif_json"] if row is not None else "") or "").strip()
+    except Exception:
+        exif_raw = ""
+    if exif_raw:
+        try:
+            exif_map = json.loads(exif_raw)
+            if isinstance(exif_map, dict):
+                for key in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
+                    if str(exif_map.get(key) or "").strip():
+                        return captured_at
+        except Exception:
+            pass
+
+    # Fallback guard: if captured_at equals fs timestamps, treat as unknown.
+    modified_fs = _sanitize_photoframe_text((row["modified_fs"] if row is not None else ""), 40)
+    created_fs = _sanitize_photoframe_text((row["created_fs"] if row is not None else ""), 40)
+    if captured_at and (captured_at not in {modified_fs, created_fs}):
+        return captured_at
+    return ""
+
+
 def _photoframe_compute_feed_revision(images: list[Dict[str, Any]], scope_mode: str = "") -> str:
     h = hashlib.sha256()
     h.update(str(scope_mode or "").strip().lower().encode("utf-8", errors="ignore"))
@@ -5031,6 +5101,10 @@ def _photoframe_compute_feed_revision(images: list[Dict[str, Any]], scope_mode: 
         updated_at = str((item or {}).get("updated_at") or "").strip()
         media_type = str((item or {}).get("media_type") or "").strip().lower()
         ext = str((item or {}).get("ext") or "").strip().lower()
+        location = str((item or {}).get("location") or "").strip()
+        city = str((item or {}).get("location_city") or "").strip()
+        country = str((item or {}).get("location_country") or "").strip()
+        captured_at = str((item or {}).get("captured_at") or "").strip()
         if not pid:
             continue
         h.update(b"|")
@@ -5041,6 +5115,14 @@ def _photoframe_compute_feed_revision(images: list[Dict[str, Any]], scope_mode: 
         h.update(media_type.encode("utf-8", errors="ignore"))
         h.update(b":")
         h.update(ext.encode("utf-8", errors="ignore"))
+        h.update(b"^")
+        h.update(location.encode("utf-8", errors="ignore"))
+        h.update(b",")
+        h.update(city.encode("utf-8", errors="ignore"))
+        h.update(b",")
+        h.update(country.encode("utf-8", errors="ignore"))
+        h.update(b"~")
+        h.update(captured_at.encode("utf-8", errors="ignore"))
     return _sanitize_photoframe_feed_rev(h.hexdigest()[:16])
 
 
@@ -9578,7 +9660,16 @@ def api_frame_feed(token: str):
                 ph = ",".join(["?"] * len(ids_for_query))
                 rows = conn.execute(
                     f"""
-                    SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                    SELECT
+                        id,
+                        rel_path,
+                        captured_at,
+                        created_fs,
+                        modified_fs,
+                        gps_name,
+                        metadata_json,
+                        exif_json,
+                        COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
                     FROM photos
                     WHERE id IN ({ph})
                     ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
@@ -9609,7 +9700,16 @@ def api_frame_feed(token: str):
                     params.extend([pref, pref + "/%"])
                 rows = conn.execute(
                     f"""
-                    SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                    SELECT
+                        id,
+                        rel_path,
+                        captured_at,
+                        created_fs,
+                        modified_fs,
+                        gps_name,
+                        metadata_json,
+                        exif_json,
+                        COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
                     FROM photos
                     WHERE {" OR ".join(conds)}
                     ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
@@ -9620,7 +9720,16 @@ def api_frame_feed(token: str):
         else:
             rows = conn.execute(
                 """
-                SELECT id, rel_path, COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
+                SELECT
+                    id,
+                    rel_path,
+                    captured_at,
+                    created_fs,
+                    modified_fs,
+                    gps_name,
+                    metadata_json,
+                    exif_json,
+                    COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) AS updated_at
                 FROM photos
                 ORDER BY COALESCE(captured_at, modified_fs, created_fs, imported_at, last_scanned_at) DESC, id DESC
                 LIMIT ?
@@ -9664,6 +9773,8 @@ def api_frame_feed(token: str):
         if media_ext in VIDEO_EXTS:
             continue
         updated_at = _sanitize_photoframe_text(row["updated_at"], 40)
+        location, location_city, location_country = _photoframe_location_from_row(row)
+        captured_at = _photoframe_date_from_row(row)
         images.append(
             {
                 "id": str(photo_id),
@@ -9671,6 +9782,10 @@ def api_frame_feed(token: str):
                 "updated_at": updated_at or now,
                 "media_type": "image",
                 "ext": media_ext,
+                "location": location,
+                "location_city": location_city,
+                "location_country": location_country,
+                "captured_at": captured_at,
             }
         )
 
