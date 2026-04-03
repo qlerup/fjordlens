@@ -2970,7 +2970,9 @@ function renderPhotoframePanel() {
       card.addEventListener('pointerdown', (ev) => {
         if (ev.button != null && Number(ev.button) !== 0) return;
         if (scopePhotoSelectMode) {
-          startScopePhotoDragSelection(ev, card, null);
+          const pointerType = String((ev && ev.pointerType) || '').toLowerCase();
+          const isTouchLike = pointerType === 'touch' || pointerType === 'pen' || !pointerType;
+          if (!isTouchLike) startScopePhotoDragSelection(ev, card, null);
           return;
         }
         lpActivated = false;
