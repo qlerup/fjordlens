@@ -9519,10 +9519,29 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             allow_redirects=False,
         )
     except Exception as exc:
-        return _photoframe_settings_proxy_error_page(f"Forbindelse til fotorammen fejlede: {exc}", 502)
+        return _photoframe_settings_proxy_error_page(
+            f"Forbindelse til fotorammen fejlede ({target_base_url}): {exc}",
+            409,
+        )
+
+    try:
+        upstream_status = int(getattr(upstream, "status_code", 0) or 0)
+    except Exception:
+        upstream_status = 0
+    if upstream_status >= 500:
+        return _photoframe_settings_proxy_error_page(
+            f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.",
+            409,
+        )
 
     proxy_root = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
-    return _photoframe_proxy_response(upstream, proxy_root, target_base_url)
+    try:
+        return _photoframe_proxy_response(upstream, proxy_root, target_base_url)
+    except Exception as exc:
+        return _photoframe_settings_proxy_error_page(
+            f"Kunne ikke gengive svar fra fotorammen ({target_base_url}): {exc}",
+            409,
+        )
 
 
 @app.route("/api/photoframes/<token_id>/scope", methods=["GET", "PUT"])

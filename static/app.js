@@ -2270,6 +2270,60 @@ function photoframeVideoPrepareUi(item) {
   return { cls, icon, text, detail, pct };
 }
 
+const PHOTOFRAME_PREVIEW_SYNC_ROWS = 5;
+
+function syncPhotoframePreviewHeights() {
+  const cards = Array.from(document.querySelectorAll('.photoframe-card'));
+  if (!cards.length) return;
+  let isMobile = false;
+  try {
+    isMobile = !!window.matchMedia('(max-width: 760px)').matches;
+  } catch (_) {
+    isMobile = false;
+  }
+
+  cards.forEach((card) => {
+    const preview = card.querySelector('.photoframe-preview');
+    if (!(preview instanceof HTMLElement)) return;
+
+    if (isMobile) {
+      preview.style.height = '';
+      preview.style.minHeight = '';
+      preview.style.maxHeight = '';
+      return;
+    }
+
+    const rows = Array.from(card.querySelectorAll('.photoframe-meta .photoframe-row')).slice(0, PHOTOFRAME_PREVIEW_SYNC_ROWS);
+    if (rows.length < PHOTOFRAME_PREVIEW_SYNC_ROWS) {
+      preview.style.height = '';
+      preview.style.minHeight = '';
+      preview.style.maxHeight = '';
+      return;
+    }
+
+    let totalHeight = 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!(row instanceof HTMLElement)) continue;
+      const rowRect = row.getBoundingClientRect();
+      totalHeight += rowRect.height;
+      if (i < (rows.length - 1)) {
+        const nextRow = rows[i + 1];
+        if (nextRow instanceof HTMLElement) {
+          const nextRect = nextRow.getBoundingClientRect();
+          totalHeight += Math.max(0, nextRect.top - rowRect.bottom);
+        }
+      }
+    }
+
+    const targetPx = Math.max(120, Math.round(totalHeight));
+    const targetCss = `${targetPx}px`;
+    preview.style.height = targetCss;
+    preview.style.minHeight = targetCss;
+    preview.style.maxHeight = targetCss;
+  });
+}
+
 function renderPhotoframePanel() {
   if (!els.grid) return;
   const items = Array.isArray(state.photoframeItems) ? state.photoframeItems : [];
@@ -2574,6 +2628,18 @@ function renderPhotoframePanel() {
       </div>
     </div>
   `;
+
+  try {
+    window.requestAnimationFrame(() => syncPhotoframePreviewHeights());
+  } catch (_) {
+    syncPhotoframePreviewHeights();
+  }
+  els.grid.querySelectorAll('.photoframe-preview img').forEach((img) => {
+    if (!img.complete) {
+      img.addEventListener('load', syncPhotoframePreviewHeights, { once: true });
+      img.addEventListener('error', syncPhotoframePreviewHeights, { once: true });
+    }
+  });
 
   const refreshBtn = document.getElementById('photoframeRefreshBtn');
   if (refreshBtn) {
@@ -10686,6 +10752,9 @@ window.addEventListener('resize', () => {
       document.body.classList.toggle('compact-settings', isSmall);
     } else {
       document.body.classList.remove('compact-settings');
+    }
+    if (state.view === 'photoframe') {
+      syncPhotoframePreviewHeights();
     }
   } catch {}
 });
