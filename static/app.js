@@ -3509,7 +3509,7 @@ function renderPhotoframePanel() {
         return;
       }
 
-      const preOpened = window.open('about:blank', '_blank', 'noopener');
+      const preOpened = window.open('', '_blank');
       if (!preOpened) {
         showStatus(tr('photoframe_open_settings_popup_blocked'), 'err');
         return;
@@ -3519,7 +3519,7 @@ function renderPhotoframePanel() {
         const doc = preOpened.document;
         if (doc) {
           doc.title = tr('photoframe_open_settings_btn');
-          doc.body.innerHTML = `<div style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#e6edf3;background:#0d1117;">${escapeHtml(tr('photoframe_open_settings_waiting'))}</div>`;
+          doc.body.innerHTML = `<div style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#e6edf3;background:#0d1117;min-height:100vh;">${escapeHtml(tr('photoframe_open_settings_waiting'))}</div>`;
         }
       } catch (_) {}
 
@@ -3545,7 +3545,13 @@ function renderPhotoframePanel() {
         preOpened.location.href = targetUrl;
         showStatus(tr('photoframe_open_settings_ready'), 'ok');
       } catch (e) {
-        try { preOpened.close(); } catch (_) {}
+        try {
+          const doc = preOpened.document;
+          if (doc) {
+            doc.title = tr('photoframe_open_settings_failed');
+            doc.body.innerHTML = `<div style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#f8d7da;background:#2a0f12;min-height:100vh;">${escapeHtml(String((e && e.message) || tr('photoframe_open_settings_failed')))}</div>`;
+          }
+        } catch (_) {}
         showStatus(String((e && e.message) || tr('photoframe_open_settings_failed')), 'err');
       } finally {
         btn.disabled = false;
