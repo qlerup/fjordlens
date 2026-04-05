@@ -606,6 +606,10 @@ const I18N = {
     photoframe_restart_kiosk_confirm: 'Genstarte kioskmode for {name}?',
     photoframe_restart_kiosk_queued: 'Kiosk-genstart sendt til enhed.',
     photoframe_restart_kiosk_failed: 'Kunne ikke sende kiosk-genstart.',
+    photoframe_reset_device_btn: 'Nulstil',
+    photoframe_reset_device_confirm: 'Nulstil {name}? Dette sletter indstillinger og cachede billeder/videoer.',
+    photoframe_reset_device_queued: 'Nulstilling sendt til enhed.',
+    photoframe_reset_device_failed: 'Kunne ikke sende nulstilling.',
     photoframe_open_settings_btn: 'Indstillinger',
     photoframe_open_settings_failed: 'Kunne ikke åbne indstillinger.',
     photoframe_open_settings_waiting: 'Venter på næste heartbeat fra rammen...',
@@ -1185,6 +1189,10 @@ const I18N = {
     photoframe_restart_kiosk_confirm: 'Restart kiosk mode for {name}?',
     photoframe_restart_kiosk_queued: 'Kiosk restart queued for device.',
     photoframe_restart_kiosk_failed: 'Could not queue kiosk restart.',
+    photoframe_reset_device_btn: 'Reset',
+    photoframe_reset_device_confirm: 'Reset {name}? This deletes settings and cached photos/videos.',
+    photoframe_reset_device_queued: 'Device reset queued.',
+    photoframe_reset_device_failed: 'Could not queue device reset.',
     photoframe_open_settings_btn: 'Settings',
     photoframe_open_settings_failed: 'Could not open settings.',
     photoframe_open_settings_waiting: 'Waiting for next heartbeat from the frame...',
@@ -2451,6 +2459,14 @@ function renderPhotoframePanel() {
                   data-frame-name="${escapeHtml(frameName)}"
                   ${updateBusy ? ' disabled' : ''}
                 >${escapeHtml(tr('photoframe_restart_kiosk_btn'))}</button>
+                <button
+                  class="btn small danger"
+                  type="button"
+                  data-photoframe-action="reset-device"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-frame-name="${escapeHtml(frameName)}"
+                  ${updateBusy ? ' disabled' : ''}
+                >${escapeHtml(tr('photoframe_reset_device_btn'))}</button>
                 ${updateBusy ? `
                   <button
                     class="btn small danger"
@@ -3640,6 +3656,43 @@ function renderPhotoframePanel() {
         await loadPhotoframeStatus();
       } catch (e) {
         showStatus(String((e && e.message) || tr('photoframe_restart_kiosk_failed')), 'err');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="reset-device"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      const frameName = String(btn.getAttribute('data-frame-name') || 'Photoframe').trim();
+      if (!frameId) return;
+
+      const question = tr('photoframe_reset_device_confirm')
+        .replace('{name}', frameName || 'Photoframe');
+      if (!window.confirm(question)) return;
+
+      btn.disabled = true;
+      btn.classList.add('loading');
+      try {
+        const res = await fetch(`/api/photoframes/${encodeURIComponent(frameId)}/reset`, {
+          method: 'POST',
+        });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const message = (data && data.error) ? String(data.error) : tr('photoframe_reset_device_failed');
+          throw new Error(message);
+        }
+        showStatus(tr('photoframe_reset_device_queued'), 'ok');
+        await loadPhotoframeStatus();
+      } catch (e) {
+        showStatus(String((e && e.message) || tr('photoframe_reset_device_failed')), 'err');
       } finally {
         btn.disabled = false;
         btn.classList.remove('loading');

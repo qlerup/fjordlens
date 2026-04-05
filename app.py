@@ -4061,7 +4061,9 @@ def _normalize_photoframe_update_package_mode(raw: Any) -> str:
     value = str(raw or "").strip().lower()
     if value in {"restart_kiosk", "restartkiosk"}:
         return "restart-kiosk"
-    if value in {"upload", "source-dir", "custom-url", "restart-kiosk"}:
+    if value in {"reset_device", "resetdevice"}:
+        return "reset-device"
+    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device"}:
         return value
     return ""
 
@@ -5052,6 +5054,34 @@ def _photoframe_queue_restart_command(rec: Optional[Dict[str, Any]]) -> tuple[bo
     return (True, job_id)
 
 
+def _photoframe_queue_reset_command(rec: Optional[Dict[str, Any]]) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if current_status in {"downloading", "installing"}:
+        return (False, "En opdatering kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfreset-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette reset-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Nulstilling afventer enhed"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "reset-device"
+    rec["update_package_sha256"] = ""
+    return (True, job_id)
+
+
 def _photoframe_settings_proxy_error_page(message: str, status_code: int = 502):
     msg = html.escape(_sanitize_photoframe_text(message, 400) or "Ukendt fejl")
     body = (
@@ -5492,6 +5522,15 @@ def _photoframe_update_command_payload(
         out = {
             "job_id": job_id,
             "action": "restart_kiosk",
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
+    if package_mode in {"reset-device", "reset_device", "resetdevice"}:
+        out = {
+            "job_id": job_id,
+            "action": "reset_device",
         }
         version = _sanitize_photoframe_text(rec.get("update_version"), 80)
         if version:
@@ -9310,6 +9349,45 @@ def api_photoframes_restart_kiosk(token_id: str):
     )
 
 
+@app.route("/api/photoframes/<token_id>/reset", methods=["POST"])
+@login_required
+def api_photoframes_reset_device(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id"}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
+
+    ok_reset, reset_info = _photoframe_queue_reset_command(rec)
+    if not ok_reset:
+        return jsonify({"ok": False, "error": reset_info or "Kunne ikke sende nulstilling"}), 409
+    job_id = str(reset_info or "").strip()
+    _save_photoframe_token_records(records)
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "job_id": job_id,
+            "status": "queued",
+            "requested_at": _sanitize_photoframe_text(rec.get("update_requested_at"), 40) or now_iso(),
+        }
+    )
+
+
 @app.route("/api/photoframes/<token_id>/update/cancel", methods=["POST"])
 @login_required
 def api_photoframes_cancel_update(token_id: str):
@@ -9649,7 +9727,10 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             headers[header_name] = value
     method = str(request.method or "GET").upper()
     body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    is_settings_entry = (method == "GET") and (clean_subpath.split("/", 1)[0] in {"remote-settings", "settings"})
+    settings_root = clean_subpath.split("/", 1)[0]
+    is_settings_entry = (method == "GET") and (settings_root in {"remote-settings", "settings"})
+    is_settings_save_post = (method == "POST") and (clean_subpath == "remote-settings/save")
+    allow_wake_retry = bool(is_settings_entry or is_settings_save_post)
 
     def _proxy_request_once() -> tuple[Optional[requests.Response], str]:
         try:
@@ -9701,7 +9782,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             last_err = f"HTTP {probe_status}"
         return (None, last_err or "timeout")
 
-    if (upstream is None) and is_settings_entry:
+    if (upstream is None) and allow_wake_retry:
         upstream, upstream_error = _try_wake_and_retry()
 
     if upstream is None:
@@ -9719,7 +9800,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         upstream_status = int(getattr(upstream, "status_code", 0) or 0)
     except Exception:
         upstream_status = 0
-    if (upstream_status >= 500) and is_settings_entry and (not wake_attempted):
+    if (upstream_status >= 500) and allow_wake_retry and (not wake_attempted):
         retry_upstream, retry_err = _try_wake_and_retry()
         if retry_upstream is not None:
             upstream = retry_upstream
