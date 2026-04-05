@@ -5024,6 +5024,34 @@ def _photoframe_settings_proxy_base_url(rec: Optional[Dict[str, Any]]) -> str:
     return f"http://{host}:5001"
 
 
+def _photoframe_queue_restart_command(rec: Optional[Dict[str, Any]]) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if current_status in {"downloading", "installing"}:
+        return (False, "En opdatering kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfrst-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette restart-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Kiosk-genstart afventer enhed"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "restart-kiosk"
+    rec["update_package_sha256"] = ""
+    return (True, job_id)
+
+
 def _photoframe_settings_proxy_error_page(message: str, status_code: int = 502):
     msg = html.escape(_sanitize_photoframe_text(message, 400) or "Ukendt fejl")
     body = (
@@ -9265,27 +9293,10 @@ def api_photoframes_restart_kiosk(token_id: str):
     if rec_idx < 0 or not rec:
         return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
 
-    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
-    if current_status in {"downloading", "installing"}:
-        return jsonify({"ok": False, "error": "En opdatering kører allerede på enheden"}), 409
-
-    job_id = _sanitize_photoframe_update_job_id(f"pfrst-{int(time.time())}-{secrets.token_hex(4)}")
-    if not job_id:
-        return jsonify({"ok": False, "error": "Kunne ikke oprette restart-id"}), 500
-
-    now = now_iso()
-    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
-    rec["update_job_id"] = job_id
-    rec["update_status"] = "queued"
-    rec["update_message"] = "Kiosk-genstart afventer enhed"
-    rec["update_requested_at"] = now
-    rec["update_started_at"] = ""
-    rec["update_finished_at"] = ""
-    rec["update_last_report_at"] = now
-    rec["update_version"] = current_version
-    rec["update_package_url"] = ""
-    rec["update_package_mode"] = "restart-kiosk"
-    rec["update_package_sha256"] = ""
+    ok_restart, restart_info = _photoframe_queue_restart_command(rec)
+    if not ok_restart:
+        return jsonify({"ok": False, "error": restart_info or "Kunne ikke sende kiosk-genstart"}), 409
+    job_id = str(restart_info or "").strip()
     _save_photoframe_token_records(records)
 
     return jsonify(
@@ -9294,7 +9305,7 @@ def api_photoframes_restart_kiosk(token_id: str):
             "id": target_id,
             "job_id": job_id,
             "status": "queued",
-            "requested_at": now,
+            "requested_at": _sanitize_photoframe_text(rec.get("update_requested_at"), 40) or now_iso(),
         }
     )
 
@@ -9470,6 +9481,136 @@ def api_photoframes_delete(token_id: str):
     return jsonify({"ok": True, "deleted_id": target_id, "count": len(kept)})
 
 
+@app.route("/api/photoframes/<token_id>/settings-ready", methods=["POST"])
+@login_required
+def api_photoframes_settings_ready(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Kun administrator kan åbne fjernindstillinger."}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id."}), 400
+
+    records = _load_photoframe_token_records()
+    _, rec = _photoframe_find_record_by_id(records, target_id)
+    if not rec:
+        return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
+
+    target_base_url = _photoframe_settings_proxy_base_url(rec)
+    if not target_base_url:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Rammen har ingen brugbar lokal IP endnu. Vent på næste heartbeat og prøv igen.",
+            }
+        ), 409
+
+    body = request.get_json(silent=True) or {}
+    wait_raw = request.args.get("wait_sec")
+    if wait_raw is None:
+        wait_raw = body.get("wait_sec")
+    try:
+        wait_sec = float(wait_raw) if wait_raw is not None else 22.0
+    except Exception:
+        wait_sec = 22.0
+    wait_sec = max(6.0, min(45.0, wait_sec))
+
+    settings_proxy_url = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
+    baseline_seen = _parse_iso_to_epoch(rec.get("last_seen_at"))
+    waited_for_heartbeat = False
+    wake_attempted = False
+    wake_job_id = ""
+    last_probe_error = ""
+
+    def _probe_settings_app() -> bool:
+        nonlocal last_probe_error
+        try:
+            probe = requests.get(
+                f"{target_base_url}/remote-settings",
+                timeout=min(4.0, float(PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC)),
+                allow_redirects=False,
+                headers={
+                    "Accept": "text/html,*/*;q=0.8",
+                    "User-Agent": "FjordLens-Settings-Ready/1.0",
+                },
+            )
+        except Exception as exc:
+            last_probe_error = str(exc)
+            return False
+        try:
+            code = int(getattr(probe, "status_code", 0) or 0)
+        except Exception:
+            code = 0
+        if code >= 500:
+            last_probe_error = f"HTTP {code}"
+            return False
+        return True
+
+    started_at = time.time()
+    deadline = started_at + wait_sec
+    while time.time() < deadline:
+        records = _load_photoframe_token_records()
+        rec_idx, current_rec = _photoframe_find_record_by_id(records, target_id)
+        if rec_idx < 0 or not current_rec:
+            return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
+
+        seen_raw = _sanitize_photoframe_text(current_rec.get("last_seen_at"), 40)
+        seen_ts = _parse_iso_to_epoch(seen_raw)
+        if seen_ts > (baseline_seen + 0.001):
+            waited_for_heartbeat = True
+            if _probe_settings_app():
+                return jsonify(
+                    {
+                        "ok": True,
+                        "settings_url": settings_proxy_url,
+                        "waited_for_heartbeat": True,
+                        "seen_at": seen_raw,
+                        "wake_attempted": wake_attempted,
+                        "wake_job_id": wake_job_id or None,
+                    }
+                )
+            baseline_seen = seen_ts
+
+        if (not wake_attempted) and ((time.time() - started_at) >= max(6.0, wait_sec * 0.45)):
+            ok_restart, restart_info = _photoframe_queue_restart_command(current_rec)
+            if ok_restart:
+                wake_attempted = True
+                wake_job_id = str(restart_info or "").strip()
+                try:
+                    _save_photoframe_token_records(records)
+                except Exception as exc:
+                    last_probe_error = f"Kunne ikke gemme wake-kommando: {exc}"
+            else:
+                wake_attempted = True
+                if restart_info:
+                    last_probe_error = str(restart_info)
+
+        try:
+            time.sleep(1.0)
+        except Exception:
+            pass
+
+    if waited_for_heartbeat:
+        msg = "Rammen sendte heartbeat, men settings-webserver på port 5001 var ikke klar endnu."
+    else:
+        msg = "Ingen ny heartbeat modtaget inden timeout."
+    if wake_job_id:
+        msg = f"{msg} Wake-job sendt ({wake_job_id})."
+    if last_probe_error:
+        msg = f"{msg} Sidste fejl: {last_probe_error}"
+
+    return jsonify(
+        {
+            "ok": False,
+            "error": msg,
+            "settings_url": settings_proxy_url,
+            "waited_for_heartbeat": waited_for_heartbeat,
+            "wake_attempted": wake_attempted,
+            "wake_job_id": wake_job_id or None,
+        }
+    ), 409
+
+
 @app.route("/api/photoframes/<token_id>/settings-proxy", defaults={"subpath": "remote-settings"}, methods=["GET", "POST"])
 @app.route("/api/photoframes/<token_id>/settings-proxy/<path:subpath>", methods=["GET", "POST"])
 @login_required
@@ -9508,19 +9649,69 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             headers[header_name] = value
     method = str(request.method or "GET").upper()
     body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    is_settings_entry = (method == "GET") and (clean_subpath.split("/", 1)[0] in {"remote-settings", "settings"})
 
-    try:
-        upstream = requests.request(
-            method=method,
-            url=target_url,
-            headers=headers or None,
-            data=body_bytes,
-            timeout=PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC,
-            allow_redirects=False,
-        )
-    except Exception as exc:
+    def _proxy_request_once() -> tuple[Optional[requests.Response], str]:
+        try:
+            out = requests.request(
+                method=method,
+                url=target_url,
+                headers=headers or None,
+                data=body_bytes,
+                timeout=PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC,
+                allow_redirects=False,
+            )
+            return out, ""
+        except Exception as exc:
+            return None, str(exc)
+
+    upstream, upstream_error = _proxy_request_once()
+    wake_attempted = False
+    wake_job_id = ""
+
+    def _try_wake_and_retry() -> tuple[Optional[requests.Response], str]:
+        nonlocal wake_attempted, wake_job_id
+        ok_restart, restart_info = _photoframe_queue_restart_command(rec)
+        if not ok_restart:
+            return (None, str(restart_info or "Kiosk-genstart kunne ikke sendes"))
+        wake_attempted = True
+        wake_job_id = str(restart_info or "").strip()
+        try:
+            _save_photoframe_token_records(records)
+        except Exception as exc:
+            return (None, f"Kunne ikke gemme wake-kommando: {exc}")
+
+        deadline = time.time() + 18.0
+        last_err = ""
+        while time.time() < deadline:
+            try:
+                time.sleep(1.4)
+            except Exception:
+                pass
+            probe, probe_err = _proxy_request_once()
+            if probe is None:
+                last_err = probe_err
+                continue
+            try:
+                probe_status = int(getattr(probe, "status_code", 0) or 0)
+            except Exception:
+                probe_status = 0
+            if probe_status < 500:
+                return (probe, "")
+            last_err = f"HTTP {probe_status}"
+        return (None, last_err or "timeout")
+
+    if (upstream is None) and is_settings_entry:
+        upstream, upstream_error = _try_wake_and_retry()
+
+    if upstream is None:
+        extra = ""
+        if wake_attempted:
+            extra = " Genstartskommando blev sendt til rammen. Vent 10-20 sekunder og prøv igen."
+            if wake_job_id:
+                extra += f" (job: {wake_job_id})"
         return _photoframe_settings_proxy_error_page(
-            f"Forbindelse til fotorammen fejlede ({target_base_url}): {exc}",
+            f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
             409,
         )
 
@@ -9528,9 +9719,26 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         upstream_status = int(getattr(upstream, "status_code", 0) or 0)
     except Exception:
         upstream_status = 0
+    if (upstream_status >= 500) and is_settings_entry and (not wake_attempted):
+        retry_upstream, retry_err = _try_wake_and_retry()
+        if retry_upstream is not None:
+            upstream = retry_upstream
+            try:
+                upstream_status = int(getattr(upstream, "status_code", 0) or 0)
+            except Exception:
+                upstream_status = 0
+        else:
+            upstream_error = str(retry_err or "")
     if upstream_status >= 500:
+        extra = ""
+        if wake_attempted:
+            extra = " Genstartskommando blev sendt til rammen. Vent 10-20 sekunder og prøv igen."
+            if wake_job_id:
+                extra += f" (job: {wake_job_id})"
+        if upstream_error:
+            extra = f"{extra} Sidste fejl: {upstream_error}".strip()
         return _photoframe_settings_proxy_error_page(
-            f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.",
+            f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.{extra}",
             409,
         )
 

@@ -1,370 +1,255 @@
-### Running without a library folder (/photos)
+﻿# FjordLens
 
-If you don't use a pre-existing photo library and only rely on uploads:
+FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with built-in photoframe management for Raspberry Pi devices.
 
-- Either set `PHOTO_DIR` in your `.env` to any existing empty folder on the host (e.g. `/volume1/docker/fjordlens/library`) and ensure it exists,
-- Or use the provided override to disable the `/photos` mount entirely:
+This repository contains two parts:
 
-```
-docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --build
-```
+- `fjordlens/`: the main web app and API (Flask + JS)
+- `photoframe/`: Raspberry Pi client (fullscreen viewer + local setup app)
 
-Note: Docker requires that bind-mount source paths exist on the host. If `PHOTO_DIR` is unset, the app now defaults `PHOTO_DIR` to `DATA_DIR/library` internally, so you can run uploads-only without any `/photos` mount.
-# FjordLens for Synology
+## What You Get
 
-FjordLens is a Docker-based photo library app for Synology NAS (and local Docker hosts), with a Flask web UI, metadata indexing, folder-based uploads, AI embedding controls, and face indexing.
+### Photo library
+
+- Timeline, Favorites, Folders, Places, Cameras, People views
+- Metadata indexing (EXIF/file info)
+- Thumbnail generation and cache management
+- Per-photo editing for captured date, GPS and favorite state
+- Duplicate detection and merge tools
+- Single file and ZIP downloads
+
+### Upload and file handling
+
+- Folder-based upload workflows from the UI
+- Resumable uploads via TUS (`/api/upload/tus`)
+- Share-link uploads (including TUS on share links)
+- Optional HEIC and RAW conversion flows
+- Post-processing pipeline for uploads
+
+### AI and face features
+
+- AI embedding ingest with start/stop/status
+- AI description ingest with start/stop/status
+- AI search and "similar photos" tools
+- Face indexing jobs with progress tracking
+- People training, rename, hide, unknown-face matching
+
+### Sharing and permissions
+
+- Public share links for folders
+- Share permissions (`view`, `upload`, `delete`)
+- Optional password protection
+- Expiry and admin management (extend/revoke/activate/edit)
+
+### Photoframe platform
+
+- Create and manage photoframe tokens from FjordLens
+- Remote status cards (online, IP/local IP, version, sync, update state)
+- Scope control per frame (all/folders/selected photos)
+- Proxy access to frame settings from FjordLens
+- Frame update rollout via uploaded ZIP (single frame or all)
+- Restart/cancel commands and update progress reporting
+
+### Admin and security
+
+- Initial setup wizard for first admin account
+- Role-based access (`admin`, `manager`, `user`)
+- TOTP 2FA for accounts
+- Per-user UI language and search language (`da`/`en`)
 
 ## Quick Start
 
-### Local / Docker host
+### Local Docker host
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Note: keep Gunicorn at 1 worker (`GUNICORN_WORKERS=1`, default in `docker-compose.yml`).
-Background jobs (scan/rescan/rethumb/AI/faces) use in-process state, so multiple workers can make jobs appear to stop (`0/0`) because status/start hit different worker processes.
+Open `http://localhost:9080` (or your configured `APP_PORT`).
 
-Open:
-- `http://localhost:9080` (or your `APP_PORT`)
+Important: keep `GUNICORN_WORKERS=1`.
+Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
 
 ### Synology NAS (SSH)
 
 ```bash
 cd /volume1/docker
-git clone https://github.com/YOUR_USER/YOUR_REPO.git fjordlens
-cd fjordlens
+git clone https://github.com/<your-user>/<your-repo>.git fjordlens
+cd fjordlens/fjordlens
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Open:
-- `http://YOUR_NAS_IP:9080`
+Open `http://<nas-ip>:9080`.
 
-## What’s Included
+### Upload-only mode (no `/photos` mount)
 
-- Web app: Flask + vanilla JS UI
-- Photo indexing from mounted `/photos`
-- EXIF/file metadata extraction
-- Thumbnails + detail panel
-- Danish/English UI language support per user
-- Danish/English search language support per user
-- Role-based auth: Admin, Manager, User
-- 2FA (TOTP)
-- Favorites, Places, Cameras, People, Folders views
-- Folder management + drag/drop upload to selected folder
-- AI embeddings ingest (start/stop) with progress
-- Face indexing with progress
-- Docker Compose stack with dedicated AI service
-
-## What Changed Recently
-
-- Settings was cleaned up and split into clearer tabs.
-- AI controls now live in a dedicated `AI` tab.
-- AI tab now has **two vertical sections**:
-  - Embeddings section (single start/stop toggle button)
-  - Face indexing section
-- Each AI section has its own explanation text and status line.
-- Deprecated upload destination controls were removed from Maintenance.
-- Folder upload workflow is now centered in the `Folders` view.
-- Profile editing is available from footer `Profile` link (modal).
-- Admin user management supports editing username/password/role/languages.
-- `Folders` header now uses a compact top-right actions menu (`⋮`).
-- Folder creation now opens a dedicated modal (`Create folder` / `Cancel`).
-- Folder selection flow now starts with `Select` (`Vælg`) and changes contextually to `Delete selected` when folders are selected.
-- Timeline/topbar controls were aligned to the right and visually matched to the compact `Folders` control sizing.
-- New mapper flow labels and status messages are localized for both Danish and English.
-- Share links for folders are now supported (public link bypassing normal login).
-- Share links support scoped permissions (`view`, `view+upload`, `view+upload+delete`).
-- Share links support expiry and optional password protection (toggle on/off when generating).
-- Upload in `Folders` now uses **TUS resumable uploads** (chunked requests) for better stability on slow/unstable networks and behind reverse proxies.
-- TUS client is bundled locally in the Docker image (`static/vendor/tus.min.js`) and is loaded without external CDN runtime dependency.
-
-## Where to Find What (UI Map)
-
-### Left navigation
-
-- `Timeline`: Date-grouped gallery
-- `Favorites`: Starred items
-- `Places`: Map/location-oriented browsing
-- `Cameras`: Camera metadata filter view
-- `Folders`: Folder tree + folder actions + drag/drop upload target
-- `People`: Face/person browsing
-- `Settings`: Operational tools and administration
-
-### Footer links
-
-- `Profile`: Edit your own account/profile settings
-- `API health`: Quick backend health endpoint
-- `Filters`: API filter debug endpoint
-- `Log out`
-
-## Settings Tabs
-
-### Maintenance
-
-Use this tab for library maintenance tasks:
-- Scan library
-- Rescan metadata
-- Rebuild thumbnails
-- Reset index
-
-### AI
-
-The AI tab is split into two clear sections:
-
-1. **AI embeddings**
-   - One toggle button: `Start AI` / `Stop AI`
-   - Starts/stops embeddings ingest for photos missing embeddings
-   - Status line shows:
-     - running/stopped
-     - embedded/total
-     - failures
-
-2. **Face indexing**
-   - Button: `Index faces`
-   - Runs face indexing job for photos
-   - Status line shows:
-     - running/stopped
-     - processed/total
-
-### Logs
-
-- Live operations log controls (`Start/Stop`, `Clear`)
-- Main log output panel
-
-### Users (Admin)
-
-- Create users
-- Edit existing users
-- Set role
-- Set per-user UI language and search language
-
-### My 2FA
-
-- Enable/disable TOTP
-- Manage trusted device behavior
-
-### Other
-
-- Duplicate scan tools
-
-## Profile and User Preferences
-
-Open `Profile` from the sidebar footer to edit your own account:
-- Username
-- Optional password change
-- UI language (`da`/`en`)
-- Search language (`da`/`en`)
-
-Preferences persist per user and are applied on refresh/login.
-
-## Folders and Upload Workflow
-
-Folder workflows now happen in `Folders` view:
-
-- Navigate folder tree
-- Create subfolders via top-right `⋮` menu -> `Create folder` (modal)
-- Drag & drop files into the folder dropzone
-- Upload target follows current folder context
-
-Folder selection/delete behavior:
-- Open `⋮` and choose `Select` (`Vælg`) to enter selection mode
-- Select one or more folders in the grid
-- The same menu action changes to `Delete selected` and triggers folder deletion
-
-Folder sharing behavior:
-- In `Folders`, select one folder and choose `Share` from `⋮` menu
-- Configure expiry and permission level in modal
-- Optional: enable `Use DuckDNS link` per link (requires `SHARE_DUCKDNS_BASE_URL`, e.g. `https://myname.duckdns.org`)
-- Optional: enable password protection per link
-- Generated links open a dedicated share page without normal app login
-- Password-protected links prompt for password before access
-
-This replaced the old maintenance upload destination controls.
-
-## Search and Sorting
-
-Search supports:
-- Filename/path
-- Camera/lens metadata
-- Date-like terms
-- Location fields (when available)
-- AI tags/metadata fields
-
-Sorting:
-- Date ascending/descending
-- Name ascending/descending
-- Size ascending/descending
-
-## Authentication and Roles
-
-- First run redirects to setup to create initial admin user.
-- Roles:
-  - `Admin`: full access, user administration
-  - `Manager`: operations access (without user admin)
-  - `User`: restricted from admin/maintenance operations
-
-Safety rules include protection against removing the last admin.
-
-## Deployment and Updates
-
-### Standard update flow
+If you only use uploads and do not have a separate photo library mount:
 
 ```bash
+docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --build
+```
+
+## Photoframe Quick Start
+
+### 1) Create a frame token in FjordLens
+
+Open the `Photoframe` view and create a frame entry/token.
+
+### 2) Install photoframe on Raspberry Pi
+
+On a fresh Raspberry Pi (SSH as normal user):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qlerup/fjordlens/main/photoframe/scripts/bootstrap_install.sh | bash
+```
+
+### 3) First setup on the frame
+
+Open `http://<frame-ip>:5001`.
+
+Current setup flow supports:
+
+- Country selection first
+- Wi-Fi setup
+- Connection setup (server URL + token)
+- QR-assisted phone setup
+- Temporary setup hotspot support for no-keyboard/no-touch scenarios
+
+After setup is completed, the frame starts fullscreen slideshow mode.
+
+## Photoframe via FjordLens (remote settings)
+
+In each photoframe card, `Settings` opens a proxied settings session through FjordLens.
+
+Notes:
+
+- FjordLens needs a recent frame heartbeat with local IP
+- If `:5001` is temporarily unavailable, FjordLens now attempts wake/retry behavior automatically
+- If your reverse proxy or Cloudflare is used, allow frame API paths (see below)
+
+## Reverse Proxy / Cloudflare Notes
+
+For photoframe feeds and media delivery, exclude these paths from bot/challenge pages:
+
+- `/api/frame/*`
+- `/api/frame/*/view/*`
+
+If Cloudflare challenge pages are returned, frames cannot parse feed JSON.
+
+## Updating
+
+### Update FjordLens
+
+```bash
+cd fjordlens
 git pull
 docker compose up -d --build
 ```
 
-### Full restart flow
+### Full restart
 
 ```bash
 docker compose down
 docker compose up -d --build
 ```
 
-### Helper scripts
+### Photoframe updates from UI
 
-- `scripts/first_install_nas.sh`
-- `scripts/update.sh`
+FjordLens supports ZIP-based remote updates:
 
-## GHCR Option (Prebuilt Images)
+- Per-frame: `Upload zip`
+- Global: `Upload zip til alle`
 
-A GHCR compose example is included:
-- `docker-compose.ghcr.yml.example`
+Update states are reported by frames (`queued`, `downloading`, `installing`, `restarting`, `success`, `failed`).
 
-Use this if you prefer pulling prebuilt images instead of building on NAS.
+## Key Configuration
 
-## Configuration
+See `.env.example` for defaults. Most-used variables:
 
-Key environment variables (see `.env.example`):
+- `APP_PORT`: web UI port (default `9080`)
+- `PHOTO_DIR`: host library path mounted read-only as `/photos`
+- `DATA_DIR`: persistent app data (`db`, thumbs, uploads, cache)
+- `TZ`: timezone
+- `LOG_LEVEL`: app log level
+- `AI_DEBUG_PORT`: optional host port for AI service
+- `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
+- `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
+- `PHOTOFRAME_TEXT_ONLY`: frame feed test card mode
+- `PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES`: max uploaded frame ZIP size
+- `SHARE_DUCKDNS_BASE_URL`: optional external base URL for share links
 
-- `APP_PORT`: Web UI host port (default `9080`)
-- `PHOTO_DIR`: Host path mounted as `/photos` (read-only recommended)
-- `DATA_DIR`: Persistent app data path (`db`, `thumbs`, uploads data)
-- `TZ`: Time zone
-- `LOG_LEVEL`: App log level
-- `AI_DEBUG_PORT`: Optional host exposure for AI service
-- `AI_URL`: Internal backend -> AI service URL (compose default uses service name)
-- `AI_INGEST_THROTTLE_SEC`: Pause between each embedding item (default `0.04`) to reduce UI impact during background ingest
-- `FACES_INDEX_THROTTLE_SEC`: Pause between each face-index item (default `0.06`) to reduce UI impact during face indexing
-- `PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES`: Max zip upload size for UI-triggered updates (default `314572800` = 300 MB)
+Common advanced settings in code/env:
 
-### Remote photoframe background updates
+- `GUNICORN_WORKERS` (recommended: `1`)
+- `GUNICORN_LOG_LEVEL`
+- `GEOCODE_ENABLE`, `GEOCODE_PROVIDER`, `GEOCODE_LANG`, `GEOCODE_TIMEOUT`, `GEOCODE_RETRIES`, `GEOCODE_DELAY`
 
-FjordLens can trigger a background update on each photoframe device:
+## Useful API Endpoints
 
-1. Upload a zip directly from UI:
-   - Per frame card: `Upload zip`
-   - Global rollout: `Upload zip til alle`
-2. Restart FjordLens after env/compose changes (if you changed env values):
-   - `docker compose up -d --build`
-3. FjordLens queues update jobs and stores one uploaded zip package.
-4. Each device fetches the update package from FjordLens and installs it in the background when it checks in (heartbeat/feed sync).
-5. Card status shows progress (`queued`, `downloading`, `installing`, `restarting`, `success`/`failed`) with an animated icon while busy.
-6. Version bar compares each frame's reported version with latest uploaded version.
-   Zip uploads auto-generate version label from upload timestamp in FjordLens (example: `v27-03-2026_20:05:41`).
-
-### Fresh photoframe install (one command)
-
-On a new Raspberry Pi (SSH as normal user), run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/qlerup/fjordlens/main/photoframe/scripts/bootstrap_install.sh | bash
-```
-
-This bootstrap script:
-- installs missing prerequisites (`git`, `curl`) if needed
-- clones/updates this repo to `~/fjordlens`
-- runs `photoframe/install.sh` with correct owner user
-
-After install:
-- open `http://<frame-ip>:5001`
-- complete setup (Wi-Fi + server URL + token from FjordLens)
-
-### Geocoding / behavior flags
-
-- `GEOCODE_ENABLE`
-- `GEOCODE_PROVIDER`
-- `GEOCODE_LANG`
-- `GEOCODE_TIMEOUT`
-- `GEOCODE_RETRIES`
-- `GEOCODE_DELAY`
-
-## Health and Validation
-
-Useful checks:
-
-- App health: `GET /api/health`
-- Compose status:
-
-```bash
-docker compose ps
-```
-
-Expected after successful deploy:
-- `fjordlens`: healthy
-
-## Upload Behavior (TUS)
-
-- Folder uploads use TUS resumable protocol (`/api/upload/tus`) with chunked PATCH requests.
-- Default chunk size is `2 MB` per request (configured in `static/app.js`).
-- This keeps each upload request well below common proxy size/time limits and provides frequent responses during large uploads.
-- The TUS browser client is bundled in the app image and served locally for privacy-focused deployments.
-- `fjordlens-ai`: healthy
-
-## Security Notes
-
-- Never commit `.env` with secrets.
-- Keep `/photos` mounted read-only when possible.
-- Use strong admin password + enable 2FA.
-- Keep `DATA_DIR` on persistent storage.
-
-## Project Structure
-
-```txt
-fjordlens/
-├─ app.py
-├─ wsgi.py
-├─ Dockerfile
-├─ docker-compose.yml
-├─ docker-compose.ghcr.yml.example
-├─ requirements.txt
-├─ .env.example
-├─ README.md
-├─ ai_service/
-│  ├─ app.py
-│  ├─ Dockerfile
-│  ├─ requirements.txt
-│  └─ download_models.py
-├─ templates/
-│  ├─ index.html
-│  ├─ login.html
-│  ├─ setup.html
-│  ├─ 2fa_setup.html
-│  ├─ 2fa_verify.html
-│  └─ admin_users.html
-├─ static/
-│  ├─ app.js
-│  ├─ styles.css
-│  └─ icons/
-├─ scripts/
-│  ├─ first_install_nas.sh
-│  └─ update.sh
-└─ data/
-```
+- Health: `GET /api/health`
+- Scan jobs: `/api/scan`, `/api/rescan`, `/api/rethumb`
+- AI jobs: `/api/ai/ingest`, `/api/ai/describe/ingest`, `/api/faces/index`
+- Photos: `/api/photos`, `/api/photos/<id>`, `/api/photos/download-zip`
+- Shares: `/api/shares`, `/api/share/<token>/*`
+- Photoframes: `/api/photoframes/*`, `/api/frame/<token>/*`
 
 ## Troubleshooting
 
-- If AI service is healthy but embeddings do not move:
-  - Check AI section status counters (`embedded/total/failures`).
-  - Check logs in `Settings -> Logs`.
-- If containers keep restarting:
-  - Run `docker compose ps` and `docker compose logs`.
-- If UI text seems stale after deploy:
-  - Hard refresh browser (`Ctrl+F5`) to invalidate cached JS/CSS.
+### Frame settings returns "connection refused"
+
+This means FjordLens can see the frame IP, but frame settings service on port `5001` is not accepting connections at that moment.
+
+- Wait a few seconds and retry
+- Ensure frame services are running (`photoframe-app.service`, `photoframe-kiosk.service`)
+- Keep frame and FjordLens on reachable network paths
+
+### Jobs look inconsistent
+
+Use one Gunicorn worker only (`GUNICORN_WORKERS=1`).
+
+### Upload issues behind reverse proxy
+
+Use TUS endpoints and confirm proxy allows `PATCH`, `HEAD`, `OPTIONS` and long-running uploads.
+
+### Containers unhealthy
+
+```bash
+docker compose ps
+docker compose logs --tail=200
+```
+
+## Project Layout
+
+```txt
+fjordlens_synology_github_ready/
+|- fjordlens/
+|  |- app.py
+|  |- Dockerfile
+|  |- docker-compose.yml
+|  |- docker-compose.no-library.yml
+|  |- ai_service/
+|  |- static/
+|  |- templates/
+|  `- scripts/
+`- photoframe/
+   |- app/
+   |- viewer/
+   |- systemd/
+   |- scripts/
+   |- install.sh
+   `- update.sh
+```
+
+## Security Checklist
+
+- Do not commit `.env` with secrets
+- Keep `/photos` read-only when possible
+- Use strong admin passwords
+- Enable 2FA for admin accounts
+- Keep `DATA_DIR` on persistent storage
 
 ---
 
-If you want, the next step can be adding screenshots per tab (in English) directly inside this README.
+If you want, next step can be: add screenshots/GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Settings`) to improve the GitHub front page.

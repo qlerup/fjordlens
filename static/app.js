@@ -608,6 +608,8 @@ const I18N = {
     photoframe_restart_kiosk_failed: 'Kunne ikke sende kiosk-genstart.',
     photoframe_open_settings_btn: 'Indstillinger',
     photoframe_open_settings_failed: 'Kunne ikke åbne indstillinger.',
+    photoframe_open_settings_waiting: 'Venter på næste heartbeat fra rammen...',
+    photoframe_open_settings_ready: 'Rammen er klar. Åbner indstillinger...',
     photoframe_open_settings_popup_blocked: 'Browseren blokerede nyt vindue. Tillad popups for at åbne indstillinger.',
     photoframe_update_state_queued: 'Venter på enhed',
     photoframe_update_state_downloading: 'Henter pakke',
@@ -1185,6 +1187,8 @@ const I18N = {
     photoframe_restart_kiosk_failed: 'Could not queue kiosk restart.',
     photoframe_open_settings_btn: 'Settings',
     photoframe_open_settings_failed: 'Could not open settings.',
+    photoframe_open_settings_waiting: 'Waiting for next heartbeat from the frame...',
+    photoframe_open_settings_ready: 'Frame is ready. Opening settings...',
     photoframe_open_settings_popup_blocked: 'Browser blocked a new window. Allow popups to open settings.',
     photoframe_update_state_queued: 'Waiting for device',
     photoframe_update_state_downloading: 'Downloading',
@@ -3497,15 +3501,55 @@ function renderPhotoframePanel() {
     });
   });
   document.querySelectorAll('[data-photoframe-action="open-settings"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
       const settingsUrl = String(btn.getAttribute('data-settings-url') || '').trim();
-      if (!settingsUrl) {
+      if (!settingsUrl || !frameId) {
         showStatus(tr('photoframe_open_settings_failed'), 'err');
         return;
       }
-      const opened = window.open(settingsUrl, '_blank', 'noopener');
-      if (!opened) {
+
+      const preOpened = window.open('about:blank', '_blank', 'noopener');
+      if (!preOpened) {
         showStatus(tr('photoframe_open_settings_popup_blocked'), 'err');
+        return;
+      }
+
+      try {
+        const doc = preOpened.document;
+        if (doc) {
+          doc.title = tr('photoframe_open_settings_btn');
+          doc.body.innerHTML = `<div style="font-family:Arial,Helvetica,sans-serif;padding:24px;color:#e6edf3;background:#0d1117;">${escapeHtml(tr('photoframe_open_settings_waiting'))}</div>`;
+        }
+      } catch (_) {}
+
+      btn.disabled = true;
+      btn.classList.add('loading');
+      try {
+        showStatus(tr('photoframe_open_settings_waiting'), 'ok');
+        const prepareUrl = `/api/photoframes/${encodeURIComponent(frameId)}/settings-ready`;
+        const res = await fetch(prepareUrl, { method: 'POST' });
+        let data = null;
+        try {
+          const ct = String(res.headers.get('content-type') || '');
+          data = ct.includes('application/json') ? await res.json() : null;
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok || !data || !data.ok) {
+          const msg = (data && data.error) ? String(data.error) : tr('photoframe_open_settings_failed');
+          throw new Error(msg);
+        }
+
+        const targetUrl = String((data && data.settings_url) || settingsUrl).trim() || settingsUrl;
+        preOpened.location.href = targetUrl;
+        showStatus(tr('photoframe_open_settings_ready'), 'ok');
+      } catch (e) {
+        try { preOpened.close(); } catch (_) {}
+        showStatus(String((e && e.message) || tr('photoframe_open_settings_failed')), 'err');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
       }
     });
   });
