@@ -2,6 +2,8 @@
 import shutil
 import subprocess
 import tempfile
+import html
+import ipaddress
 import re
 import hmac
 import secrets
@@ -73,6 +75,11 @@ try:
 except Exception:
     PHOTOFRAME_ONLINE_WINDOW_SEC = 180
 PHOTOFRAME_ONLINE_WINDOW_SEC = max(30, min(3600, PHOTOFRAME_ONLINE_WINDOW_SEC))
+try:
+    PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC = float(os.environ.get("PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC", "20") or 20)
+except Exception:
+    PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC = 20.0
+PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC = max(3.0, min(45.0, PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC))
 try:
     PHOTOFRAME_FEED_MAX_IMAGES = int(os.environ.get("PHOTOFRAME_FEED_MAX_IMAGES", "1200") or 1200)
 except Exception:
@@ -4955,6 +4962,159 @@ def _photoframe_token_lookup(token_plain: str) -> tuple[list[Dict[str, Any]], in
     return (records, -1, None)
 
 
+def _photoframe_find_record_by_id(records: list[Dict[str, Any]], target_id: str) -> tuple[int, Optional[Dict[str, Any]]]:
+    target = _sanitize_photoframe_text(target_id, 64)
+    if not target:
+        return (-1, None)
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target:
+            return (idx, it)
+    return (-1, None)
+
+
+def _normalize_photoframe_proxy_ip(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if value.startswith("[") and ("]" in value):
+        value = value[1:value.find("]")]
+    if "%" in value:
+        value = value.split("%", 1)[0].strip()
+    if (value.count(":") == 1) and ("." in value):
+        host_part, port_part = value.rsplit(":", 1)
+        if port_part.isdigit():
+            value = host_part.strip()
+    try:
+        addr = ipaddress.ip_address(value)
+    except Exception:
+        return ""
+    return addr.compressed
+
+
+def _photoframe_settings_proxy_base_url(rec: Optional[Dict[str, Any]]) -> str:
+    ip = _normalize_photoframe_proxy_ip((rec or {}).get("last_ip"))
+    if not ip:
+        return ""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except Exception:
+        return ""
+    # Security guard: do not allow proxying to arbitrary public addresses.
+    if not (addr.is_private or addr.is_loopback or addr.is_link_local):
+        return ""
+    host = f"[{addr.compressed}]" if addr.version == 6 else addr.compressed
+    return f"http://{host}:5001"
+
+
+def _photoframe_settings_proxy_error_page(message: str, status_code: int = 502):
+    msg = html.escape(_sanitize_photoframe_text(message, 400) or "Ukendt fejl")
+    body = (
+        "<!doctype html><html lang='da'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Photoframe indstillinger</title>"
+        "<style>"
+        "body{font-family:Arial,Helvetica,sans-serif;background:#121417;color:#f1f3f5;margin:0;padding:24px;}"
+        ".card{max-width:760px;margin:0 auto;background:#1f2329;border:1px solid #343a40;border-radius:12px;padding:18px;}"
+        "h1{font-size:22px;margin:0 0 10px;}p{line-height:1.45;color:#d0d7de;}"
+        ".err{display:inline-block;margin-top:10px;padding:10px 12px;border-radius:8px;background:#3b2222;border:1px solid #7f3d3d;}"
+        "</style></head><body><div class='card'>"
+        "<h1>Kunne ikke åbne photoframe-indstillinger</h1>"
+        "<p>Tjek at rammen er online og har sendt en lokal IP-adresse til FjordLens.</p>"
+        f"<div class='err'>{msg}</div>"
+        "</div></body></html>"
+    )
+    resp = make_response(body, int(status_code))
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
+def _rewrite_photoframe_settings_html(body: str, proxy_root: str) -> str:
+    root = str(proxy_root or "").rstrip("/")
+    if not root:
+        return body
+
+    def _repl(match: re.Match) -> str:
+        return f"{match.group(1)}{root}/"
+
+    return re.sub(
+        r"(?i)(\b(?:href|src|action|formaction)\s*=\s*[\"'])/(?!/)",
+        _repl,
+        str(body or ""),
+    )
+
+
+def _rewrite_photoframe_settings_location(location: str, proxy_root: str, target_base_url: str) -> str:
+    loc = str(location or "").strip()
+    if not loc:
+        return ""
+    root = str(proxy_root or "").rstrip("/")
+    if not root:
+        return loc
+    if loc.startswith("/"):
+        return f"{root}/{loc.lstrip('/')}"
+
+    parsed = urlparse(loc)
+    if (not parsed.scheme) and (not parsed.netloc):
+        if loc.startswith("?") or loc.startswith("#"):
+            return loc
+        return f"{root}/{loc.lstrip('/')}"
+
+    target = urlparse(str(target_base_url or ""))
+    parsed_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    target_port = target.port or (443 if target.scheme == "https" else 80)
+    same_host = str(parsed.hostname or "").strip().lower() == str(target.hostname or "").strip().lower()
+    if same_host and (parsed_port == target_port):
+        path = str(parsed.path or "/")
+        new_path = f"{root}/{path.lstrip('/')}"
+        return urlunparse(("", "", new_path, "", parsed.query, parsed.fragment))
+    return loc
+
+
+def _photoframe_proxy_response(upstream: requests.Response, proxy_root: str, target_base_url: str):
+    content_type = str(upstream.headers.get("Content-Type") or "")
+    is_html = "text/html" in content_type.lower()
+    body_bytes = upstream.content or b""
+    if is_html:
+        encoding = str(upstream.encoding or "utf-8")
+        try:
+            body_text = body_bytes.decode(encoding, errors="replace")
+        except Exception:
+            body_text = body_bytes.decode("utf-8", errors="replace")
+        body_bytes = _rewrite_photoframe_settings_html(body_text, proxy_root).encode("utf-8")
+
+    resp = make_response(body_bytes, int(upstream.status_code))
+    skip_headers = {
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "trailers",
+        "upgrade",
+        "set-cookie",
+    }
+    for key, value in upstream.headers.items():
+        low = str(key or "").lower()
+        if low in skip_headers:
+            continue
+        if low == "location":
+            rewritten = _rewrite_photoframe_settings_location(value, proxy_root, target_base_url)
+            if rewritten:
+                resp.headers[key] = rewritten
+            continue
+        if is_html and (low == "content-type"):
+            resp.headers[key] = "text/html; charset=utf-8"
+            continue
+        resp.headers[key] = value
+    if is_html and ("Content-Type" not in resp.headers):
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 def _parse_iso_to_epoch(value: Any) -> float:
     raw = str(value or "").strip()
     if not raw:
@@ -8754,12 +8914,14 @@ def api_photoframes_status():
     items: list[Dict[str, Any]] = []
     with closing(get_conn()) as conn:
         for idx, rec in enumerate(records_sorted, start=1):
+            rec_id = _sanitize_photoframe_text(rec.get("id"), 64) or f"pf-token-{idx}"
             token_hint = _sanitize_photoframe_text(rec.get("token_hint"), 16)
             token_plain = _sanitize_photoframe_token_plain(rec.get("token_plain"))
             scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(rec)
             last_seen_at = _sanitize_photoframe_text(rec.get("last_seen_at"), 40)
             seen_ts = _parse_iso_to_epoch(last_seen_at)
             online = bool(seen_ts and ((now_ts - seen_ts) <= PHOTOFRAME_ONLINE_WINDOW_SEC))
+            settings_base = _photoframe_settings_proxy_base_url(rec)
             device_name = _sanitize_photoframe_text(rec.get("device_name"), 80)
             name = device_name or (f"Fotoramme {idx}")
             update_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
@@ -8790,7 +8952,7 @@ def api_photoframes_status():
 
             items.append(
                 {
-                    "id": str(rec.get("id") or f"pf-token-{idx}"),
+                    "id": rec_id,
                     "name": name,
                     "base_url": "",
                     "info_url": "",
@@ -8804,6 +8966,8 @@ def api_photoframes_status():
                     "feed_url": "",
                     "setup_complete": None,
                     "checked_at": checked_at,
+                    "settings_proxy_url": f"/api/photoframes/{quote(rec_id, safe='')}/settings-proxy",
+                    "settings_available": bool(settings_base),
                     "token_hint": token_hint,
                     "token_available": bool(token_plain),
                     "scope_mode": scope_mode,
@@ -9269,6 +9433,61 @@ def api_photoframes_delete(token_id: str):
 
     _save_photoframe_token_records(kept)
     return jsonify({"ok": True, "deleted_id": target_id, "count": len(kept)})
+
+
+@app.route("/api/photoframes/<token_id>/settings-proxy", defaults={"subpath": "remote-settings"}, methods=["GET", "POST"])
+@app.route("/api/photoframes/<token_id>/settings-proxy/<path:subpath>", methods=["GET", "POST"])
+@login_required
+def api_photoframes_settings_proxy(token_id: str, subpath: str):
+    if not getattr(current_user, "is_admin", False):
+        return _photoframe_settings_proxy_error_page("Kun administrator kan åbne fjernindstillinger.", 403)
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return _photoframe_settings_proxy_error_page("Ugyldigt token-id.", 400)
+
+    records = _load_photoframe_token_records()
+    _, rec = _photoframe_find_record_by_id(records, target_id)
+    if not rec:
+        return _photoframe_settings_proxy_error_page("Fotoramme blev ikke fundet.", 404)
+
+    target_base_url = _photoframe_settings_proxy_base_url(rec)
+    if not target_base_url:
+        return _photoframe_settings_proxy_error_page(
+            "Rammen har ingen brugbar lokal IP endnu. Vent til den er online og prøv igen.",
+            409,
+        )
+
+    clean_subpath = re.sub(r"/+", "/", str(subpath or "").strip()).lstrip("/")
+    if not clean_subpath:
+        clean_subpath = "remote-settings"
+    target_url = f"{target_base_url}/{clean_subpath}"
+    raw_query = request.query_string.decode("utf-8", errors="ignore").strip()
+    if raw_query:
+        target_url = f"{target_url}?{raw_query}"
+
+    headers: Dict[str, str] = {}
+    for header_name in ("Content-Type", "Accept", "Accept-Language"):
+        value = str(request.headers.get(header_name) or "").strip()
+        if value:
+            headers[header_name] = value
+    method = str(request.method or "GET").upper()
+    body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+
+    try:
+        upstream = requests.request(
+            method=method,
+            url=target_url,
+            headers=headers or None,
+            data=body_bytes,
+            timeout=PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC,
+            allow_redirects=False,
+        )
+    except Exception as exc:
+        return _photoframe_settings_proxy_error_page(f"Forbindelse til fotorammen fejlede: {exc}", 502)
+
+    proxy_root = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
+    return _photoframe_proxy_response(upstream, proxy_root, target_base_url)
 
 
 @app.route("/api/photoframes/<token_id>/scope", methods=["GET", "PUT"])

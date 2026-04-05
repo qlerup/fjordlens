@@ -605,6 +605,9 @@ const I18N = {
     photoframe_restart_kiosk_confirm: 'Genstarte kioskmode for {name}?',
     photoframe_restart_kiosk_queued: 'Kiosk-genstart sendt til enhed.',
     photoframe_restart_kiosk_failed: 'Kunne ikke sende kiosk-genstart.',
+    photoframe_open_settings_btn: 'Indstillinger',
+    photoframe_open_settings_failed: 'Kunne ikke åbne indstillinger.',
+    photoframe_open_settings_popup_blocked: 'Browseren blokerede nyt vindue. Tillad popups for at åbne indstillinger.',
     photoframe_update_state_queued: 'Venter på enhed',
     photoframe_update_state_downloading: 'Henter pakke',
     photoframe_update_state_installing: 'Installerer',
@@ -1178,6 +1181,9 @@ const I18N = {
     photoframe_restart_kiosk_confirm: 'Restart kiosk mode for {name}?',
     photoframe_restart_kiosk_queued: 'Kiosk restart queued for device.',
     photoframe_restart_kiosk_failed: 'Could not queue kiosk restart.',
+    photoframe_open_settings_btn: 'Settings',
+    photoframe_open_settings_failed: 'Could not open settings.',
+    photoframe_open_settings_popup_blocked: 'Browser blocked a new window. Allow popups to open settings.',
     photoframe_update_state_queued: 'Waiting for device',
     photoframe_update_state_downloading: 'Downloading',
     photoframe_update_state_installing: 'Installing',
@@ -2277,6 +2283,7 @@ function renderPhotoframePanel() {
     const statusClass = online ? 'online' : 'offline';
     const frameId = String(item.id || '').trim();
     const frameName = String(item.name || 'Photoframe').trim();
+    const settingsProxyUrl = String(item.settings_proxy_url || '').trim() || (frameId ? `/api/photoframes/${encodeURIComponent(frameId)}/settings-proxy` : '');
     const ipText = String(item.ip || '').trim() || '-';
     const tokenHint = String(item.token_hint || '').trim();
     const tokenText = tokenHint ? `***${tokenHint}` : '-';
@@ -2352,6 +2359,13 @@ function renderPhotoframePanel() {
             ${noteText ? `<div class="mini-label">${escapeHtml(noteText)}</div>` : ''}
             ${canCreateFrame ? `
               <div class="photoframe-card-actions">
+                <button
+                  class="btn small"
+                  type="button"
+                  data-photoframe-action="open-settings"
+                  data-frame-id="${escapeHtml(frameId)}"
+                  data-settings-url="${escapeHtml(settingsProxyUrl)}"
+                >${escapeHtml(tr('photoframe_open_settings_btn'))}</button>
                 <button
                   class="btn small"
                   type="button"
@@ -3410,6 +3424,19 @@ function renderPhotoframePanel() {
       const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
       const frameName = String(btn.getAttribute('data-frame-name') || '').trim();
       await openScopeModal(frameId, frameName);
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="open-settings"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const settingsUrl = String(btn.getAttribute('data-settings-url') || '').trim();
+      if (!settingsUrl) {
+        showStatus(tr('photoframe_open_settings_failed'), 'err');
+        return;
+      }
+      const opened = window.open(settingsUrl, '_blank', 'noopener');
+      if (!opened) {
+        showStatus(tr('photoframe_open_settings_popup_blocked'), 'err');
+      }
     });
   });
   document.querySelectorAll('[data-photoframe-action="show-token"]').forEach((btn) => {
