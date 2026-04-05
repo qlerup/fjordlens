@@ -4290,6 +4290,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         created_at = _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso()
         last_seen_at = _sanitize_photoframe_text(it.get("last_seen_at"), 40)
         last_ip = _sanitize_photoframe_text(it.get("last_ip"), 120)
+        last_local_ip = _sanitize_photoframe_text(it.get("last_local_ip"), 120)
         device_name = _sanitize_photoframe_text(it.get("device_name"), 80)
         last_user_agent = _sanitize_photoframe_text(it.get("last_user_agent"), 180)
         last_photo_id = _sanitize_photoframe_photo_id(it.get("last_photo_id"))
@@ -4333,6 +4334,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "created_at": created_at,
                 "last_seen_at": last_seen_at,
                 "last_ip": last_ip,
+                "last_local_ip": last_local_ip,
                 "device_name": device_name,
                 "last_user_agent": last_user_agent,
                 "last_photo_id": last_photo_id,
@@ -4469,6 +4471,7 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "created_at": _sanitize_photoframe_text(it.get("created_at"), 40) or now_iso(),
                 "last_seen_at": _sanitize_photoframe_text(it.get("last_seen_at"), 40),
                 "last_ip": _sanitize_photoframe_text(it.get("last_ip"), 120),
+                "last_local_ip": _sanitize_photoframe_text(it.get("last_local_ip"), 120),
                 "device_name": _sanitize_photoframe_text(it.get("device_name"), 80),
                 "last_user_agent": _sanitize_photoframe_text(it.get("last_user_agent"), 180),
                 "last_photo_id": _sanitize_photoframe_photo_id(it.get("last_photo_id")),
@@ -4993,6 +4996,19 @@ def _normalize_photoframe_proxy_ip(raw: Any) -> str:
 
 
 def _photoframe_settings_proxy_base_url(rec: Optional[Dict[str, Any]]) -> str:
+    local_ip = _normalize_photoframe_proxy_ip((rec or {}).get("last_local_ip"))
+    if local_ip:
+        try:
+            addr_local = ipaddress.ip_address(local_ip)
+            if not (addr_local.is_private or addr_local.is_loopback or addr_local.is_link_local):
+                addr_local = None
+            if addr_local is None:
+                raise ValueError("non-local")
+            host_local = f"[{addr_local.compressed}]" if addr_local.version == 6 else addr_local.compressed
+            return f"http://{host_local}:5001"
+        except Exception:
+            pass
+
     ip = _normalize_photoframe_proxy_ip((rec or {}).get("last_ip"))
     if not ip:
         return ""
@@ -5000,7 +5016,8 @@ def _photoframe_settings_proxy_base_url(rec: Optional[Dict[str, Any]]) -> str:
         addr = ipaddress.ip_address(ip)
     except Exception:
         return ""
-    # Security guard: do not allow proxying to arbitrary public addresses.
+    # Preferred path is always frame-reported local IP. Fallback to the observed
+    # request IP only when local IP is not available yet.
     if not (addr.is_private or addr.is_loopback or addr.is_link_local):
         return ""
     host = f"[{addr.compressed}]" if addr.version == 6 else addr.compressed
@@ -5132,6 +5149,19 @@ def _photoframe_update_presence_fields(rec: Dict[str, Any], req: Any, seen_at: s
         return
     rec["last_seen_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
     rec["last_ip"] = _request_client_ip()
+    local_ip_raw = ""
+    try:
+        local_ip_raw = str(req.args.get("local_ip") or req.headers.get("X-Photoframe-Local-IP") or "").strip()
+    except Exception:
+        local_ip_raw = ""
+    local_ip = _normalize_photoframe_proxy_ip(local_ip_raw)
+    if local_ip:
+        try:
+            local_addr = ipaddress.ip_address(local_ip)
+            if local_addr.is_private or local_addr.is_loopback or local_addr.is_link_local:
+                rec["last_local_ip"] = local_addr.compressed
+        except Exception:
+            pass
     rec["last_user_agent"] = _sanitize_photoframe_text(req.headers.get("User-Agent"), 180)
     frame_name = _sanitize_photoframe_text(
         req.headers.get("X-Photoframe-Name") or req.args.get("name"),
@@ -8936,6 +8966,9 @@ def api_photoframes_status():
             feed_sync_sent_at = _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40)
             feed_sync_acked_at = _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40)
             feed_sync_count = _sanitize_photoframe_feed_sync_count(rec.get("feed_sync_count"))
+            local_ip = _sanitize_photoframe_text(rec.get("last_local_ip"), 120)
+            net_ip = _sanitize_photoframe_text(rec.get("last_ip"), 120)
+            display_ip = net_ip or local_ip
             device_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
             version_status = "unknown"
             if latest_version:
@@ -8962,7 +8995,9 @@ def api_photoframes_status():
                     "http_status": 200 if online else None,
                     "latency_ms": None,
                     "error": error,
-                    "ip": _sanitize_photoframe_text(rec.get("last_ip"), 120),
+                    "ip": display_ip,
+                    "net_ip": net_ip,
+                    "local_ip": local_ip,
                     "feed_url": "",
                     "setup_complete": None,
                     "checked_at": checked_at,
@@ -9454,7 +9489,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
     target_base_url = _photoframe_settings_proxy_base_url(rec)
     if not target_base_url:
         return _photoframe_settings_proxy_error_page(
-            "Rammen har ingen brugbar lokal IP endnu. Vent til den er online og prøv igen.",
+            "Rammen har ingen brugbar lokal IP endnu. Opdater rammen til nyeste version, lad den køre i 30-60 sekunder, og prøv igen.",
             409,
         )
 

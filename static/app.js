@@ -561,6 +561,7 @@ const I18N = {
     photoframe_last_checked: 'Sidst tjekket',
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
+    photoframe_card_local_ip: 'Lokal IP',
     photoframe_card_token: 'Token',
     photoframe_card_scope: 'Indhold',
     photoframe_scope_summary_all: 'Alle billeder',
@@ -1137,6 +1138,7 @@ const I18N = {
     photoframe_last_checked: 'Last checked',
     photoframe_card_endpoint: 'Endpoint',
     photoframe_card_ip: 'IP',
+    photoframe_card_local_ip: 'Local IP',
     photoframe_card_token: 'Token',
     photoframe_card_scope: 'Content',
     photoframe_scope_summary_all: 'All photos',
@@ -2284,7 +2286,8 @@ function renderPhotoframePanel() {
     const frameId = String(item.id || '').trim();
     const frameName = String(item.name || 'Photoframe').trim();
     const settingsProxyUrl = String(item.settings_proxy_url || '').trim() || (frameId ? `/api/photoframes/${encodeURIComponent(frameId)}/settings-proxy` : '');
-    const ipText = String(item.ip || '').trim() || '-';
+    const ipText = String(item.net_ip || item.ip || '').trim() || '-';
+    const localIpText = String(item.local_ip || '').trim() || '-';
     const tokenHint = String(item.token_hint || '').trim();
     const tokenText = tokenHint ? `***${tokenHint}` : '-';
     const scopeText = photoframeScopeSummary(item);
@@ -2324,6 +2327,7 @@ function renderPhotoframePanel() {
               <div class="photoframe-row photoframe-row-token"><span>${escapeHtml(tr('photoframe_card_token'))}</span><strong class="photoframe-token-value">${escapeHtml(tokenText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_scope'))}</span><strong>${escapeHtml(scopeText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_ip'))}</span><strong>${escapeHtml(ipText)}</strong></div>
+              <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_local_ip'))}</span><strong>${escapeHtml(localIpText)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_card_last_seen'))}</span><strong>${escapeHtml(lastSeenLabel)}</strong></div>
               <div class="photoframe-row"><span>${escapeHtml(tr('photoframe_last_checked'))}</span><strong>${escapeHtml(checkedLabel)}</strong></div>
               <div class="photoframe-row photoframe-version-row">
