@@ -5914,6 +5914,17 @@ def _photoframe_settings_fallback_page(
         )
     page_script += "})();</script>"
 
+    if direct_available:
+        intro_block = (
+            f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} er på lokalnettet. "
+            "Indstillingerne nedenfor sendes via frame API, så visningen er den samme på lokal og fjern adgang.</p>"
+        )
+    else:
+        intro_block = (
+            f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
+            "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
+        )
+
     body = (
         "<!doctype html><html lang='da'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -5943,13 +5954,7 @@ def _photoframe_settings_fallback_page(
         "@media (max-width:780px){.row,.row3{grid-template-columns:1fr;}}"
         "@media (max-width:780px){.network{grid-template-columns:1fr;}}"
         "</style></head><body><div class='card'>"
-        (
-            f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} er på lokalnettet. "
-            "Indstillingerne nedenfor sendes via frame API, så visningen er den samme på lokal og fjern adgang.</p>"
-            if direct_available
-            else f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
-            "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
-        )
+        f"{intro_block}"
         f"{notice_block}"
         f"{status_block}"
         f"{scan_wait_live_block}"
