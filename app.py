@@ -10044,20 +10044,6 @@ def api_photoframes_settings_ready(token_id: str):
                 )
             baseline_seen = seen_ts
 
-        if (not wake_attempted) and ((time.time() - started_at) >= max(6.0, wait_sec * 0.45)):
-            ok_restart, restart_info = _photoframe_queue_restart_command(current_rec)
-            if ok_restart:
-                wake_attempted = True
-                wake_job_id = str(restart_info or "").strip()
-                try:
-                    _save_photoframe_token_records(records)
-                except Exception as exc:
-                    last_probe_error = f"Kunne ikke gemme wake-kommando: {exc}"
-            else:
-                wake_attempted = True
-                if restart_info:
-                    last_probe_error = str(restart_info)
-
         try:
             time.sleep(1.0)
         except Exception:
@@ -10067,8 +10053,6 @@ def api_photoframes_settings_ready(token_id: str):
         msg = "Rammen sendte heartbeat, men settings-webserver på port 5001 var ikke klar endnu."
     else:
         msg = "Ingen ny heartbeat modtaget inden timeout."
-    if wake_job_id:
-        msg = f"{msg} Wake-job sendt ({wake_job_id})."
     if last_probe_error:
         msg = f"{msg} Sidste fejl: {last_probe_error}"
 
@@ -10086,6 +10070,7 @@ def api_photoframes_settings_ready(token_id: str):
 
 
 @app.route("/api/photoframes/<token_id>/settings-proxy", defaults={"subpath": "remote-settings"}, methods=["GET", "POST"])
+@app.route("/api/photoframes/<token_id>/settings-proxy/", defaults={"subpath": "remote-settings"}, methods=["GET", "POST"])
 @app.route("/api/photoframes/<token_id>/settings-proxy/<path:subpath>", methods=["GET", "POST"])
 @login_required
 def api_photoframes_settings_proxy(token_id: str, subpath: str):
@@ -10176,7 +10161,6 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         if value:
             headers[header_name] = value
     body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    allow_wake_retry = bool(is_settings_entry or is_settings_save_post)
 
     def _proxy_request_once() -> tuple[Optional[requests.Response], str]:
         try:
@@ -10193,50 +10177,8 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             return None, str(exc)
 
     upstream, upstream_error = _proxy_request_once()
-    wake_attempted = False
-    wake_job_id = ""
-
-    def _try_wake_and_retry() -> tuple[Optional[requests.Response], str]:
-        nonlocal wake_attempted, wake_job_id
-        ok_restart, restart_info = _photoframe_queue_restart_command(rec)
-        if not ok_restart:
-            return (None, str(restart_info or "Kiosk-genstart kunne ikke sendes"))
-        wake_attempted = True
-        wake_job_id = str(restart_info or "").strip()
-        try:
-            _save_photoframe_token_records(records)
-        except Exception as exc:
-            return (None, f"Kunne ikke gemme wake-kommando: {exc}")
-
-        deadline = time.time() + 18.0
-        last_err = ""
-        while time.time() < deadline:
-            try:
-                time.sleep(1.4)
-            except Exception:
-                pass
-            probe, probe_err = _proxy_request_once()
-            if probe is None:
-                last_err = probe_err
-                continue
-            try:
-                probe_status = int(getattr(probe, "status_code", 0) or 0)
-            except Exception:
-                probe_status = 0
-            if probe_status < 500:
-                return (probe, "")
-            last_err = f"HTTP {probe_status}"
-        return (None, last_err or "timeout")
-
-    if (upstream is None) and allow_wake_retry:
-        upstream, upstream_error = _try_wake_and_retry()
-
     if upstream is None:
-        extra = ""
-        if wake_attempted:
-            extra = " Genstartskommando blev sendt til rammen. Vent 10-20 sekunder og prøv igen."
-            if wake_job_id:
-                extra += f" (job: {wake_job_id})"
+        extra = " Vent et par sekunder og prøv igen."
         if is_settings_save_post:
             return _fallback_submit(
                 transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
@@ -10256,24 +10198,10 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         upstream_status = int(getattr(upstream, "status_code", 0) or 0)
     except Exception:
         upstream_status = 0
-    if (upstream_status >= 500) and allow_wake_retry and (not wake_attempted):
-        retry_upstream, retry_err = _try_wake_and_retry()
-        if retry_upstream is not None:
-            upstream = retry_upstream
-            try:
-                upstream_status = int(getattr(upstream, "status_code", 0) or 0)
-            except Exception:
-                upstream_status = 0
-        else:
-            upstream_error = str(retry_err or "")
     if upstream_status >= 500:
         extra = ""
-        if wake_attempted:
-            extra = " Genstartskommando blev sendt til rammen. Vent 10-20 sekunder og prøv igen."
-            if wake_job_id:
-                extra += f" (job: {wake_job_id})"
         if upstream_error:
-            extra = f"{extra} Sidste fejl: {upstream_error}".strip()
+            extra = f" Sidste fejl: {upstream_error}".strip()
         transport_msg = f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.{extra}"
         if is_settings_save_post:
             return _fallback_submit(transport_error=transport_msg)
