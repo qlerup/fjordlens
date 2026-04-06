@@ -5777,11 +5777,15 @@ def _photoframe_settings_fallback_page(
             security = _sanitize_photoframe_text(net.get("security"), 120) or "Åbent netværk"
             signal_value = int(net.get("signal", -1) or -1)
             signal_label = str(signal_value) if signal_value >= 0 else "-"
+            security_lower = str(security or "").strip().lower()
+            is_open_network = bool((not security_lower) or ("åbent" in security_lower) or ("open" in security_lower))
+            ssid_attr = html.escape(ssid, quote=True)
             network_rows.append(
                 "<div class='network'>"
                 f"<strong>{html.escape(ssid)}</strong>"
                 f"<span>Signal: {html.escape(signal_label)}</span>"
                 f"<span>{html.escape(security)}</span>"
+                f"<button type='button' class='secondary pick-wifi' data-ssid='{ssid_attr}' data-open='{'1' if is_open_network else '0'}'>Forbind til Wi-Fi</button>"
                 "</div>"
             )
         wifi_scan_list_block = "<div class='network-list'>" + "".join(network_rows) + "</div>"
@@ -5806,6 +5810,7 @@ def _photoframe_settings_fallback_page(
         )
 
     status_block = ""
+    scan_wait_live_block = ""
     if update_status or update_message or update_job_id:
         parts = []
         if update_status:
@@ -5814,11 +5819,15 @@ def _photoframe_settings_fallback_page(
             parts.append(f"Type: {update_mode}")
         if update_job_id:
             parts.append(f"Job: {update_job_id}")
-        if scan_active and wait_seconds > 0:
-            parts.append(f"Venter: {wait_seconds}s")
         if update_message:
             parts.append(update_message)
         status_block = f"<div class='status'>{html.escape(' | '.join(parts))}</div>"
+    if scan_active and wait_seconds > 0:
+        scan_wait_live_block = (
+            "<p class='meta'>"
+            f"<span id='scan-wait-live' data-seconds='{int(wait_seconds)}'>Venter: {int(wait_seconds)}s</span>"
+            "</p>"
+        )
 
     scan_hint_block = ""
     if scan_active and (not scan_probably_stuck):
@@ -5837,26 +5846,72 @@ def _photoframe_settings_fallback_page(
             settings_session_meta_parts.append(f"Sidste aktivitet: {settings_web_last_activity_at}")
         if settings_web_started_at:
             settings_session_meta_parts.append(f"Startet: {settings_web_started_at}")
-        if session_idle_seconds > 0:
-            settings_session_meta_parts.append(f"Inaktiv i {session_idle_seconds}s")
     else:
         settings_session_meta_parts.append("Status: ikke aktiv")
     settings_session_meta_block = f"<p class='meta'>{html.escape(' | '.join(settings_session_meta_parts))}</p>"
+    settings_session_idle_block = ""
+    if settings_web_active and session_idle_seconds > 0:
+        settings_session_idle_block = (
+            "<p class='meta'>"
+            f"<span id='settings-idle-live' data-seconds='{int(session_idle_seconds)}'>Inaktiv i {int(session_idle_seconds)}s</span>"
+            "</p>"
+        )
 
-    auto_refresh_script = ""
+    page_script = (
+        "<script>"
+        "(function(){"
+        "function bindLiveSeconds(id,prefix){"
+        "var el=document.getElementById(id);"
+        "if(!el){return;}"
+        "var s=parseInt(el.getAttribute('data-seconds')||'0',10);"
+        "if(!(s>=0)){s=0;}"
+        "window.setInterval(function(){"
+        "s+=1;"
+        "el.textContent=prefix+s+'s';"
+        "el.setAttribute('data-seconds',String(s));"
+        "},1000);"
+        "}"
+        "bindLiveSeconds('scan-wait-live','Venter: ');"
+        "bindLiveSeconds('settings-idle-live','Inaktiv i ');"
+        "var ssidInput=document.querySelector(\"input[name='wifi_ssid']\");"
+        "var pwInput=document.querySelector(\"input[name='wifi_password']\");"
+        "var note=document.getElementById('wifi-select-note');"
+        "var picks=document.querySelectorAll('.pick-wifi');"
+        "for(var i=0;i<picks.length;i++){"
+        "picks[i].addEventListener('click',function(){"
+        "var ssid=(this.getAttribute('data-ssid')||'').trim();"
+        "var isOpen=(this.getAttribute('data-open')==='1');"
+        "if(!ssid||!ssidInput){return;}"
+        "if(pwInput){"
+        "if(isOpen){pwInput.value='';}"
+        "else{"
+        "var promptText='Skriv Wi-Fi kode til \"'+ssid+'\"';"
+        "var entered=window.prompt(promptText,pwInput.value||'');"
+        "if(entered===null){return;}"
+        "pwInput.value=entered;"
+        "}"
+        "}"
+        "ssidInput.value=ssid;"
+        "if(note){"
+        "if(isOpen){"
+        "note.textContent='Valgt Wi-Fi: '+ssid+' (åbent netværk). Tryk \"Send indstillinger til rammen\" for at anvende.';"
+        "}else{"
+        "note.textContent='Valgt Wi-Fi: '+ssid+'. Koden er klar. Tryk \"Send indstillinger til rammen\" for at anvende.';"
+        "}"
+        "}"
+        "});"
+        "}"
+    )
     if auto_refresh_enabled:
         target = html.escape(f"{root}/remote-settings", quote=True)
-        auto_refresh_script = (
-            "<script>"
-            "(function(){"
+        page_script += (
             "var t=window.setTimeout(function(){"
             "if(document.visibilityState==='hidden'){return;}"
             f"window.location.replace('{target}');"
             "},3000);"
             "window.addEventListener('beforeunload',function(){try{clearTimeout(t);}catch(e){}});"
-            "})();"
-            "</script>"
         )
+    page_script += "})();</script>"
 
     body = (
         "<!doctype html><html lang='da'><head><meta charset='utf-8'>"
@@ -5882,7 +5937,8 @@ def _photoframe_settings_fallback_page(
         "button:disabled{opacity:.6;cursor:not-allowed;}"
         ".link{color:#9cc2ff;text-decoration:none;font-size:14px;}"
         ".network-list{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px;}"
-        ".network{display:grid;grid-template-columns:minmax(0,1.2fr) auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid #2b3540;border-radius:8px;background:#0f141a;font-size:14px;}"
+        ".network{display:grid;grid-template-columns:minmax(0,1.2fr) auto auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid #2b3540;border-radius:8px;background:#0f141a;font-size:14px;}"
+        ".network .pick-wifi{padding:6px 12px;font-size:13px;white-space:nowrap;}"
         "@media (max-width:780px){.row,.row3{grid-template-columns:1fr;}}"
         "@media (max-width:780px){.network{grid-template-columns:1fr;}}"
         "</style></head><body><div class='card'>"
@@ -5890,6 +5946,7 @@ def _photoframe_settings_fallback_page(
         "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
         f"{notice_block}"
         f"{status_block}"
+        f"{scan_wait_live_block}"
         f"{scan_hint_block}"
         "<form method='post' action='" + html.escape(f"{root}/remote-settings/save") + "'>"
         "<input type='hidden' name='fallback_mode' value='1'>"
@@ -5912,6 +5969,12 @@ def _photoframe_settings_fallback_page(
         "<div><label>Device token</label>"
         f"<input name='device_token' value='{html.escape(str(defaults.get('device_token') or ''))}' placeholder='Indsæt token fra FjordLens'></div>"
         "</div>"
+        "<div class='actions'>"
+        "<button type='submit' class='secondary' formaction='" + html.escape(f"{root}/wifi/scan") + "' formmethod='post' formnovalidate>Opdater Wi-Fi liste</button>"
+        "</div>"
+        f"{wifi_scan_meta_block}"
+        f"{wifi_scan_list_block}"
+        "<p id='wifi-select-note' class='meta'></p>"
         "<div class='actions'><button type='submit'>Send indstillinger til rammen</button>"
         f"<a class='link' href='{html.escape(root + '/remote-settings')}'>Opdater side</a></div>"
         "</form>"
@@ -5919,15 +5982,11 @@ def _photoframe_settings_fallback_page(
         "<div class='actions'><button type='submit' class='secondary danger'>Luk forbindelsen</button></div>"
         "</form>"
         f"{settings_session_meta_block}"
-        "<form method='post' action='" + html.escape(f"{root}/wifi/scan") + "'>"
-        "<div class='actions'><button type='submit' class='secondary'>Opdater Wi-Fi liste</button></div>"
-        "</form>"
-        f"{wifi_scan_meta_block}"
-        f"{wifi_scan_list_block}"
+        f"{settings_session_idle_block}"
         "<p class='meta'>"
         f"Sidst set: {html.escape(last_seen_at or 'ukendt')} | Sidste IP: {html.escape(last_ip or 'ukendt')}"
         "</p>"
-        f"{auto_refresh_script}"
+        f"{page_script}"
         "</div></body></html>"
     )
     resp = make_response(body, int(status_code))
