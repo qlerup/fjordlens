@@ -81,6 +81,11 @@ except Exception:
     PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC = 20.0
 PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC = max(3.0, min(45.0, PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC))
 try:
+    PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC = int(os.environ.get("PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC", "600") or 600)
+except Exception:
+    PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC = 600
+PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC))
+try:
     PHOTOFRAME_FEED_MAX_IMAGES = int(os.environ.get("PHOTOFRAME_FEED_MAX_IMAGES", "1200") or 1200)
 except Exception:
     PHOTOFRAME_FEED_MAX_IMAGES = 1200
@@ -4082,9 +4087,22 @@ def _normalize_photoframe_update_package_mode(raw: Any) -> str:
         return "scan-wifi"
     if value in {"start_settings_web", "startsettingsweb"}:
         return "start-settings-web"
-    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device", "apply-settings", "scan-wifi", "start-settings-web"}:
+    if value in {"stop_settings_web", "stopsettingsweb"}:
+        return "stop-settings-web"
+    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device", "apply-settings", "scan-wifi", "start-settings-web", "stop-settings-web"}:
         return value
     return ""
+
+
+def _sanitize_photoframe_bool(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return bool(raw)
+    value = str(raw or "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return False
 
 
 def _normalize_photoframe_device_name(raw: Any, max_len: int = 40) -> str:
@@ -4158,6 +4176,30 @@ def _sanitize_photoframe_wifi_scan_networks(raw: Any, max_items: int = 64) -> li
     if len(out) > cap:
         out = out[:cap]
     return out
+
+
+def _decode_photoframe_wifi_scan_payload(raw: Any, max_len: int = 12000) -> list[Dict[str, Any]]:
+    value = str(raw or "").strip()
+    if not value:
+        return []
+    if len(value) > max_len:
+        return []
+    parsed: Any = None
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = None
+    if parsed is None:
+        try:
+            padded = value + ("=" * ((4 - (len(value) % 4)) % 4))
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+            if len(decoded) > (max_len * 3):
+                return []
+            parsed = json.loads(decoded.decode("utf-8", errors="ignore"))
+        except Exception:
+            return []
+    return _sanitize_photoframe_wifi_scan_networks(parsed, max_items=80)
 
 
 def _sanitize_photoframe_settings_payload(raw: Any) -> tuple[Dict[str, Any], str]:
@@ -4493,6 +4535,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         wifi_scan_scanned_at = _sanitize_photoframe_text(it.get("wifi_scan_scanned_at"), 40)
         wifi_scan_error = _sanitize_photoframe_text(it.get("wifi_scan_error"), 240)
         update_settings_payload = _decode_photoframe_settings_payload(it.get("update_settings_payload"))
+        settings_web_active = _sanitize_photoframe_bool(it.get("settings_web_active"))
+        settings_web_started_at = _sanitize_photoframe_text(it.get("settings_web_started_at"), 40)
+        settings_web_last_activity_at = _sanitize_photoframe_text(it.get("settings_web_last_activity_at"), 40)
         out.append(
             {
                 "id": rec_id,
@@ -4533,6 +4578,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "wifi_scan_networks": wifi_scan_networks,
                 "wifi_scan_scanned_at": wifi_scan_scanned_at,
                 "wifi_scan_error": wifi_scan_error,
+                "settings_web_active": settings_web_active,
+                "settings_web_started_at": settings_web_started_at,
+                "settings_web_last_activity_at": settings_web_last_activity_at,
             }
         )
     return out
@@ -4555,6 +4603,14 @@ def _photoframe_update_field_names() -> tuple[str, ...]:
     )
 
 
+def _photoframe_settings_session_field_names() -> tuple[str, ...]:
+    return (
+        "settings_web_active",
+        "settings_web_started_at",
+        "settings_web_last_activity_at",
+    )
+
+
 def _photoframe_update_state_rev(rec: Dict[str, Any]) -> float:
     if not isinstance(rec, dict):
         return 0.0
@@ -4564,6 +4620,60 @@ def _photoframe_update_state_rev(rec: Dict[str, Any]) -> float:
         _parse_iso_to_epoch(rec.get("update_started_at")),
         _parse_iso_to_epoch(rec.get("update_requested_at")),
     )
+
+
+def _photoframe_settings_session_state_rev(rec: Dict[str, Any]) -> float:
+    if not isinstance(rec, dict):
+        return 0.0
+    return max(
+        _parse_iso_to_epoch(rec.get("settings_web_last_activity_at")),
+        _parse_iso_to_epoch(rec.get("settings_web_started_at")),
+    )
+
+
+def _photoframe_mark_settings_session_active(rec: Optional[Dict[str, Any]], seen_at: str = "") -> bool:
+    if not isinstance(rec, dict):
+        return False
+    at = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    changed = False
+    if not _sanitize_photoframe_bool(rec.get("settings_web_active")):
+        rec["settings_web_active"] = True
+        changed = True
+    if not _sanitize_photoframe_text(rec.get("settings_web_started_at"), 40):
+        rec["settings_web_started_at"] = at
+        changed = True
+    if _sanitize_photoframe_text(rec.get("settings_web_last_activity_at"), 40) != at:
+        rec["settings_web_last_activity_at"] = at
+        changed = True
+    return changed
+
+
+def _photoframe_touch_settings_session_activity(rec: Optional[Dict[str, Any]], seen_at: str = "") -> bool:
+    if not isinstance(rec, dict):
+        return False
+    if not _sanitize_photoframe_bool(rec.get("settings_web_active")):
+        return False
+    at = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    if _sanitize_photoframe_text(rec.get("settings_web_last_activity_at"), 40) == at:
+        return False
+    rec["settings_web_last_activity_at"] = at
+    if not _sanitize_photoframe_text(rec.get("settings_web_started_at"), 40):
+        rec["settings_web_started_at"] = at
+    return True
+
+
+def _photoframe_mark_settings_session_closed(rec: Optional[Dict[str, Any]], seen_at: str = "") -> bool:
+    if not isinstance(rec, dict):
+        return False
+    at = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    changed = False
+    if _sanitize_photoframe_bool(rec.get("settings_web_active")):
+        rec["settings_web_active"] = False
+        changed = True
+    if _sanitize_photoframe_text(rec.get("settings_web_last_activity_at"), 40) != at:
+        rec["settings_web_last_activity_at"] = at
+        changed = True
+    return changed
 
 
 def _photoframe_mark_stale_scan_if_needed(rec: Optional[Dict[str, Any]], seen_at: str) -> bool:
@@ -4634,6 +4744,36 @@ def _photoframe_merge_wifi_scan_state(candidate: Dict[str, Any], existing: Optio
     return candidate
 
 
+def _photoframe_merge_settings_session_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
+        return candidate
+
+    candidate_active = _sanitize_photoframe_bool(candidate.get("settings_web_active"))
+    existing_active = _sanitize_photoframe_bool(existing.get("settings_web_active"))
+    candidate_started = _sanitize_photoframe_text(candidate.get("settings_web_started_at"), 40)
+    existing_started = _sanitize_photoframe_text(existing.get("settings_web_started_at"), 40)
+    candidate_last_activity = _sanitize_photoframe_text(candidate.get("settings_web_last_activity_at"), 40)
+    existing_last_activity = _sanitize_photoframe_text(existing.get("settings_web_last_activity_at"), 40)
+    candidate_rev = _photoframe_settings_session_state_rev(candidate)
+    existing_rev = _photoframe_settings_session_state_rev(existing)
+
+    use_existing = False
+    if existing_rev > (candidate_rev + 0.001):
+        use_existing = True
+    elif existing_active and (not candidate_active) and (existing_rev >= (candidate_rev - 0.001)):
+        use_existing = True
+
+    if use_existing:
+        candidate["settings_web_active"] = existing_active
+        candidate["settings_web_started_at"] = existing_started
+        candidate["settings_web_last_activity_at"] = existing_last_activity
+    else:
+        candidate["settings_web_active"] = candidate_active
+        candidate["settings_web_started_at"] = candidate_started
+        candidate["settings_web_last_activity_at"] = candidate_last_activity
+    return candidate
+
+
 def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
         return candidate
@@ -4646,10 +4786,10 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     candidate_rev = _photoframe_update_state_rev(candidate)
     active_states = {"queued", "downloading", "installing", "restarting"}
     if not existing_job:
-        return _photoframe_merge_wifi_scan_state(candidate, existing)
+        return _photoframe_merge_settings_session_state(_photoframe_merge_wifi_scan_state(candidate, existing), existing)
     # A freshly queued new job must win over stale persisted state.
     if candidate_job and (candidate_job != existing_job) and (candidate_status == "queued"):
-        return _photoframe_merge_wifi_scan_state(candidate, existing)
+        return _photoframe_merge_settings_session_state(_photoframe_merge_wifi_scan_state(candidate, existing), existing)
     # Protect an active persisted job from stale candidate snapshots that carry
     # no job id or a different (older) job id.
     if (existing_status in active_states) and (candidate_job != existing_job):
@@ -4659,7 +4799,7 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
                 candidate[key] = existing.get(key)
             if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
                 candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
-            return _photoframe_merge_wifi_scan_state(candidate, existing)
+            return _photoframe_merge_settings_session_state(_photoframe_merge_wifi_scan_state(candidate, existing), existing)
 
     rank = {
         "": 0,
@@ -4684,7 +4824,7 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
 
     if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
         candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
-    return _photoframe_merge_wifi_scan_state(candidate, existing)
+    return _photoframe_merge_settings_session_state(_photoframe_merge_wifi_scan_state(candidate, existing), existing)
 
 
 def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
@@ -4745,6 +4885,9 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "wifi_scan_networks": _sanitize_photoframe_wifi_scan_networks(it.get("wifi_scan_networks"), max_items=80),
                 "wifi_scan_scanned_at": _sanitize_photoframe_text(it.get("wifi_scan_scanned_at"), 40),
                 "wifi_scan_error": _sanitize_photoframe_text(it.get("wifi_scan_error"), 240),
+                "settings_web_active": _sanitize_photoframe_bool(it.get("settings_web_active")),
+                "settings_web_started_at": _sanitize_photoframe_text(it.get("settings_web_started_at"), 40),
+                "settings_web_last_activity_at": _sanitize_photoframe_text(it.get("settings_web_last_activity_at"), 40),
             }
 
             existing = existing_by_hash.get(token_hash)
@@ -5366,6 +5509,41 @@ def _photoframe_queue_start_settings_web_command(rec: Optional[Dict[str, Any]]) 
     return (True, job_id)
 
 
+def _photoframe_queue_stop_settings_web_command(rec: Optional[Dict[str, Any]], reason: str = "") -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    current_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    if current_status in {"queued", "downloading", "installing", "restarting"}:
+        if current_mode == "stop-settings-web":
+            existing_job = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+            if existing_job:
+                return (True, existing_job)
+        return (False, "En anden kommando kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfwebstop-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette stop-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    message = _sanitize_photoframe_text(reason, 240) or "Lukker indstillingsforbindelse"
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = message
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "stop-settings-web"
+    rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
+    return (True, job_id)
+
+
 def _photoframe_queue_wifi_scan_command(rec: Optional[Dict[str, Any]]) -> tuple[bool, str]:
     if not isinstance(rec, dict):
         return (False, "Mangler token-record")
@@ -5470,6 +5648,35 @@ def _photoframe_queue_settings_command(rec: Optional[Dict[str, Any]], settings_p
     return (True, job_id)
 
 
+def _photoframe_maybe_queue_settings_auto_stop(rec: Optional[Dict[str, Any]], seen_at: str) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "")
+    if not _sanitize_photoframe_bool(rec.get("settings_web_active")):
+        return (False, "")
+
+    status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if status in {"queued", "downloading", "installing", "restarting"}:
+        return (False, "")
+
+    now_epoch = _parse_iso_to_epoch(seen_at)
+    if now_epoch <= 0:
+        now_epoch = time.time()
+    last_activity = _sanitize_photoframe_text(rec.get("settings_web_last_activity_at"), 40)
+    if not last_activity:
+        last_activity = _sanitize_photoframe_text(rec.get("settings_web_started_at"), 40)
+    last_activity_epoch = _parse_iso_to_epoch(last_activity)
+    if last_activity_epoch <= 0:
+        return (False, "")
+
+    idle_seconds = max(0.0, now_epoch - last_activity_epoch)
+    if idle_seconds < float(PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC):
+        return (False, "")
+
+    idle_minutes = max(1, int(round(float(PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC) / 60.0)))
+    reason = f"Lukker forbindelsen efter {idle_minutes} min inaktivitet"
+    return _photoframe_queue_stop_settings_web_command(rec, reason=reason)
+
+
 def _photoframe_settings_fallback_defaults(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults: Dict[str, Any] = {
         "device_name": _sanitize_photoframe_text((rec or {}).get("device_name"), 40),
@@ -5518,6 +5725,9 @@ def _photoframe_settings_fallback_page(
     wifi_scan_networks = _sanitize_photoframe_wifi_scan_networks((rec or {}).get("wifi_scan_networks"), max_items=80)
     wifi_scan_scanned_at = _sanitize_photoframe_text((rec or {}).get("wifi_scan_scanned_at"), 40)
     wifi_scan_error = _sanitize_photoframe_text((rec or {}).get("wifi_scan_error"), 240)
+    settings_web_active = _sanitize_photoframe_bool((rec or {}).get("settings_web_active"))
+    settings_web_started_at = _sanitize_photoframe_text((rec or {}).get("settings_web_started_at"), 40)
+    settings_web_last_activity_at = _sanitize_photoframe_text((rec or {}).get("settings_web_last_activity_at"), 40)
     active_update_statuses = {"queued", "downloading", "installing", "restarting"}
     update_active = update_status in active_update_statuses
     scan_active = update_active and (update_mode == "scan-wifi")
@@ -5532,6 +5742,12 @@ def _photoframe_settings_fallback_page(
         and (last_seen_epoch >= (requested_epoch + 8.0))
         and (last_report_epoch <= (requested_epoch + 1.0))
     )
+    settings_timeout_minutes = max(1, int(round(float(PHOTOFRAME_SETTINGS_IDLE_TIMEOUT_SEC) / 60.0)))
+    session_idle_seconds = 0
+    session_idle_source = settings_web_last_activity_at or settings_web_started_at
+    session_idle_epoch = _parse_iso_to_epoch(session_idle_source)
+    if settings_web_active and session_idle_epoch > 0:
+        session_idle_seconds = int(max(0.0, time.time() - session_idle_epoch))
     auto_refresh_enabled = bool(update_active)
 
     options_html = []
@@ -5614,6 +5830,19 @@ def _photoframe_settings_fallback_page(
             "Opdater rammen til nyeste version og prøv igen.</div>"
         )
 
+    settings_session_meta_parts = [f"Forbindelsen lukkes automatisk efter {settings_timeout_minutes} min inaktivitet."]
+    if settings_web_active:
+        settings_session_meta_parts.append("Status: aktiv")
+        if settings_web_last_activity_at:
+            settings_session_meta_parts.append(f"Sidste aktivitet: {settings_web_last_activity_at}")
+        if settings_web_started_at:
+            settings_session_meta_parts.append(f"Startet: {settings_web_started_at}")
+        if session_idle_seconds > 0:
+            settings_session_meta_parts.append(f"Inaktiv i {session_idle_seconds}s")
+    else:
+        settings_session_meta_parts.append("Status: ikke aktiv")
+    settings_session_meta_block = f"<p class='meta'>{html.escape(' | '.join(settings_session_meta_parts))}</p>"
+
     auto_refresh_script = ""
     if auto_refresh_enabled:
         target = html.escape(f"{root}/remote-settings", quote=True)
@@ -5649,6 +5878,8 @@ def _photoframe_settings_fallback_page(
         ".actions{display:flex;gap:10px;align-items:center;margin-top:14px;}"
         "button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600;}"
         "button.secondary{background:#263243;color:#d7e5ff;border:1px solid #3f4f66;}"
+        "button.danger{background:#7b2b2b;color:#fff;border:1px solid #a54747;}"
+        "button:disabled{opacity:.6;cursor:not-allowed;}"
         ".link{color:#9cc2ff;text-decoration:none;font-size:14px;}"
         ".network-list{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px;}"
         ".network{display:grid;grid-template-columns:minmax(0,1.2fr) auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid #2b3540;border-radius:8px;background:#0f141a;font-size:14px;}"
@@ -5684,6 +5915,10 @@ def _photoframe_settings_fallback_page(
         "<div class='actions'><button type='submit'>Send indstillinger til rammen</button>"
         f"<a class='link' href='{html.escape(root + '/remote-settings')}'>Opdater side</a></div>"
         "</form>"
+        "<form method='post' action='" + html.escape(f"{root}/connection/close") + "'>"
+        "<div class='actions'><button type='submit' class='secondary danger'>Luk forbindelsen</button></div>"
+        "</form>"
+        f"{settings_session_meta_block}"
         "<form method='post' action='" + html.escape(f"{root}/wifi/scan") + "'>"
         "<div class='actions'><button type='submit' class='secondary'>Opdater Wi-Fi liste</button></div>"
         "</form>"
@@ -6185,6 +6420,15 @@ def _photoframe_update_command_payload(
         if version:
             out["version"] = version
         return out
+    if package_mode in {"stop-settings-web", "stop_settings_web", "stopsettingsweb"}:
+        out = {
+            "job_id": job_id,
+            "action": "stop_settings_web",
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
 
     safe_token = _sanitize_photoframe_token_plain(token)
     safe_base = _normalize_photoframe_base_url(request_base)
@@ -6237,6 +6481,18 @@ def _photoframe_apply_update_report(
             rec["device_version"] = version
     if status in {"downloading", "installing", "restarting", "success", "failed"} and not _sanitize_photoframe_text(rec.get("update_started_at"), 40):
         rec["update_started_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    if mode == "start-settings-web":
+        if status == "success":
+            _photoframe_mark_settings_session_active(rec, seen_at)
+        elif status == "failed":
+            _photoframe_mark_settings_session_closed(rec, seen_at)
+    elif mode == "stop-settings-web":
+        if status == "success":
+            _photoframe_mark_settings_session_closed(rec, seen_at)
+        elif status == "failed":
+            # Keep session marked active if stop failed, so auto-timeout can retry.
+            _photoframe_mark_settings_session_active(rec, seen_at)
     if status in {"success", "failed"}:
         rec["update_finished_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
         if status == "success":
@@ -9681,6 +9937,9 @@ def api_photoframes_status():
             update_last_report_at = _sanitize_photoframe_text(rec.get("update_last_report_at"), 40)
             update_version = _sanitize_photoframe_text(rec.get("update_version"), 80)
             update_package_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+            settings_web_active = _sanitize_photoframe_bool(rec.get("settings_web_active"))
+            settings_web_started_at = _sanitize_photoframe_text(rec.get("settings_web_started_at"), 40)
+            settings_web_last_activity_at = _sanitize_photoframe_text(rec.get("settings_web_last_activity_at"), 40)
             feed_sync_status = _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status"))
             feed_sync_sent_at = _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40)
             feed_sync_acked_at = _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40)
@@ -9741,6 +10000,9 @@ def api_photoframes_status():
                     "update_last_report_at": update_last_report_at,
                     "update_version": update_version,
                     "update_package_mode": update_package_mode,
+                    "settings_web_active": settings_web_active,
+                    "settings_web_started_at": settings_web_started_at,
+                    "settings_web_last_activity_at": settings_web_last_activity_at,
                     "device_version": device_version,
                     "version_status": version_status,
                     "content_sync_status": feed_sync_status,
@@ -9805,6 +10067,9 @@ def api_photoframes_create():
             "wifi_scan_networks": [],
             "wifi_scan_scanned_at": "",
             "wifi_scan_error": "",
+            "settings_web_active": False,
+            "settings_web_started_at": "",
+            "settings_web_last_activity_at": "",
         }
     )
     _save_photoframe_token_records(records)
@@ -10342,6 +10607,8 @@ def api_photoframes_settings_ready(token_id: str):
             last_message = current_message
             seen_at = current_seen_at
             if current_status == "success":
+                if _photoframe_mark_settings_session_active(current_rec, now_iso()):
+                    _save_photoframe_token_records(records)
                 return jsonify(
                     {
                         "ok": True,
@@ -10366,6 +10633,8 @@ def api_photoframes_settings_ready(token_id: str):
                     }
                 ), 409
         elif current_mode == "start-settings-web" and current_status == "success":
+            if _photoframe_mark_settings_session_active(current_rec, now_iso()):
+                _save_photoframe_token_records(records)
             return jsonify(
                 {
                     "ok": True,
@@ -10427,6 +10696,17 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
     is_settings_entry = (method == "GET") and (settings_root in {"remote-settings", "settings"})
     is_settings_save_post = (method == "POST") and (clean_subpath in {"remote-settings/save", "settings/save", "wifi/connect"})
     is_settings_scan_post = (method == "POST") and (clean_subpath in {"wifi/scan", "remote-settings/scan", "settings/scan"})
+    is_settings_close_post = (method == "POST") and (clean_subpath in {"connection/close", "remote-settings/close", "settings/close"})
+    is_settings_related = bool(
+        settings_root in {"remote-settings", "settings"}
+        or clean_subpath.startswith("remote-settings/")
+        or clean_subpath.startswith("settings/")
+        or clean_subpath.startswith("wifi/")
+    )
+
+    if is_settings_related and (not is_settings_close_post):
+        if _photoframe_touch_settings_session_activity(rec, now_iso()):
+            _save_photoframe_token_records(records)
 
     def _fallback_submit(transport_error: str = ""):
         settings_payload, err = _photoframe_extract_settings_payload_from_request(request)
@@ -10471,6 +10751,25 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             code=303,
         )
 
+    def _queue_close_submit():
+        ok_close, close_info = _photoframe_queue_stop_settings_web_command(
+            rec,
+            reason="Lukker indstillingsforbindelse",
+        )
+        if not ok_close:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                status_code=409,
+                error=close_info or "Kunne ikke lukke forbindelsen",
+            )
+        _save_photoframe_token_records(records)
+        job_id = _sanitize_photoframe_update_job_id(close_info)
+        return redirect(
+            f"{proxy_root}/remote-settings?close_queued=1&close_job_id={quote(job_id, safe='')}",
+            code=303,
+        )
+
     def _entry_notice_from_query() -> str:
         notes: list[str] = []
         queued = str(request.args.get("queued") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -10487,6 +10786,13 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             if scan_job_id:
                 txt = f"{txt} Job: {scan_job_id}"
             notes.append(txt)
+        close_queued = str(request.args.get("close_queued") or "").strip().lower() in {"1", "true", "yes", "on"}
+        close_job_id = _sanitize_photoframe_update_job_id(request.args.get("close_job_id"))
+        if close_queued:
+            txt = "Luk forbindelsen sendt til rammen."
+            if close_job_id:
+                txt = f"{txt} Job: {close_job_id}"
+            notes.append(txt)
         return " ".join([n for n in notes if n]).strip()
 
     target_base_url = _photoframe_settings_proxy_base_url(rec)
@@ -10495,6 +10801,8 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         return _fallback_submit()
     if is_settings_scan_post:
         return _queue_scan_submit()
+    if is_settings_close_post:
+        return _queue_close_submit()
     if not target_base_url:
         if is_settings_entry:
             notice = _entry_notice_from_query()
@@ -10934,6 +11242,7 @@ def api_frame_feed(token: str):
     now = now_iso()
     active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
     _photoframe_update_presence_fields(active_record, request, now)
+    _photoframe_maybe_queue_settings_auto_stop(active_record, now)
     _save_photoframe_token_records(records)
     current_photo_raw = request.args.get("current_photo_id") or request.headers.get("X-Photoframe-Current-Photo-Id")
     scope_mode, scope_folders, scope_photo_ids = _photoframe_record_scope(active_record)
@@ -11147,6 +11456,10 @@ def api_frame_heartbeat(token: str):
     update_message_raw = request.args.get("update_message") or request.headers.get("X-Photoframe-Update-Message")
     update_version_raw = request.args.get("update_version") or request.headers.get("X-Photoframe-Update-Version")
     feed_rev_raw = request.args.get("feed_rev") or request.headers.get("X-Photoframe-Feed-Rev")
+    wifi_scan_sent_raw = request.args.get("wifi_scan_sent") or request.headers.get("X-Photoframe-Wifi-Scan-Sent")
+    wifi_scan_payload_raw = request.args.get("wifi_scan_payload") or request.headers.get("X-Photoframe-Wifi-Scan-Payload")
+    wifi_scan_error_raw = request.args.get("wifi_scan_error") or request.headers.get("X-Photoframe-Wifi-Scan-Error")
+    wifi_scan_scanned_at_raw = request.args.get("wifi_scan_scanned_at") or request.headers.get("X-Photoframe-Wifi-Scan-Scanned-At")
     current_photo_id = 0
     with closing(get_conn()) as conn:
         current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
@@ -11166,6 +11479,12 @@ def api_frame_heartbeat(token: str):
         now,
         allow_fallback=False,
     )
+    wifi_scan_sent = _sanitize_photoframe_bool(wifi_scan_sent_raw) or bool(str(wifi_scan_payload_raw or "").strip()) or bool(str(wifi_scan_error_raw or "").strip())
+    if wifi_scan_sent:
+        active_record["wifi_scan_networks"] = _decode_photoframe_wifi_scan_payload(wifi_scan_payload_raw, max_len=12000)
+        active_record["wifi_scan_error"] = _sanitize_photoframe_text(wifi_scan_error_raw, 240)
+        active_record["wifi_scan_scanned_at"] = _sanitize_photoframe_text(wifi_scan_scanned_at_raw, 40) or now
+    _photoframe_maybe_queue_settings_auto_stop(active_record, now)
     _save_photoframe_token_records(records)
 
     latest_photo_id = _sanitize_photoframe_photo_id(active_record.get("last_photo_id") if isinstance(active_record, dict) else 0)
