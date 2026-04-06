@@ -4574,6 +4574,8 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     candidate_job = _sanitize_photoframe_update_job_id(candidate.get("update_job_id"))
     candidate_status = _sanitize_photoframe_update_status(candidate.get("update_status"))
     existing_status = _sanitize_photoframe_update_status(existing.get("update_status"))
+    existing_rev = _photoframe_update_state_rev(existing)
+    candidate_rev = _photoframe_update_state_rev(candidate)
     active_states = {"queued", "downloading", "installing", "restarting"}
     if not existing_job:
         return candidate
@@ -4583,14 +4585,14 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     # Protect an active persisted job from stale candidate snapshots that carry
     # no job id or a different (older) job id.
     if (existing_status in active_states) and (candidate_job != existing_job):
-        for key in _photoframe_update_field_names():
-            candidate[key] = existing.get(key)
-        if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
-            candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
-        return candidate
+        candidate_terminal = candidate_status in {"success", "failed"}
+        if (not candidate_terminal) or (candidate_rev <= (existing_rev + 0.001)):
+            for key in _photoframe_update_field_names():
+                candidate[key] = existing.get(key)
+            if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
+                candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
+            return candidate
 
-    existing_rev = _photoframe_update_state_rev(existing)
-    candidate_rev = _photoframe_update_state_rev(candidate)
     rank = {
         "": 0,
         "queued": 1,
