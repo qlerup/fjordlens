@@ -5710,6 +5710,7 @@ def _photoframe_settings_fallback_page(
     notice: str = "",
     error: str = "",
     transport_error: str = "",
+    direct_available: bool = False,
 ):
     root = str(proxy_root or "").rstrip("/")
     defaults = _photoframe_settings_fallback_defaults(rec)
@@ -5942,8 +5943,13 @@ def _photoframe_settings_fallback_page(
         "@media (max-width:780px){.row,.row3{grid-template-columns:1fr;}}"
         "@media (max-width:780px){.network{grid-template-columns:1fr;}}"
         "</style></head><body><div class='card'>"
-        f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
-        "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
+        (
+            f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} er på lokalnettet. "
+            "Indstillingerne nedenfor sendes via frame API, så visningen er den samme på lokal og fjern adgang.</p>"
+            if direct_available
+            else f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
+            "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
+        )
         f"{notice_block}"
         f"{status_block}"
         f"{scan_wait_live_block}"
@@ -10855,6 +10861,16 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         return " ".join([n for n in notes if n]).strip()
 
     target_base_url = _photoframe_settings_proxy_base_url(rec)
+    # Always use the FjordLens fallback UI for settings entry.
+    # This keeps a consistent desktop/mobile layout across local and remote access.
+    if is_settings_entry:
+        notice = _entry_notice_from_query()
+        return _photoframe_settings_fallback_page(
+            rec,
+            proxy_root,
+            notice=notice,
+            direct_available=bool(target_base_url),
+        )
     # All settings writes go via the existing frame heartbeat command channel.
     if is_settings_save_post:
         return _fallback_submit()
@@ -10863,13 +10879,6 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
     if is_settings_close_post:
         return _queue_close_submit()
     if not target_base_url:
-        if is_settings_entry:
-            notice = _entry_notice_from_query()
-            return _photoframe_settings_fallback_page(
-                rec,
-                proxy_root,
-                notice=notice,
-            )
         return _photoframe_settings_proxy_error_page(
             "Rammen har ingen brugbar lokal IP endnu. Brug fallback-fjernindstillinger og prøv igen.",
             409,
