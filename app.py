@@ -5638,7 +5638,7 @@ def _photoframe_settings_fallback_page(
         "<div><label>Land</label><select name='wifi_country'>" + countries + "</select></div>"
         "<div><label>Wi-Fi SSID (valgfri)</label>"
         f"<input name='wifi_ssid' list='wifi-ssid-list' value='{html.escape(str(defaults.get('wifi_ssid') or ''))}' placeholder='Fx MitWiFi'></div>"
-        "<div><label>Wi-Fi adgangskode (valgfri)</label><input type='password' name='wifi_password' placeholder='Skriv Wi-Fi kode her'></div>"
+        "<div><label>Wi-Fi adgangskode (påkrævet for lukkede netværk)</label><input type='password' name='wifi_password' placeholder='Skriv Wi-Fi kode her'></div>"
         "</div>"
         "<datalist id='wifi-ssid-list'>" + wifi_ssid_options + "</datalist>"
         "<div class='row'>"
