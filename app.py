@@ -4566,6 +4566,40 @@ def _photoframe_update_state_rev(rec: Dict[str, Any]) -> float:
     )
 
 
+def _photoframe_mark_stale_scan_if_needed(rec: Optional[Dict[str, Any]], seen_at: str) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if status != "queued":
+        return False
+    mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    if mode != "scan-wifi":
+        return False
+    requested_at = _sanitize_photoframe_text(rec.get("update_requested_at"), 40)
+    requested_epoch = _parse_iso_to_epoch(requested_at)
+    if requested_epoch <= 0:
+        return False
+    seen_epoch = _parse_iso_to_epoch(seen_at)
+    if seen_epoch <= 0:
+        seen_epoch = time.time()
+    if (seen_epoch - requested_epoch) < 45.0:
+        return False
+    last_seen_epoch = _parse_iso_to_epoch(rec.get("last_seen_at"))
+    if last_seen_epoch < (requested_epoch + 8.0):
+        return False
+    last_report_epoch = _parse_iso_to_epoch(rec.get("update_last_report_at"))
+    if last_report_epoch > (requested_epoch + 1.0):
+        return False
+
+    rec["update_status"] = "failed"
+    rec["update_message"] = "Wi-Fi scan fik ingen kvittering fra rammen. Opdater frame-softwaren og prøv igen."
+    rec["update_last_report_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    if not _sanitize_photoframe_text(rec.get("update_started_at"), 40):
+        rec["update_started_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    rec["update_finished_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
+    return True
+
+
 def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
         return candidate
@@ -5441,12 +5475,30 @@ def _photoframe_settings_fallback_page(
     update_status = _sanitize_photoframe_update_status((rec or {}).get("update_status"))
     update_message = _sanitize_photoframe_text((rec or {}).get("update_message"), 240)
     update_job_id = _sanitize_photoframe_update_job_id((rec or {}).get("update_job_id"))
+    update_mode = _normalize_photoframe_update_package_mode((rec or {}).get("update_package_mode"))
+    update_requested_at = _sanitize_photoframe_text((rec or {}).get("update_requested_at"), 40)
+    update_last_report_at = _sanitize_photoframe_text((rec or {}).get("update_last_report_at"), 40)
     last_seen_at = _sanitize_photoframe_text((rec or {}).get("last_seen_at"), 40)
     last_ip = _sanitize_photoframe_text((rec or {}).get("last_ip"), 120) or _sanitize_photoframe_text((rec or {}).get("last_local_ip"), 120)
     device_name = _sanitize_photoframe_text((rec or {}).get("device_name"), 80) or "Fotoramme"
     wifi_scan_networks = _sanitize_photoframe_wifi_scan_networks((rec or {}).get("wifi_scan_networks"), max_items=80)
     wifi_scan_scanned_at = _sanitize_photoframe_text((rec or {}).get("wifi_scan_scanned_at"), 40)
     wifi_scan_error = _sanitize_photoframe_text((rec or {}).get("wifi_scan_error"), 240)
+    active_update_statuses = {"queued", "downloading", "installing", "restarting"}
+    update_active = update_status in active_update_statuses
+    scan_active = update_active and (update_mode == "scan-wifi")
+    requested_epoch = _parse_iso_to_epoch(update_requested_at)
+    last_seen_epoch = _parse_iso_to_epoch(last_seen_at)
+    last_report_epoch = _parse_iso_to_epoch(update_last_report_at)
+    wait_seconds = int(max(0.0, time.time() - requested_epoch)) if requested_epoch > 0 else 0
+    scan_probably_stuck = bool(
+        scan_active
+        and (requested_epoch > 0)
+        and (wait_seconds >= 35)
+        and (last_seen_epoch >= (requested_epoch + 8.0))
+        and (last_report_epoch <= (requested_epoch + 1.0))
+    )
+    auto_refresh_enabled = bool(update_active)
 
     options_html = []
     current_country = _normalize_photoframe_wifi_country(defaults.get("wifi_country")) or "DK"
@@ -5461,6 +5513,8 @@ def _photoframe_settings_fallback_page(
         wifi_scan_meta.append(f"Sidst scannet: {wifi_scan_scanned_at}")
     if wifi_scan_error:
         wifi_scan_meta.append(f"Scan-fejl: {wifi_scan_error}")
+    if wifi_scan_scanned_at and (not wifi_scan_networks) and (not wifi_scan_error):
+        wifi_scan_meta.append("Scan gennemført, men ingen Wi-Fi netværk blev fundet")
     wifi_scan_meta_block = ""
     if wifi_scan_meta:
         wifi_scan_meta_block = f"<p class='meta'>{html.escape(' | '.join(wifi_scan_meta))}</p>"
@@ -5481,6 +5535,8 @@ def _photoframe_settings_fallback_page(
                 "</div>"
             )
         wifi_scan_list_block = "<div class='network-list'>" + "".join(network_rows) + "</div>"
+    elif wifi_scan_scanned_at and not wifi_scan_error:
+        wifi_scan_list_block = "<p class='meta'>Ingen Wi-Fi netværk fundet ved seneste scan.</p>"
     elif not wifi_scan_error:
         wifi_scan_list_block = "<p class='meta'>Ingen Wi-Fi netværk i cache endnu. Tryk \"Opdater Wi-Fi liste\".</p>"
 
@@ -5504,11 +5560,40 @@ def _photoframe_settings_fallback_page(
         parts = []
         if update_status:
             parts.append(f"Status: {update_status}")
+        if update_mode:
+            parts.append(f"Type: {update_mode}")
         if update_job_id:
             parts.append(f"Job: {update_job_id}")
+        if scan_active and wait_seconds > 0:
+            parts.append(f"Venter: {wait_seconds}s")
         if update_message:
             parts.append(update_message)
         status_block = f"<div class='status'>{html.escape(' | '.join(parts))}</div>"
+
+    scan_hint_block = ""
+    if scan_active and (not scan_probably_stuck):
+        scan_hint_block = "<p class='meta'>Venter på svar fra rammen. Siden opdateres automatisk hvert 3. sekund.</p>"
+    elif scan_probably_stuck:
+        scan_hint_block = (
+            "<div class='notice warn'>Wi-Fi scan afventer stadig svar fra rammen. "
+            "Hvis dette fortsætter, er frame-softwaren sandsynligvis for gammel til scan-funktionen. "
+            "Opdater rammen til nyeste version og prøv igen.</div>"
+        )
+
+    auto_refresh_script = ""
+    if auto_refresh_enabled:
+        target = html.escape(f"{root}/remote-settings", quote=True)
+        auto_refresh_script = (
+            "<script>"
+            "(function(){"
+            "var t=window.setTimeout(function(){"
+            "if(document.visibilityState==='hidden'){return;}"
+            f"window.location.replace('{target}');"
+            "},3000);"
+            "window.addEventListener('beforeunload',function(){try{clearTimeout(t);}catch(e){}});"
+            "})();"
+            "</script>"
+        )
 
     body = (
         "<!doctype html><html lang='da'><head><meta charset='utf-8'>"
@@ -5540,6 +5625,7 @@ def _photoframe_settings_fallback_page(
         "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
         f"{notice_block}"
         f"{status_block}"
+        f"{scan_hint_block}"
         "<form method='post' action='" + html.escape(f"{root}/remote-settings/save") + "'>"
         "<input type='hidden' name='fallback_mode' value='1'>"
         "<div class='row'>"
@@ -5571,7 +5657,9 @@ def _photoframe_settings_fallback_page(
         f"{wifi_scan_list_block}"
         "<p class='meta'>"
         f"Sidst set: {html.escape(last_seen_at or 'ukendt')} | Sidste IP: {html.escape(last_ip or 'ukendt')}"
-        "</p></div></body></html>"
+        "</p>"
+        f"{auto_refresh_script}"
+        "</div></body></html>"
     )
     resp = make_response(body, int(status_code))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
@@ -11028,7 +11116,7 @@ def api_frame_heartbeat(token: str):
     current_photo_id = 0
     with closing(get_conn()) as conn:
         current_photo_id = _photoframe_try_set_current_photo(conn, active_record, current_photo_raw, now)
-    _photoframe_apply_update_report(
+    report_applied = _photoframe_apply_update_report(
         active_record,
         update_job_raw,
         update_status_raw,
@@ -11036,6 +11124,8 @@ def api_frame_heartbeat(token: str):
         update_version_raw,
         now,
     )
+    if not report_applied:
+        _photoframe_mark_stale_scan_if_needed(active_record, now)
     _photoframe_apply_feed_sync_ack(
         active_record,
         feed_rev_raw,
