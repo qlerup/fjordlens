@@ -4600,6 +4600,40 @@ def _photoframe_mark_stale_scan_if_needed(rec: Optional[Dict[str, Any]], seen_at
     return True
 
 
+def _photoframe_merge_wifi_scan_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
+        return candidate
+
+    candidate_scan_at = _sanitize_photoframe_text(candidate.get("wifi_scan_scanned_at"), 40)
+    existing_scan_at = _sanitize_photoframe_text(existing.get("wifi_scan_scanned_at"), 40)
+    candidate_scan_rev = _parse_iso_to_epoch(candidate_scan_at)
+    existing_scan_rev = _parse_iso_to_epoch(existing_scan_at)
+
+    candidate_networks = _sanitize_photoframe_wifi_scan_networks(candidate.get("wifi_scan_networks"), max_items=80)
+    existing_networks = _sanitize_photoframe_wifi_scan_networks(existing.get("wifi_scan_networks"), max_items=80)
+    candidate_error = _sanitize_photoframe_text(candidate.get("wifi_scan_error"), 240)
+    existing_error = _sanitize_photoframe_text(existing.get("wifi_scan_error"), 240)
+
+    use_existing = False
+    if existing_scan_rev > (candidate_scan_rev + 0.001):
+        use_existing = True
+    elif existing_scan_rev >= (candidate_scan_rev - 0.001):
+        if (not candidate_networks) and bool(existing_networks):
+            use_existing = True
+        elif (not candidate_error) and bool(existing_error) and (not candidate_networks):
+            use_existing = True
+
+    if use_existing:
+        candidate["wifi_scan_networks"] = existing_networks
+        candidate["wifi_scan_scanned_at"] = existing_scan_at
+        candidate["wifi_scan_error"] = existing_error
+    else:
+        candidate["wifi_scan_networks"] = candidate_networks
+        candidate["wifi_scan_scanned_at"] = candidate_scan_at
+        candidate["wifi_scan_error"] = candidate_error
+    return candidate
+
+
 def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if (not isinstance(candidate, dict)) or (not isinstance(existing, dict)):
         return candidate
@@ -4612,10 +4646,10 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     candidate_rev = _photoframe_update_state_rev(candidate)
     active_states = {"queued", "downloading", "installing", "restarting"}
     if not existing_job:
-        return candidate
+        return _photoframe_merge_wifi_scan_state(candidate, existing)
     # A freshly queued new job must win over stale persisted state.
     if candidate_job and (candidate_job != existing_job) and (candidate_status == "queued"):
-        return candidate
+        return _photoframe_merge_wifi_scan_state(candidate, existing)
     # Protect an active persisted job from stale candidate snapshots that carry
     # no job id or a different (older) job id.
     if (existing_status in active_states) and (candidate_job != existing_job):
@@ -4625,7 +4659,7 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
                 candidate[key] = existing.get(key)
             if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
                 candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
-            return candidate
+            return _photoframe_merge_wifi_scan_state(candidate, existing)
 
     rank = {
         "": 0,
@@ -4650,7 +4684,7 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
 
     if (not str(candidate.get("last_server_base_url") or "").strip()) and str(existing.get("last_server_base_url") or "").strip():
         candidate["last_server_base_url"] = _normalize_photoframe_base_url(existing.get("last_server_base_url")) or ""
-    return candidate
+    return _photoframe_merge_wifi_scan_state(candidate, existing)
 
 
 def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
