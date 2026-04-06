@@ -4078,7 +4078,11 @@ def _normalize_photoframe_update_package_mode(raw: Any) -> str:
         return "reset-device"
     if value in {"apply_settings", "applysettings"}:
         return "apply-settings"
-    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device", "apply-settings"}:
+    if value in {"scan_wifi", "scanwifi"}:
+        return "scan-wifi"
+    if value in {"start_settings_web", "startsettingsweb"}:
+        return "start-settings-web"
+    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device", "apply-settings", "scan-wifi", "start-settings-web"}:
         return value
     return ""
 
@@ -4112,6 +4116,48 @@ def _normalize_photoframe_wifi_secret(raw: Any, max_len: int = 128) -> str:
     if max_len > 0 and len(value) > max_len:
         value = value[:max_len]
     return value
+
+
+def _sanitize_photoframe_wifi_scan_networks(raw: Any, max_items: int = 64) -> list[Dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    by_ssid: Dict[str, Dict[str, Any]] = {}
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        ssid = _sanitize_photoframe_text(it.get("ssid"), 120)
+        if not ssid:
+            continue
+        signal_raw = str(it.get("signal") or "").strip()
+        try:
+            signal = int(signal_raw)
+        except Exception:
+            signal = -1
+        signal = max(-1, min(100, signal))
+        security = _sanitize_photoframe_text(it.get("security"), 120)
+        candidate = {
+            "ssid": ssid,
+            "signal": signal,
+            "security": security,
+        }
+        key = ssid.lower()
+        prev = by_ssid.get(key)
+        if not prev:
+            by_ssid[key] = candidate
+            continue
+        prev_signal = int(prev.get("signal", -1) or -1)
+        if signal > prev_signal:
+            by_ssid[key] = candidate
+        elif (signal == prev_signal) and security and (not str(prev.get("security") or "").strip()):
+            by_ssid[key] = candidate
+
+    out = list(by_ssid.values())
+    out.sort(key=lambda n: int(n.get("signal", -1) or -1), reverse=True)
+    cap = max(1, min(200, int(max_items or 64)))
+    if len(out) > cap:
+        out = out[:cap]
+    return out
 
 
 def _sanitize_photoframe_settings_payload(raw: Any) -> tuple[Dict[str, Any], str]:
@@ -4443,6 +4489,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         feed_sync_acked_rev = _sanitize_photoframe_feed_rev(it.get("feed_sync_acked_rev"))
         feed_sync_acked_at = _sanitize_photoframe_text(it.get("feed_sync_acked_at"), 40)
         feed_sync_count = _sanitize_photoframe_feed_sync_count(it.get("feed_sync_count"))
+        wifi_scan_networks = _sanitize_photoframe_wifi_scan_networks(it.get("wifi_scan_networks"), max_items=80)
+        wifi_scan_scanned_at = _sanitize_photoframe_text(it.get("wifi_scan_scanned_at"), 40)
+        wifi_scan_error = _sanitize_photoframe_text(it.get("wifi_scan_error"), 240)
         update_settings_payload = _decode_photoframe_settings_payload(it.get("update_settings_payload"))
         out.append(
             {
@@ -4481,6 +4530,9 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "feed_sync_acked_rev": feed_sync_acked_rev,
                 "feed_sync_acked_at": feed_sync_acked_at,
                 "feed_sync_count": feed_sync_count,
+                "wifi_scan_networks": wifi_scan_networks,
+                "wifi_scan_scanned_at": wifi_scan_scanned_at,
+                "wifi_scan_error": wifi_scan_error,
             }
         )
     return out
@@ -4620,6 +4672,9 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "feed_sync_acked_rev": _sanitize_photoframe_feed_rev(it.get("feed_sync_acked_rev")),
                 "feed_sync_acked_at": _sanitize_photoframe_text(it.get("feed_sync_acked_at"), 40),
                 "feed_sync_count": _sanitize_photoframe_feed_sync_count(it.get("feed_sync_count")),
+                "wifi_scan_networks": _sanitize_photoframe_wifi_scan_networks(it.get("wifi_scan_networks"), max_items=80),
+                "wifi_scan_scanned_at": _sanitize_photoframe_text(it.get("wifi_scan_scanned_at"), 40),
+                "wifi_scan_error": _sanitize_photoframe_text(it.get("wifi_scan_error"), 240),
             }
 
             existing = existing_by_hash.get(token_hash)
@@ -5207,6 +5262,74 @@ def _photoframe_queue_reset_command(rec: Optional[Dict[str, Any]]) -> tuple[bool
     return (True, job_id)
 
 
+def _photoframe_queue_start_settings_web_command(rec: Optional[Dict[str, Any]]) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    current_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    if current_status in {"queued", "downloading", "installing", "restarting"}:
+        if current_mode == "start-settings-web":
+            existing_job = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+            if existing_job:
+                return (True, existing_job)
+        return (False, "En anden kommando kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfweb-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette settings-web-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Starter indstillingswebserver"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "start-settings-web"
+    rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
+    return (True, job_id)
+
+
+def _photoframe_queue_wifi_scan_command(rec: Optional[Dict[str, Any]]) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    current_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    if current_status in {"queued", "downloading", "installing", "restarting"}:
+        if current_mode == "scan-wifi":
+            existing_job = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+            if existing_job:
+                return (True, existing_job)
+        return (False, "En anden kommando kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfscan-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette Wi-Fi scan-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Wi-Fi scan afventer enhed"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "scan-wifi"
+    rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
+    return (True, job_id)
+
+
 def _photoframe_extract_settings_payload_from_request(req: Any) -> tuple[Dict[str, Any], str]:
     source: Dict[str, Any] = {}
     try:
@@ -5319,6 +5442,9 @@ def _photoframe_settings_fallback_page(
     last_seen_at = _sanitize_photoframe_text((rec or {}).get("last_seen_at"), 40)
     last_ip = _sanitize_photoframe_text((rec or {}).get("last_ip"), 120) or _sanitize_photoframe_text((rec or {}).get("last_local_ip"), 120)
     device_name = _sanitize_photoframe_text((rec or {}).get("device_name"), 80) or "Fotoramme"
+    wifi_scan_networks = _sanitize_photoframe_wifi_scan_networks((rec or {}).get("wifi_scan_networks"), max_items=80)
+    wifi_scan_scanned_at = _sanitize_photoframe_text((rec or {}).get("wifi_scan_scanned_at"), 40)
+    wifi_scan_error = _sanitize_photoframe_text((rec or {}).get("wifi_scan_error"), 240)
 
     options_html = []
     current_country = _normalize_photoframe_wifi_country(defaults.get("wifi_country")) or "DK"
@@ -5326,6 +5452,35 @@ def _photoframe_settings_fallback_page(
         selected = " selected" if current_country == code else ""
         options_html.append(f"<option value='{html.escape(code)}'{selected}>{html.escape(label)} ({html.escape(code)})</option>")
     countries = "".join(options_html)
+    wifi_ssid_options = "".join([f"<option value='{html.escape(str(net.get('ssid') or ''))}'>" for net in wifi_scan_networks])
+
+    wifi_scan_meta = []
+    if wifi_scan_scanned_at:
+        wifi_scan_meta.append(f"Sidst scannet: {wifi_scan_scanned_at}")
+    if wifi_scan_error:
+        wifi_scan_meta.append(f"Scan-fejl: {wifi_scan_error}")
+    wifi_scan_meta_block = ""
+    if wifi_scan_meta:
+        wifi_scan_meta_block = f"<p class='meta'>{html.escape(' | '.join(wifi_scan_meta))}</p>"
+
+    wifi_scan_list_block = ""
+    if wifi_scan_networks:
+        network_rows = []
+        for net in wifi_scan_networks:
+            ssid = _sanitize_photoframe_text(net.get("ssid"), 120) or "-"
+            security = _sanitize_photoframe_text(net.get("security"), 120) or "Åbent netværk"
+            signal_value = int(net.get("signal", -1) or -1)
+            signal_label = str(signal_value) if signal_value >= 0 else "-"
+            network_rows.append(
+                "<div class='network'>"
+                f"<strong>{html.escape(ssid)}</strong>"
+                f"<span>Signal: {html.escape(signal_label)}</span>"
+                f"<span>{html.escape(security)}</span>"
+                "</div>"
+            )
+        wifi_scan_list_block = "<div class='network-list'>" + "".join(network_rows) + "</div>"
+    elif not wifi_scan_error:
+        wifi_scan_list_block = "<p class='meta'>Ingen Wi-Fi netværk i cache endnu. Tryk \"Opdater Wi-Fi liste\".</p>"
 
     notice_block = ""
     err_text = _sanitize_photoframe_text(error, 320)
@@ -5372,8 +5527,12 @@ def _photoframe_settings_fallback_page(
         ".meta{font-size:13px;color:#9fb0bf;}"
         ".actions{display:flex;gap:10px;align-items:center;margin-top:14px;}"
         "button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600;}"
+        "button.secondary{background:#263243;color:#d7e5ff;border:1px solid #3f4f66;}"
         ".link{color:#9cc2ff;text-decoration:none;font-size:14px;}"
+        ".network-list{display:grid;grid-template-columns:1fr;gap:8px;margin-top:10px;}"
+        ".network{display:grid;grid-template-columns:minmax(0,1.2fr) auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid #2b3540;border-radius:8px;background:#0f141a;font-size:14px;}"
         "@media (max-width:780px){.row,.row3{grid-template-columns:1fr;}}"
+        "@media (max-width:780px){.network{grid-template-columns:1fr;}}"
         "</style></head><body><div class='card'>"
         f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
         "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
@@ -5390,9 +5549,10 @@ def _photoframe_settings_fallback_page(
         "<div class='row3'>"
         "<div><label>Land</label><select name='wifi_country'>" + countries + "</select></div>"
         "<div><label>Wi-Fi SSID (valgfri)</label>"
-        f"<input name='wifi_ssid' value='{html.escape(str(defaults.get('wifi_ssid') or ''))}' placeholder='Fx MitWiFi'></div>"
+        f"<input name='wifi_ssid' list='wifi-ssid-list' value='{html.escape(str(defaults.get('wifi_ssid') or ''))}' placeholder='Fx MitWiFi'></div>"
         "<div><label>Wi-Fi adgangskode (valgfri)</label><input type='password' name='wifi_password' placeholder='Skriv Wi-Fi kode her'></div>"
         "</div>"
+        "<datalist id='wifi-ssid-list'>" + wifi_ssid_options + "</datalist>"
         "<div class='row'>"
         "<div><label>Server URL</label>"
         f"<input name='server_url' value='{html.escape(str(defaults.get('server_url') or ''))}' placeholder='https://photos.ditdomaene.dk'></div>"
@@ -5402,6 +5562,11 @@ def _photoframe_settings_fallback_page(
         "<div class='actions'><button type='submit'>Send indstillinger til rammen</button>"
         f"<a class='link' href='{html.escape(root + '/remote-settings')}'>Opdater side</a></div>"
         "</form>"
+        "<form method='post' action='" + html.escape(f"{root}/wifi/scan") + "'>"
+        "<div class='actions'><button type='submit' class='secondary'>Opdater Wi-Fi liste</button></div>"
+        "</form>"
+        f"{wifi_scan_meta_block}"
+        f"{wifi_scan_list_block}"
         "<p class='meta'>"
         f"Sidst set: {html.escape(last_seen_at or 'ukendt')} | Sidste IP: {html.escape(last_ip or 'ukendt')}"
         "</p></div></body></html>"
@@ -5873,6 +6038,24 @@ def _photoframe_update_command_payload(
             "job_id": job_id,
             "action": "apply_settings",
             "settings": settings_payload,
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
+    if package_mode in {"scan-wifi", "scan_wifi", "scanwifi"}:
+        out = {
+            "job_id": job_id,
+            "action": "scan_wifi",
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
+    if package_mode in {"start-settings-web", "start_settings_web", "startsettingsweb"}:
+        out = {
+            "job_id": job_id,
+            "action": "start_settings_web",
         }
         version = _sanitize_photoframe_text(rec.get("update_version"), 80)
         if version:
@@ -9495,6 +9678,9 @@ def api_photoframes_create():
             "feed_sync_acked_rev": "",
             "feed_sync_acked_at": "",
             "feed_sync_count": 0,
+            "wifi_scan_networks": [],
+            "wifi_scan_scanned_at": "",
+            "wifi_scan_error": "",
         }
     )
     _save_photoframe_token_records(records)
@@ -9968,16 +10154,6 @@ def api_photoframes_settings_ready(token_id: str):
         return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
 
     settings_proxy_url = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
-    target_base_url = _photoframe_settings_proxy_base_url(rec)
-    if not target_base_url:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Rammen har ingen brugbar lokal IP endnu. Åbner fallback med API-baserede fjernindstillinger.",
-                "settings_url": settings_proxy_url,
-                "fallback_available": True,
-            }
-        ), 409
 
     body = request.get_json(silent=True) or {}
     wait_raw = request.args.get("wait_sec")
@@ -9989,72 +10165,104 @@ def api_photoframes_settings_ready(token_id: str):
         wait_sec = 22.0
     wait_sec = max(6.0, min(45.0, wait_sec))
 
-    baseline_seen = _parse_iso_to_epoch(rec.get("last_seen_at"))
-    waited_for_heartbeat = False
-    wake_attempted = False
-    wake_job_id = ""
-    last_probe_error = ""
+    active_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
+    active_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    start_job_id = ""
+    reused_existing_job = False
+    if active_mode == "start-settings-web" and active_status in {"queued", "downloading", "installing", "restarting"}:
+        start_job_id = _sanitize_photoframe_update_job_id(rec.get("update_job_id"))
+        reused_existing_job = bool(start_job_id)
 
-    def _probe_settings_app() -> bool:
-        nonlocal last_probe_error
-        try:
-            probe = requests.get(
-                f"{target_base_url}/remote-settings",
-                timeout=min(4.0, float(PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC)),
-                allow_redirects=False,
-                headers={
-                    "Accept": "text/html,*/*;q=0.8",
-                    "User-Agent": "FjordLens-Settings-Ready/1.0",
-                },
-            )
-        except Exception as exc:
-            last_probe_error = str(exc)
-            return False
-        try:
-            code = int(getattr(probe, "status_code", 0) or 0)
-        except Exception:
-            code = 0
-        if code >= 500:
-            last_probe_error = f"HTTP {code}"
-            return False
-        return True
+    if not start_job_id:
+        ok_start, start_info = _photoframe_queue_start_settings_web_command(rec)
+        if not ok_start:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": start_info or "Kunne ikke starte indstillinger på rammen.",
+                    "settings_url": settings_proxy_url,
+                    "fallback_available": True,
+                }
+            ), 409
+        start_job_id = _sanitize_photoframe_update_job_id(start_info)
+        if not start_job_id:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Kunne ikke oprette gyldigt settings-web job-id.",
+                    "settings_url": settings_proxy_url,
+                    "fallback_available": True,
+                }
+            ), 409
+        _save_photoframe_token_records(records)
 
     started_at = time.time()
     deadline = started_at + wait_sec
+    last_status = ""
+    last_message = ""
+    seen_at = ""
     while time.time() < deadline:
         records = _load_photoframe_token_records()
         rec_idx, current_rec = _photoframe_find_record_by_id(records, target_id)
         if rec_idx < 0 or not current_rec:
             return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
 
-        seen_raw = _sanitize_photoframe_text(current_rec.get("last_seen_at"), 40)
-        seen_ts = _parse_iso_to_epoch(seen_raw)
-        if seen_ts > (baseline_seen + 0.001):
-            waited_for_heartbeat = True
-            if _probe_settings_app():
+        current_job_id = _sanitize_photoframe_update_job_id(current_rec.get("update_job_id"))
+        current_status = _sanitize_photoframe_update_status(current_rec.get("update_status"))
+        current_mode = _normalize_photoframe_update_package_mode(current_rec.get("update_package_mode"))
+        current_message = _sanitize_photoframe_text(current_rec.get("update_message"), 240)
+        current_seen_at = _sanitize_photoframe_text(current_rec.get("last_seen_at"), 40)
+
+        if current_job_id == start_job_id:
+            last_status = current_status
+            last_message = current_message
+            seen_at = current_seen_at
+            if current_status == "success":
                 return jsonify(
                     {
                         "ok": True,
                         "settings_url": settings_proxy_url,
-                        "waited_for_heartbeat": True,
-                        "seen_at": seen_raw,
-                        "wake_attempted": wake_attempted,
-                        "wake_job_id": wake_job_id or None,
+                        "start_acknowledged": True,
+                        "start_job_id": start_job_id,
+                        "reused_existing_job": reused_existing_job,
+                        "seen_at": seen_at or None,
                     }
                 )
-            baseline_seen = seen_ts
+            if current_status == "failed":
+                err = current_message or "Rammen kunne ikke starte indstillinger."
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": err,
+                        "settings_url": settings_proxy_url,
+                        "fallback_available": True,
+                        "start_acknowledged": False,
+                        "start_job_id": start_job_id,
+                        "reused_existing_job": reused_existing_job,
+                    }
+                ), 409
+        elif current_mode == "start-settings-web" and current_status == "success":
+            return jsonify(
+                {
+                    "ok": True,
+                    "settings_url": settings_proxy_url,
+                    "start_acknowledged": True,
+                    "start_job_id": current_job_id or start_job_id,
+                    "reused_existing_job": True,
+                    "seen_at": current_seen_at or None,
+                }
+            )
 
         try:
             time.sleep(1.0)
         except Exception:
             pass
 
-    if waited_for_heartbeat:
-        msg = "Rammen sendte heartbeat, men settings-webserver på port 5001 var ikke klar endnu."
-    else:
-        msg = "Ingen ny heartbeat modtaget inden timeout."
-    if last_probe_error:
-        msg = f"{msg} Sidste fejl: {last_probe_error}"
+    msg = "Ingen kvittering for settings-webserver fra rammen inden timeout."
+    if last_status:
+        msg = f"{msg} Sidste status: {last_status}."
+    if last_message:
+        msg = f"{msg} Besked: {last_message}"
 
     return jsonify(
         {
@@ -10062,9 +10270,9 @@ def api_photoframes_settings_ready(token_id: str):
             "error": msg,
             "settings_url": settings_proxy_url,
             "fallback_available": True,
-            "waited_for_heartbeat": waited_for_heartbeat,
-            "wake_attempted": wake_attempted,
-            "wake_job_id": wake_job_id or None,
+            "start_acknowledged": False,
+            "start_job_id": start_job_id or None,
+            "reused_existing_job": reused_existing_job,
         }
     ), 409
 
@@ -10094,11 +10302,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
     settings_root = clean_subpath.split("/", 1)[0]
     is_settings_entry = (method == "GET") and (settings_root in {"remote-settings", "settings"})
     is_settings_save_post = (method == "POST") and (clean_subpath in {"remote-settings/save", "settings/save", "wifi/connect"})
-    fallback_mode_requested = str(
-        request.values.get("fallback_mode")
-        or request.args.get("fallback_mode")
-        or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    is_settings_scan_post = (method == "POST") and (clean_subpath in {"wifi/scan", "remote-settings/scan", "settings/scan"})
 
     def _fallback_submit(transport_error: str = ""):
         settings_payload, err = _photoframe_extract_settings_payload_from_request(request)
@@ -10126,20 +10330,50 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             code=303,
         )
 
+    def _queue_scan_submit(transport_error: str = ""):
+        ok_scan, scan_info = _photoframe_queue_wifi_scan_command(rec)
+        if not ok_scan:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                status_code=409,
+                error=scan_info or "Kunne ikke starte Wi-Fi scan",
+                transport_error=transport_error,
+            )
+        _save_photoframe_token_records(records)
+        job_id = _sanitize_photoframe_update_job_id(scan_info)
+        return redirect(
+            f"{proxy_root}/remote-settings?scan_queued=1&scan_job_id={quote(job_id, safe='')}",
+            code=303,
+        )
+
+    def _entry_notice_from_query() -> str:
+        notes: list[str] = []
+        queued = str(request.args.get("queued") or "").strip().lower() in {"1", "true", "yes", "on"}
+        job_id = _sanitize_photoframe_update_job_id(request.args.get("job_id"))
+        if queued:
+            txt = "Indstillinger sendt. Rammen anvender dem ved næste heartbeat."
+            if job_id:
+                txt = f"{txt} Job: {job_id}"
+            notes.append(txt)
+        scan_queued = str(request.args.get("scan_queued") or "").strip().lower() in {"1", "true", "yes", "on"}
+        scan_job_id = _sanitize_photoframe_update_job_id(request.args.get("scan_job_id"))
+        if scan_queued:
+            txt = "Wi-Fi scan sendt til rammen."
+            if scan_job_id:
+                txt = f"{txt} Job: {scan_job_id}"
+            notes.append(txt)
+        return " ".join([n for n in notes if n]).strip()
+
     target_base_url = _photoframe_settings_proxy_base_url(rec)
-    if fallback_mode_requested and is_settings_save_post:
+    # All settings writes go via the existing frame heartbeat command channel.
+    if is_settings_save_post:
         return _fallback_submit()
+    if is_settings_scan_post:
+        return _queue_scan_submit()
     if not target_base_url:
-        if is_settings_save_post:
-            return _fallback_submit()
         if is_settings_entry:
-            queued = str(request.args.get("queued") or "").strip().lower() in {"1", "true", "yes", "on"}
-            job_id = _sanitize_photoframe_update_job_id(request.args.get("job_id"))
-            notice = ""
-            if queued:
-                notice = "Indstillinger sendt. Rammen anvender dem ved næste heartbeat."
-                if job_id:
-                    notice = f"{notice} Job: {job_id}"
+            notice = _entry_notice_from_query()
             return _photoframe_settings_fallback_page(
                 rec,
                 proxy_root,
@@ -10187,6 +10421,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             return _photoframe_settings_fallback_page(
                 rec,
                 proxy_root,
+                notice=_entry_notice_from_query(),
                 transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
             )
         return _photoframe_settings_proxy_error_page(
@@ -10209,6 +10444,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             return _photoframe_settings_fallback_page(
                 rec,
                 proxy_root,
+                notice=_entry_notice_from_query(),
                 transport_error=transport_msg,
             )
         return _photoframe_settings_proxy_error_page(
@@ -10821,6 +11057,53 @@ def api_frame_heartbeat(token: str):
             "content_sync_status": _sanitize_photoframe_feed_sync_status(active_record.get("feed_sync_status") if isinstance(active_record, dict) else ""),
             "content_sync_rev": _sanitize_photoframe_feed_rev(active_record.get("feed_sync_sent_rev") if isinstance(active_record, dict) else ""),
             "update": update_cmd,
+        }
+    )
+
+
+@app.route("/api/frame/<token>/wifi-scan-report", methods=["POST"])
+def api_frame_wifi_scan_report(token: str):
+    records, rec_idx, rec = _photoframe_token_lookup(token)
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Invalid token"}), 404
+
+    now = now_iso()
+    active_record = records[rec_idx] if (0 <= rec_idx < len(records)) else rec
+    _photoframe_update_presence_fields(active_record, request, now)
+
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
+
+    job_id = _sanitize_photoframe_update_job_id(body.get("job_id"))
+    status = _sanitize_photoframe_update_status(body.get("status"))
+    message = _sanitize_photoframe_text(body.get("message"), 240)
+    version = _sanitize_photoframe_text(body.get("version"), 80)
+    if status:
+        target_job = job_id or _sanitize_photoframe_update_job_id(active_record.get("update_job_id"))
+        status_msg = message or _sanitize_photoframe_text(body.get("error"), 240)
+        _photoframe_apply_update_report(active_record, target_job, status, status_msg, version, now)
+
+    networks_provided = ("networks" in body)
+    scan_networks = _sanitize_photoframe_wifi_scan_networks(body.get("networks"), max_items=80) if networks_provided else _sanitize_photoframe_wifi_scan_networks(active_record.get("wifi_scan_networks"), max_items=80)
+    scan_error = _sanitize_photoframe_text(body.get("error"), 240) if ("error" in body) else _sanitize_photoframe_text(active_record.get("wifi_scan_error"), 240)
+    scanned_at = _sanitize_photoframe_text(body.get("scanned_at"), 40) or now
+    if networks_provided:
+        active_record["wifi_scan_networks"] = scan_networks
+        active_record["wifi_scan_scanned_at"] = scanned_at
+        active_record["wifi_scan_error"] = scan_error
+    elif ("error" in body):
+        active_record["wifi_scan_scanned_at"] = scanned_at
+        active_record["wifi_scan_error"] = scan_error
+
+    _save_photoframe_token_records(records)
+    return jsonify(
+        {
+            "ok": True,
+            "seen_at": now,
+            "job_id": job_id or None,
+            "status": status or None,
+            "network_count": len(scan_networks) if networks_provided else None,
         }
     )
 

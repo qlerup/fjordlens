@@ -1197,7 +1197,7 @@ const I18N = {
     photoframe_reset_device_failed: 'Could not queue device reset.',
     photoframe_open_settings_btn: 'Settings',
     photoframe_open_settings_failed: 'Could not open settings.',
-    photoframe_open_settings_waiting: 'Waiting for next heartbeat from the frame...',
+    photoframe_open_settings_waiting: 'Connecting to the frame...',
     photoframe_open_settings_ready: 'Frame is ready. Opening settings...',
     photoframe_open_settings_popup_blocked: 'Browser blocked a new window. Allow popups to open settings.',
     photoframe_update_state_queued: 'Waiting for device',
