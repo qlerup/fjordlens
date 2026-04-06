@@ -1710,6 +1710,9 @@ body.view-photoframe .photoframe-header-actions {
   align-items: start;
   overflow: hidden;
 }
+.photoframe-card-body.no-preview {
+  grid-template-columns: minmax(0, 1fr);
+}
 .photoframe-card-main {
   min-width: 0;
   display: grid;

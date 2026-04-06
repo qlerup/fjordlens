@@ -95,6 +95,19 @@ except Exception:
 PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = max(5 * 1024 * 1024, min(2 * 1024 * 1024 * 1024, PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES))
 PHOTOFRAME_LATEST_VERSION_KEY = "photoframe_latest_version"
 PHOTOFRAME_LATEST_VERSION_AT_KEY = "photoframe_latest_version_at"
+PHOTOFRAME_WIFI_COUNTRY_CHOICES = (
+    ("DK", "Danmark"),
+    ("SE", "Sverige"),
+    ("NO", "Norge"),
+    ("FI", "Finland"),
+    ("DE", "Tyskland"),
+    ("NL", "Holland"),
+    ("GB", "Storbritannien"),
+    ("US", "USA"),
+    ("FR", "Frankrig"),
+    ("ES", "Spanien"),
+    ("IT", "Italien"),
+)
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
@@ -4063,9 +4076,115 @@ def _normalize_photoframe_update_package_mode(raw: Any) -> str:
         return "restart-kiosk"
     if value in {"reset_device", "resetdevice"}:
         return "reset-device"
-    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device"}:
+    if value in {"apply_settings", "applysettings"}:
+        return "apply-settings"
+    if value in {"upload", "source-dir", "custom-url", "restart-kiosk", "reset-device", "apply-settings"}:
         return value
     return ""
+
+
+def _normalize_photoframe_device_name(raw: Any, max_len: int = 40) -> str:
+    value = re.sub(r"\s+", " ", str(raw or "")).strip()
+    value = re.sub(r"[^A-Za-z0-9 _.\-]", "", value)
+    if max_len > 0 and len(value) > max_len:
+        value = value[:max_len].strip()
+    return value
+
+
+def _normalize_photoframe_wifi_country(raw: Any) -> str:
+    value = str(raw or "").strip().upper()
+    if re.match(r"^[A-Z]{2}$", value):
+        return value
+    return ""
+
+
+def _normalize_photoframe_interval_seconds(raw: Any, default: int = 5) -> int:
+    try:
+        value = int(str(raw or "").strip())
+    except Exception:
+        value = int(default)
+    return max(1, min(60, value))
+
+
+def _normalize_photoframe_wifi_secret(raw: Any, max_len: int = 128) -> str:
+    value = str(raw or "")
+    value = value.replace("\r", "").replace("\n", "").strip()
+    if max_len > 0 and len(value) > max_len:
+        value = value[:max_len]
+    return value
+
+
+def _sanitize_photoframe_settings_payload(raw: Any) -> tuple[Dict[str, Any], str]:
+    if not isinstance(raw, dict):
+        return ({}, "Ugyldigt settings payload")
+
+    out: Dict[str, Any] = {}
+
+    if "device_name" in raw:
+        device_name = _normalize_photoframe_device_name(raw.get("device_name"), 40)
+        if not device_name:
+            return ({}, "Indtast et gyldigt enhedsnavn")
+        out["device_name"] = device_name
+
+    if "server_url" in raw:
+        server_url_raw = str(raw.get("server_url") or "").strip()
+        if server_url_raw:
+            server_url = _normalize_photoframe_base_url(server_url_raw) or ""
+            if not server_url:
+                return ({}, "Server URL skal starte med http:// eller https://")
+            out["server_url"] = server_url
+
+    if "device_token" in raw:
+        token_raw = str(raw.get("device_token") or "").strip()
+        if token_raw:
+            token = _sanitize_photoframe_token_plain(token_raw)
+            if not token:
+                return ({}, "Ugyldigt device token")
+            out["device_token"] = token
+
+    if "interval_seconds" in raw:
+        interval_raw = str(raw.get("interval_seconds") or "").strip()
+        if interval_raw:
+            try:
+                interval_val = int(interval_raw)
+            except Exception:
+                return ({}, "Tid pr billede skal være et tal mellem 1 og 60")
+            if interval_val < 1 or interval_val > 60:
+                return ({}, "Tid pr billede skal være mellem 1 og 60")
+            out["interval_seconds"] = int(interval_val)
+
+    if "wifi_country" in raw:
+        country_raw = str(raw.get("wifi_country") or "").strip()
+        if country_raw:
+            country = _normalize_photoframe_wifi_country(country_raw)
+            if not country:
+                return ({}, "Landekode skal være 2 bogstaver (fx DK)")
+            out["wifi_country"] = country
+
+    ssid_raw = ""
+    if "wifi_ssid" in raw:
+        ssid_raw = _sanitize_photoframe_text(raw.get("wifi_ssid"), 120)
+    if ssid_raw:
+        out["wifi_ssid"] = ssid_raw
+        password = _normalize_photoframe_wifi_secret(raw.get("wifi_password"), 128) if ("wifi_password" in raw) else ""
+        out["wifi_password"] = password
+
+    return (out, "")
+
+
+def _decode_photoframe_settings_payload(raw: Any) -> Dict[str, Any]:
+    parsed: Any = {}
+    if isinstance(raw, dict):
+        parsed = raw
+    elif isinstance(raw, str):
+        txt = str(raw or "").strip()
+        if txt:
+            try:
+                parsed = json.loads(txt)
+            except Exception:
+                parsed = {}
+    clean, _ = _sanitize_photoframe_settings_payload(parsed if isinstance(parsed, dict) else {})
+    return clean if isinstance(clean, dict) else {}
 
 
 def _sanitize_photoframe_feed_rev(raw: Any) -> str:
@@ -4324,6 +4443,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
         feed_sync_acked_rev = _sanitize_photoframe_feed_rev(it.get("feed_sync_acked_rev"))
         feed_sync_acked_at = _sanitize_photoframe_text(it.get("feed_sync_acked_at"), 40)
         feed_sync_count = _sanitize_photoframe_feed_sync_count(it.get("feed_sync_count"))
+        update_settings_payload = _decode_photoframe_settings_payload(it.get("update_settings_payload"))
         out.append(
             {
                 "id": rec_id,
@@ -4353,6 +4473,7 @@ def _load_photoframe_token_records() -> list[Dict[str, Any]]:
                 "update_package_url": update_package_url,
                 "update_package_mode": update_package_mode,
                 "update_package_sha256": update_package_sha256,
+                "update_settings_payload": update_settings_payload,
                 "last_server_base_url": last_server_base_url,
                 "feed_sync_status": feed_sync_status,
                 "feed_sync_sent_rev": feed_sync_sent_rev,
@@ -4378,6 +4499,7 @@ def _photoframe_update_field_names() -> tuple[str, ...]:
         "update_package_url",
         "update_package_mode",
         "update_package_sha256",
+        "update_settings_payload",
     )
 
 
@@ -4490,6 +4612,7 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "update_package_url": _normalize_photoframe_http_url(it.get("update_package_url") or it.get("update_url")) or "",
                 "update_package_mode": _normalize_photoframe_update_package_mode(it.get("update_package_mode")),
                 "update_package_sha256": _sanitize_photoframe_update_sha256(it.get("update_package_sha256")),
+                "update_settings_payload": _decode_photoframe_settings_payload(it.get("update_settings_payload")),
                 "last_server_base_url": _normalize_photoframe_base_url(it.get("last_server_base_url")) or "",
                 "feed_sync_status": _sanitize_photoframe_feed_sync_status(it.get("feed_sync_status")),
                 "feed_sync_sent_rev": _sanitize_photoframe_feed_rev(it.get("feed_sync_sent_rev")),
@@ -5051,6 +5174,7 @@ def _photoframe_queue_restart_command(rec: Optional[Dict[str, Any]]) -> tuple[bo
     rec["update_package_url"] = ""
     rec["update_package_mode"] = "restart-kiosk"
     rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
     return (True, job_id)
 
 
@@ -5079,7 +5203,212 @@ def _photoframe_queue_reset_command(rec: Optional[Dict[str, Any]]) -> tuple[bool
     rec["update_package_url"] = ""
     rec["update_package_mode"] = "reset-device"
     rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
     return (True, job_id)
+
+
+def _photoframe_extract_settings_payload_from_request(req: Any) -> tuple[Dict[str, Any], str]:
+    source: Dict[str, Any] = {}
+    try:
+        if req.is_json:
+            body = req.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                source = body
+    except Exception:
+        source = {}
+    if not source:
+        try:
+            source = dict(req.form or {})
+        except Exception:
+            source = {}
+    if not isinstance(source, dict):
+        return ({}, "Ugyldig request payload")
+
+    payload: Dict[str, Any] = {}
+    for key in ("device_name", "server_url", "device_token", "interval_seconds", "wifi_country"):
+        if key in source:
+            payload[key] = source.get(key)
+
+    ssid_present = ("wifi_ssid" in source) or ("ssid" in source)
+    if ssid_present:
+        payload["wifi_ssid"] = source.get("wifi_ssid", source.get("ssid"))
+        payload["wifi_password"] = source.get("wifi_password", source.get("password", ""))
+
+    clean_payload, err = _sanitize_photoframe_settings_payload(payload)
+    if err:
+        return ({}, err)
+    if not clean_payload:
+        return ({}, "Ingen gyldige indstillinger at sende")
+    return (clean_payload, "")
+
+
+def _photoframe_queue_settings_command(rec: Optional[Dict[str, Any]], settings_payload: Any) -> tuple[bool, str]:
+    if not isinstance(rec, dict):
+        return (False, "Mangler token-record")
+
+    clean_payload, err = _sanitize_photoframe_settings_payload(settings_payload if isinstance(settings_payload, dict) else {})
+    if err:
+        return (False, err)
+    if not clean_payload:
+        return (False, "Ingen gyldige indstillinger at sende")
+
+    current_status = _sanitize_photoframe_update_status(rec.get("update_status"))
+    if current_status in {"queued", "downloading", "installing", "restarting"}:
+        return (False, "En anden kommando kører allerede på enheden")
+
+    job_id = _sanitize_photoframe_update_job_id(f"pfcfg-{int(time.time())}-{secrets.token_hex(4)}")
+    if not job_id:
+        return (False, "Kunne ikke oprette settings-id")
+
+    now = now_iso()
+    current_version = _sanitize_photoframe_text(rec.get("device_version"), 80) or _sanitize_photoframe_text(rec.get("update_version"), 80)
+    rec["update_job_id"] = job_id
+    rec["update_status"] = "queued"
+    rec["update_message"] = "Indstillinger afventer enhed"
+    rec["update_requested_at"] = now
+    rec["update_started_at"] = ""
+    rec["update_finished_at"] = ""
+    rec["update_last_report_at"] = now
+    rec["update_version"] = current_version
+    rec["update_package_url"] = ""
+    rec["update_package_mode"] = "apply-settings"
+    rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = clean_payload
+    return (True, job_id)
+
+
+def _photoframe_settings_fallback_defaults(rec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {
+        "device_name": _sanitize_photoframe_text((rec or {}).get("device_name"), 40),
+        "server_url": _normalize_photoframe_base_url((rec or {}).get("last_server_base_url")) or "",
+        "device_token": _sanitize_photoframe_token_plain((rec or {}).get("token_plain")),
+        "interval_seconds": 5,
+        "wifi_country": "DK",
+        "wifi_ssid": "",
+    }
+    pending_payload = _decode_photoframe_settings_payload((rec or {}).get("update_settings_payload"))
+    if isinstance(pending_payload, dict):
+        if pending_payload.get("device_name"):
+            defaults["device_name"] = _normalize_photoframe_device_name(pending_payload.get("device_name"), 40)
+        if pending_payload.get("server_url"):
+            defaults["server_url"] = _normalize_photoframe_base_url(pending_payload.get("server_url")) or defaults["server_url"]
+        if pending_payload.get("device_token"):
+            defaults["device_token"] = _sanitize_photoframe_token_plain(pending_payload.get("device_token"))
+        if pending_payload.get("interval_seconds") is not None:
+            defaults["interval_seconds"] = _normalize_photoframe_interval_seconds(pending_payload.get("interval_seconds"), 5)
+        if pending_payload.get("wifi_country"):
+            defaults["wifi_country"] = _normalize_photoframe_wifi_country(pending_payload.get("wifi_country")) or "DK"
+        if pending_payload.get("wifi_ssid"):
+            defaults["wifi_ssid"] = _sanitize_photoframe_text(pending_payload.get("wifi_ssid"), 120)
+    return defaults
+
+
+def _photoframe_settings_fallback_page(
+    rec: Optional[Dict[str, Any]],
+    proxy_root: str,
+    status_code: int = 200,
+    notice: str = "",
+    error: str = "",
+    transport_error: str = "",
+):
+    root = str(proxy_root or "").rstrip("/")
+    defaults = _photoframe_settings_fallback_defaults(rec)
+    update_status = _sanitize_photoframe_update_status((rec or {}).get("update_status"))
+    update_message = _sanitize_photoframe_text((rec or {}).get("update_message"), 240)
+    update_job_id = _sanitize_photoframe_update_job_id((rec or {}).get("update_job_id"))
+    last_seen_at = _sanitize_photoframe_text((rec or {}).get("last_seen_at"), 40)
+    last_ip = _sanitize_photoframe_text((rec or {}).get("last_ip"), 120) or _sanitize_photoframe_text((rec or {}).get("last_local_ip"), 120)
+    device_name = _sanitize_photoframe_text((rec or {}).get("device_name"), 80) or "Fotoramme"
+
+    options_html = []
+    current_country = _normalize_photoframe_wifi_country(defaults.get("wifi_country")) or "DK"
+    for code, label in PHOTOFRAME_WIFI_COUNTRY_CHOICES:
+        selected = " selected" if current_country == code else ""
+        options_html.append(f"<option value='{html.escape(code)}'{selected}>{html.escape(label)} ({html.escape(code)})</option>")
+    countries = "".join(options_html)
+
+    notice_block = ""
+    err_text = _sanitize_photoframe_text(error, 320)
+    note_text = _sanitize_photoframe_text(notice, 320)
+    transport_text = _sanitize_photoframe_text(transport_error, 320)
+    if err_text:
+        notice_block = f"<div class='notice err'>{html.escape(err_text)}</div>"
+    elif note_text:
+        notice_block = f"<div class='notice ok'>{html.escape(note_text)}</div>"
+    elif transport_text:
+        notice_block = (
+            "<div class='notice warn'>Kunne ikke åbne rammens lokale web-indstillinger. "
+            "Du kan sende indstillinger via FjordLens i stedet.<br>"
+            f"<span>{html.escape(transport_text)}</span></div>"
+        )
+
+    status_block = ""
+    if update_status or update_message or update_job_id:
+        parts = []
+        if update_status:
+            parts.append(f"Status: {update_status}")
+        if update_job_id:
+            parts.append(f"Job: {update_job_id}")
+        if update_message:
+            parts.append(update_message)
+        status_block = f"<div class='status'>{html.escape(' | '.join(parts))}</div>"
+
+    body = (
+        "<!doctype html><html lang='da'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Photoframe fjernindstillinger</title>"
+        "<style>"
+        "body{font-family:Arial,Helvetica,sans-serif;background:#0f1318;color:#e6edf3;margin:0;padding:20px;}"
+        ".card{max-width:860px;margin:0 auto;background:#171b21;border:1px solid #2f363d;border-radius:12px;padding:18px;}"
+        "h1{font-size:22px;margin:0 0 8px;}p{line-height:1.45;color:#b9c4d0;}label{display:block;margin:10px 0 6px;font-weight:600;}"
+        "input,select{width:100%;box-sizing:border-box;background:#0f141a;color:#e6edf3;border:1px solid #35404a;border-radius:8px;padding:10px;}"
+        ".row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}"
+        ".row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}"
+        ".notice{margin:10px 0 14px;padding:10px 12px;border-radius:8px;border:1px solid transparent;}"
+        ".notice.ok{background:#14301f;border-color:#245c37;}"
+        ".notice.warn{background:#2b240f;border-color:#6d5a22;}"
+        ".notice.err{background:#32191b;border-color:#7f3d3d;}"
+        ".status{margin:12px 0;padding:10px 12px;border-radius:8px;background:#111821;border:1px solid #2c3d4d;color:#c6d4e1;}"
+        ".meta{font-size:13px;color:#9fb0bf;}"
+        ".actions{display:flex;gap:10px;align-items:center;margin-top:14px;}"
+        "button{background:#2f81f7;color:white;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600;}"
+        ".link{color:#9cc2ff;text-decoration:none;font-size:14px;}"
+        "@media (max-width:780px){.row,.row3{grid-template-columns:1fr;}}"
+        "</style></head><body><div class='card'>"
+        f"<h1>Fjernindstillinger via FjordLens</h1><p>{html.escape(device_name)} kan ikke nås direkte på lokalnet lige nu. "
+        "Indstillingerne nedenfor sendes som en kommando via frame API og anvendes ved næste heartbeat.</p>"
+        f"{notice_block}"
+        f"{status_block}"
+        "<form method='post' action='" + html.escape(f"{root}/remote-settings/save") + "'>"
+        "<input type='hidden' name='fallback_mode' value='1'>"
+        "<div class='row'>"
+        "<div><label>Navn på fotorammen</label>"
+        f"<input name='device_name' value='{html.escape(str(defaults.get('device_name') or ''))}' placeholder='Fx Stue-Ramme'></div>"
+        "<div><label>Tid pr billede (sekunder)</label>"
+        f"<input type='number' name='interval_seconds' min='1' max='60' step='1' value='{int(defaults.get('interval_seconds') or 5)}'></div>"
+        "</div>"
+        "<div class='row3'>"
+        "<div><label>Land</label><select name='wifi_country'>" + countries + "</select></div>"
+        "<div><label>Wi-Fi SSID (valgfri)</label>"
+        f"<input name='wifi_ssid' value='{html.escape(str(defaults.get('wifi_ssid') or ''))}' placeholder='Fx MitWiFi'></div>"
+        "<div><label>Wi-Fi adgangskode (valgfri)</label><input type='password' name='wifi_password' placeholder='Skriv Wi-Fi kode her'></div>"
+        "</div>"
+        "<div class='row'>"
+        "<div><label>Server URL</label>"
+        f"<input name='server_url' value='{html.escape(str(defaults.get('server_url') or ''))}' placeholder='https://photos.ditdomaene.dk'></div>"
+        "<div><label>Device token</label>"
+        f"<input name='device_token' value='{html.escape(str(defaults.get('device_token') or ''))}' placeholder='Indsæt token fra FjordLens'></div>"
+        "</div>"
+        "<div class='actions'><button type='submit'>Send indstillinger til rammen</button>"
+        f"<a class='link' href='{html.escape(root + '/remote-settings')}'>Opdater side</a></div>"
+        "</form>"
+        "<p class='meta'>"
+        f"Sidst set: {html.escape(last_seen_at or 'ukendt')} | Sidste IP: {html.escape(last_ip or 'ukendt')}"
+        "</p></div></body></html>"
+    )
+    resp = make_response(body, int(status_code))
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
 
 
 def _photoframe_settings_proxy_error_page(message: str, status_code: int = 502):
@@ -5536,6 +5865,19 @@ def _photoframe_update_command_payload(
         if version:
             out["version"] = version
         return out
+    if package_mode in {"apply-settings", "apply_settings", "applysettings"}:
+        settings_payload = _decode_photoframe_settings_payload(rec.get("update_settings_payload"))
+        if not settings_payload:
+            return None
+        out = {
+            "job_id": job_id,
+            "action": "apply_settings",
+            "settings": settings_payload,
+        }
+        version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+        if version:
+            out["version"] = version
+        return out
 
     safe_token = _sanitize_photoframe_token_plain(token)
     safe_base = _normalize_photoframe_base_url(request_base)
@@ -5592,6 +5934,8 @@ def _photoframe_apply_update_report(
         rec["update_finished_at"] = _sanitize_photoframe_text(seen_at, 40) or now_iso()
         if status == "success":
             rec["update_package_sha256"] = ""
+        if _normalize_photoframe_update_package_mode(rec.get("update_package_mode")) == "apply-settings":
+            rec["update_settings_payload"] = {}
     return True
 
 
@@ -9029,6 +9373,7 @@ def api_photoframes_status():
             update_finished_at = _sanitize_photoframe_text(rec.get("update_finished_at"), 40)
             update_last_report_at = _sanitize_photoframe_text(rec.get("update_last_report_at"), 40)
             update_version = _sanitize_photoframe_text(rec.get("update_version"), 80)
+            update_package_mode = _normalize_photoframe_update_package_mode(rec.get("update_package_mode"))
             feed_sync_status = _sanitize_photoframe_feed_sync_status(rec.get("feed_sync_status"))
             feed_sync_sent_at = _sanitize_photoframe_text(rec.get("feed_sync_sent_at"), 40)
             feed_sync_acked_at = _sanitize_photoframe_text(rec.get("feed_sync_acked_at"), 40)
@@ -9088,6 +9433,7 @@ def api_photoframes_status():
                     "update_finished_at": update_finished_at,
                     "update_last_report_at": update_last_report_at,
                     "update_version": update_version,
+                    "update_package_mode": update_package_mode,
                     "device_version": device_version,
                     "version_status": version_status,
                     "content_sync_status": feed_sync_status,
@@ -9142,6 +9488,7 @@ def api_photoframes_create():
             "update_version": "",
             "update_package_url": "",
             "update_package_sha256": "",
+            "update_settings_payload": {},
             "feed_sync_status": "",
             "feed_sync_sent_rev": "",
             "feed_sync_sent_at": "",
@@ -9290,6 +9637,7 @@ def api_photoframes_trigger_update(token_id: str):
     rec["update_package_url"] = package_url
     rec["update_package_mode"] = package_mode
     rec["update_package_sha256"] = requested_sha
+    rec["update_settings_payload"] = {}
     _save_photoframe_token_records(records)
     if requested_version:
         _set_setting(PHOTOFRAME_LATEST_VERSION_KEY, requested_version)
@@ -9388,6 +9736,49 @@ def api_photoframes_reset_device(token_id: str):
     )
 
 
+@app.route("/api/photoframes/<token_id>/settings-command", methods=["POST"])
+@login_required
+def api_photoframes_settings_command(token_id: str):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Kun administrator kan sende fjernindstillinger."}), 403
+
+    target_id = _sanitize_photoframe_text(token_id, 64)
+    if not target_id:
+        return jsonify({"ok": False, "error": "Ugyldigt token-id."}), 400
+
+    records = _load_photoframe_token_records()
+    rec_idx = -1
+    rec: Optional[Dict[str, Any]] = None
+    for idx, it in enumerate(records):
+        rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+        if rec_id == target_id:
+            rec_idx = idx
+            rec = it
+            break
+    if rec_idx < 0 or not rec:
+        return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
+
+    settings_payload, err = _photoframe_extract_settings_payload_from_request(request)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+
+    ok_queue, queue_info = _photoframe_queue_settings_command(rec, settings_payload)
+    if not ok_queue:
+        return jsonify({"ok": False, "error": queue_info or "Kunne ikke sende indstillinger"}), 409
+    job_id = str(queue_info or "").strip()
+    _save_photoframe_token_records(records)
+
+    return jsonify(
+        {
+            "ok": True,
+            "id": target_id,
+            "job_id": job_id,
+            "status": "queued",
+            "requested_at": _sanitize_photoframe_text(rec.get("update_requested_at"), 40) or now_iso(),
+        }
+    )
+
+
 @app.route("/api/photoframes/<token_id>/update/cancel", methods=["POST"])
 @login_required
 def api_photoframes_cancel_update(token_id: str):
@@ -9436,6 +9827,7 @@ def api_photoframes_cancel_update(token_id: str):
     rec["update_package_url"] = ""
     rec["update_package_mode"] = ""
     rec["update_package_sha256"] = ""
+    rec["update_settings_payload"] = {}
 
     _save_photoframe_token_records(records)
     return jsonify(
@@ -9516,6 +9908,7 @@ def api_photoframes_trigger_update_all():
         rec["update_package_url"] = package_url
         rec["update_package_mode"] = "upload"
         rec["update_package_sha256"] = uploaded_sha
+        rec["update_settings_payload"] = {}
         queued += 1
 
     if queued <= 0:
@@ -9574,12 +9967,15 @@ def api_photoframes_settings_ready(token_id: str):
     if not rec:
         return jsonify({"ok": False, "error": "Fotoramme blev ikke fundet."}), 404
 
+    settings_proxy_url = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
     target_base_url = _photoframe_settings_proxy_base_url(rec)
     if not target_base_url:
         return jsonify(
             {
                 "ok": False,
-                "error": "Rammen har ingen brugbar lokal IP endnu. Vent på næste heartbeat og prøv igen.",
+                "error": "Rammen har ingen brugbar lokal IP endnu. Åbner fallback med API-baserede fjernindstillinger.",
+                "settings_url": settings_proxy_url,
+                "fallback_available": True,
             }
         ), 409
 
@@ -9593,7 +9989,6 @@ def api_photoframes_settings_ready(token_id: str):
         wait_sec = 22.0
     wait_sec = max(6.0, min(45.0, wait_sec))
 
-    settings_proxy_url = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
     baseline_seen = _parse_iso_to_epoch(rec.get("last_seen_at"))
     waited_for_heartbeat = False
     wake_attempted = False
@@ -9682,6 +10077,7 @@ def api_photoframes_settings_ready(token_id: str):
             "ok": False,
             "error": msg,
             "settings_url": settings_proxy_url,
+            "fallback_available": True,
             "waited_for_heartbeat": waited_for_heartbeat,
             "wake_attempted": wake_attempted,
             "wake_job_id": wake_job_id or None,
@@ -9705,16 +10101,70 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
     if not rec:
         return _photoframe_settings_proxy_error_page("Fotoramme blev ikke fundet.", 404)
 
-    target_base_url = _photoframe_settings_proxy_base_url(rec)
-    if not target_base_url:
-        return _photoframe_settings_proxy_error_page(
-            "Rammen har ingen brugbar lokal IP endnu. Opdater rammen til nyeste version, lad den køre i 30-60 sekunder, og prøv igen.",
-            409,
-        )
-
+    proxy_root = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
     clean_subpath = re.sub(r"/+", "/", str(subpath or "").strip()).lstrip("/")
     if not clean_subpath:
         clean_subpath = "remote-settings"
+    method = str(request.method or "GET").upper()
+    settings_root = clean_subpath.split("/", 1)[0]
+    is_settings_entry = (method == "GET") and (settings_root in {"remote-settings", "settings"})
+    is_settings_save_post = (method == "POST") and (clean_subpath in {"remote-settings/save", "settings/save", "wifi/connect"})
+    fallback_mode_requested = str(
+        request.values.get("fallback_mode")
+        or request.args.get("fallback_mode")
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _fallback_submit(transport_error: str = ""):
+        settings_payload, err = _photoframe_extract_settings_payload_from_request(request)
+        if err:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                status_code=400,
+                error=err,
+                transport_error=transport_error,
+            )
+        ok_queue, queue_info = _photoframe_queue_settings_command(rec, settings_payload)
+        if not ok_queue:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                status_code=409,
+                error=queue_info or "Kunne ikke sende indstillinger",
+                transport_error=transport_error,
+            )
+        _save_photoframe_token_records(records)
+        job_id = _sanitize_photoframe_update_job_id(queue_info)
+        return redirect(
+            f"{proxy_root}/remote-settings?queued=1&job_id={quote(job_id, safe='')}",
+            code=303,
+        )
+
+    target_base_url = _photoframe_settings_proxy_base_url(rec)
+    if fallback_mode_requested and is_settings_save_post:
+        return _fallback_submit()
+    if not target_base_url:
+        if is_settings_save_post:
+            return _fallback_submit()
+        if is_settings_entry:
+            queued = str(request.args.get("queued") or "").strip().lower() in {"1", "true", "yes", "on"}
+            job_id = _sanitize_photoframe_update_job_id(request.args.get("job_id"))
+            notice = ""
+            if queued:
+                notice = "Indstillinger sendt. Rammen anvender dem ved næste heartbeat."
+                if job_id:
+                    notice = f"{notice} Job: {job_id}"
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                notice=notice,
+            )
+        return _photoframe_settings_proxy_error_page(
+            "Rammen har ingen brugbar lokal IP endnu. Brug fallback-fjernindstillinger og prøv igen.",
+            409,
+        )
+
     target_url = f"{target_base_url}/{clean_subpath}"
     raw_query = request.query_string.decode("utf-8", errors="ignore").strip()
     if raw_query:
@@ -9725,11 +10175,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         value = str(request.headers.get(header_name) or "").strip()
         if value:
             headers[header_name] = value
-    method = str(request.method or "GET").upper()
     body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    settings_root = clean_subpath.split("/", 1)[0]
-    is_settings_entry = (method == "GET") and (settings_root in {"remote-settings", "settings"})
-    is_settings_save_post = (method == "POST") and (clean_subpath == "remote-settings/save")
     allow_wake_retry = bool(is_settings_entry or is_settings_save_post)
 
     def _proxy_request_once() -> tuple[Optional[requests.Response], str]:
@@ -9791,6 +10237,16 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
             extra = " Genstartskommando blev sendt til rammen. Vent 10-20 sekunder og prøv igen."
             if wake_job_id:
                 extra += f" (job: {wake_job_id})"
+        if is_settings_save_post:
+            return _fallback_submit(
+                transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
+            )
+        if is_settings_entry:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
+            )
         return _photoframe_settings_proxy_error_page(
             f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
             409,
@@ -9818,12 +10274,20 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
                 extra += f" (job: {wake_job_id})"
         if upstream_error:
             extra = f"{extra} Sidste fejl: {upstream_error}".strip()
+        transport_msg = f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.{extra}"
+        if is_settings_save_post:
+            return _fallback_submit(transport_error=transport_msg)
+        if is_settings_entry:
+            return _photoframe_settings_fallback_page(
+                rec,
+                proxy_root,
+                transport_error=transport_msg,
+            )
         return _photoframe_settings_proxy_error_page(
-            f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.{extra}",
+            transport_msg,
             409,
         )
 
-    proxy_root = f"/api/photoframes/{quote(target_id, safe='')}/settings-proxy"
     try:
         return _photoframe_proxy_response(upstream, proxy_root, target_base_url)
     except Exception as exc:

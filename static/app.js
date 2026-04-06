@@ -612,7 +612,7 @@ const I18N = {
     photoframe_reset_device_failed: 'Kunne ikke sende nulstilling.',
     photoframe_open_settings_btn: 'Indstillinger',
     photoframe_open_settings_failed: 'Kunne ikke åbne indstillinger.',
-    photoframe_open_settings_waiting: 'Venter på næste heartbeat fra rammen...',
+    photoframe_open_settings_waiting: 'Forbinder til rammen...',
     photoframe_open_settings_ready: 'Rammen er klar. Åbner indstillinger...',
     photoframe_open_settings_popup_blocked: 'Browseren blokerede nyt vindue. Tillad popups for at åbne indstillinger.',
     photoframe_update_state_queued: 'Venter på enhed',
@@ -624,6 +624,8 @@ const I18N = {
     photoframe_sync_state_sending: 'Sender billeder',
     photoframe_sync_state_sent: 'Billeder sendt',
     photoframe_show_token_btn: 'Vis token',
+    photoframe_preview_toggle_on: 'Preview til',
+    photoframe_preview_toggle_off: 'Preview fra',
     photoframe_scope_btn: 'Indhold',
     photoframe_delete_btn: 'Slet',
     photoframe_delete_confirm: 'Slet token for {name}?',
@@ -1207,6 +1209,8 @@ const I18N = {
     photoframe_sync_state_sending: 'Sending photos',
     photoframe_sync_state_sent: 'Photos sent',
     photoframe_show_token_btn: 'Show token',
+    photoframe_preview_toggle_on: 'Preview on',
+    photoframe_preview_toggle_off: 'Preview off',
     photoframe_scope_btn: 'Content',
     photoframe_delete_btn: 'Delete',
     photoframe_delete_confirm: 'Delete token for {name}?',
@@ -1795,6 +1799,7 @@ let state = {
   photoframeConfigPath: '',
   photoframeLatestVersion: '',
   photoframeLatestVersionAt: '',
+  photoframePreviewHiddenById: {},
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
@@ -1806,6 +1811,38 @@ const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
+const PHOTOFRAME_PREVIEW_UI_STATE_KEY = 'fjordlens.photoframePreviewHiddenById.v1';
+
+function _loadPhotoframePreviewUiState() {
+  try {
+    const raw = localStorage.getItem(PHOTOFRAME_PREVIEW_UI_STATE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    const clean = {};
+    Object.entries(parsed).forEach(([k, v]) => {
+      const id = String(k || '').trim();
+      if (!id) return;
+      if (v === true) clean[id] = true;
+    });
+    state.photoframePreviewHiddenById = clean;
+  } catch {}
+}
+
+function _savePhotoframePreviewUiState() {
+  try {
+    const source = (state && state.photoframePreviewHiddenById && typeof state.photoframePreviewHiddenById === 'object')
+      ? state.photoframePreviewHiddenById
+      : {};
+    const clean = {};
+    Object.entries(source).forEach(([k, v]) => {
+      const id = String(k || '').trim();
+      if (!id) return;
+      if (v === true) clean[id] = true;
+    });
+    localStorage.setItem(PHOTOFRAME_PREVIEW_UI_STATE_KEY, JSON.stringify(clean));
+  } catch {}
+}
 
 function _loadMapperTreeUiState() {
   try {
@@ -1834,6 +1871,7 @@ function _saveMapperTreeUiState() {
 }
 
 _loadMapperTreeUiState();
+_loadPhotoframePreviewUiState();
 
 function _expandMapperAncestors(path) {
   const parts = String(path || '').split('/').filter(Boolean);
@@ -2342,7 +2380,6 @@ function renderPhotoframePanel() {
   const hasFrames = items.length > 0;
   const canCreateFrame = String((state.currentUser && state.currentUser.role) || '').toLowerCase() === 'admin';
   const checkedText = state.photoframeCheckedAt ? fmtDate(state.photoframeCheckedAt) : '-';
-  const sourceText = photoframeSourceLabel(String(state.photoframeSource || 'none'));
   const pathText = String(state.photoframeConfigPath || '/data/photoframes.json');
 
   const cardsHtml = items.map((item) => {
@@ -2351,6 +2388,13 @@ function renderPhotoframePanel() {
     const statusClass = online ? 'online' : 'offline';
     const frameId = String(item.id || '').trim();
     const frameName = String(item.name || 'Photoframe').trim();
+    const previewHiddenMap = (state.photoframePreviewHiddenById && typeof state.photoframePreviewHiddenById === 'object')
+      ? state.photoframePreviewHiddenById
+      : {};
+    const previewVisible = !previewHiddenMap[frameId];
+    const previewToggleLabel = previewVisible
+      ? tr('photoframe_preview_toggle_off')
+      : tr('photoframe_preview_toggle_on');
     const settingsProxyUrl = String(item.settings_proxy_url || '').trim() || (frameId ? `/api/photoframes/${encodeURIComponent(frameId)}/settings-proxy` : '');
     const ipText = String(item.net_ip || item.ip || '').trim() || '-';
     const localIpText = String(item.local_ip || '').trim() || '-';
@@ -2386,7 +2430,7 @@ function renderPhotoframePanel() {
             ${escapeHtml(statusLabel)}
           </span>
         </div>
-        <div class="photoframe-card-body">
+        <div class="photoframe-card-body${previewVisible ? '' : ' no-preview'}">
           <div class="photoframe-card-main">
             ${locationText ? `<div class="mini-label">${escapeHtml(locationText)}</div>` : ''}
             <div class="photoframe-meta">
@@ -2486,6 +2530,12 @@ function renderPhotoframePanel() {
                 <button
                   class="btn small"
                   type="button"
+                  data-photoframe-action="toggle-preview"
+                  data-frame-id="${escapeHtml(frameId)}"
+                >${escapeHtml(previewToggleLabel)}</button>
+                <button
+                  class="btn small"
+                  type="button"
                   data-photoframe-action="delete-token"
                   data-frame-id="${escapeHtml(frameId)}"
                   data-frame-name="${escapeHtml(frameName)}"
@@ -2493,13 +2543,15 @@ function renderPhotoframePanel() {
               </div>
             ` : ''}
           </div>
-          <aside class="photoframe-preview" aria-label="Preview">
-            ${previewThumbSrc
-              ? `<img src="${escapeHtml(previewThumbSrc)}" alt="${escapeHtml(frameName)}" loading="lazy" decoding="async">`
-              : `<div class="photoframe-preview-empty">${escapeHtml(tr('no_thumb'))}</div>`
-            }
-            ${previewUpdatedLabel ? `<div class="photoframe-preview-meta">${escapeHtml(previewUpdatedLabel)}</div>` : ''}
-          </aside>
+          ${previewVisible ? `
+            <aside class="photoframe-preview" aria-label="Preview">
+              ${previewThumbSrc
+                ? `<img src="${escapeHtml(previewThumbSrc)}" alt="${escapeHtml(frameName)}" loading="lazy" decoding="async">`
+                : `<div class="photoframe-preview-empty">${escapeHtml(tr('no_thumb'))}</div>`
+              }
+              ${previewUpdatedLabel ? `<div class="photoframe-preview-meta">${escapeHtml(previewUpdatedLabel)}</div>` : ''}
+            </aside>
+          ` : ''}
         </div>
       </article>
     `;
@@ -2550,9 +2602,6 @@ function renderPhotoframePanel() {
 
   els.grid.innerHTML = `
     <section class="photoframe-wrap">
-      <div class="photoframe-toolbar">
-        <div class="mini-label">${escapeHtml(sourceText)} - ${escapeHtml(tr('photoframe_last_checked'))}: ${escapeHtml(checkedText)}</div>
-      </div>
       ${errorBlock}
       ${loadingBlock}
       ${emptyBlock}
@@ -3552,12 +3601,19 @@ function renderPhotoframePanel() {
         } catch (_) {
           data = null;
         }
+        const fallbackUrl = String((data && data.settings_url) || '').trim();
         if (!res.ok || !data || !data.ok) {
+          if (fallbackUrl) {
+            preOpened.location.href = fallbackUrl;
+            const msg = (data && data.error) ? String(data.error) : tr('photoframe_open_settings_ready');
+            showStatus(msg, 'ok');
+            return;
+          }
           const msg = (data && data.error) ? String(data.error) : tr('photoframe_open_settings_failed');
           throw new Error(msg);
         }
 
-        const targetUrl = String((data && data.settings_url) || settingsUrl).trim() || settingsUrl;
+        const targetUrl = fallbackUrl || settingsUrl;
         preOpened.location.href = targetUrl;
         showStatus(tr('photoframe_open_settings_ready'), 'ok');
       } catch (e) {
@@ -3580,6 +3636,21 @@ function renderPhotoframePanel() {
       const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
       const frameName = String(btn.getAttribute('data-frame-name') || '').trim();
       await openShowTokenModal(frameId, frameName);
+    });
+  });
+  document.querySelectorAll('[data-photoframe-action="toggle-preview"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const frameId = String(btn.getAttribute('data-frame-id') || '').trim();
+      if (!frameId) return;
+      const map = (state.photoframePreviewHiddenById && typeof state.photoframePreviewHiddenById === 'object')
+        ? { ...state.photoframePreviewHiddenById }
+        : {};
+      const currentlyHidden = !!map[frameId];
+      if (currentlyHidden) delete map[frameId];
+      else map[frameId] = true;
+      state.photoframePreviewHiddenById = map;
+      _savePhotoframePreviewUiState();
+      if (state.view === 'photoframe') renderGrid();
     });
   });
   document.querySelectorAll('[data-photoframe-action="trigger-update-upload"]').forEach((btn) => {
