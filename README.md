@@ -160,7 +160,7 @@ docker compose up -d --build
 FjordLens supports ZIP-based remote updates:
 
 - Per-frame: `Upload zip`
-- Global: `Upload zip til alle`
+- Global: `Upload zip to all`
 
 Update states are reported by frames (`queued`, `downloading`, `installing`, `restarting`, `success`, `failed`).
 
