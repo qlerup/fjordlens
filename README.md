@@ -59,6 +59,27 @@ This repository contains two parts:
 
 ## Quick Start
 
+### Fastest Setup (Recommended)
+
+If you want the easiest path from a fresh server, use this exact flow:
+
+```bash
+ssh <user>@<server-ip>
+cd ~
+git clone https://github.com/qlerup/fjordlens.git
+cd fjordlens
+chmod +x scripts/fresh_setup.sh
+./scripts/fresh_setup.sh
+```
+
+The wizard is interactive and guides you through:
+
+- app port, timezone, and logging
+- storage paths
+- optional NFS `/etc/fstab` setup
+- optional scan/library settings
+- final preflight + `docker compose up -d --build`
+
 ### Local Docker host
 
 ```bash
