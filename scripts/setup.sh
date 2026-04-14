@@ -44,6 +44,128 @@ ask_yes_no() {
   done
 }
 
+is_truthy() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+csv_has() {
+  csv="$1"
+  needle="$2"
+  old_ifs="$IFS"
+  IFS=','
+  for item in $csv; do
+    clean="$(printf '%s' "$item" | tr -d '[:space:]')"
+    if [ "$clean" = "$needle" ]; then
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+ensure_absolute_dir() {
+  path="$1"
+  label="$2"
+  if [ -z "$path" ]; then
+    echo "ERROR: ${label} is empty."
+    exit 1
+  fi
+  case "$path" in
+    /*) ;;
+    *)
+      echo "ERROR: ${label} must be an absolute path, got: ${path}"
+      exit 1
+      ;;
+  esac
+  mkdir -p "$path"
+  if [ ! -d "$path" ]; then
+    echo "ERROR: Could not create/read directory for ${label}: ${path}"
+    exit 1
+  fi
+}
+
+assert_writable() {
+  path="$1"
+  label="$2"
+  probe="${path}/.fjordlens_write_test.$$"
+  if ! ( : > "$probe" ) 2>/dev/null; then
+    echo "ERROR: ${label} is not writable: ${path}"
+    exit 1
+  fi
+  rm -f "$probe" >/dev/null 2>&1 || true
+}
+
+mount_field() {
+  path="$1"
+  field="$2"
+  findmnt -T "$path" -n -o "$field" 2>/dev/null | head -n 1 || true
+}
+
+report_mount() {
+  path="$1"
+  label="$2"
+  expected_csv="$3"
+  target="$(mount_field "$path" TARGET)"
+  source="$(mount_field "$path" SOURCE)"
+  fstype="$(mount_field "$path" FSTYPE)"
+  if [ -z "$target" ] || [ -z "$fstype" ]; then
+    echo "ERROR: Could not resolve mount info for ${label}: ${path}"
+    exit 1
+  fi
+  echo "    ${label}: ${path}"
+  echo "      mount: ${source} on ${target} (fstype=${fstype})"
+  if [ -n "$expected_csv" ] && ! csv_has "$expected_csv" "$fstype"; then
+    echo "ERROR: ${label} fstype '${fstype}' is not in EXPECT list: ${expected_csv}"
+    exit 1
+  fi
+}
+
+require_runtime_tools() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker command not found."
+    exit 1
+  fi
+  if ! command -v findmnt >/dev/null 2>&1; then
+    echo "ERROR: findmnt command not found (install util-linux)."
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "ERROR: docker compose plugin not available."
+    exit 1
+  fi
+}
+
+load_env_with_defaults() {
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+  fi
+
+  : "${APP_PORT:=9080}"
+  : "${DATA_DIR:=/volume1/docker/fjordlens/data}"
+  : "${UPLOADS_HOST_DIR:=/volume1/docker/fjordlens/data/uploads}"
+  : "${THUMBS_HOST_DIR:=/volume1/docker/fjordlens/data/thumbs}"
+  : "${TZ:=Europe/Copenhagen}"
+  : "${LOG_LEVEL:=INFO}"
+  : "${SQLITE_JOURNAL_MODE:=}"
+  : "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
+  : "${ENABLE_LIBRARY_SOURCE:=0}"
+  : "${ENABLE_SCAN_FEATURES:=0}"
+  : "${PHOTOFRAME_TEXT_ONLY:=0}"
+  : "${PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES:=314572800}"
+  : "${EXPECT_DATA_FSTYPES:=}"
+  : "${EXPECT_UPLOADS_FSTYPES:=}"
+  : "${EXPECT_THUMBS_FSTYPES:=}"
+  : "${EXPECT_PHOTO_FSTYPES:=}"
+  : "${PHOTO_DIR:=/volume1/docker/fjordlens/Photos}"
+}
+
 write_env_file() {
   target="$1"
   cat > "$target" <<EOF
@@ -66,7 +188,7 @@ EXPECT_THUMBS_FSTYPES=${EXPECT_THUMBS_FSTYPES}
 EXPECT_PHOTO_FSTYPES=${EXPECT_PHOTO_FSTYPES}
 EOF
 
-  if [ "$ENABLE_LIBRARY_SOURCE" = "1" ]; then
+  if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
     printf "PHOTO_DIR=%s\n" "$PHOTO_DIR" >> "$target"
   else
     cat >> "$target" <<EOF
@@ -75,6 +197,69 @@ EOF
 EOF
   fi
 }
+
+run_preflight_and_start() {
+  require_runtime_tools
+
+  echo
+  echo "==> Mount preflight"
+  ensure_absolute_dir "$DATA_DIR" "DATA_DIR"
+  ensure_absolute_dir "$UPLOADS_HOST_DIR" "UPLOADS_HOST_DIR"
+  ensure_absolute_dir "$THUMBS_HOST_DIR" "THUMBS_HOST_DIR"
+
+  mkdir -p "${UPLOADS_HOST_DIR}/originals" "${UPLOADS_HOST_DIR}/converted"
+
+  assert_writable "$DATA_DIR" "DATA_DIR"
+  assert_writable "$UPLOADS_HOST_DIR" "UPLOADS_HOST_DIR"
+  assert_writable "$THUMBS_HOST_DIR" "THUMBS_HOST_DIR"
+
+  report_mount "$DATA_DIR" "DATA_DIR" "$EXPECT_DATA_FSTYPES"
+  report_mount "$UPLOADS_HOST_DIR" "UPLOADS_HOST_DIR" "$EXPECT_UPLOADS_FSTYPES"
+  report_mount "$THUMBS_HOST_DIR" "THUMBS_HOST_DIR" "$EXPECT_THUMBS_FSTYPES"
+
+  if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
+    if [ -z "${PHOTO_DIR:-}" ]; then
+      echo "ERROR: ENABLE_LIBRARY_SOURCE=1 requires PHOTO_DIR in ${ENV_FILE}"
+      exit 1
+    fi
+    if [ ! -d "$PHOTO_DIR" ]; then
+      echo "ERROR: PHOTO_DIR does not exist: ${PHOTO_DIR}"
+      exit 1
+    fi
+    report_mount "$PHOTO_DIR" "PHOTO_DIR" "$EXPECT_PHOTO_FSTYPES"
+  else
+    echo "    PHOTO_DIR check skipped (ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE})"
+  fi
+
+  echo
+  echo "==> Starting containers"
+  cd "$REPO_DIR"
+  docker compose up -d --build
+  echo "==> Done"
+  echo "    Open: http://localhost:${APP_PORT:-9080}"
+}
+
+if [ "${1:-}" = "--start-only" ]; then
+  echo "==> FjordLens start-only mode"
+  echo "    Repo: ${REPO_DIR}"
+  echo "    Env : ${ENV_FILE}"
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "ERROR: Missing env file: ${ENV_FILE}"
+    echo "Run full wizard first:"
+    echo "  sh scripts/setup.sh"
+    exit 1
+  fi
+  load_env_with_defaults
+  run_preflight_and_start
+  exit 0
+fi
+
+if [ "${1:-}" != "" ]; then
+  echo "Usage:"
+  echo "  sh scripts/setup.sh            # guided setup (A-Z)"
+  echo "  sh scripts/setup.sh --start-only  # preflight + start with existing .env"
+  exit 1
+fi
 
 echo "==> FjordLens guided setup"
 echo "    Repo: ${REPO_DIR}"
@@ -85,31 +270,7 @@ if [ ! -f "$EXAMPLE_ENV" ]; then
   exit 1
 fi
 
-# Load existing env as defaults when available.
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
-
-: "${APP_PORT:=9080}"
-: "${DATA_DIR:=/volume1/docker/fjordlens/data}"
-: "${UPLOADS_HOST_DIR:=/volume1/docker/fjordlens/data/uploads}"
-: "${THUMBS_HOST_DIR:=/volume1/docker/fjordlens/data/thumbs}"
-: "${TZ:=Europe/Copenhagen}"
-: "${LOG_LEVEL:=INFO}"
-: "${SQLITE_JOURNAL_MODE:=}"
-: "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
-: "${ENABLE_LIBRARY_SOURCE:=0}"
-: "${ENABLE_SCAN_FEATURES:=0}"
-: "${PHOTOFRAME_TEXT_ONLY:=0}"
-: "${PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES:=314572800}"
-: "${EXPECT_DATA_FSTYPES:=}"
-: "${EXPECT_UPLOADS_FSTYPES:=}"
-: "${EXPECT_THUMBS_FSTYPES:=}"
-: "${EXPECT_PHOTO_FSTYPES:=}"
-: "${PHOTO_DIR:=/volume1/docker/fjordlens/Photos}"
+load_env_with_defaults
 
 echo
 echo "Step 1/6: Basic app settings"
@@ -125,7 +286,7 @@ THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR")"
 
 echo
 echo "Step 3/6: Optional library source"
-if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$( [ "$ENABLE_LIBRARY_SOURCE" = "1" ] && echo y || echo n )"; then
+if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
   ENABLE_LIBRARY_SOURCE="1"
   PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR")"
 else
@@ -134,7 +295,7 @@ fi
 
 echo
 echo "Step 4/6: Feature toggles"
-if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$( [ "$ENABLE_SCAN_FEATURES" = "1" ] && echo y || echo n )"; then
+if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$(is_truthy "$ENABLE_SCAN_FEATURES" && echo y || echo n)"; then
   ENABLE_SCAN_FEATURES="1"
 else
   ENABLE_SCAN_FEATURES="0"
@@ -157,7 +318,7 @@ if ask_yes_no "Enable strict NFS checks for uploads/thumbs paths?" "$( [ -n "$EX
   EXPECT_UPLOADS_FSTYPES="$(ask_input "EXPECT_UPLOADS_FSTYPES" "${EXPECT_UPLOADS_FSTYPES:-nfs,nfs4}")"
   EXPECT_THUMBS_FSTYPES="$(ask_input "EXPECT_THUMBS_FSTYPES" "${EXPECT_THUMBS_FSTYPES:-nfs,nfs4}")"
   EXPECT_DATA_FSTYPES="$(ask_input "EXPECT_DATA_FSTYPES (optional, leave blank to skip)" "$EXPECT_DATA_FSTYPES")"
-  if [ "$ENABLE_LIBRARY_SOURCE" = "1" ]; then
+  if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
     EXPECT_PHOTO_FSTYPES="$(ask_input "EXPECT_PHOTO_FSTYPES (optional, leave blank to skip)" "$EXPECT_PHOTO_FSTYPES")"
   else
     EXPECT_PHOTO_FSTYPES=""
@@ -189,7 +350,7 @@ echo "  DATA_DIR=${DATA_DIR}"
 echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
 echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
 echo "  ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}"
-if [ "$ENABLE_LIBRARY_SOURCE" = "1" ]; then
+if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
   echo "  PHOTO_DIR=${PHOTO_DIR}"
 fi
 echo "  ENABLE_SCAN_FEATURES=${ENABLE_SCAN_FEATURES}"
@@ -201,9 +362,9 @@ fi
 
 echo
 if ask_yes_no "Run preflight + docker compose up -d --build now?" "y"; then
-  sh "${SCRIPT_DIR}/bootstrap.sh"
+  run_preflight_and_start
 else
   echo "Skipped start."
   echo "Run later with:"
-  echo "  sh scripts/bootstrap.sh"
+  echo "  sh scripts/setup.sh --start-only"
 fi
