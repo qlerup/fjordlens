@@ -195,7 +195,7 @@
       <section id="settingsPanel" class="hidden">
         <div class="settings-header">
           <h1>Indstillinger</h1>
-          <p>Vedligeholdelse, scan og logs</p>
+          <p>Vedligeholdelse og logs</p>
         </div>
         <nav class="tabs">
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
@@ -226,10 +226,12 @@
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Vedligeholdelse</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              {% if scan_enabled %}
               <button id="scanBtn" class="btn primary">Scan bibliotek</button>
               <button id="rescanBtn" class="btn">Rescan metadata</button>
               <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
               <button id="fixThumbsBtn" class="btn">Ret manglende thumbnails</button>
+              {% endif %}
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
               <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
             </div>
@@ -748,6 +750,7 @@
       <div id="sharedEditError" class="mini-label hidden" style="color:#ff6b6b;margin-top:8px;"></div>
     </div>
   </div>
+  {% if scan_enabled %}
   <div id="scanModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
     <div style="width:520px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -761,6 +764,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
   <div id="aiScopeModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
     <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -778,7 +782,8 @@
   <!-- Bootstrap data (avoids inline JS parse issues) -->
   <div id="bootstrapData"
        data-profile='{{ (user_profile or {})|tojson }}'
-       data-role='{{ (user_role or "user")|tojson }}'></div>
+       data-role='{{ (user_role or "user")|tojson }}'
+       data-scan-enabled='{{ (scan_enabled if scan_enabled is not none else false)|tojson }}'></div>
   <script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
   <script>
     // Fallback: load tus-js-client from CDN if local bundle is missing

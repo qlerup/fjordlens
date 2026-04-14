@@ -430,20 +430,34 @@ try {
 // Initialize globals from bootstrap element if not already present
 (() => {
   try {
-    if (!window.APP_PROFILE || !window.APP_ROLE) {
+    if (!window.APP_PROFILE || !window.APP_ROLE || typeof window.APP_SCAN_ENABLED === 'undefined') {
       const el = document.getElementById('bootstrapData');
       if (el) {
         const p = el.getAttribute('data-profile') || '{}';
         const r = el.getAttribute('data-role') || '"user"';
+        const s = el.getAttribute('data-scan-enabled') || 'false';
         if (!window.APP_PROFILE) window.APP_PROFILE = JSON.parse(p);
         if (!window.APP_ROLE) window.APP_ROLE = JSON.parse(r);
+        if (typeof window.APP_SCAN_ENABLED === 'undefined') window.APP_SCAN_ENABLED = !!JSON.parse(s);
       }
     }
   } catch {}
 })();
 
 const APP_PROFILE = (window.APP_PROFILE && typeof window.APP_PROFILE === 'object') ? window.APP_PROFILE : {};
+const SCAN_FEATURES_ENABLED = (typeof window.APP_SCAN_ENABLED === 'boolean') ? window.APP_SCAN_ENABLED : false;
 const UI_LANGUAGES = new Set(['da', 'en']);
+
+function applyScanFeatureVisibility() {
+  if (SCAN_FEATURES_ENABLED) return;
+  try {
+    [els.scanBtn, els.rescanBtn, els.rethumbBtn, els.fixThumbsBtn].forEach((el) => {
+      if (el) el.style.display = 'none';
+    });
+    if (els.scanModal) els.scanModal.classList.add('hidden');
+  } catch {}
+}
+applyScanFeatureVisibility();
 
 // THEME: System/Light/Dark with auto-detect and persistence
 const THEME_STORE_KEY = 'fl_theme_mode'; // 'system' | 'light' | 'dark'
@@ -533,7 +547,7 @@ const I18N = {
     view_personer_title: 'Personer',
     view_personer_sub: '',
     view_settings_title: 'Indstillinger',
-    view_settings_sub: 'Vedligeholdelse, scan og administration',
+    view_settings_sub: 'Vedligeholdelse og administration',
     sort_date_desc: 'Nyeste først',
     sort_date_asc: 'Ældste først',
     sort_name_asc: 'Navn A-Å',
@@ -695,7 +709,7 @@ const I18N = {
     photoframe_create_failed: 'Kunne ikke oprette fotoramme.',
     no_thumb: 'Ingen thumbnail',
     settings_title: 'Indstillinger',
-    settings_sub: 'Vedligeholdelse, scan og logs',
+    settings_sub: 'Vedligeholdelse og logs',
     maint_title: 'Vedligeholdelse',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI-embeddings',
@@ -1118,7 +1132,7 @@ const I18N = {
     view_personer_title: 'People',
     view_personer_sub: '',
     view_settings_title: 'Settings',
-    view_settings_sub: 'Maintenance, scan and administration',
+    view_settings_sub: 'Maintenance and administration',
     sort_date_desc: 'Newest first',
     sort_date_asc: 'Oldest first',
     sort_name_asc: 'Name A-Z',
@@ -1280,7 +1294,7 @@ const I18N = {
     photoframe_create_failed: 'Could not create photo frame.',
     no_thumb: 'No thumbnail',
     settings_title: 'Settings',
-    settings_sub: 'Maintenance, scan and logs',
+    settings_sub: 'Maintenance and logs',
     maint_title: 'Maintenance',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI embeddings',
@@ -8519,6 +8533,7 @@ function renderPlacesMarkers() {
   } catch {}
 }
 function updateScanButton() {
+  if (!SCAN_FEATURES_ENABLED || !els.scanBtn) return;
   if (state.scanning) {
     els.scanBtn.textContent = tr('btn_stop_scan');
   } else {
@@ -8575,6 +8590,7 @@ document.addEventListener("click", (e) => {
 });
 
 async function pollScanStatus() {
+  if (!SCAN_FEATURES_ENABLED) return;
   try {
     const res = await fetch("/api/scan/status");
     const data = await res.json();
@@ -8596,6 +8612,10 @@ async function pollScanStatus() {
 }
 
 async function scanLibrary() {
+  if (!SCAN_FEATURES_ENABLED) {
+    showStatus('Scan-funktioner er deaktiveret.', 'err');
+    return;
+  }
   if (state.scanning) {
     // act as stop
     try {
@@ -8631,6 +8651,7 @@ async function scanLibrary() {
 
 // Rescan metadata
 async function pollRescanStatus() {
+  if (!SCAN_FEATURES_ENABLED) return;
   try {
     const res = await fetch("/api/rescan/status");
     const data = await res.json();
@@ -8648,6 +8669,10 @@ async function pollRescanStatus() {
 }
 
 async function rescanMetadata() {
+  if (!SCAN_FEATURES_ENABLED) {
+    showStatus('Scan-funktioner er deaktiveret.', 'err');
+    return;
+  }
   try {
     els.rescanBtn.disabled = true;
     showStatus(tr('rescan_starting'), "ok");
@@ -8684,6 +8709,10 @@ async function pollRethumbStatus() {
 }
 
 async function rethumbAll() {
+  if (!SCAN_FEATURES_ENABLED) {
+    showStatus('Scan-funktioner er deaktiveret.', 'err');
+    return;
+  }
   try {
     if (els.rethumbBtn) els.rethumbBtn.disabled = true;
     showStatus(tr('rethumb_starting'), "ok");
@@ -8745,6 +8774,10 @@ async function clearIndex() {
 
 // Fix only missing/outdated thumbnails
 async function fixMissingThumbs() {
+  if (!SCAN_FEATURES_ENABLED) {
+    showStatus('Scan-funktioner er deaktiveret.', 'err');
+    return;
+  }
   try {
     if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = true;
     showStatus(tr('rethumb_starting'), 'ok');
@@ -9411,6 +9444,7 @@ if (mapperShareQrDownload) {
 }
 
 function openScanModal() {
+  if (!SCAN_FEATURES_ENABLED) return;
   if (!els.scanModal) return;
   els.scanModal.classList.remove('hidden');
 }
@@ -9709,7 +9743,11 @@ els.sort.addEventListener("change", () => {
   state.sort = els.sort.value;
   loadPhotos();
 });
-els.scanBtn.addEventListener("click", () => {
+els.scanBtn && els.scanBtn.addEventListener("click", () => {
+  if (!SCAN_FEATURES_ENABLED) {
+    showStatus('Scan-funktioner er deaktiveret.', 'err');
+    return;
+  }
   if (state.scanning) {
     scanLibrary();
     return;
@@ -11406,13 +11444,15 @@ applyUiLanguage();
 
 setView(state.view, { syncUrl: false }).then(async () => {
   // Start with a quick status check in case scan was running
-  fetch("/api/scan/status").then(r => r.json()).then(d => {
-    if (d && d.running) {
-      state.scanning = true;
-      updateScanButton();
-      pollScanStatus();
-    }
-  }).catch(() => {});
+  if (SCAN_FEATURES_ENABLED) {
+    fetch("/api/scan/status").then(r => r.json()).then(d => {
+      if (d && d.running) {
+        state.scanning = true;
+        updateScanButton();
+        pollScanStatus();
+      }
+    }).catch(() => {});
+  }
   // Start logs only for elevated roles (not basic 'user')
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';

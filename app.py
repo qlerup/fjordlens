@@ -52,13 +52,17 @@ from urllib.parse import quote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
 APP_PORT = 8080
-# Define DATA_DIR first so PHOTO_DIR can default inside it for uploads-only setups
+# DATA_DIR is app state (db, cache, temp, secrets, etc.)
+# UPLOAD_DIR can be split out to separate storage (e.g. NFS) for originals/converted uploads.
+# THUMB_DIR can be split out independently for thumbnail storage.
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 # If PHOTO_DIR is not set, default to a library folder inside DATA_DIR so no external mount is required
 PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", str(DATA_DIR / "library"))).resolve()
-THUMB_DIR = DATA_DIR / "thumbs"
+_THUMB_DIR_ENV = os.environ.get("THUMB_DIR") or os.environ.get("THUMBS_DIR")
+THUMB_DIR = Path(_THUMB_DIR_ENV or str(DATA_DIR / "thumbs")).resolve()
 CONVERT_DIR = DATA_DIR / "converted"
-UPLOAD_DIR = DATA_DIR / "uploads"
+_UPLOAD_DIR_ENV = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_DIR")
+UPLOAD_DIR = Path(_UPLOAD_DIR_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
 _SQLITE_JOURNAL_MODE_ENV = str(os.environ.get("SQLITE_JOURNAL_MODE", "") or "").strip().upper()
@@ -117,6 +121,8 @@ def _is_network_fstype(fs_type: str) -> bool:
 
 
 DATA_DIR_FS_TYPE = _linux_mount_fstype_for_path(DATA_DIR)
+UPLOAD_DIR_FS_TYPE = _linux_mount_fstype_for_path(UPLOAD_DIR)
+THUMB_DIR_FS_TYPE = _linux_mount_fstype_for_path(THUMB_DIR)
 if _SQLITE_JOURNAL_MODE_ENV in _SQLITE_JOURNAL_MODE_ALLOWED:
     SQLITE_JOURNAL_MODE = _SQLITE_JOURNAL_MODE_ENV
 else:
@@ -127,6 +133,10 @@ try:
 except Exception:
     SQLITE_BUSY_TIMEOUT_MS = 10000
 SQLITE_BUSY_TIMEOUT_MS = max(1000, min(120000, SQLITE_BUSY_TIMEOUT_MS))
+ENABLE_SCAN_FEATURES = (
+    str(os.environ.get("ENABLE_SCAN_FEATURES", "0") or "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
 PHOTOFRAME_FRAMES_ENV = str(os.environ.get("PHOTOFRAME_FRAMES", "") or "").strip()
@@ -9404,7 +9414,12 @@ def index():
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": "system",
         }
-    return render_template("index.html", user_role=(role or "user"), user_profile=profile)
+    return render_template(
+        "index.html",
+        user_role=(role or "user"),
+        user_profile=profile,
+        scan_enabled=bool(ENABLE_SCAN_FEATURES),
+    )
 
 
 @app.route("/s/<token>")
@@ -10087,10 +10102,15 @@ def api_health():
         "photo_dir_exists": PHOTO_DIR.exists(),
         "data_dir": str(DATA_DIR),
         "data_dir_fs_type": DATA_DIR_FS_TYPE,
+        "upload_dir": str(UPLOAD_DIR),
+        "upload_dir_fs_type": UPLOAD_DIR_FS_TYPE,
+        "thumb_dir": str(THUMB_DIR),
+        "thumb_dir_fs_type": THUMB_DIR_FS_TYPE,
         "db_path": str(DB_PATH),
         "sqlite_journal_mode_configured": SQLITE_JOURNAL_MODE,
         "sqlite_journal_mode_effective": sqlite_effective_mode,
         "sqlite_busy_timeout_ms": int(SQLITE_BUSY_TIMEOUT_MS),
+        "scan_features_enabled": bool(ENABLE_SCAN_FEATURES),
         "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
     })
@@ -11821,8 +11841,14 @@ last_rescan_result: Optional[Dict[str, Any]] = None
 rethumb_thread = None
 last_rethumb_result: Optional[Dict[str, Any]] = None
 
+
+def _scan_disabled_error() -> Dict[str, Any]:
+    return {"ok": False, "error": "Scan-funktioner er deaktiveret"}
+
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -11839,6 +11865,8 @@ def api_scan():
 # Stop scan
 @app.route("/api/scan/stop", methods=["POST"])
 def api_scan_stop():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -11848,12 +11876,16 @@ def api_scan_stop():
 # Scan status
 @app.route("/api/scan/status")
 def api_scan_status():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify({"ok": True, "running": False, "disabled": True})
     running = bool(scan_thread and scan_thread.is_alive())
     return jsonify({"ok": True, "running": running})
 
 
 @app.route("/api/rescan", methods=["POST"])
 def api_rescan():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -11874,6 +11906,8 @@ def api_rescan():
 
 @app.route("/api/rescan/status")
 def api_rescan_status():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify({"ok": True, "running": False, "disabled": True})
     running = bool(rescan_thread and rescan_thread.is_alive())
     resp: Dict[str, Any] = {"ok": True, "running": running}
     if not running and last_rescan_result is not None:
@@ -11915,6 +11949,8 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
 
 @app.route("/api/rethumb", methods=["POST"])
 def api_rethumb():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -11935,6 +11971,8 @@ def api_rethumb():
 
 @app.route("/api/rethumb/status")
 def api_rethumb_status():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify({"ok": True, "running": False, "disabled": True})
     running = bool(rethumb_thread and rethumb_thread.is_alive())
     resp: Dict[str, Any] = {"ok": True, "running": running}
     if not running and last_rethumb_result is not None:
@@ -11999,6 +12037,8 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
 
 @app.route("/api/rethumb/missing", methods=["POST"])
 def api_rethumb_missing():
+    if not ENABLE_SCAN_FEATURES:
+        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]

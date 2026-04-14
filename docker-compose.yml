@@ -17,6 +17,8 @@ services:
     environment:
       PHOTO_DIR: /photos
       DATA_DIR: /data
+      UPLOAD_DIR: /uploads
+      THUMB_DIR: /thumbs
       AI_URL: http://fjordlens-ai:8000
       AI_INGEST_THROTTLE_SEC: ${AI_INGEST_THROTTLE_SEC:-0.04}
       FACES_INDEX_THROTTLE_SEC: ${FACES_INDEX_THROTTLE_SEC:-0.06}
@@ -26,6 +28,7 @@ services:
       PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES: ${PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES:-314572800}
       SQLITE_JOURNAL_MODE: ${SQLITE_JOURNAL_MODE:-}
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-10000}
+      ENABLE_SCAN_FEATURES: ${ENABLE_SCAN_FEATURES:-0}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s
@@ -38,6 +41,8 @@ services:
     volumes:
       - "${PHOTO_DIR:-/volume1/photo}:/photos:ro"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
+      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordlens/data/uploads}:/uploads"
+      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordlens/data/thumbs}:/thumbs"
     restart: unless-stopped
 
   fjordlens-ai:

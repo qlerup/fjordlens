@@ -170,9 +170,12 @@ See `.env.example` for defaults. Most-used variables:
 
 - `APP_PORT`: web UI port (default `9080`)
 - `PHOTO_DIR`: host library path mounted read-only as `/photos`
-- `DATA_DIR`: persistent app data (`db`, thumbs, uploads, cache)
+- `UPLOADS_HOST_DIR`: host path mounted to `/uploads` (folder creation + uploads/originals + uploads/converted)
+- `THUMBS_HOST_DIR`: host path mounted to `/thumbs` (thumbnails)
+- `DATA_DIR`: persistent app state (`db`, converted cache, temp uploads, secrets, other internal data)
 - `TZ`: timezone
 - `LOG_LEVEL`: app log level
+- `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
 - `AI_DEBUG_PORT`: optional host port for AI service
 - `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
 - `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
