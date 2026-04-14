@@ -5392,6 +5392,10 @@ async function loadPhotos() {
     state.items = [];
   } else {
     state.items = data.items || [];
+    if (data && data.error) {
+      const errMsg = String(data.error || '').trim();
+      if (errMsg) showStatus(`Kunne ikke hente billeder: ${errMsg}`, 'err');
+    }
   }
 
   const labels = navLabels();

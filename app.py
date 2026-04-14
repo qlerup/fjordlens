@@ -3395,7 +3395,7 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
     if not base.exists() or not base.is_dir():
         return out
     try:
-        blocked_dir_names = {"@eadir"}
+        blocked_dir_names = {"@eadir", "#recycle"}
         for root, dirs, _files in os.walk(base):
             dirs[:] = sorted([
                 d for d in dirs
@@ -8884,9 +8884,16 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
     # Optional folder filter: include canonical uploads path AND
     # internal originals/converted mirrors under the same user folder.
     if folder:
-        raw = _normalize_upload_subdir(str(folder))
+        # Browsing/filtering must accept existing on-disk names (e.g. Synology system folders)
+        # while still blocking traversal input.
+        try:
+            raw = _normalize_folder_acl_path(str(folder))
+        except Exception:
+            raw = ""
         # Strip optional 'uploads/' prefix for consistent handling
         f = raw[8:] if raw.startswith("uploads/") else raw
+        if f == "uploads":
+            f = ""
         # If caller passed 'originals/<sub>' or 'converted/<sub>', fold to base '<sub>'
         if f.startswith("originals/"):
             f_base = f[len("originals/"):]
@@ -12570,20 +12577,36 @@ def api_photos():
     _, user_lang = _current_user_pref_languages()
     search_language = _normalize_language(requested_lang, user_lang)
 
-    items = query_photos(view, sort, folder=folder)
-    if q:
-        items = [p for p in items if matches_search(p, q, search_language=search_language)]
-    items = _filter_public_items_by_current_user_acl(items)
-
-    return jsonify({
-        "items": items,
-        "count": len(items),
-        "query": q,
-        "view": view,
-        "sort": sort,
-        "folder": folder,
-        "search_lang": search_language,
-    })
+    try:
+        items = query_photos(view, sort, folder=folder)
+        if q:
+            items = [p for p in items if matches_search(p, q, search_language=search_language)]
+        items = _filter_public_items_by_current_user_acl(items)
+        return jsonify({
+            "items": items,
+            "count": len(items),
+            "query": q,
+            "view": view,
+            "sort": sort,
+            "folder": folder,
+            "search_lang": search_language,
+        })
+    except Exception as e:
+        try:
+            log_event("error", rel_path="api/photos", error=str(e), view=view, sort=sort, folder=str(folder or ""))
+        except Exception:
+            pass
+        return jsonify({
+            "items": [],
+            "count": 0,
+            "query": q,
+            "view": view,
+            "sort": sort,
+            "folder": folder,
+            "search_lang": search_language,
+            "ok": False,
+            "error": str(e),
+        }), 200
 
 
 @app.route("/api/photos/<int:photo_id>")
