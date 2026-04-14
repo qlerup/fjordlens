@@ -133,6 +133,10 @@ try:
 except Exception:
     SQLITE_BUSY_TIMEOUT_MS = 10000
 SQLITE_BUSY_TIMEOUT_MS = max(1000, min(120000, SQLITE_BUSY_TIMEOUT_MS))
+ENABLE_LIBRARY_SOURCE = (
+    str(os.environ.get("ENABLE_LIBRARY_SOURCE", "0") or "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 ENABLE_SCAN_FEATURES = (
     str(os.environ.get("ENABLE_SCAN_FEATURES", "0") or "0").strip().lower()
     in {"1", "true", "yes", "on"}
@@ -3213,6 +3217,10 @@ def ai_ingest_throttle_enabled_sec() -> float:
 
 def faces_index_throttle_enabled_sec() -> float:
     return _get_setting_throttle("faces_index_throttle_sec", FACES_INDEX_THROTTLE_SEC)
+
+
+def library_source_enabled() -> bool:
+    return bool(ENABLE_LIBRARY_SOURCE)
 
 
 def _disk_path_from_rel_path(rel_path: str) -> Path:
@@ -7996,7 +8004,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("scan_start")
 
-    if not PHOTO_DIR.exists():
+    if library_source_enabled() and not PHOTO_DIR.exists():
         return {
             "ok": False,
             "error": f"Photo folder not found: {PHOTO_DIR}",
@@ -8019,34 +8027,35 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
         }
 
 
-    # Scan primary photo directory
-    for path, rel_path in iter_photo_files(PHOTO_DIR):
-        if stop_event and stop_event.is_set():
-            break
-        scanned += 1
-        try:
-            log_event("scan_check", rel_path=rel_path)
-            stat = path.stat()
-            modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
-            file_size = stat.st_size
-            prev = existing.get(rel_path)
-            if prev:
-                unchanged = (prev["modified_fs"] == modified_fs and prev["file_size"] == file_size)
-                missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
-                if unchanged and not missing_meta:
-                    log_event("skip_unchanged", rel_path=rel_path)
-                    log_event("no_new", rel_path=rel_path)
-                    continue
+    # Scan primary photo directory (optional)
+    if library_source_enabled():
+        for path, rel_path in iter_photo_files(PHOTO_DIR):
+            if stop_event and stop_event.is_set():
+                break
+            scanned += 1
+            try:
+                log_event("scan_check", rel_path=rel_path)
+                stat = path.stat()
+                modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+                file_size = stat.st_size
+                prev = existing.get(rel_path)
+                if prev:
+                    unchanged = (prev["modified_fs"] == modified_fs and prev["file_size"] == file_size)
+                    missing_meta = (prev["lens_model"] in (None, "")) or (prev["gps_lat"] is None and prev["gps_lon"] is None)
+                    if unchanged and not missing_meta:
+                        log_event("skip_unchanged", rel_path=rel_path)
+                        log_event("no_new", rel_path=rel_path)
+                        continue
 
-            meta = extract_metadata(path, rel_path)
-            upsert_photo(meta)
-            updated += 1
-            log_event("indexed", rel_path=rel_path)
-        except Exception as e:
-            errors += 1
-            log_event("error", rel_path=rel_path, error=str(e))
-            if len(error_samples) < 5:
-                error_samples.append(f"{rel_path}: {e}")
+                meta = extract_metadata(path, rel_path)
+                upsert_photo(meta)
+                updated += 1
+                log_event("indexed", rel_path=rel_path)
+            except Exception as e:
+                errors += 1
+                log_event("error", rel_path=rel_path, error=str(e))
+                if len(error_samples) < 5:
+                    error_samples.append(f"{rel_path}: {e}")
 
     # Also scan uploaded files stored under DATA_DIR/uploads (prefixed as 'uploads/...')
     for path, rel_path in iter_photo_files(UPLOAD_DIR, prefix="uploads"):
@@ -10110,6 +10119,7 @@ def api_health():
         "sqlite_journal_mode_configured": SQLITE_JOURNAL_MODE,
         "sqlite_journal_mode_effective": sqlite_effective_mode,
         "sqlite_busy_timeout_ms": int(SQLITE_BUSY_TIMEOUT_MS),
+        "library_source_enabled": bool(ENABLE_LIBRARY_SOURCE),
         "scan_features_enabled": bool(ENABLE_SCAN_FEATURES),
         "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
@@ -12999,6 +13009,8 @@ def api_original(rel_path: str):
     if safe_rel.startswith("uploads/"):
         up_rel = safe_rel[len("uploads/"):]
         return send_from_directory(str(UPLOAD_DIR), up_rel)
+    if not library_source_enabled():
+        return ("Not found", 404)
     directory = str(PHOTO_DIR)
     return send_from_directory(directory, safe_rel)
 
@@ -13012,6 +13024,8 @@ def api_viewable(rel_path: str):
     if safe_rel.startswith("uploads/"):
         src = UPLOAD_DIR / safe_rel[len("uploads/"):]
     else:
+        if not library_source_enabled():
+            return ("Not found", 404)
         src = PHOTO_DIR / safe_rel
     if not src.exists():
         # Fallback: maybe already a converted file reference
