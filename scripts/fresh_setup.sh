@@ -66,6 +66,23 @@ print_cmd() {
   printf "  > %s\n" "$*"
 }
 
+detect_host_ip() {
+  ip_candidate=""
+  if command -v hostname >/dev/null 2>&1; then
+    ip_candidate="$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i !~ /^127\./) {print $i; exit}}')"
+  fi
+  if [ -z "$ip_candidate" ] && command -v ip >/dev/null 2>&1; then
+    ip_candidate="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i==\"src\") {print $(i+1); exit}}')"
+  fi
+  if [ -z "$ip_candidate" ] && command -v hostname >/dev/null 2>&1; then
+    ip_candidate="$(hostname 2>/dev/null || true)"
+  fi
+  if [ -z "$ip_candidate" ]; then
+    ip_candidate="localhost"
+  fi
+  printf "%s" "$ip_candidate"
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "ERROR: Missing required command: $1"
@@ -341,8 +358,175 @@ run_preflight_and_start() {
   cd "$REPO_DIR"
   print_cmd "docker compose up -d --build"
   docker compose up -d --build
+  host_ip="$(detect_host_ip)"
   echo "==> Done"
-  echo "    Open: http://localhost:${APP_PORT:-9080}"
+  echo "    Open: http://${host_ip}:${APP_PORT:-9080}"
+}
+
+step_1_basic() {
+  echo
+  echo "Step 1/7: Basic app settings"
+  APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
+  TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
+  LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
+}
+
+step_2_nfs() {
+  echo
+  echo "Step 2/7: Optional NFS uploads mount (/etc/fstab)"
+  if ask_yes_no "Configure NFS mount for uploads in /etc/fstab?" "$(is_truthy "$SETUP_NFS_UPLOADS_ENABLED" && echo y || echo n)"; then
+    SETUP_NFS_UPLOADS_ENABLED="1"
+    SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/volume1/ProxmoxFjordlens" "Synology NFS share in server:/path format.")"
+    SETUP_NFS_MOUNT_ROOT="$(ask_input "Local NFS mount root" "$SETUP_NFS_MOUNT_ROOT" "/home/qlerup/synology/fjordlens-data" "Local mount root on Proxmox. Must be an absolute path.")"
+    SETUP_NFS_UPLOADS_SUBDIR="$(ask_input "Uploads subdir inside NFS mount" "$SETUP_NFS_UPLOADS_SUBDIR" "uploads" "Host-side subfolder name only. The app still mounts this path as /uploads inside the container.")"
+    SETUP_NFS_FSTAB_OPTIONS="$(ask_input "NFS fstab options" "$SETUP_NFS_FSTAB_OPTIONS" "vers=3,_netdev,nofail" "Mount options written directly to /etc/fstab.")"
+    SETUP_NFS_UPLOADS_SUBDIR="$(printf "%s" "$SETUP_NFS_UPLOADS_SUBDIR" | sed 's#^/*##; s#/*$##')"
+    if [ -z "$SETUP_NFS_UPLOADS_SUBDIR" ]; then
+      SETUP_NFS_UPLOADS_SUBDIR="uploads"
+    fi
+    UPLOADS_HOST_DIR="${SETUP_NFS_MOUNT_ROOT}/${SETUP_NFS_UPLOADS_SUBDIR}"
+    if [ -z "$EXPECT_UPLOADS_FSTYPES" ]; then
+      EXPECT_UPLOADS_FSTYPES="nfs,nfs4"
+    fi
+  else
+    SETUP_NFS_UPLOADS_ENABLED="0"
+  fi
+}
+
+step_3_storage() {
+  echo
+  echo "Step 3/7: Storage paths (host paths)"
+  DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/home/qlerup/fjordlens-local/appdata" "Stores database, cache, temp files, and internal app data.")"
+  UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (uploads/originals+converted)" "$UPLOADS_HOST_DIR" "/home/qlerup/synology/fjordlens-data/uploads" "Root for uploads. The script creates originals/ and converted/ under this path.")"
+  THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/home/qlerup/fjordlens-local/thumbs" "Root directory where thumbnails are stored.")"
+}
+
+step_4_library() {
+  echo
+  echo "Step 4/7: Optional library source"
+  if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
+    ENABLE_LIBRARY_SOURCE="1"
+    PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/home/qlerup/fjordlens-library" "Optional read-only library directory when library source is enabled.")"
+  else
+    ENABLE_LIBRARY_SOURCE="0"
+  fi
+}
+
+step_5_features() {
+  echo
+  echo "Step 5/7: Feature toggles"
+  if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$(is_truthy "$ENABLE_SCAN_FEATURES" && echo y || echo n)"; then
+    ENABLE_SCAN_FEATURES="1"
+  else
+    ENABLE_SCAN_FEATURES="0"
+  fi
+}
+
+step_6_sqlite() {
+  echo
+  echo "Step 6/7: SQLite"
+  sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto or DELETE (NFS)" "Choose auto for automatic selection. On NFS, DELETE is often more stable.")"
+  sqlite_choice_lc="$(printf "%s" "$sqlite_choice" | tr '[:upper:]' '[:lower:]')"
+  if [ "$sqlite_choice_lc" = "auto" ] || [ -z "$sqlite_choice_lc" ]; then
+    SQLITE_JOURNAL_MODE=""
+  else
+    SQLITE_JOURNAL_MODE="$(printf "%s" "$sqlite_choice" | tr '[:lower:]' '[:upper:]')"
+  fi
+  SQLITE_BUSY_TIMEOUT_MS="$(ask_input "SQLite busy timeout ms" "$SQLITE_BUSY_TIMEOUT_MS" "10000 or 15000" "Wait time for database locks in milliseconds.")"
+}
+
+step_7_fschecks() {
+  echo
+  echo "Step 7/7: Optional strict mount checks"
+  if ask_yes_no "Enable strict fs-type checks (NFS/local expectations)?" "$( [ -n "$EXPECT_UPLOADS_FSTYPES$EXPECT_THUMBS_FSTYPES$EXPECT_DATA_FSTYPES$EXPECT_PHOTO_FSTYPES" ] && echo y || echo n )"; then
+    EXPECT_UPLOADS_FSTYPES="$(ask_input "EXPECT_UPLOADS_FSTYPES" "${EXPECT_UPLOADS_FSTYPES:-nfs,nfs4}" "nfs,nfs4" "Allowed filesystem types for uploads mount (comma-separated).")"
+    EXPECT_THUMBS_FSTYPES="$(ask_input "EXPECT_THUMBS_FSTYPES (blank to skip)" "$EXPECT_THUMBS_FSTYPES" "nfs,nfs4" "Allowed filesystem types for thumbs mount. Blank = no check.")"
+    EXPECT_DATA_FSTYPES="$(ask_input "EXPECT_DATA_FSTYPES (blank to skip)" "$EXPECT_DATA_FSTYPES" "ext4,xfs,btrfs" "Allowed filesystem types for DATA_DIR. Blank = no check.")"
+    if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
+      EXPECT_PHOTO_FSTYPES="$(ask_input "EXPECT_PHOTO_FSTYPES (blank to skip)" "$EXPECT_PHOTO_FSTYPES" "nfs,nfs4" "Allowed filesystem types for PHOTO_DIR. Blank = no check.")"
+    else
+      EXPECT_PHOTO_FSTYPES=""
+    fi
+  else
+    EXPECT_UPLOADS_FSTYPES=""
+    EXPECT_THUMBS_FSTYPES=""
+    EXPECT_DATA_FSTYPES=""
+    EXPECT_PHOTO_FSTYPES=""
+  fi
+}
+
+print_summary() {
+  echo
+  echo "Summary:"
+  echo "  APP_PORT=${APP_PORT}"
+  echo "  DATA_DIR=${DATA_DIR}"
+  echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
+  echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
+  echo "  ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}"
+  if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
+    echo "  PHOTO_DIR=${PHOTO_DIR}"
+  fi
+  echo "  ENABLE_SCAN_FEATURES=${ENABLE_SCAN_FEATURES}"
+  echo "  SETUP_NFS_UPLOADS_ENABLED=${SETUP_NFS_UPLOADS_ENABLED}"
+  if is_truthy "$SETUP_NFS_UPLOADS_ENABLED"; then
+    echo "  SETUP_NFS_EXPORT=${SETUP_NFS_EXPORT}"
+    echo "  SETUP_NFS_MOUNT_ROOT=${SETUP_NFS_MOUNT_ROOT}"
+    echo "  SETUP_NFS_UPLOADS_SUBDIR=${SETUP_NFS_UPLOADS_SUBDIR}"
+  fi
+  if [ -n "$SQLITE_JOURNAL_MODE" ]; then
+    echo "  SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}"
+  else
+    echo "  SQLITE_JOURNAL_MODE=<auto>"
+  fi
+}
+
+backup_env_once() {
+  if [ "${ENV_BACKUP_DONE:-0}" = "1" ]; then
+    return 0
+  fi
+  if [ -f "$ENV_FILE" ]; then
+    backup_file="${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    cp "$ENV_FILE" "$backup_file"
+    echo
+    echo "Backup of existing env saved to:"
+    echo "  ${backup_file}"
+  fi
+  ENV_BACKUP_DONE=1
+}
+
+save_env() {
+  backup_env_once
+  write_env_file "$ENV_FILE"
+  echo
+  echo "Wrote configuration:"
+  echo "  ${ENV_FILE}"
+}
+
+edit_menu() {
+  while :; do
+    echo
+    echo "Edit settings menu:"
+    echo "  1) Basic app settings"
+    echo "  2) NFS / fstab settings"
+    echo "  3) Storage paths"
+    echo "  4) Library source (PHOTO_DIR)"
+    echo "  5) Feature toggles"
+    echo "  6) SQLite settings"
+    echo "  7) Strict fs-type checks"
+    echo "  8) Done editing (back to summary)"
+    choice="$(ask_input "Choose section number" "8" "1-8" "Type the number for what you want to edit.")"
+    case "$choice" in
+      1) step_1_basic ;;
+      2) step_2_nfs ;;
+      3) step_3_storage ;;
+      4) step_4_library ;;
+      5) step_5_features ;;
+      6) step_6_sqlite ;;
+      7) step_7_fschecks ;;
+      8|"") break ;;
+      *) echo "Invalid choice. Please select 1-8." ;;
+    esac
+  done
 }
 
 if [ "${1:-}" = "--start-only" ]; then
@@ -383,126 +567,29 @@ if [ ! -f "$EXAMPLE_ENV" ]; then
 fi
 
 load_env_with_defaults
+step_1_basic
+step_2_nfs
+step_3_storage
+step_4_library
+step_5_features
+step_6_sqlite
+step_7_fschecks
 
-echo
-echo "Step 1/7: Basic app settings"
-APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
-TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
-LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
-
-echo
-echo "Step 2/7: Optional NFS uploads mount (/etc/fstab)"
-if ask_yes_no "Configure NFS mount for uploads in /etc/fstab?" "$(is_truthy "$SETUP_NFS_UPLOADS_ENABLED" && echo y || echo n)"; then
-  SETUP_NFS_UPLOADS_ENABLED="1"
-  SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/volume1/ProxmoxFjordlens" "Synology NFS share in server:/path format.")"
-  SETUP_NFS_MOUNT_ROOT="$(ask_input "Local NFS mount root" "$SETUP_NFS_MOUNT_ROOT" "/home/qlerup/synology/fjordlens-data" "Local mount root on Proxmox. Must be an absolute path.")"
-  SETUP_NFS_UPLOADS_SUBDIR="$(ask_input "Uploads subdir inside NFS mount" "$SETUP_NFS_UPLOADS_SUBDIR" "uploads" "Subfolder inside the NFS mount used for uploads.")"
-  SETUP_NFS_FSTAB_OPTIONS="$(ask_input "NFS fstab options" "$SETUP_NFS_FSTAB_OPTIONS" "vers=3,_netdev,nofail" "Mount options written directly to /etc/fstab.")"
-  SETUP_NFS_UPLOADS_SUBDIR="$(printf "%s" "$SETUP_NFS_UPLOADS_SUBDIR" | sed 's#^/*##; s#/*$##')"
-  if [ -z "$SETUP_NFS_UPLOADS_SUBDIR" ]; then
-    SETUP_NFS_UPLOADS_SUBDIR="uploads"
-  fi
-  UPLOADS_HOST_DIR="${SETUP_NFS_MOUNT_ROOT}/${SETUP_NFS_UPLOADS_SUBDIR}"
-  if [ -z "$EXPECT_UPLOADS_FSTYPES" ]; then
-    EXPECT_UPLOADS_FSTYPES="nfs,nfs4"
-  fi
-else
-  SETUP_NFS_UPLOADS_ENABLED="0"
-fi
-
-echo
-echo "Step 3/7: Storage paths (host paths)"
-DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/home/qlerup/fjordlens-local/appdata" "Stores database, cache, temp files, and internal app data.")"
-UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (uploads/originals+converted)" "$UPLOADS_HOST_DIR" "/home/qlerup/synology/fjordlens-data/uploads" "Root for uploads. The script creates originals/ and converted/ under this path.")"
-THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/home/qlerup/fjordlens-local/thumbs" "Root directory where thumbnails are stored.")"
-
-echo
-echo "Step 4/7: Optional library source"
-if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
-  ENABLE_LIBRARY_SOURCE="1"
-  PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/home/qlerup/fjordlens-library" "Optional read-only library directory when library source is enabled.")"
-else
-  ENABLE_LIBRARY_SOURCE="0"
-fi
-
-echo
-echo "Step 5/7: Feature toggles"
-if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$(is_truthy "$ENABLE_SCAN_FEATURES" && echo y || echo n)"; then
-  ENABLE_SCAN_FEATURES="1"
-else
-  ENABLE_SCAN_FEATURES="0"
-fi
-
-echo
-echo "Step 6/7: SQLite"
-sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto or DELETE (NFS)" "Choose auto for automatic selection. On NFS, DELETE is often more stable.")"
-sqlite_choice_lc="$(printf "%s" "$sqlite_choice" | tr '[:upper:]' '[:lower:]')"
-if [ "$sqlite_choice_lc" = "auto" ] || [ -z "$sqlite_choice_lc" ]; then
-  SQLITE_JOURNAL_MODE=""
-else
-  SQLITE_JOURNAL_MODE="$(printf "%s" "$sqlite_choice" | tr '[:lower:]' '[:upper:]')"
-fi
-SQLITE_BUSY_TIMEOUT_MS="$(ask_input "SQLite busy timeout ms" "$SQLITE_BUSY_TIMEOUT_MS" "10000 or 15000" "Wait time for database locks in milliseconds.")"
-
-echo
-echo "Step 7/7: Optional strict mount checks"
-if ask_yes_no "Enable strict fs-type checks (NFS/local expectations)?" "$( [ -n "$EXPECT_UPLOADS_FSTYPES$EXPECT_THUMBS_FSTYPES$EXPECT_DATA_FSTYPES$EXPECT_PHOTO_FSTYPES" ] && echo y || echo n )"; then
-  EXPECT_UPLOADS_FSTYPES="$(ask_input "EXPECT_UPLOADS_FSTYPES" "${EXPECT_UPLOADS_FSTYPES:-nfs,nfs4}" "nfs,nfs4" "Allowed filesystem types for uploads mount (comma-separated).")"
-  EXPECT_THUMBS_FSTYPES="$(ask_input "EXPECT_THUMBS_FSTYPES (blank to skip)" "$EXPECT_THUMBS_FSTYPES" "nfs,nfs4" "Allowed filesystem types for thumbs mount. Blank = no check.")"
-  EXPECT_DATA_FSTYPES="$(ask_input "EXPECT_DATA_FSTYPES (blank to skip)" "$EXPECT_DATA_FSTYPES" "ext4,xfs,btrfs" "Allowed filesystem types for DATA_DIR. Blank = no check.")"
-  if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
-    EXPECT_PHOTO_FSTYPES="$(ask_input "EXPECT_PHOTO_FSTYPES (blank to skip)" "$EXPECT_PHOTO_FSTYPES" "nfs,nfs4" "Allowed filesystem types for PHOTO_DIR. Blank = no check.")"
-  else
-    EXPECT_PHOTO_FSTYPES=""
-  fi
-else
-  EXPECT_UPLOADS_FSTYPES=""
-  EXPECT_THUMBS_FSTYPES=""
-  EXPECT_DATA_FSTYPES=""
-  EXPECT_PHOTO_FSTYPES=""
-fi
-
-if [ -f "$ENV_FILE" ]; then
-  backup_file="${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"
-  cp "$ENV_FILE" "$backup_file"
+while :; do
+  save_env
+  print_summary
   echo
-  echo "Backup of existing env saved to:"
-  echo "  ${backup_file}"
-fi
-
-write_env_file "$ENV_FILE"
-
-echo
-echo "Wrote configuration:"
-echo "  ${ENV_FILE}"
-echo
-echo "Summary:"
-echo "  APP_PORT=${APP_PORT}"
-echo "  DATA_DIR=${DATA_DIR}"
-echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
-echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
-echo "  ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}"
-if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
-  echo "  PHOTO_DIR=${PHOTO_DIR}"
-fi
-echo "  ENABLE_SCAN_FEATURES=${ENABLE_SCAN_FEATURES}"
-echo "  SETUP_NFS_UPLOADS_ENABLED=${SETUP_NFS_UPLOADS_ENABLED}"
-if is_truthy "$SETUP_NFS_UPLOADS_ENABLED"; then
-  echo "  SETUP_NFS_EXPORT=${SETUP_NFS_EXPORT}"
-  echo "  SETUP_NFS_MOUNT_ROOT=${SETUP_NFS_MOUNT_ROOT}"
-  echo "  SETUP_NFS_UPLOADS_SUBDIR=${SETUP_NFS_UPLOADS_SUBDIR}"
-fi
-if [ -n "$SQLITE_JOURNAL_MODE" ]; then
-  echo "  SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}"
-else
-  echo "  SQLITE_JOURNAL_MODE=<auto>"
-fi
-
-echo
-if ask_yes_no "Run preflight + optional NFS/fstab + docker compose up -d --build now?" "y"; then
-  run_preflight_and_start
-else
+  if ask_yes_no "Run preflight + optional NFS/fstab + docker compose up -d --build now?" "y"; then
+    run_preflight_and_start
+    break
+  fi
+  edit_menu
+  echo
+  if ask_yes_no "Return to summary and start prompt?" "y"; then
+    continue
+  fi
   echo "Skipped start."
   echo "Run later with:"
   echo "  sh scripts/fresh_setup.sh --start-only"
-fi
+  break
+done
