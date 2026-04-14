@@ -6,6 +6,15 @@ REPO_DIR="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${ENV_FILE:-${REPO_DIR}/.env}"
 EXAMPLE_ENV="${REPO_DIR}/.env.example"
 
+# Clear terminal at startup for better readability in interactive sessions.
+if [ -t 1 ]; then
+  if command -v clear >/dev/null 2>&1; then
+    clear || printf '\033c'
+  else
+    printf '\033c'
+  fi
+fi
+
 ask_input() {
   prompt="$1"
   default="${2:-}"
@@ -353,7 +362,12 @@ fi
 echo "==> FjordLens guided setup"
 echo "    Repo: ${REPO_DIR}"
 echo "    Env : ${ENV_FILE}"
-echo "    Tip : tryk Enter for at bruge default ved hvert spørgsmål."
+echo "    Tip : tryk Enter for at bruge default ved hvert sporgsmal."
+echo "    Eksempler pa input:"
+echo "      - APP_PORT: 9080 eller 9090"
+echo "      - DATA_DIR: /home/qlerup/fjordlens-local/appdata"
+echo "      - UPLOADS_HOST_DIR: /home/qlerup/synology/fjordlens-data/uploads"
+echo "      - NFS export: 10.10.0.161:/volume1/ProxmoxFjordlens"
 
 if [ ! -f "$EXAMPLE_ENV" ]; then
   echo "ERROR: Missing .env.example in repo root."
