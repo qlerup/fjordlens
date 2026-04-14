@@ -9,11 +9,11 @@ EXAMPLE_ENV="${REPO_DIR}/.env.example"
 ask_input() {
   prompt="$1"
   default="${2:-}"
+  printf "\n%s\n" "$prompt" >&2
   if [ -n "$default" ]; then
-    printf "%s [%s]: " "$prompt" "$default"
-  else
-    printf "%s: " "$prompt"
+    printf "Default: %s\n" "$default" >&2
   fi
+  printf "Svar (tryk Enter for default): " >&2
   IFS= read -r answer || true
   if [ -z "$answer" ]; then
     printf "%s" "$default"
@@ -26,10 +26,11 @@ ask_yes_no() {
   prompt="$1"
   default="${2:-y}"
   while :; do
+    printf "\n%s\n" "$prompt" >&2
     if [ "$default" = "y" ]; then
-      printf "%s [Y/n]: " "$prompt"
+      printf "Svar [Y/n] (Enter=Y): " >&2
     else
-      printf "%s [y/N]: " "$prompt"
+      printf "Svar [y/N] (Enter=N): " >&2
     fi
     IFS= read -r answer || true
     answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
@@ -42,6 +43,10 @@ ask_yes_no() {
       *) echo "Please answer y or n." ;;
     esac
   done
+}
+
+print_cmd() {
+  printf "  > %s\n" "$*"
 }
 
 need_cmd() {
@@ -261,9 +266,12 @@ configure_nfs_upload_mount_if_enabled() {
 
   echo
   echo "==> Configuring NFS mount in /etc/fstab"
+  print_cmd "mkdir -p ${SETUP_NFS_MOUNT_ROOT}"
   as_sudo mkdir -p "$SETUP_NFS_MOUNT_ROOT"
   fstab_line="${SETUP_NFS_EXPORT} ${SETUP_NFS_MOUNT_ROOT} nfs ${SETUP_NFS_FSTAB_OPTIONS} 0 0"
+  print_cmd "update /etc/fstab entry for ${SETUP_NFS_MOUNT_ROOT}"
   ensure_fstab_line "$SETUP_NFS_MOUNT_ROOT" "$fstab_line"
+  print_cmd "mount -a"
   as_sudo mount -a
 
   if ! findmnt -T "$SETUP_NFS_MOUNT_ROOT" >/dev/null 2>&1; then
@@ -279,10 +287,14 @@ run_preflight_and_start() {
 
   echo
   echo "==> Mount preflight"
+  print_cmd "mkdir -p ${DATA_DIR}"
   ensure_absolute_dir "$DATA_DIR" "DATA_DIR"
+  print_cmd "mkdir -p ${UPLOADS_HOST_DIR}"
   ensure_absolute_dir "$UPLOADS_HOST_DIR" "UPLOADS_HOST_DIR"
+  print_cmd "mkdir -p ${THUMBS_HOST_DIR}"
   ensure_absolute_dir "$THUMBS_HOST_DIR" "THUMBS_HOST_DIR"
 
+  print_cmd "mkdir -p ${UPLOADS_HOST_DIR}/originals ${UPLOADS_HOST_DIR}/converted"
   mkdir -p "${UPLOADS_HOST_DIR}/originals" "${UPLOADS_HOST_DIR}/converted"
 
   assert_writable "$DATA_DIR" "DATA_DIR"
@@ -310,6 +322,7 @@ run_preflight_and_start() {
   echo
   echo "==> Starting containers"
   cd "$REPO_DIR"
+  print_cmd "docker compose up -d --build"
   docker compose up -d --build
   echo "==> Done"
   echo "    Open: http://localhost:${APP_PORT:-9080}"
@@ -340,6 +353,7 @@ fi
 echo "==> FjordLens guided setup"
 echo "    Repo: ${REPO_DIR}"
 echo "    Env : ${ENV_FILE}"
+echo "    Tip : tryk Enter for at bruge default ved hvert spørgsmål."
 
 if [ ! -f "$EXAMPLE_ENV" ]; then
   echo "ERROR: Missing .env.example in repo root."
