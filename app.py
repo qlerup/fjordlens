@@ -6849,8 +6849,8 @@ def setup():
         try:
             with closing(get_conn()) as conn:
                 conn.execute(
-                    "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES (?,?,?,?)",
-                    (u, generate_password_hash(p), 1, now_iso()),
+                    "INSERT INTO users(username, password_hash, is_admin, role, created_at) VALUES (?,?,?,?,?)",
+                    (u, generate_password_hash(p), 1, "admin", now_iso()),
                 )
                 conn.commit()
             # Redirect directly to login after successful creation
@@ -15468,27 +15468,33 @@ def api_me():
         with closing(get_conn()) as conn:
             try:
                 row = conn.execute(
-                    "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
+                    "SELECT id, username, role, is_admin, ui_language, search_language, theme_mode FROM users WHERE id=?",
                     (current_user.id,),
                 ).fetchone()
             except sqlite3.OperationalError as e:
                 if 'no such column' in str(e).lower() and 'theme_mode' in str(e).lower():
                     _ensure_users_theme_mode_column(conn)
                     row = conn.execute(
-                        "SELECT id, username, role, ui_language, search_language FROM users WHERE id=?",
+                        "SELECT id, username, role, is_admin, ui_language, search_language FROM users WHERE id=?",
                         (current_user.id,),
                     ).fetchone()
                 else:
                     raise
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
+        raw_role = str((row["role"] if "role" in row.keys() else "") or "").strip().lower()
+        if raw_role not in {"admin", "user"}:
+            try:
+                raw_role = "admin" if bool(row["is_admin"]) else "user"
+            except Exception:
+                raw_role = "user"
         return jsonify(
             {
                 "ok": True,
                 "item": {
                     "id": int(row["id"]),
                     "username": row["username"],
-                    "role": (row["role"] or "user"),
+                    "role": raw_role,
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
                     "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),
