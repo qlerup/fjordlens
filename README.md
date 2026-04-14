@@ -63,7 +63,7 @@ This repository contains two parts:
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+sh scripts/setup.sh
 ```
 
 Open `http://localhost:9080` (or your configured `APP_PORT`).
@@ -71,17 +71,30 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
 
+If you prefer to start manually without preflight:
+
+```bash
+docker compose up -d --build
+```
+
 ### Synology NAS (SSH)
 
 ```bash
 cd /volume1/docker
 git clone https://github.com/<your-user>/<your-repo>.git fjordlens
 cd fjordlens/fjordlens
-cp .env.example .env
-docker compose up -d --build
+sh scripts/setup.sh
 ```
 
 Open `http://<nas-ip>:9080`.
+
+`scripts/setup.sh` will:
+
+- create `.env` from `.env.example` if missing
+- run `scripts/bootstrap.sh`
+- check mount status with `findmnt`
+- create required host folders (`DATA_DIR`, `UPLOADS_HOST_DIR`, `THUMBS_HOST_DIR`)
+- start `docker compose up -d --build`
 
 ### Upload-only mode (no `/photos` mount)
 
@@ -89,6 +102,12 @@ If you only use uploads and do not have a separate photo library mount:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --build
+```
+
+For upload-only setups with preflight checks:
+
+```bash
+ENABLE_LIBRARY_SOURCE=0 sh scripts/bootstrap.sh
 ```
 
 ## Photoframe Quick Start
@@ -189,6 +208,7 @@ Common advanced settings in code/env:
 - `GUNICORN_WORKERS` (recommended: `1`)
 - `GUNICORN_LOG_LEVEL`
 - `GEOCODE_ENABLE`, `GEOCODE_PROVIDER`, `GEOCODE_LANG`, `GEOCODE_TIMEOUT`, `GEOCODE_RETRIES`, `GEOCODE_DELAY`
+- `EXPECT_UPLOADS_FSTYPES`, `EXPECT_THUMBS_FSTYPES`, `EXPECT_DATA_FSTYPES`, `EXPECT_PHOTO_FSTYPES` (optional strict mount checks for `scripts/bootstrap.sh`)
 
 ## Useful API Endpoints
 
