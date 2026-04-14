@@ -62,7 +62,6 @@ This repository contains two parts:
 ### Local Docker host
 
 ```bash
-cp .env.example .env
 sh scripts/setup.sh
 ```
 
@@ -70,6 +69,8 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
+
+`scripts/setup.sh` is a guided A-Z wizard. It asks for paths and options, writes `.env`, runs mount preflight checks, and starts containers.
 
 If you prefer to start manually without preflight:
 
@@ -90,8 +91,9 @@ Open `http://<nas-ip>:9080`.
 
 `scripts/setup.sh` will:
 
-- create `.env` from `.env.example` if missing
-- run `scripts/bootstrap.sh`
+- ask guided setup questions (port, storage paths, optional library source, scan toggle, SQLite mode, optional NFS checks)
+- write `.env` (with backup if `.env` already exists)
+- run `scripts/bootstrap.sh` preflight
 - check mount status with `findmnt`
 - create required host folders (`DATA_DIR`, `UPLOADS_HOST_DIR`, `THUMBS_HOST_DIR`)
 - start `docker compose up -d --build`
@@ -107,7 +109,7 @@ docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --bu
 For upload-only setups with preflight checks:
 
 ```bash
-ENABLE_LIBRARY_SOURCE=0 sh scripts/bootstrap.sh
+ENABLE_LIBRARY_SOURCE=0 sh scripts/setup.sh
 ```
 
 ## Photoframe Quick Start
