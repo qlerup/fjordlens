@@ -61,9 +61,67 @@ CONVERT_DIR = DATA_DIR / "converted"
 UPLOAD_DIR = DATA_DIR / "uploads"
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
-SQLITE_JOURNAL_MODE = str(os.environ.get("SQLITE_JOURNAL_MODE", "WAL") or "WAL").strip().upper()
-if SQLITE_JOURNAL_MODE not in {"DELETE", "WAL", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}:
-    SQLITE_JOURNAL_MODE = "WAL"
+_SQLITE_JOURNAL_MODE_ENV = str(os.environ.get("SQLITE_JOURNAL_MODE", "") or "").strip().upper()
+_SQLITE_JOURNAL_MODE_ALLOWED = {"DELETE", "WAL", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}
+
+
+def _linux_mount_fstype_for_path(path: Path) -> str:
+    """Best-effort filesystem type lookup for a given path (Linux /proc/mounts)."""
+    try:
+        target = str(path.resolve()).replace("\\", "/")
+    except Exception:
+        target = str(path).replace("\\", "/")
+    if not target.startswith("/"):
+        return ""
+    best_mount = ""
+    best_fs = ""
+    try:
+        with Path("/proc/mounts").open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 3:
+                    continue
+                mount_raw = str(parts[1] or "")
+                fs_type = str(parts[2] or "")
+                mount = (
+                    mount_raw
+                    .replace("\\040", " ")
+                    .replace("\\011", "\t")
+                    .replace("\\012", "\n")
+                    .replace("\\134", "\\")
+                )
+                mount = mount.rstrip("/") or "/"
+                if target == mount or target.startswith(mount.rstrip("/") + "/") or mount == "/":
+                    if len(mount) > len(best_mount):
+                        best_mount = mount
+                        best_fs = fs_type
+    except Exception:
+        return ""
+    return best_fs.lower()
+
+
+def _is_network_fstype(fs_type: str) -> bool:
+    fs = str(fs_type or "").strip().lower()
+    if not fs:
+        return False
+    return (
+        fs.startswith("nfs")
+        or fs.startswith("cifs")
+        or fs.startswith("smb")
+        or fs.startswith("fuse.sshfs")
+        or fs.startswith("davfs")
+        or fs.startswith("afp")
+        or fs.startswith("ceph")
+        or fs.startswith("gluster")
+    )
+
+
+DATA_DIR_FS_TYPE = _linux_mount_fstype_for_path(DATA_DIR)
+if _SQLITE_JOURNAL_MODE_ENV in _SQLITE_JOURNAL_MODE_ALLOWED:
+    SQLITE_JOURNAL_MODE = _SQLITE_JOURNAL_MODE_ENV
+else:
+    # Safe default: WAL on local storage, DELETE on network filesystems.
+    SQLITE_JOURNAL_MODE = "DELETE" if _is_network_fstype(DATA_DIR_FS_TYPE) else "WAL"
 try:
     SQLITE_BUSY_TIMEOUT_MS = int(os.environ.get("SQLITE_BUSY_TIMEOUT_MS", "10000") or 10000)
 except Exception:
@@ -10015,12 +10073,24 @@ def api_share_delete(token: str):
 
 @app.route("/api/health")
 def api_health():
+    sqlite_effective_mode = SQLITE_JOURNAL_MODE
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            if row and len(row):
+                sqlite_effective_mode = str(row[0] or sqlite_effective_mode).upper()
+    except Exception:
+        pass
     return jsonify({
         "ok": True,
         "photo_dir": str(PHOTO_DIR),
         "photo_dir_exists": PHOTO_DIR.exists(),
         "data_dir": str(DATA_DIR),
+        "data_dir_fs_type": DATA_DIR_FS_TYPE,
         "db_path": str(DB_PATH),
+        "sqlite_journal_mode_configured": SQLITE_JOURNAL_MODE,
+        "sqlite_journal_mode_effective": sqlite_effective_mode,
+        "sqlite_busy_timeout_ms": int(SQLITE_BUSY_TIMEOUT_MS),
         "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
     })

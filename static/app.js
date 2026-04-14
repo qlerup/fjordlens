@@ -4426,11 +4426,11 @@ function renderGrid() {
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
       appendFolderCard(folderPath, arr, {
         title,
-        onOpen: () => {
+        onOpen: async () => {
           state.mapperPath = folderPath;
           state.folder = folderPath;
-          loadMapperTools(folderPath);
-          loadPhotos();
+          await loadMapperTools(folderPath);
+          await loadPhotos();
         },
       });
     }
@@ -4732,7 +4732,10 @@ function appendFolderCard(folder, arr, opts = {}) {
       return;
     }
     if (typeof opts.onOpen === 'function') {
-      opts.onOpen();
+      Promise.resolve(opts.onOpen()).catch((e) => {
+        const errMsg = String((e && e.message) || e || '').trim();
+        if (errMsg) showStatus(`Kunne ikke åbne mappe: ${errMsg}`, 'err');
+      });
       return;
     }
     state.view = "timeline";
@@ -7431,7 +7434,11 @@ function applyAiPerfPreset(kind) {
 async function loadMapperTools(preferred = null) {
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
-    if (!res.ok || !data || !data.ok) return;
+    if (!res.ok || !data || !data.ok) {
+      const errMsg = String((data && data.error) || `HTTP ${res && res.status ? res.status : 'fejl'}`).trim();
+      if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
+      return;
+    }
     const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperFolders = folders;
     if (state.mapperSelectedFolders && state.mapperSelectedFolders.size) {
@@ -7446,7 +7453,10 @@ async function loadMapperTools(preferred = null) {
     _expandMapperAncestors(wanted);
     renderMapperContext(state.mapperPath);
     if (state.view === 'mapper') _syncRouteStateToUrl();
-  } catch {}
+  } catch (e) {
+    const errMsg = String((e && e.message) || e || '').trim();
+    if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
+  }
 }
 
 async function createMapperFolder() {

@@ -219,6 +219,7 @@ SQLITE_BUSY_TIMEOUT_MS=15000
 ```
 
 Then restart the container. `WAL` often causes locking instability on network filesystems.
+If `SQLITE_JOURNAL_MODE` is not set, FjordLens now auto-selects `DELETE` on detected network filesystems and `WAL` on local disks.
 
 ### Upload issues behind reverse proxy
 
