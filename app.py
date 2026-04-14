@@ -2582,6 +2582,23 @@ def init_db() -> None:
             pass
 
 
+DB_BOOTSTRAP_LOCK = threading.Lock()
+DB_BOOTSTRAP_READY = False
+
+
+def ensure_runtime_bootstrap() -> None:
+    """One-time runtime bootstrap for DB schema and required data dirs."""
+    global DB_BOOTSTRAP_READY
+    if DB_BOOTSTRAP_READY:
+        return
+    with DB_BOOTSTRAP_LOCK:
+        if DB_BOOTSTRAP_READY:
+            return
+        ensure_dirs()
+        init_db()
+        DB_BOOTSTRAP_READY = True
+
+
 def _normalize_folder_acl_path(value: Optional[str]) -> str:
     raw = str(value or "").replace("\\", "/").strip()
     while "//" in raw:
@@ -2928,11 +2945,17 @@ def _perm_allows(perm: Optional[str], required: str) -> bool:
 
 @app.before_request
 def enforce_login_for_app():
-    # Allow static files and login endpoints without auth
+    # Allow static assets without touching DB/bootstrap.
+    if request.endpoint == "static" or (request.endpoint or "").startswith("static"):
+        return None
+
+    # Ensure DB/schema exists before auth/setup decisions.
+    ensure_runtime_bootstrap()
+
+    # Allow login/setup and selected public endpoints without auth
     open_endpoints = {
         "login",
         "verify_2fa",
-        "static",
         "setup",
         "api_health",
         "shared_folder_view",
@@ -2957,7 +2980,7 @@ def enforce_login_for_app():
         "api_frame_update_package",
         "api_frame_uploaded_update_package",
     }
-    if request.endpoint in open_endpoints or (request.endpoint or "").startswith("static"):
+    if request.endpoint in open_endpoints:
         return None
     # Bootstrap: if no users exist, redirect to setup
     try:
@@ -6807,6 +6830,7 @@ def _read_secret(name: str) -> Optional[str]:
 
 @app.route("/setup", methods=["GET", "POST"])
 def setup():
+    ensure_runtime_bootstrap()
     # If a user already exists, send to login
     if users_count() > 0:
         return redirect(url_for("login"))
@@ -14620,6 +14644,7 @@ def api_logs_clear():
 # --- Authentication routes ---
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    ensure_runtime_bootstrap()
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
