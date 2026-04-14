@@ -19,14 +19,18 @@ ask_input() {
   prompt="$1"
   default="${2:-}"
   example="${3:-}"
+  explain="${4:-}"
   printf "\n%s\n" "$prompt" >&2
+  if [ -n "$explain" ]; then
+    printf "Description: %s\n" "$explain" >&2
+  fi
   if [ -n "$example" ]; then
-    printf "Eksempel: %s\n" "$example" >&2
+    printf "Example: %s\n" "$example" >&2
   fi
   if [ -n "$default" ]; then
     printf "Default: %s\n" "$default" >&2
   fi
-  printf "Svar (tryk Enter for default): " >&2
+  printf "Answer (press Enter for default): " >&2
   IFS= read -r answer || true
   if [ -z "$answer" ]; then
     printf "%s" "$default"
@@ -41,9 +45,9 @@ ask_yes_no() {
   while :; do
     printf "\n%s\n" "$prompt" >&2
     if [ "$default" = "y" ]; then
-      printf "Svar [Y/n] (Enter=Y): " >&2
+      printf "Answer [Y/n] (Enter=Y): " >&2
     else
-      printf "Svar [y/N] (Enter=N): " >&2
+      printf "Answer [y/N] (Enter=N): " >&2
     fi
     IFS= read -r answer || true
     answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
@@ -366,9 +370,9 @@ fi
 echo "==> FjordLens guided setup"
 echo "    Repo: ${REPO_DIR}"
 echo "    Env : ${ENV_FILE}"
-echo "    Tip : tryk Enter for at bruge default ved hvert sporgsmal."
-echo "    Eksempler pa input:"
-echo "      - APP_PORT: 9080 eller 9090"
+echo "    Tip : press Enter to use the default at each prompt."
+echo "    Input examples:"
+echo "      - APP_PORT: 9080 or 9090"
 echo "      - DATA_DIR: /home/qlerup/fjordlens-local/appdata"
 echo "      - UPLOADS_HOST_DIR: /home/qlerup/synology/fjordlens-data/uploads"
 echo "      - NFS export: 10.10.0.161:/volume1/ProxmoxFjordlens"
@@ -382,18 +386,18 @@ load_env_with_defaults
 
 echo
 echo "Step 1/7: Basic app settings"
-APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 eller 9090")"
-TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen")"
-LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO eller DEBUG")"
+APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
+TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
+LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
 
 echo
 echo "Step 2/7: Optional NFS uploads mount (/etc/fstab)"
 if ask_yes_no "Configure NFS mount for uploads in /etc/fstab?" "$(is_truthy "$SETUP_NFS_UPLOADS_ENABLED" && echo y || echo n)"; then
   SETUP_NFS_UPLOADS_ENABLED="1"
-  SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/volume1/ProxmoxFjordlens")"
-  SETUP_NFS_MOUNT_ROOT="$(ask_input "Local NFS mount root" "$SETUP_NFS_MOUNT_ROOT" "/home/qlerup/synology/fjordlens-data")"
-  SETUP_NFS_UPLOADS_SUBDIR="$(ask_input "Uploads subdir inside NFS mount" "$SETUP_NFS_UPLOADS_SUBDIR" "uploads")"
-  SETUP_NFS_FSTAB_OPTIONS="$(ask_input "NFS fstab options" "$SETUP_NFS_FSTAB_OPTIONS" "vers=3,_netdev,nofail")"
+  SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/volume1/ProxmoxFjordlens" "Synology NFS share in server:/path format.")"
+  SETUP_NFS_MOUNT_ROOT="$(ask_input "Local NFS mount root" "$SETUP_NFS_MOUNT_ROOT" "/home/qlerup/synology/fjordlens-data" "Local mount root on Proxmox. Must be an absolute path.")"
+  SETUP_NFS_UPLOADS_SUBDIR="$(ask_input "Uploads subdir inside NFS mount" "$SETUP_NFS_UPLOADS_SUBDIR" "uploads" "Subfolder inside the NFS mount used for uploads.")"
+  SETUP_NFS_FSTAB_OPTIONS="$(ask_input "NFS fstab options" "$SETUP_NFS_FSTAB_OPTIONS" "vers=3,_netdev,nofail" "Mount options written directly to /etc/fstab.")"
   SETUP_NFS_UPLOADS_SUBDIR="$(printf "%s" "$SETUP_NFS_UPLOADS_SUBDIR" | sed 's#^/*##; s#/*$##')"
   if [ -z "$SETUP_NFS_UPLOADS_SUBDIR" ]; then
     SETUP_NFS_UPLOADS_SUBDIR="uploads"
@@ -408,15 +412,15 @@ fi
 
 echo
 echo "Step 3/7: Storage paths (host paths)"
-DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/home/qlerup/fjordlens-local/appdata")"
-UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (uploads/originals+converted)" "$UPLOADS_HOST_DIR" "/home/qlerup/synology/fjordlens-data/uploads")"
-THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/home/qlerup/fjordlens-local/thumbs")"
+DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/home/qlerup/fjordlens-local/appdata" "Stores database, cache, temp files, and internal app data.")"
+UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (uploads/originals+converted)" "$UPLOADS_HOST_DIR" "/home/qlerup/synology/fjordlens-data/uploads" "Root for uploads. The script creates originals/ and converted/ under this path.")"
+THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/home/qlerup/fjordlens-local/thumbs" "Root directory where thumbnails are stored.")"
 
 echo
 echo "Step 4/7: Optional library source"
 if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
   ENABLE_LIBRARY_SOURCE="1"
-  PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/home/qlerup/fjordlens-library")"
+  PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/home/qlerup/fjordlens-library" "Optional read-only library directory when library source is enabled.")"
 else
   ENABLE_LIBRARY_SOURCE="0"
 fi
@@ -431,23 +435,23 @@ fi
 
 echo
 echo "Step 6/7: SQLite"
-sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto eller DELETE (NFS)")"
+sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto or DELETE (NFS)" "Choose auto for automatic selection. On NFS, DELETE is often more stable.")"
 sqlite_choice_lc="$(printf "%s" "$sqlite_choice" | tr '[:upper:]' '[:lower:]')"
 if [ "$sqlite_choice_lc" = "auto" ] || [ -z "$sqlite_choice_lc" ]; then
   SQLITE_JOURNAL_MODE=""
 else
   SQLITE_JOURNAL_MODE="$(printf "%s" "$sqlite_choice" | tr '[:lower:]' '[:upper:]')"
 fi
-SQLITE_BUSY_TIMEOUT_MS="$(ask_input "SQLite busy timeout ms" "$SQLITE_BUSY_TIMEOUT_MS" "10000 eller 15000")"
+SQLITE_BUSY_TIMEOUT_MS="$(ask_input "SQLite busy timeout ms" "$SQLITE_BUSY_TIMEOUT_MS" "10000 or 15000" "Wait time for database locks in milliseconds.")"
 
 echo
 echo "Step 7/7: Optional strict mount checks"
 if ask_yes_no "Enable strict fs-type checks (NFS/local expectations)?" "$( [ -n "$EXPECT_UPLOADS_FSTYPES$EXPECT_THUMBS_FSTYPES$EXPECT_DATA_FSTYPES$EXPECT_PHOTO_FSTYPES" ] && echo y || echo n )"; then
-  EXPECT_UPLOADS_FSTYPES="$(ask_input "EXPECT_UPLOADS_FSTYPES" "${EXPECT_UPLOADS_FSTYPES:-nfs,nfs4}" "nfs,nfs4")"
-  EXPECT_THUMBS_FSTYPES="$(ask_input "EXPECT_THUMBS_FSTYPES (blank to skip)" "$EXPECT_THUMBS_FSTYPES" "nfs,nfs4")"
-  EXPECT_DATA_FSTYPES="$(ask_input "EXPECT_DATA_FSTYPES (blank to skip)" "$EXPECT_DATA_FSTYPES" "ext4,xfs,btrfs")"
+  EXPECT_UPLOADS_FSTYPES="$(ask_input "EXPECT_UPLOADS_FSTYPES" "${EXPECT_UPLOADS_FSTYPES:-nfs,nfs4}" "nfs,nfs4" "Allowed filesystem types for uploads mount (comma-separated).")"
+  EXPECT_THUMBS_FSTYPES="$(ask_input "EXPECT_THUMBS_FSTYPES (blank to skip)" "$EXPECT_THUMBS_FSTYPES" "nfs,nfs4" "Allowed filesystem types for thumbs mount. Blank = no check.")"
+  EXPECT_DATA_FSTYPES="$(ask_input "EXPECT_DATA_FSTYPES (blank to skip)" "$EXPECT_DATA_FSTYPES" "ext4,xfs,btrfs" "Allowed filesystem types for DATA_DIR. Blank = no check.")"
   if is_truthy "$ENABLE_LIBRARY_SOURCE"; then
-    EXPECT_PHOTO_FSTYPES="$(ask_input "EXPECT_PHOTO_FSTYPES (blank to skip)" "$EXPECT_PHOTO_FSTYPES" "nfs,nfs4")"
+    EXPECT_PHOTO_FSTYPES="$(ask_input "EXPECT_PHOTO_FSTYPES (blank to skip)" "$EXPECT_PHOTO_FSTYPES" "nfs,nfs4" "Allowed filesystem types for PHOTO_DIR. Blank = no check.")"
   else
     EXPECT_PHOTO_FSTYPES=""
   fi
