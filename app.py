@@ -61,6 +61,14 @@ CONVERT_DIR = DATA_DIR / "converted"
 UPLOAD_DIR = DATA_DIR / "uploads"
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
+SQLITE_JOURNAL_MODE = str(os.environ.get("SQLITE_JOURNAL_MODE", "WAL") or "WAL").strip().upper()
+if SQLITE_JOURNAL_MODE not in {"DELETE", "WAL", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}:
+    SQLITE_JOURNAL_MODE = "WAL"
+try:
+    SQLITE_BUSY_TIMEOUT_MS = int(os.environ.get("SQLITE_BUSY_TIMEOUT_MS", "10000") or 10000)
+except Exception:
+    SQLITE_BUSY_TIMEOUT_MS = 10000
+SQLITE_BUSY_TIMEOUT_MS = max(1000, min(120000, SQLITE_BUSY_TIMEOUT_MS))
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
 PHOTOFRAME_FRAMES_ENV = str(os.environ.get("PHOTOFRAME_FRAMES", "") or "").strip()
@@ -2181,9 +2189,25 @@ def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source
     return (True, target.name, None)
 
 
+def _configure_sqlite_connection(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE};")
+    except Exception:
+        pass
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_MS)};")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON;")
+    except Exception:
+        pass
+
+
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=max(1.0, float(SQLITE_BUSY_TIMEOUT_MS) / 1000.0))
     conn.row_factory = sqlite3.Row
+    _configure_sqlite_connection(conn)
     return conn
 
 
@@ -2191,8 +2215,6 @@ def init_db() -> None:
     with closing(get_conn()) as conn:
         conn.executescript(
             """
-            PRAGMA journal_mode=WAL;
-
             CREATE TABLE IF NOT EXISTS photos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 rel_path TEXT UNIQUE NOT NULL,

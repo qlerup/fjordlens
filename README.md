@@ -209,6 +209,17 @@ This means FjordLens can see the frame IP, but frame settings service on port `5
 
 Use one Gunicorn worker only (`GUNICORN_WORKERS=1`).
 
+### Proxmox + NFS: folder click / random DB errors
+
+If `DATA_DIR` is on NFS/CIFS, set SQLite journal mode to `DELETE` (not `WAL`):
+
+```env
+SQLITE_JOURNAL_MODE=DELETE
+SQLITE_BUSY_TIMEOUT_MS=15000
+```
+
+Then restart the container. `WAL` often causes locking instability on network filesystems.
+
 ### Upload issues behind reverse proxy
 
 Use TUS endpoints and confirm proxy allows `PATCH`, `HEAD`, `OPTIONS` and long-running uploads.
