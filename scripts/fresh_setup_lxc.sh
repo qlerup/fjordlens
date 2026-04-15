@@ -188,7 +188,7 @@ load_env_with_defaults() {
 
   : "${APP_PORT:=9080}"
   : "${DATA_DIR:=/opt/fjordlens-data/appdata}"
-  : "${UPLOADS_HOST_DIR:=/mnt/fjordlens-uploads}"
+  : "${UPLOADS_HOST_DIR:=/mnt/fjordlens-nfs/uploads}"
   : "${THUMBS_HOST_DIR:=/opt/fjordlens-data/thumbs}"
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
@@ -203,7 +203,7 @@ load_env_with_defaults() {
   : "${EXPECT_UPLOADS_FSTYPES:=}"
   : "${EXPECT_THUMBS_FSTYPES:=ext4,xfs,btrfs,overlay}"
   : "${EXPECT_PHOTO_FSTYPES:=}"
-  : "${PHOTO_DIR:=/mnt/fjordlens-photos}"
+  : "${PHOTO_DIR:=/mnt/fjordlens-nfs/photos}"
   : "${LXC_MOUNTS_MANAGED_BY_PROXMOX:=1}"
 }
 
@@ -317,7 +317,7 @@ step_2_mounts() {
   echo "    uploads: /mnt/fjordlens-uploads"
   echo "    photos : /mnt/fjordlens-photos"
   if ask_yes_no "Use a Proxmox-provided bind mount for uploads?" "y"; then
-    UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR inside the LXC" "$UPLOADS_HOST_DIR" "/mnt/fjordlens-uploads" "Path inside this LXC that points to your uploads bind mount from Proxmox.")"
+    UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR inside the LXC" "$UPLOADS_HOST_DIR" "/mnt/fjordlens-nfs/uploads" "Path inside this LXC that points to your uploads bind mount from Proxmox.")"
     if [ -z "$EXPECT_UPLOADS_FSTYPES" ]; then
       EXPECT_UPLOADS_FSTYPES="nfs,nfs4,cifs,fuseblk"
     fi
@@ -339,7 +339,7 @@ step_4_library() {
   echo "Step 4/6: Optional library source"
   if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
     ENABLE_LIBRARY_SOURCE="1"
-    PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/mnt/fjordlens-photos" "Path inside this LXC pointing to a Proxmox bind mount with your library photos.")"
+    PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/mnt/fjordlens-nfs/photos" "Path inside this LXC pointing to a Proxmox bind mount with your library photos.")"
     if [ -z "$EXPECT_PHOTO_FSTYPES" ]; then
       EXPECT_PHOTO_FSTYPES="nfs,nfs4,cifs,fuseblk"
     fi
@@ -478,11 +478,12 @@ echo "    Env : ${ENV_FILE}"
 echo "    This variant assumes network mounts are handled by Proxmox host bind mounts."
 echo "    It does NOT edit /etc/fstab or mount NFS inside the LXC."
 echo "    Tip : press Enter to use the default at each prompt."
+echo "    LXC mode expects your Proxmox host to bind-mount the Synology/NFS share into this container, typically at /mnt/fjordlens-nfs."
 echo "    Input examples:"
 echo "      - APP_PORT: 9080 or 9090"
 echo "      - DATA_DIR: /opt/fjordlens-data/appdata"
-echo "      - UPLOADS_HOST_DIR: /mnt/fjordlens-uploads"
-echo "      - PHOTO_DIR: /mnt/fjordlens-photos"
+echo "      - UPLOADS_HOST_DIR: /mnt/fjordlens-nfs/uploads"
+echo "      - PHOTO_DIR: /mnt/fjordlens-nfs/photos"
 
 if [ ! -f "$EXAMPLE_ENV" ]; then
   echo "ERROR: Missing .env.example in repo root."
