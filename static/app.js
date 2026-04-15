@@ -22,6 +22,8 @@
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiFacesTitle: document.getElementById("aiFacesTitle"),
   aiFacesDesc: document.getElementById("aiFacesDesc"),
+  aiEmbedRuntime: document.getElementById("aiEmbedRuntime"),
+  aiFacesRuntime: document.getElementById("aiFacesRuntime"),
   aiStatus: document.getElementById("aiStatus"),
   facesToggle: document.getElementById("facesToggle"),
   facesToggleText: document.getElementById("facesToggleText"),
@@ -803,6 +805,10 @@ const I18N = {
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
     status_running: 'kører',
+    status_runtime_label: 'Runtime',
+    status_runtime_gpu: 'GPU',
+    status_runtime_cpu: 'CPU',
+    status_runtime_unknown: 'ukendt',
     status_dash: '—',
     upload_new_folder_placeholder: 'Ny mappe (fx ferie eller 2026/rejse)',
     upload_create_folder: 'Opret mappe',
@@ -1388,6 +1394,10 @@ const I18N = {
     status_processed_label: 'processed',
     status_stopped: 'stopped',
     status_running: 'running',
+    status_runtime_label: 'Runtime',
+    status_runtime_gpu: 'GPU',
+    status_runtime_cpu: 'CPU',
+    status_runtime_unknown: 'unknown',
     status_dash: '—',
     upload_new_folder_placeholder: 'New folder (e.g. holiday or 2026/trip)',
     upload_create_folder: 'Create folder',
@@ -1747,6 +1757,19 @@ function updateFacesToggleButton() {
   }
 }
 
+function formatRuntimeDevice(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === 'unknown') return tr('status_runtime_unknown');
+  if (raw === 'gpu' || raw === 'cuda' || raw.startsWith('cuda')) return tr('status_runtime_gpu');
+  if (raw === 'cpu') return tr('status_runtime_cpu');
+  return raw.toUpperCase();
+}
+
+function updateRuntimeIndicator(el, value) {
+  if (!el) return;
+  el.textContent = `${tr('status_runtime_label')}: ${formatRuntimeDevice(value)}`;
+}
+
 function navLabels() {
   return {
     timeline: [tr('view_timeline_title'), tr('view_timeline_sub')],
@@ -1800,10 +1823,12 @@ let state = {
   searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
   aiRunning: false,
   aiAutoEnabled: false,
+  aiRuntime: 'unknown',
   aiDescribeRunning: false,
   aiDescribeAutoEnabled: false,
   facesRunning: false,
   facesAutoEnabled: false,
+  facesRuntime: 'unknown',
   aiScopePendingFeature: null,
   photoframeItems: [],
   photoframeLoading: false,
@@ -8996,6 +9021,8 @@ function applyUiLanguage() {
   if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
+  updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
+  updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
   if (els.dnsPanelTitle) els.dnsPanelTitle.textContent = tr('dns_title');
   if (els.dnsPanelDesc) els.dnsPanelDesc.textContent = tr('dns_desc');
   if (els.dnsDuckdnsBaseUrlLabel) els.dnsDuckdnsBaseUrlLabel.textContent = tr('dns_duckdns_base_url');
@@ -9862,7 +9889,9 @@ async function pollFacesStatus() {
     const s = await r.json();
     state.facesRunning = !!(s && s.ok && s.running);
     state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
+    state.facesRuntime = String((s && s.runtime && (s.runtime.faces || s.runtime.ai)) || 'unknown');
     updateFacesToggleButton();
+    updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
     if (els.facesStatus) {
       const run = s && s.running ? tr('status_running') : tr('status_stopped');
       const source = (!s.running && s.last) ? s.last : s;
@@ -9903,7 +9932,9 @@ async function pollFacesStatus() {
   } catch {
     state.facesRunning = false;
     state.facesAutoEnabled = false;
+    state.facesRuntime = 'unknown';
     updateFacesToggleButton();
+    updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
     if (els.facesStatus) els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${tr('status_dash')}`;
   }
 }
@@ -9966,7 +9997,9 @@ async function pollAiStatus() {
     const s = await r.json();
     state.aiRunning = !!(s && s.ok && s.running);
     state.aiAutoEnabled = !!(s && s.ok && s.auto_ingest);
+    state.aiRuntime = String((s && s.runtime && s.runtime.ai) || 'unknown');
     updateAiToggleButton();
+    updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
     if (els.aiStatus) {
       if (!s || !s.ok) { els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`; }
       else {
@@ -9981,7 +10014,9 @@ async function pollAiStatus() {
   } catch {
     state.aiRunning = false;
     state.aiAutoEnabled = false;
+    state.aiRuntime = 'unknown';
     updateAiToggleButton();
+    updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
     if (els.aiStatus) els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`;
   }
   // Poll mens der kører noget

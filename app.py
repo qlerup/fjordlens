@@ -645,6 +645,12 @@ def log_event(event: str, **data: Any) -> None:
 
 
 # --- AI helpers (CLIP service) ---
+_AI_HEALTH_CACHE_TTL_SEC = 2.0
+_ai_health_cache_lock = threading.Lock()
+_ai_health_cache_at = 0.0
+_ai_health_cache_payload: Dict[str, Any] = {"ok": False}
+
+
 def _ai_health() -> dict:
     try:
         r = requests.get(f"{AI_URL}/health", timeout=5)
@@ -653,6 +659,45 @@ def _ai_health() -> dict:
     except Exception:
         pass
     return {"ok": False}
+
+
+def _ai_health_cached(force: bool = False) -> Dict[str, Any]:
+    """Fetch AI health with a short cache to avoid duplicate UI polling bursts."""
+    global _ai_health_cache_at, _ai_health_cache_payload
+    now = time.time()
+    with _ai_health_cache_lock:
+        if (not force) and _ai_health_cache_payload and (now - _ai_health_cache_at) < _AI_HEALTH_CACHE_TTL_SEC:
+            return dict(_ai_health_cache_payload)
+
+    payload = _ai_health()
+    with _ai_health_cache_lock:
+        _ai_health_cache_payload = dict(payload or {"ok": False})
+        _ai_health_cache_at = now
+        return dict(_ai_health_cache_payload)
+
+
+def _runtime_device_label(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return "unknown"
+    if raw in {"gpu", "cuda"} or raw.startswith("cuda"):
+        return "gpu"
+    if raw == "cpu":
+        return "cpu"
+    return raw
+
+
+def _ai_runtime_info() -> Dict[str, Any]:
+    health = _ai_health_cached()
+    ai_device_raw = health.get("device")
+    face_device_raw = health.get("face_device") or ai_device_raw
+    return {
+        "service_ok": bool(health.get("ok")),
+        "ai_device": _runtime_device_label(ai_device_raw),
+        "face_device": _runtime_device_label(face_device_raw),
+        "ai_device_raw": ai_device_raw,
+        "face_device_raw": face_device_raw,
+    }
 
 
 def _ai_embed_text(text: str) -> Optional[list[float]]:
@@ -7906,7 +7951,20 @@ def api_faces_stop():
 
 @app.route("/api/faces/status")
 def api_faces_status():
-    resp: Dict[str, Any] = {"ok": True, "running": _faces_running.is_set(), "auto_index": faces_auto_index_enabled(), **faces_counts}
+    rt = _ai_runtime_info()
+    resp: Dict[str, Any] = {
+        "ok": True,
+        "running": _faces_running.is_set(),
+        "auto_index": faces_auto_index_enabled(),
+        **faces_counts,
+        "runtime": {
+            "service_ok": rt["service_ok"],
+            "ai": rt["ai_device"],
+            "faces": rt["face_device"],
+            "ai_raw": rt["ai_device_raw"],
+            "faces_raw": rt["face_device_raw"],
+        },
+    }
     if not _faces_running.is_set() and last_faces_result:
         resp["last"] = last_faces_result
     return jsonify(resp)
@@ -12276,7 +12334,20 @@ def api_ai_stop():
 
 @app.route("/api/ai/status")
 def api_ai_status():
-    resp: Dict[str, Any] = {"ok": True, "running": ai_running, "auto_ingest": ai_auto_ingest_enabled(), **ai_counts}
+    rt = _ai_runtime_info()
+    resp: Dict[str, Any] = {
+        "ok": True,
+        "running": ai_running,
+        "auto_ingest": ai_auto_ingest_enabled(),
+        **ai_counts,
+        "runtime": {
+            "service_ok": rt["service_ok"],
+            "ai": rt["ai_device"],
+            "faces": rt["face_device"],
+            "ai_raw": rt["ai_device_raw"],
+            "faces_raw": rt["face_device_raw"],
+        },
+    }
     if not ai_running and last_ai_result:
         resp["last"] = last_ai_result
     return jsonify(resp)
