@@ -139,6 +139,22 @@ Start later with existing `.env` (no wizard):
 sh scripts/Fresh_start_ubuntu_vm.sh --start-only
 ```
 
+### Proxmox LXC guided setup
+
+For Proxmox LXC environments (where host bind mounts and GPU passthrough are configured on the Proxmox host):
+
+```bash
+sh scripts/fresh_setup_lxc.sh
+```
+
+`scripts/fresh_setup_lxc.sh` now includes optional guided GPU setup (`ENABLE_GPU_GUIDE=1`):
+
+- checks `/dev/nvidia*` visibility inside the LXC
+- auto-sets `no-cgroups = true` in `/etc/nvidia-container-runtime/config.toml` when needed
+- restarts Docker runtime when runtime config changes
+- runs CUDA + PyTorch GPU smoke tests before `docker compose up`
+- prints exact Proxmox host `pct`/`/etc/pve/lxc/<CTID>.conf` hints if passthrough is still incomplete
+
 ## Photoframe Quick Start
 
 ### 1) Create a frame token in FjordLens
@@ -226,6 +242,7 @@ See `.env.example` for defaults. Most-used variables:
 - `ENABLE_LIBRARY_SOURCE`: enable/disable library source (`PHOTO_DIR`) usage (`0` by default)
 - `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
 - `AI_DEVICE`: AI runtime preference (`auto`, `cpu`, `cuda`; default `auto`)
+- `ENABLE_GPU_GUIDE`: enable guided GPU preflight in `scripts/fresh_setup_lxc.sh` (`1` by default)
 - `AI_DEBUG_PORT`: optional host port for AI service
 - `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
 - `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
@@ -291,7 +308,13 @@ docker compose logs --tail=200
 
 `AI_DEVICE=auto` enables automatic CUDA use when the container can see a GPU.
 
-If health still reports CPU, verify Docker GPU passthrough is enabled on the host/runtime and then rebuild:
+If health still reports CPU, run the LXC GPU guide first:
+
+```bash
+sh scripts/fresh_setup_lxc.sh --start-only
+```
+
+Then verify Docker GPU passthrough is enabled on the host/runtime and rebuild:
 
 ```bash
 docker compose up -d --build

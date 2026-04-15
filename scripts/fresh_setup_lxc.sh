@@ -112,6 +112,22 @@ csv_has() {
   return 1
 }
 
+char_major() {
+  device_path="$1"
+  if [ ! -e "$device_path" ]; then
+    return 0
+  fi
+  ls -l "$device_path" 2>/dev/null | awk 'NR==1 {gsub(",", "", $5); print $5}'
+}
+
+dir_char_major() {
+  dir_path="$1"
+  if [ ! -d "$dir_path" ]; then
+    return 0
+  fi
+  ls -l "$dir_path" 2>/dev/null | awk 'NR>1 && $1 ~ /^c/ {gsub(",", "", $5); print $5; exit}'
+}
+
 ensure_absolute_dir() {
   path="$1"
   label="$2"
@@ -193,6 +209,7 @@ load_env_with_defaults() {
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
   : "${AI_DEVICE:=auto}"
+  : "${ENABLE_GPU_GUIDE:=1}"
   : "${SQLITE_JOURNAL_MODE:=}"
   : "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
   : "${ENABLE_LIBRARY_SOURCE:=0}"
@@ -218,6 +235,7 @@ THUMBS_HOST_DIR=${THUMBS_HOST_DIR}
 TZ=${TZ}
 LOG_LEVEL=${LOG_LEVEL}
 AI_DEVICE=${AI_DEVICE}
+ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE}
 SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}
 SQLITE_BUSY_TIMEOUT_MS=${SQLITE_BUSY_TIMEOUT_MS}
 ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}
@@ -277,9 +295,154 @@ preflight_paths() {
   fi
 }
 
+print_gpu_host_fix_hint() {
+  nvidia_uvm_major="$1"
+  nvidia_caps_major="$2"
+  if [ -z "$nvidia_uvm_major" ]; then
+    nvidia_uvm_major="510"
+  fi
+  if [ -z "$nvidia_caps_major" ]; then
+    nvidia_caps_major="235"
+  fi
+  cat <<EOF2
+    Suggested Proxmox host checks (run on host, not inside LXC):
+      pct stop <CTID>
+      nano /etc/pve/lxc/<CTID>.conf
+
+    Ensure these lines exist:
+      features: nesting=1,keyctl=1
+      lxc.apparmor.profile: unconfined
+      lxc.cgroup2.devices.allow: c 195:* rwm
+      lxc.cgroup2.devices.allow: c ${nvidia_uvm_major}:* rwm
+      lxc.cgroup2.devices.allow: c ${nvidia_caps_major}:* rwm
+      lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
+      lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
+      lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
+      lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file
+      lxc.mount.entry: /dev/nvidia-caps dev/nvidia-caps none bind,optional,create=dir
+      lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file
+      lxc.mount.entry: /sys/class/drm sys/class/drm none ro,bind,optional,create=dir
+
+    Then restart the CT:
+      pct start <CTID>
+EOF2
+}
+
+ensure_nvidia_no_cgroups() {
+  cfg="/etc/nvidia-container-runtime/config.toml"
+  NVIDIA_RUNTIME_UPDATED=0
+  if [ ! -f "$cfg" ]; then
+    echo "WARNING: NVIDIA runtime config not found: $cfg"
+    return 1
+  fi
+  if grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true([[:space:]]|$)' "$cfg"; then
+    echo "    NVIDIA runtime already has no-cgroups=true"
+    return 0
+  fi
+  print_cmd "sed -i 's/^#\\?no-cgroups *= *.*/no-cgroups = true/' ${cfg}"
+  if grep -Eq '^[[:space:]]*#?[[:space:]]*no-cgroups[[:space:]]*=' "$cfg"; then
+    sed -i 's/^[[:space:]]*#\?[[:space:]]*no-cgroups[[:space:]]*=.*/no-cgroups = true/' "$cfg"
+  else
+    printf "\nno-cgroups = true\n" >> "$cfg"
+  fi
+  if grep -Eq '^[[:space:]]*no-cgroups[[:space:]]*=[[:space:]]*true([[:space:]]|$)' "$cfg"; then
+    NVIDIA_RUNTIME_UPDATED=1
+    echo "    NVIDIA runtime updated: no-cgroups=true"
+    return 0
+  fi
+  echo "WARNING: Could not set no-cgroups=true in $cfg"
+  return 1
+}
+
+gpu_preflight_lxc() {
+  if [ "$AI_DEVICE" = "cpu" ]; then
+    echo
+    echo "==> GPU preflight skipped (AI_DEVICE=cpu)"
+    return 0
+  fi
+
+  echo
+  echo "==> GPU preflight (LXC)"
+
+  uvm_major="$(char_major /dev/nvidia-uvm || true)"
+  caps_major="$(dir_char_major /dev/nvidia-caps || true)"
+  if [ -e /dev/nvidia0 ]; then
+    echo "    Found /dev/nvidia0"
+  else
+    echo "WARNING: /dev/nvidia0 not found inside this LXC."
+    print_gpu_host_fix_hint "$uvm_major" "$caps_major"
+    return 1
+  fi
+  if [ -n "$uvm_major" ]; then
+    echo "    Detected /dev/nvidia-uvm major: $uvm_major"
+  fi
+  if [ -n "$caps_major" ]; then
+    echo "    Detected /dev/nvidia-caps major: $caps_major"
+  fi
+
+  NVIDIA_RUNTIME_UPDATED=0
+  if ensure_nvidia_no_cgroups; then
+    :
+  else
+    echo "WARNING: Continuing, but NVIDIA runtime may not initialize CUDA in LXC."
+  fi
+  if [ "${NVIDIA_RUNTIME_UPDATED:-0}" = "1" ]; then
+    echo "    Restarting Docker to apply runtime config"
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl restart docker >/dev/null 2>&1 || service docker restart >/dev/null 2>&1 || true
+    else
+      service docker restart >/dev/null 2>&1 || true
+    fi
+  fi
+
+  print_cmd "docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+  if ! docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
+    echo "WARNING: Docker cannot run nvidia-smi with --gpus all."
+    print_gpu_host_fix_hint "$uvm_major" "$caps_major"
+    return 1
+  fi
+  echo "    CUDA container smoke test: OK"
+
+  print_cmd "docker run --rm --gpus all pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime python -c \"import torch; print(torch.cuda.is_available())\""
+  torch_probe="$(docker run --rm --gpus all pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime python -c "import torch; print(torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no gpu')" 2>&1 || true)"
+  torch_available="$(printf "%s\n" "$torch_probe" | awk '/^(True|False)$/{v=$0} END{print v}')"
+  echo "$torch_probe"
+  if [ "$torch_available" != "True" ]; then
+    echo "WARNING: PyTorch CUDA probe still reports False."
+    print_gpu_host_fix_hint "$uvm_major" "$caps_major"
+    return 1
+  fi
+  echo "    PyTorch CUDA probe: OK"
+  return 0
+}
+
 run_preflight_and_start() {
   require_runtime_tools
   preflight_paths
+
+  if is_truthy "$ENABLE_GPU_GUIDE"; then
+    if ! gpu_preflight_lxc; then
+      if [ "$AI_DEVICE" = "cuda" ]; then
+        echo "ERROR: AI_DEVICE=cuda but GPU preflight failed."
+        echo "Fix the host passthrough/runtime and rerun:"
+        echo "  sh scripts/fresh_setup_lxc.sh --start-only"
+        exit 1
+      fi
+      if [ -t 0 ] && [ -t 1 ]; then
+        if ! ask_yes_no "GPU preflight failed. Continue with CPU fallback (AI_DEVICE=${AI_DEVICE})?" "n"; then
+          echo "Stopped before container start."
+          echo "Run again after fixing host GPU passthrough:"
+          echo "  sh scripts/fresh_setup_lxc.sh --start-only"
+          exit 1
+        fi
+      else
+        echo "WARNING: GPU preflight failed. Continuing (AI_DEVICE=${AI_DEVICE}) may fall back to CPU."
+      fi
+    fi
+  else
+    echo
+    echo "==> GPU guide skipped (ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE})"
+  fi
 
   echo
   echo "==> Starting containers"
@@ -306,6 +469,11 @@ step_1_basic() {
       AI_DEVICE="auto"
       ;;
   esac
+  if ask_yes_no "Run guided GPU checks/fixes for Proxmox LXC (ENABLE_GPU_GUIDE)?" "$(is_truthy "$ENABLE_GPU_GUIDE" && echo y || echo n)"; then
+    ENABLE_GPU_GUIDE="1"
+  else
+    ENABLE_GPU_GUIDE="0"
+  fi
 }
 
 step_2_mounts() {
@@ -387,6 +555,7 @@ print_summary() {
   echo "Summary:"
   echo "  APP_PORT=${APP_PORT}"
   echo "  AI_DEVICE=${AI_DEVICE}"
+  echo "  ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE}"
   echo "  DATA_DIR=${DATA_DIR}"
   echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
   echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"

@@ -20,6 +20,7 @@
   aiDescribeToggle: document.getElementById("aiDescribeToggle"),
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
+  aiDescribeRuntime: document.getElementById("aiDescribeRuntime"),
   aiFacesTitle: document.getElementById("aiFacesTitle"),
   aiFacesDesc: document.getElementById("aiFacesDesc"),
   aiEmbedRuntime: document.getElementById("aiEmbedRuntime"),
@@ -1826,6 +1827,7 @@ let state = {
   aiRuntime: 'unknown',
   aiDescribeRunning: false,
   aiDescribeAutoEnabled: false,
+  aiDescribeRuntime: 'unknown',
   facesRunning: false,
   facesAutoEnabled: false,
   facesRuntime: 'unknown',
@@ -9022,6 +9024,7 @@ function applyUiLanguage() {
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
   updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
+  updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
   updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
   if (els.dnsPanelTitle) els.dnsPanelTitle.textContent = tr('dns_title');
   if (els.dnsPanelDesc) els.dnsPanelDesc.textContent = tr('dns_desc');
@@ -10033,7 +10036,9 @@ async function pollAiDescribeStatus() {
     const s = await r.json();
     state.aiDescribeRunning = !!(s && s.ok && s.running);
     state.aiDescribeAutoEnabled = !!(s && s.ok && s.auto_ingest);
+    state.aiDescribeRuntime = String((s && s.runtime && (s.runtime.describe || s.runtime.ai)) || state.aiRuntime || 'unknown');
     updateAiDescribeToggleButton();
+    updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
     if (els.aiDescribeStatus) {
       if (!s || !s.ok) {
         els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('status_dash')}`;
@@ -10049,7 +10054,9 @@ async function pollAiDescribeStatus() {
   } catch {
     state.aiDescribeRunning = false;
     state.aiDescribeAutoEnabled = false;
+    state.aiDescribeRuntime = 'unknown';
     updateAiDescribeToggleButton();
+    updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
     if (els.aiDescribeStatus) els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('status_dash')}`;
   }
   try {

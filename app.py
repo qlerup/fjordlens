@@ -12383,11 +12383,20 @@ def api_ai_describe_stop():
 
 @app.route("/api/ai/describe/status")
 def api_ai_describe_status():
+    rt = _ai_runtime_info()
     resp: Dict[str, Any] = {
         "ok": True,
         "running": ai_desc_running,
         "auto_ingest": ai_desc_auto_ingest_enabled(),
         **ai_desc_counts,
+        "runtime": {
+            "service_ok": rt["service_ok"],
+            "describe": rt["ai_device"],
+            "ai": rt["ai_device"],
+            "faces": rt["face_device"],
+            "ai_raw": rt["ai_device_raw"],
+            "faces_raw": rt["face_device_raw"],
+        },
     }
     if not ai_desc_running and last_ai_desc_result:
         resp["last"] = last_ai_desc_result
