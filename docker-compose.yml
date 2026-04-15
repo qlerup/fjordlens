@@ -52,6 +52,7 @@ services:
     environment:
       CLIP_MODEL: ViT-B-32
       CLIP_PRETRAINED: openai
+      AI_DEVICE: ${AI_DEVICE:-auto}
       PORT: "8000"
       # Persist model/weights downloads between restarts
       XDG_CACHE_HOME: /cache

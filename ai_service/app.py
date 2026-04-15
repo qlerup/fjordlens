@@ -1,28 +1,58 @@
 import io
 import os
 from typing import List
-from fastapi import HTTPException
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uvicorn
-import torch
-import numpy as np
-from PIL import Image
-import open_clip
 import insightface
 import numpy as np
+import open_clip
+import torch
+import uvicorn
+from PIL import Image
+
+try:
+    import onnxruntime as ort
+except Exception:
+    ort = None
+
 try:
     # Enable HEIC/HEIF decoding when the wheel is available
     from pillow_heif import register_heif_opener  # type: ignore
+
     register_heif_opener()
 except Exception:
     pass
 
 MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
+if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
+    DEVICE_PREF = "auto"
+
+TORCH_CUDA_AVAILABLE = bool(torch.cuda.is_available())
+if DEVICE_PREF == "cpu":
+    DEVICE = "cpu"
+elif DEVICE_PREF == "cuda":
+    DEVICE = "cuda" if TORCH_CUDA_AVAILABLE else "cpu"
+else:
+    DEVICE = "cuda" if TORCH_CUDA_AVAILABLE else "cpu"
+
+ONNX_AVAILABLE_PROVIDERS: list[str] = []
+if ort is not None:
+    try:
+        ONNX_AVAILABLE_PROVIDERS = [str(p) for p in ort.get_available_providers()]
+    except Exception:
+        ONNX_AVAILABLE_PROVIDERS = []
+
+FACE_USE_CUDA = DEVICE == "cuda" and "CUDAExecutionProvider" in ONNX_AVAILABLE_PROVIDERS
+FACE_CTX_ID = 0 if FACE_USE_CUDA else -1
+FACE_PROVIDER_CHAIN = (
+    ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if FACE_USE_CUDA
+    else ["CPUExecutionProvider"]
+)
 
 app = FastAPI(title="FjordLens AI Service")
 app.add_middleware(
@@ -37,20 +67,43 @@ model, _, preprocess = open_clip.create_model_and_transforms(MODEL_NAME, pretrai
 tokenizer = open_clip.get_tokenizer(MODEL_NAME)
 model.eval()
 
-# Load InsightFace for face detection/recognition (CPU by default)
+# Load InsightFace for face detection/recognition
 face_app = None
 face_detection_available = False
 face_detection_error = None
+face_device = "cuda" if FACE_USE_CUDA else "cpu"
 try:
-    face_app = insightface.app.FaceAnalysis(name='buffalo_l')
     try:
-        face_app.prepare(ctx_id=-1, det_size=(640, 640))
+        face_app = insightface.app.FaceAnalysis(name="buffalo_l", providers=FACE_PROVIDER_CHAIN)
+    except TypeError:
+        # Older insightface versions might not expose the providers kwarg.
+        face_app = insightface.app.FaceAnalysis(name="buffalo_l")
+
+    try:
+        face_app.prepare(ctx_id=FACE_CTX_ID, det_size=(640, 640))
     except Exception:
         # Fallback without det_size if necessary
-        face_app.prepare(ctx_id=-1)
+        face_app.prepare(ctx_id=FACE_CTX_ID)
     face_detection_available = True
 except Exception as exc:
-    face_detection_error = str(exc)
+    if FACE_USE_CUDA:
+        # If CUDA init fails for InsightFace, retry CPU instead of failing startup.
+        try:
+            try:
+                face_app = insightface.app.FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+            except TypeError:
+                face_app = insightface.app.FaceAnalysis(name="buffalo_l")
+            try:
+                face_app.prepare(ctx_id=-1, det_size=(640, 640))
+            except Exception:
+                face_app.prepare(ctx_id=-1)
+            face_detection_available = True
+            face_device = "cpu"
+            face_detection_error = f"cuda_init_failed: {exc}; fell back to cpu"
+        except Exception as exc2:
+            face_detection_error = f"cuda_init_failed: {exc}; cpu_fallback_failed: {exc2}"
+    else:
+        face_detection_error = str(exc)
 
 
 def _to_list(t: torch.Tensor) -> List[float]:
@@ -73,8 +126,13 @@ def health():
     return {
         "ok": True,
         "device": DEVICE,
+        "device_preference": DEVICE_PREF,
+        "torch_cuda_available": TORCH_CUDA_AVAILABLE,
         "model": MODEL_NAME,
         "pretrained": MODEL_PRETRAINED,
+        "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
+        "face_device": face_device,
+        "face_ctx_id": FACE_CTX_ID if face_device == "cuda" else -1,
         "face_detection_available": face_detection_available,
         "face_detection_error": face_detection_error,
     }

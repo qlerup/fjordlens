@@ -225,6 +225,7 @@ See `.env.example` for defaults. Most-used variables:
 - `LOG_LEVEL`: app log level
 - `ENABLE_LIBRARY_SOURCE`: enable/disable library source (`PHOTO_DIR`) usage (`0` by default)
 - `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
+- `AI_DEVICE`: AI runtime preference (`auto`, `cpu`, `cuda`; default `auto`)
 - `AI_DEBUG_PORT`: optional host port for AI service
 - `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
 - `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
@@ -284,6 +285,16 @@ Use TUS endpoints and confirm proxy allows `PATCH`, `HEAD`, `OPTIONS` and long-r
 ```bash
 docker compose ps
 docker compose logs --tail=200
+```
+
+### GPU acceleration is not used
+
+`AI_DEVICE=auto` enables automatic CUDA use when the container can see a GPU.
+
+If health still reports CPU, verify Docker GPU passthrough is enabled on the host/runtime and then rebuild:
+
+```bash
+docker compose up -d --build
 ```
 
 ## Project Layout

@@ -225,6 +225,7 @@ load_env_with_defaults() {
   : "${THUMBS_HOST_DIR:=/volume1/docker/fjordlens/data/thumbs}"
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
+  : "${AI_DEVICE:=auto}"
   : "${SQLITE_JOURNAL_MODE:=}"
   : "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
   : "${ENABLE_LIBRARY_SOURCE:=0}"
@@ -254,6 +255,7 @@ UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}
 THUMBS_HOST_DIR=${THUMBS_HOST_DIR}
 TZ=${TZ}
 LOG_LEVEL=${LOG_LEVEL}
+AI_DEVICE=${AI_DEVICE}
 SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}
 SQLITE_BUSY_TIMEOUT_MS=${SQLITE_BUSY_TIMEOUT_MS}
 ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}
@@ -369,6 +371,15 @@ step_1_basic() {
   APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
   TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
   LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
+  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: auto/cpu/cuda)" "$AI_DEVICE" "auto" "auto uses CUDA when available and falls back to CPU.")"
+  ai_device_choice_lc="$(printf "%s" "$ai_device_choice" | tr '[:upper:]' '[:lower:]')"
+  case "$ai_device_choice_lc" in
+    auto|cpu|cuda) AI_DEVICE="$ai_device_choice_lc" ;;
+    *)
+      echo "Invalid AI_DEVICE '${ai_device_choice}'. Using auto."
+      AI_DEVICE="auto"
+      ;;
+  esac
 }
 
 step_2_nfs() {
@@ -459,6 +470,7 @@ print_summary() {
   echo
   echo "Summary:"
   echo "  APP_PORT=${APP_PORT}"
+  echo "  AI_DEVICE=${AI_DEVICE}"
   echo "  DATA_DIR=${DATA_DIR}"
   echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
   echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
