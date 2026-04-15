@@ -49,6 +49,7 @@ services:
   fjordlens-ai:
     build: ./ai_service
     container_name: fjordlens-ai
+    gpus: all
     environment:
       CLIP_MODEL: ViT-B-32
       CLIP_PRETRAINED: openai
