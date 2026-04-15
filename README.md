@@ -68,8 +68,8 @@ ssh <user>@<server-ip>
 cd ~
 git clone https://github.com/qlerup/fjordlens.git
 cd fjordlens
-chmod +x scripts/fresh_setup.sh
-./scripts/fresh_setup.sh
+chmod +x scripts/Fresh_start_ubuntu_vm.sh
+./scripts/Fresh_start_ubuntu_vm.sh
 ```
 
 The wizard is interactive and guides you through:
@@ -83,7 +83,7 @@ The wizard is interactive and guides you through:
 ### Local Docker host
 
 ```bash
-sh scripts/fresh_setup.sh
+sh scripts/Fresh_start_ubuntu_vm.sh
 ```
 
 Open `http://localhost:9080` (or your configured `APP_PORT`).
@@ -91,7 +91,7 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
 
-`scripts/fresh_setup.sh` is a guided A-Z wizard. It asks for paths and options, writes `.env`, runs mount preflight checks, and starts containers.
+`scripts/Fresh_start_ubuntu_vm.sh` is a guided A-Z wizard. It asks for paths and options, writes `.env`, runs mount preflight checks, and starts containers.
 
 If you prefer to start manually without preflight:
 
@@ -105,12 +105,12 @@ docker compose up -d --build
 cd /volume1/docker
 git clone https://github.com/<your-user>/<your-repo>.git fjordlens
 cd fjordlens/fjordlens
-sh scripts/fresh_setup.sh
+sh scripts/Fresh_start_ubuntu_vm.sh
 ```
 
 Open `http://<nas-ip>:9080`.
 
-`scripts/fresh_setup.sh` will:
+`scripts/Fresh_start_ubuntu_vm.sh` will:
 
 - ask guided setup questions (port, storage paths, optional library source, scan toggle, SQLite mode, optional fs-type checks)
 - optionally configure NFS upload mount in `/etc/fstab` and run `mount -a`
@@ -130,13 +130,13 @@ docker compose -f docker-compose.yml -f docker-compose.no-library.yml up -d --bu
 For upload-only setups with preflight checks:
 
 ```bash
-ENABLE_LIBRARY_SOURCE=0 sh scripts/fresh_setup.sh
+ENABLE_LIBRARY_SOURCE=0 sh scripts/Fresh_start_ubuntu_vm.sh
 ```
 
 Start later with existing `.env` (no wizard):
 
 ```bash
-sh scripts/fresh_setup.sh --start-only
+sh scripts/Fresh_start_ubuntu_vm.sh --start-only
 ```
 
 ## Photoframe Quick Start
@@ -238,7 +238,7 @@ Common advanced settings in code/env:
 - `GUNICORN_WORKERS` (recommended: `1`)
 - `GUNICORN_LOG_LEVEL`
 - `GEOCODE_ENABLE`, `GEOCODE_PROVIDER`, `GEOCODE_LANG`, `GEOCODE_TIMEOUT`, `GEOCODE_RETRIES`, `GEOCODE_DELAY`
-- `EXPECT_UPLOADS_FSTYPES`, `EXPECT_THUMBS_FSTYPES`, `EXPECT_DATA_FSTYPES`, `EXPECT_PHOTO_FSTYPES` (optional strict mount checks for `scripts/fresh_setup.sh`)
+- `EXPECT_UPLOADS_FSTYPES`, `EXPECT_THUMBS_FSTYPES`, `EXPECT_DATA_FSTYPES`, `EXPECT_PHOTO_FSTYPES` (optional strict mount checks for `scripts/Fresh_start_ubuntu_vm.sh`)
 - `SETUP_NFS_UPLOADS_ENABLED`, `SETUP_NFS_EXPORT`, `SETUP_NFS_MOUNT_ROOT`, `SETUP_NFS_UPLOADS_SUBDIR`, `SETUP_NFS_FSTAB_OPTIONS` (optional setup metadata for reruns)
 
 ## Useful API Endpoints
