@@ -17,14 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # - Try CUDA wheel index first (enables GPU where available)
 # - Fall back to CPU wheel index on unsupported platforms
 ARG TORCH_VERSION=2.1.2
+ARG TORCHVISION_VERSION=0.16.2
 ARG TORCH_GPU_INDEX_URL=https://download.pytorch.org/whl/cu121
 ARG TORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN set -eux; \
-    if pip install --no-cache-dir --index-url "${TORCH_GPU_INDEX_URL}" "torch==${TORCH_VERSION}"; then \
-      echo "Installed CUDA-capable torch build"; \
+    if pip install --no-cache-dir --index-url "${TORCH_GPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; then \
+      echo "Installed CUDA-capable torch/torchvision build"; \
     else \
-      echo "CUDA torch build unavailable, using CPU torch build"; \
-      pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}"; \
+      echo "CUDA torch build unavailable, using CPU torch/torchvision build"; \
+      pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; \
     fi
 
 # Install ONNX Runtime with GPU-first fallback:

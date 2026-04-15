@@ -127,6 +127,8 @@ def health():
         "ok": True,
         "device": DEVICE,
         "device_preference": DEVICE_PREF,
+        "torch_version": str(getattr(torch, "__version__", "")),
+        "torch_cuda_version": str(getattr(torch.version, "cuda", "")),
         "torch_cuda_available": TORCH_CUDA_AVAILABLE,
         "model": MODEL_NAME,
         "pretrained": MODEL_PRETRAINED,
