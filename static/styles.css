@@ -3055,6 +3055,16 @@ body.view-mapper .content-header .stats { display: none !important; }
 body.view-photoframe .content-header .stats { display: none !important; }
 /* Header actions (incl. upload top-status) should be visible across views */
 body.view-mapper .mapper-header-actions { display: flex; }
+/* Keep mapper search/menu pinned to the right edge like other sections */
+body.view-mapper .content-header > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+body.view-mapper .content-header .mapper-header-actions {
+  margin-left: auto !important;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
 @media (min-width: 761px) {
   body.view-mapper .topbar { display: none !important; }
 }
