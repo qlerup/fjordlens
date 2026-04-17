@@ -116,6 +116,7 @@
           <div id="uploadTopStatus" class="upload-top-status hidden" aria-live="polite">
             <div id="uploadTopStatusLabel" class="upload-top-status-label">Upload: Klar</div>
             <div class="upload-top-status-progress"><span id="uploadTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
+            <div id="uploadTopProcessRow" class="upload-top-process-row hidden"></div>
           </div>
           <div id="downloadTopStatus" class="upload-top-status download-top-status hidden" aria-live="polite">
             <button id="downloadTopStatusCancel" class="download-top-status-cancel" type="button" aria-label="Annuller download" title="Annuller">&times;</button>
@@ -200,6 +201,7 @@
         <nav class="tabs">
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
           <button class="tab-btn" data-tab="ai">AI</button>
+          <button class="tab-btn" data-tab="upload_workflow">Upload workflow</button>
           <button class="tab-btn" data-tab="dns">DNS</button>
           <button class="tab-btn" data-tab="heic">Konvertering</button>
           <button class="tab-btn" data-tab="shared">Delte</button>
@@ -212,6 +214,7 @@
           <select id="settingsTabSelect" aria-label="Vælg faneblad">
             <option value="maint" selected>Vedligeholdelse</option>
             <option value="ai">AI</option>
+            <option value="upload_workflow">Upload workflow</option>
             <option value="dns">DNS</option>
             <option value="heic">Konvertering</option>
             <option value="shared">Delte</option>
@@ -344,6 +347,37 @@
                   <div id="aiPerfStatus" class="status hidden" style="margin:0;"></div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Upload workflow -->
+        <div class="tab-panel hidden" data-tabpanel="upload_workflow">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div id="uploadWorkflowTitle" class="sidebar-card-title">Upload workflow</div>
+            <p id="uploadWorkflowDesc" class="hint" style="margin:0 0 10px 0;">
+              Vælg hvordan upload-efterbehandling kører.
+            </p>
+            <div style="display:grid; gap:10px;">
+              <label class="ai-toggle-row" for="uploadWorkflowModeGentle" style="align-items:flex-start;">
+                <input id="uploadWorkflowModeGentle" type="radio" name="uploadWorkflowMode" value="gentle" />
+                <span class="mini-label">
+                  <strong id="uploadWorkflowGentleTitle">Skånsom</strong><br />
+                  <span id="uploadWorkflowGentleDesc">Kører én fase ad gangen for at skåne systemet.</span>
+                </span>
+              </label>
+              <label class="ai-toggle-row" for="uploadWorkflowModeAggressive" style="align-items:flex-start;">
+                <input id="uploadWorkflowModeAggressive" type="radio" name="uploadWorkflowMode" value="aggressive" />
+                <span class="mini-label">
+                  <strong id="uploadWorkflowAggressiveTitle">Kraftig</strong><br />
+                  <span id="uploadWorkflowAggressiveDesc">Kører faser parallelt. Ansigter behandles i batch på 10 filer.</span>
+                </span>
+              </label>
+              <div id="uploadWorkflowExtraInfo" class="mini-label">Thumbnail runtime: CPU · Ansigtsbatch: 10</div>
+              <div class="actions" style="justify-content:flex-end;gap:8px;">
+                <button id="uploadWorkflowSaveBtn" class="btn">Gem workflow</button>
+              </div>
+              <div id="uploadWorkflowStatus" class="status hidden" style="margin:0;"></div>
             </div>
           </div>
         </div>
@@ -840,6 +874,7 @@
         hideTab('logs');
         hideTab('dns');
         hideTab('shared');
+        hideTab('upload_workflow');
       } else if(ROLE === 'manager'){
         hideTab('users');
         hideTab('dns');

@@ -198,6 +198,12 @@ AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "tr
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
 HEIC_CONVERT_ON_UPLOAD_DEFAULT = (os.environ.get("HEIC_CONVERT_ON_UPLOAD", "0") in {"1", "true", "True"})
+UPLOAD_WORKFLOW_MODE_GENTLE = "gentle"
+UPLOAD_WORKFLOW_MODE_AGGRESSIVE = "aggressive"
+UPLOAD_WORKFLOW_MODE_DEFAULT = UPLOAD_WORKFLOW_MODE_GENTLE
+UPLOAD_WORKFLOW_FACE_BATCH_SIZE = 10
+# Thumbnail generation currently uses PIL/ffmpeg and does not use GPU in this service.
+UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU = False
 UPLOAD_DEST_UPLOADS = "uploads"
 UPLOAD_DEST_LIBRARY = "library"
 UPLOAD_DEST_DEFAULT = UPLOAD_DEST_UPLOADS
@@ -1416,6 +1422,7 @@ def _is_upload_postprocess_running(uploaded_by: str) -> bool:
 def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
     """Start per-user upload postprocess worker if it is not already running."""
     user = str(uploaded_by or "").strip() or "__unknown__"
+    workflow_mode = upload_workflow_mode()
     with UPLOAD_POSTPROCESS_LOCK:
         st = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
         if bool(st.get("running")):
@@ -1428,6 +1435,8 @@ def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
                 "error": None,
                 "result": None,
                 "phase": "starting",
+                "workflow_mode": workflow_mode,
+                "process_status": None,
                 "current_rel": None,
                 "stage_processed": 0,
                 "stage_total": 0,
@@ -1629,6 +1638,7 @@ def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    workflow_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -1643,6 +1653,7 @@ def _postprocess_uploaded_rels(
     faces_enabled = faces_auto_index_enabled()
     ai_enabled = ai_auto_ingest_enabled()
     ai_desc_enabled = ai_desc_auto_ingest_enabled()
+    mode = _normalize_upload_workflow_mode(workflow_mode or upload_workflow_mode())
 
     def _emit_progress(payload: Dict[str, Any]) -> None:
         if not progress_cb:
@@ -1827,160 +1838,405 @@ def _postprocess_uploaded_rels(
                 pass
 
     thumb_errors = 0
-    _emit_progress({
-        "phase": "thumbnails",
-        "current_rel": None,
-        "stage_processed": 0,
-        "stage_total": len(indexed_ok),
-    })
-    for i, rel in enumerate(indexed_ok, start=1):
-        _emit_progress({
-            "phase": "thumbnails",
-            "current_rel": rel,
-            "stage_processed": max(0, i - 1),
-            "stage_total": len(indexed_ok),
-        })
-        try:
-            disk_path = _disk_path_from_rel_path(rel)
-            if not disk_path.exists():
-                thumb_errors += 1
-                continue
-            stat = disk_path.stat()
-            thumb_name: Optional[str] = None
-            if disk_path.suffix.lower() in VIDEO_EXTS:
-                thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
-            else:
-                with Image.open(disk_path) as img:
-                    try:
-                        img = ImageOps.exif_transpose(img)
-                    except Exception:
-                        pass
-                    thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
-            if thumb_name:
-                with closing(get_conn()) as conn:
-                    conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (thumb_name, now_iso(), rel))
-                    conn.commit()
-            else:
-                thumb_errors += 1
-            _emit_progress({
-                "phase": "thumbnails",
-                "current_rel": rel,
-                "stage_processed": i,
-                "stage_total": len(indexed_ok),
-            })
-        except Exception as e:
-            thumb_errors += 1
-            try:
-                log_event("error", rel_path=rel, error=f"postprocess_thumb: {e}")
-            except Exception:
-                pass
-
     faces_done = 0
     faces_found = 0
     faces_errors = 0
-    if faces_enabled:
-        _emit_progress({
-            "phase": "faces",
-            "current_rel": None,
-            "stage_processed": 0,
-            "stage_total": len(indexed_ok),
-        })
-        for i, rel in enumerate(indexed_ok, start=1):
-            _emit_progress({
-                "phase": "faces",
-                "current_rel": rel,
-                "stage_processed": max(0, i - 1),
-                "stage_total": len(indexed_ok),
-            })
-            try:
-                fc = index_faces_for_photo(rel)
-                faces_done += 1
-                try:
-                    if int(fc or 0) > 0:
-                        faces_found += 1
-                except Exception:
-                    pass
-                _emit_progress({
-                    "phase": "faces",
-                    "current_rel": rel,
-                    "stage_processed": i,
-                    "stage_total": len(indexed_ok),
-                })
-            except Exception as e:
-                faces_errors += 1
-                try:
-                    log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
-                except Exception:
-                    pass
-
     ai_done = 0
     ai_errors = 0
-    if ai_enabled:
-        _emit_progress({
-            "phase": "embeddings",
-            "current_rel": None,
-            "stage_processed": 0,
-            "stage_total": len(indexed_ok),
-        })
-        for i, rel in enumerate(indexed_ok, start=1):
-            _emit_progress({
-                "phase": "embeddings",
-                "current_rel": rel,
-                "stage_processed": max(0, i - 1),
-                "stage_total": len(indexed_ok),
-            })
-            try:
-                _embed_uploaded_photo_if_needed(rel)
-                ai_done += 1
-                _emit_progress({
-                    "phase": "embeddings",
-                    "current_rel": rel,
-                    "stage_processed": i,
-                    "stage_total": len(indexed_ok),
-                })
-            except Exception as e:
-                ai_errors += 1
-                try:
-                    log_event("error", rel_path=rel, error=f"postprocess_ai: {e}")
-                except Exception:
-                    pass
-
     ai_desc_done = 0
     ai_desc_errors = 0
-    if ai_desc_enabled:
-        desc_total = len(indexed_ok)
-        _emit_progress({
-            "phase": "descriptions",
-            "current_rel": None,
-            "stage_processed": 0,
-            "stage_total": desc_total,
-        })
-        for i, rel in enumerate(indexed_ok, start=1):
-            _emit_progress({
-                "phase": "descriptions",
-                "current_rel": rel,
-                "stage_processed": i,
-                "stage_total": desc_total,
-            })
-            try:
-                _describe_uploaded_photo_if_needed(rel)
-                ai_desc_done += 1
-            except Exception as e:
-                ai_desc_errors += 1
+    process_status: Optional[Dict[str, Dict[str, Any]]] = None
+
+    if mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE:
+        process_lock = threading.Lock()
+        process_status = {
+            "metadata": {
+                "enabled": True,
+                "running": False,
+                "processed": len(rels),
+                "total": len(rels),
+                "errors": index_errors,
+                "queued": 0,
+            },
+            "thumbnails": {
+                "enabled": True,
+                "running": bool(indexed_ok),
+                "processed": 0,
+                "total": len(indexed_ok),
+                "errors": 0,
+                "queued": len(indexed_ok),
+            },
+            "faces": {
+                "enabled": bool(faces_enabled),
+                "running": bool(faces_enabled and indexed_ok),
+                "processed": 0,
+                "total": len(indexed_ok) if faces_enabled else 0,
+                "errors": 0,
+                "queued": len(indexed_ok) if faces_enabled else 0,
+                "batch_size": int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE),
+            },
+            "embeddings": {
+                "enabled": bool(ai_enabled),
+                "running": bool(ai_enabled and indexed_ok),
+                "processed": 0,
+                "total": len(indexed_ok) if ai_enabled else 0,
+                "errors": 0,
+                "queued": len(indexed_ok) if ai_enabled else 0,
+            },
+            "descriptions": {
+                "enabled": bool(ai_desc_enabled),
+                "running": bool(ai_desc_enabled and indexed_ok),
+                "processed": 0,
+                "total": len(indexed_ok) if ai_desc_enabled else 0,
+                "errors": 0,
+                "queued": len(indexed_ok) if ai_desc_enabled else 0,
+            },
+        }
+
+        def _copy_process_status() -> Dict[str, Dict[str, Any]]:
+            out: Dict[str, Dict[str, Any]] = {}
+            with process_lock:
+                for k, v in process_status.items():
+                    out[k] = dict(v)
+            return out
+
+        def _update_stage(stage: str, processed_inc: int = 0, errors_inc: int = 0, set_running: Optional[bool] = None) -> None:
+            with process_lock:
+                st = process_status.get(stage)
+                if not st:
+                    return
+                if processed_inc:
+                    st["processed"] = int(st.get("processed") or 0) + int(processed_inc)
+                if errors_inc:
+                    st["errors"] = int(st.get("errors") or 0) + int(errors_inc)
+                st["queued"] = max(0, int(st.get("total") or 0) - int(st.get("processed") or 0))
+                if set_running is not None:
+                    st["running"] = bool(set_running)
+
+        def _emit_parallel(current_rel: Optional[str] = None) -> None:
+            md = process_status.get("metadata") or {}
+            _emit_progress(
+                {
+                    "phase": "parallel",
+                    "workflow_mode": mode,
+                    "current_rel": current_rel,
+                    "stage_processed": int(md.get("processed") or 0),
+                    "stage_total": int(md.get("total") or 0),
+                    "process_status": _copy_process_status(),
+                }
+            )
+
+        def _thumb_worker() -> None:
+            nonlocal thumb_errors
+            for rel in indexed_ok:
+                err_inc = 0
                 try:
-                    log_event("error", rel_path=rel, error=f"postprocess_ai_desc: {e}")
+                    disk_path = _disk_path_from_rel_path(rel)
+                    if not disk_path.exists():
+                        thumb_errors += 1
+                        err_inc = 1
+                    else:
+                        stat = disk_path.stat()
+                        thumb_name: Optional[str] = None
+                        if disk_path.suffix.lower() in VIDEO_EXTS:
+                            thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
+                        else:
+                            with Image.open(disk_path) as img:
+                                try:
+                                    img = ImageOps.exif_transpose(img)
+                                except Exception:
+                                    pass
+                                thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
+                        if thumb_name:
+                            with closing(get_conn()) as conn:
+                                conn.execute(
+                                    "UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?",
+                                    (thumb_name, now_iso(), rel),
+                                )
+                                conn.commit()
+                        else:
+                            thumb_errors += 1
+                            err_inc = 1
+                except Exception as e:
+                    thumb_errors += 1
+                    err_inc = 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_thumb: {e}")
+                    except Exception:
+                        pass
+                _update_stage("thumbnails", processed_inc=1, errors_inc=err_inc)
+                _emit_parallel(rel)
+            _update_stage("thumbnails", set_running=False)
+            _emit_parallel()
+
+        def _faces_worker() -> None:
+            nonlocal faces_done, faces_found, faces_errors
+            for start in range(0, len(indexed_ok), int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)):
+                batch = indexed_ok[start : start + int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)]
+                try:
+                    log_event("faces_batch_start", batch_size=len(batch))
+                except Exception:
+                    pass
+                for rel in batch:
+                    err_inc = 0
+                    try:
+                        fc = index_faces_for_photo(rel)
+                        faces_done += 1
+                        try:
+                            if int(fc or 0) > 0:
+                                faces_found += 1
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        faces_errors += 1
+                        err_inc = 1
+                        try:
+                            log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
+                        except Exception:
+                            pass
+                    _update_stage("faces", processed_inc=1, errors_inc=err_inc)
+                    _emit_parallel(rel)
+            _update_stage("faces", set_running=False)
+            _emit_parallel()
+
+        def _embeddings_worker() -> None:
+            nonlocal ai_done, ai_errors
+            for rel in indexed_ok:
+                err_inc = 0
+                try:
+                    _embed_uploaded_photo_if_needed(rel)
+                    ai_done += 1
+                except Exception as e:
+                    ai_errors += 1
+                    err_inc = 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_ai: {e}")
+                    except Exception:
+                        pass
+                _update_stage("embeddings", processed_inc=1, errors_inc=err_inc)
+                _emit_parallel(rel)
+            _update_stage("embeddings", set_running=False)
+            _emit_parallel()
+
+        def _descriptions_worker() -> None:
+            nonlocal ai_desc_done, ai_desc_errors
+            for rel in indexed_ok:
+                err_inc = 0
+                try:
+                    _describe_uploaded_photo_if_needed(rel)
+                    ai_desc_done += 1
+                except Exception as e:
+                    ai_desc_errors += 1
+                    err_inc = 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_ai_desc: {e}")
+                    except Exception:
+                        pass
+                _update_stage("descriptions", processed_inc=1, errors_inc=err_inc)
+                _emit_parallel(rel)
+            _update_stage("descriptions", set_running=False)
+            _emit_parallel()
+
+        _emit_parallel()
+        workers: list[threading.Thread] = []
+        if indexed_ok:
+            workers.append(threading.Thread(target=_thumb_worker, daemon=True))
+            if faces_enabled:
+                workers.append(threading.Thread(target=_faces_worker, daemon=True))
+            if ai_enabled:
+                workers.append(threading.Thread(target=_embeddings_worker, daemon=True))
+            if ai_desc_enabled:
+                workers.append(threading.Thread(target=_descriptions_worker, daemon=True))
+        for t in workers:
+            try:
+                t.start()
+            except Exception:
+                pass
+        for t in workers:
+            try:
+                t.join()
+            except Exception:
+                pass
+        with process_lock:
+            for st in process_status.values():
+                st["running"] = False
+                st["queued"] = max(0, int(st.get("total") or 0) - int(st.get("processed") or 0))
+        _emit_parallel()
+    else:
+        _emit_progress(
+            {
+                "phase": "thumbnails",
+                "current_rel": None,
+                "stage_processed": 0,
+                "stage_total": len(indexed_ok),
+            }
+        )
+        for i, rel in enumerate(indexed_ok, start=1):
+            _emit_progress(
+                {
+                    "phase": "thumbnails",
+                    "current_rel": rel,
+                    "stage_processed": max(0, i - 1),
+                    "stage_total": len(indexed_ok),
+                }
+            )
+            try:
+                disk_path = _disk_path_from_rel_path(rel)
+                if not disk_path.exists():
+                    thumb_errors += 1
+                    continue
+                stat = disk_path.stat()
+                thumb_name: Optional[str] = None
+                if disk_path.suffix.lower() in VIDEO_EXTS:
+                    thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
+                else:
+                    with Image.open(disk_path) as img:
+                        try:
+                            img = ImageOps.exif_transpose(img)
+                        except Exception:
+                            pass
+                        thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
+                if thumb_name:
+                    with closing(get_conn()) as conn:
+                        conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (thumb_name, now_iso(), rel))
+                        conn.commit()
+                else:
+                    thumb_errors += 1
+                _emit_progress(
+                    {
+                        "phase": "thumbnails",
+                        "current_rel": rel,
+                        "stage_processed": i,
+                        "stage_total": len(indexed_ok),
+                    }
+                )
+            except Exception as e:
+                thumb_errors += 1
+                try:
+                    log_event("error", rel_path=rel, error=f"postprocess_thumb: {e}")
                 except Exception:
                     pass
 
-    _emit_progress({
+        if faces_enabled:
+            _emit_progress(
+                {
+                    "phase": "faces",
+                    "current_rel": None,
+                    "stage_processed": 0,
+                    "stage_total": len(indexed_ok),
+                }
+            )
+            for i, rel in enumerate(indexed_ok, start=1):
+                _emit_progress(
+                    {
+                        "phase": "faces",
+                        "current_rel": rel,
+                        "stage_processed": max(0, i - 1),
+                        "stage_total": len(indexed_ok),
+                    }
+                )
+                try:
+                    fc = index_faces_for_photo(rel)
+                    faces_done += 1
+                    try:
+                        if int(fc or 0) > 0:
+                            faces_found += 1
+                    except Exception:
+                        pass
+                    _emit_progress(
+                        {
+                            "phase": "faces",
+                            "current_rel": rel,
+                            "stage_processed": i,
+                            "stage_total": len(indexed_ok),
+                        }
+                    )
+                except Exception as e:
+                    faces_errors += 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
+                    except Exception:
+                        pass
+
+        if ai_enabled:
+            _emit_progress(
+                {
+                    "phase": "embeddings",
+                    "current_rel": None,
+                    "stage_processed": 0,
+                    "stage_total": len(indexed_ok),
+                }
+            )
+            for i, rel in enumerate(indexed_ok, start=1):
+                _emit_progress(
+                    {
+                        "phase": "embeddings",
+                        "current_rel": rel,
+                        "stage_processed": max(0, i - 1),
+                        "stage_total": len(indexed_ok),
+                    }
+                )
+                try:
+                    _embed_uploaded_photo_if_needed(rel)
+                    ai_done += 1
+                    _emit_progress(
+                        {
+                            "phase": "embeddings",
+                            "current_rel": rel,
+                            "stage_processed": i,
+                            "stage_total": len(indexed_ok),
+                        }
+                    )
+                except Exception as e:
+                    ai_errors += 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_ai: {e}")
+                    except Exception:
+                        pass
+
+        if ai_desc_enabled:
+            desc_total = len(indexed_ok)
+            _emit_progress(
+                {
+                    "phase": "descriptions",
+                    "current_rel": None,
+                    "stage_processed": 0,
+                    "stage_total": desc_total,
+                }
+            )
+            for i, rel in enumerate(indexed_ok, start=1):
+                _emit_progress(
+                    {
+                        "phase": "descriptions",
+                        "current_rel": rel,
+                        "stage_processed": i,
+                        "stage_total": desc_total,
+                    }
+                )
+                try:
+                    _describe_uploaded_photo_if_needed(rel)
+                    ai_desc_done += 1
+                except Exception as e:
+                    ai_desc_errors += 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_ai_desc: {e}")
+                    except Exception:
+                        pass
+
+    done_payload: Dict[str, Any] = {
         "phase": "done",
+        "workflow_mode": mode,
         "current_rel": None,
         "stage_processed": len(rels),
         "stage_total": len(rels),
-    })
+    }
+    if process_status is not None:
+        done_payload["process_status"] = process_status
+    _emit_progress(done_payload)
 
-    return {
+    result: Dict[str, Any] = {
         "ok": True,
+        "workflow_mode": mode,
         "received": len(rels),
         "indexed": len(indexed_ok),
         "index_errors": index_errors,
@@ -1997,10 +2253,14 @@ def _postprocess_uploaded_rels(
         "ai_desc_done": ai_desc_done,
         "ai_desc_errors": ai_desc_errors,
     }
+    if process_status is not None:
+        result["process_status"] = process_status
+    return result
 
 
 def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
     user = str(uploaded_by or "").strip() or "__unknown__"
+    workflow_mode = upload_workflow_mode()
     _set_upload_postprocess_state(
         user,
         {
@@ -2010,6 +2270,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             "error": None,
             "result": None,
             "phase": "starting",
+            "workflow_mode": workflow_mode,
+            "process_status": None,
             "current_rel": None,
             "stage_processed": 0,
             "stage_total": 0,
@@ -2018,6 +2280,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
 
     aggregate: Dict[str, Any] = {
         "ok": True,
+        "workflow_mode": workflow_mode,
         "received": 0,
         "indexed": 0,
         "index_errors": 0,
@@ -2032,13 +2295,24 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "ai_desc_enabled": ai_desc_auto_ingest_enabled(),
         "ai_desc_done": 0,
         "ai_desc_errors": 0,
+        "process_status": None,
     }
 
     batch = list(initial_rels or [])
     try:
         while batch:
+            if workflow_mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE and len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE):
+                gather_deadline = time.time() + 1.2
+                while len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE) and time.time() < gather_deadline:
+                    time.sleep(0.12)
+                    more = _pop_uploaded_rels(user)
+                    if not more:
+                        continue
+                    batch.extend(more)
+                    gather_deadline = time.time() + 0.35
+
             try:
-                log_event("upload_postprocess_start", user=user, files=len(batch))
+                log_event("upload_postprocess_start", user=user, files=len(batch), workflow_mode=workflow_mode)
             except Exception:
                 pass
 
@@ -2046,6 +2320,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 user,
                 batch,
                 progress_cb=lambda p: _set_upload_postprocess_state(user, p),
+                workflow_mode=workflow_mode,
             )
             aggregate["received"] += int(result["received"] if "received" in result and result["received"] is not None else 0)
             aggregate["indexed"] += int(result["indexed"] if "indexed" in result and result["indexed"] is not None else 0)
@@ -2061,11 +2336,15 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             aggregate["faces_enabled"] = bool(result["faces_enabled"] if "faces_enabled" in result else False)
             aggregate["ai_enabled"] = bool(result["ai_enabled"] if "ai_enabled" in result else False)
             aggregate["ai_desc_enabled"] = bool(result["ai_desc_enabled"] if "ai_desc_enabled" in result else False)
+            if "process_status" in result:
+                aggregate["process_status"] = result["process_status"]
+                _set_upload_postprocess_state(user, {"process_status": result["process_status"], "workflow_mode": workflow_mode})
 
             try:
                 log_event(
                     "upload_postprocess_done",
                     user=user,
+                    workflow_mode=workflow_mode,
                     files=result["received"] if "received" in result else None,
                     indexed=result["indexed"] if "indexed" in result else None,
                     heic_converted=result["heic_converted"] if "heic_converted" in result else None,
@@ -2092,6 +2371,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "result": aggregate,
                 "error": None,
                 "phase": "done",
+                "workflow_mode": workflow_mode,
+                "process_status": aggregate.get("process_status"),
                 "current_rel": None,
                 "stage_processed": int(aggregate["received"] if "received" in aggregate and aggregate["received"] is not None else 0),
                 "stage_total": int(aggregate["received"] if "received" in aggregate and aggregate["received"] is not None else 0),
@@ -2101,6 +2382,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             log_event(
                 "upload_postprocess_summary_done",
                 user=user,
+                workflow_mode=workflow_mode,
                 files=aggregate["received"] if "received" in aggregate else None,
                 indexed=aggregate["indexed"] if "indexed" in aggregate else None,
                 heic_converted=aggregate["heic_converted"] if "heic_converted" in aggregate else None,
@@ -2124,6 +2406,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "error": str(e),
                 "result": aggregate,
                 "phase": "error",
+                "workflow_mode": workflow_mode,
             },
         )
 
@@ -2716,6 +2999,9 @@ def init_db() -> None:
             row6 = conn.execute("SELECT value FROM settings WHERE key='upload_subdir_library'").fetchone()
             if not row6:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_subdir_library", ""))
+            row7 = conn.execute("SELECT value FROM settings WHERE key='upload_workflow_mode'").fetchone()
+            if not row7:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_workflow_mode", UPLOAD_WORKFLOW_MODE_DEFAULT))
             conn.commit()
         except Exception:
             pass
@@ -3262,6 +3548,32 @@ def ai_ingest_throttle_enabled_sec() -> float:
 
 def faces_index_throttle_enabled_sec() -> float:
     return _get_setting_throttle("faces_index_throttle_sec", FACES_INDEX_THROTTLE_SEC)
+
+
+def _normalize_upload_workflow_mode(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"aggressive", "hard", "fast", "parallel"}:
+        return UPLOAD_WORKFLOW_MODE_AGGRESSIVE
+    return UPLOAD_WORKFLOW_MODE_GENTLE
+
+
+def upload_workflow_mode() -> str:
+    return _normalize_upload_workflow_mode(_get_setting("upload_workflow_mode", UPLOAD_WORKFLOW_MODE_DEFAULT))
+
+
+def upload_workflow_is_aggressive() -> bool:
+    return upload_workflow_mode() == UPLOAD_WORKFLOW_MODE_AGGRESSIVE
+
+
+def _upload_workflow_settings_payload() -> Dict[str, Any]:
+    mode = upload_workflow_mode()
+    return {
+        "ok": True,
+        "mode": mode,
+        "batch_size": int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE),
+        "thumbnails_use_gpu": bool(UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU),
+        "options": [UPLOAD_WORKFLOW_MODE_GENTLE, UPLOAD_WORKFLOW_MODE_AGGRESSIVE],
+    }
 
 
 def library_source_enabled() -> bool:
@@ -14457,6 +14769,20 @@ def api_settings_ai_performance():
     )
 
 
+@app.route("/api/settings/upload-workflow", methods=["GET", "POST"])
+def api_settings_upload_workflow():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        mode = _normalize_upload_workflow_mode(body.get("mode"))
+        _set_setting("upload_workflow_mode", mode)
+
+    return jsonify(_upload_workflow_settings_payload())
+
+
 # --- Upload endpoint (drag & drop) ---
 @app.route("/api/upload/tus", methods=["OPTIONS"])
 @app.route("/api/upload/tus/<upload_id>", methods=["OPTIONS"])
@@ -14830,48 +15156,54 @@ def api_upload():
 @login_required
 def api_upload_postprocess():
     uploaded_by = str(getattr(current_user, "username", "") or "")
+    workflow_mode = upload_workflow_mode()
     rels = _pop_uploaded_rels(uploaded_by)
 
     if _is_upload_postprocess_running(uploaded_by):
         for rel in rels:
             _queue_uploaded_rel(uploaded_by, rel)
+        running_state = _get_upload_postprocess_state(uploaded_by)
+        running_mode = running_state.get("workflow_mode") if isinstance(running_state, dict) else None
         with UPLOAD_PENDING_LOCK:
             pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
-        return jsonify({"ok": True, "started": False, "running": True, "pending": pending_count})
+        return jsonify({"ok": True, "started": False, "running": True, "pending": pending_count, "workflow_mode": running_mode or workflow_mode, "process_status": (running_state.get("process_status") if isinstance(running_state, dict) else None)})
 
     if not rels:
         state = _get_upload_postprocess_state(uploaded_by)
         if state:
             with UPLOAD_PENDING_LOCK:
                 pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
-            return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "result": state.get("result"), "error": state.get("error")})
-        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "result": {"ok": True, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
+            return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "workflow_mode": state.get("workflow_mode") or workflow_mode, "process_status": state.get("process_status"), "result": state.get("result"), "error": state.get("error")})
+        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
-    return jsonify({"ok": True, "started": True, "running": True, "pending": pending_count, "queued": len(rels)})
+    return jsonify({"ok": True, "started": True, "running": True, "pending": pending_count, "queued": len(rels), "workflow_mode": workflow_mode})
 
 
 @app.route("/api/upload/postprocess/status")
 @login_required
 def api_upload_postprocess_status():
     uploaded_by = str(getattr(current_user, "username", "") or "")
+    workflow_mode = upload_workflow_mode()
     state = _get_upload_postprocess_state(uploaded_by)
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
     if not state:
-        return jsonify({"ok": True, "running": False, "pending": pending_count, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
+        return jsonify({"ok": True, "running": False, "pending": pending_count, "workflow_mode": workflow_mode, "process_status": None, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
     return jsonify(
         {
             "ok": True,
             "running": bool(state.get("running")),
             "pending": pending_count,
+            "workflow_mode": state.get("workflow_mode") or workflow_mode,
             "started_at": state.get("started_at"),
             "finished_at": state.get("finished_at"),
             "result": state.get("result"),
             "error": state.get("error"),
             "phase": state.get("phase"),
+            "process_status": state.get("process_status"),
             "current_rel": state.get("current_rel"),
             "stage_processed": int(state.get("stage_processed") or 0),
             "stage_total": int(state.get("stage_total") or 0),

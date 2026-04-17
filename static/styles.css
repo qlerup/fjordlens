@@ -578,7 +578,7 @@ body.view-mapper .mapper-header-actions {
 }
 .upload-top-status {
   min-width: 240px;
-  max-width: 360px;
+  max-width: 520px;
   padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -589,6 +589,67 @@ body.view-mapper .mapper-header-actions {
 }
 .upload-top-status.hidden {
   display: none !important;
+}
+.upload-top-status.multi {
+  min-width: 360px;
+}
+.upload-top-status.multi .upload-top-status-label,
+.upload-top-status.multi .upload-top-status-progress {
+  display: none;
+}
+.upload-top-process-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.upload-top-process-row.hidden {
+  display: none !important;
+}
+.upload-top-proc {
+  min-width: 128px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.upload-top-proc-name {
+  font-size: 0.7rem;
+  color: var(--muted);
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.upload-top-proc-meta {
+  font-size: 0.8rem;
+  color: var(--text);
+  line-height: 1.2;
+}
+.upload-top-proc-queue {
+  font-size: 0.7rem;
+  color: var(--muted);
+  line-height: 1.1;
+}
+.upload-top-proc-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.upload-top-proc-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+.upload-top-proc.off .upload-top-proc-bar > span {
+  background: #555b66;
 }
 .download-top-status .upload-top-status-bar {
   background: linear-gradient(90deg, #5b8cff, #7ab0ff);

@@ -36,6 +36,17 @@
   aiPerfPresetFast: document.getElementById("aiPerfPresetFast"),
   aiPerfSaveBtn: document.getElementById("aiPerfSaveBtn"),
   aiPerfStatus: document.getElementById("aiPerfStatus"),
+  uploadWorkflowTitle: document.getElementById("uploadWorkflowTitle"),
+  uploadWorkflowDesc: document.getElementById("uploadWorkflowDesc"),
+  uploadWorkflowModeGentle: document.getElementById("uploadWorkflowModeGentle"),
+  uploadWorkflowModeAggressive: document.getElementById("uploadWorkflowModeAggressive"),
+  uploadWorkflowGentleTitle: document.getElementById("uploadWorkflowGentleTitle"),
+  uploadWorkflowGentleDesc: document.getElementById("uploadWorkflowGentleDesc"),
+  uploadWorkflowAggressiveTitle: document.getElementById("uploadWorkflowAggressiveTitle"),
+  uploadWorkflowAggressiveDesc: document.getElementById("uploadWorkflowAggressiveDesc"),
+  uploadWorkflowExtraInfo: document.getElementById("uploadWorkflowExtraInfo"),
+  uploadWorkflowSaveBtn: document.getElementById("uploadWorkflowSaveBtn"),
+  uploadWorkflowStatus: document.getElementById("uploadWorkflowStatus"),
   heicConvertToggle: document.getElementById("heicConvertToggle"),
   heicKeepToggle: document.getElementById("heicKeepToggle"),
   heicStatus: document.getElementById("heicStatus"),
@@ -272,6 +283,7 @@
   uploadTopStatus: document.getElementById("uploadTopStatus"),
   uploadTopStatusLabel: document.getElementById("uploadTopStatusLabel"),
   uploadTopStatusBar: document.getElementById("uploadTopStatusBar"),
+  uploadTopProcessRow: document.getElementById("uploadTopProcessRow"),
   downloadTopStatus: document.getElementById("downloadTopStatus"),
   downloadTopStatusLabel: document.getElementById("downloadTopStatusLabel"),
   downloadTopStatusBar: document.getElementById("downloadTopStatusBar"),
@@ -306,6 +318,7 @@ function ensureUploadTopStatusRefs() {
   if (!els.uploadTopStatus) els.uploadTopStatus = document.getElementById("uploadTopStatus");
   if (!els.uploadTopStatusLabel) els.uploadTopStatusLabel = document.getElementById("uploadTopStatusLabel");
   if (!els.uploadTopStatusBar) els.uploadTopStatusBar = document.getElementById("uploadTopStatusBar");
+  if (!els.uploadTopProcessRow) els.uploadTopProcessRow = document.getElementById("uploadTopProcessRow");
 }
 
 function ensureDownloadTopStatusRefs() {
@@ -329,7 +342,12 @@ function setDownloadTopStatusCancelable(on = false) {
 function showTopStatusMessage(label, pct = null) {
   ensureUploadTopStatusRefs();
   if (!els.uploadTopStatus) return;
+  els.uploadTopStatus.classList.remove('multi');
   els.uploadTopStatus.classList.remove('hidden');
+  if (els.uploadTopProcessRow) {
+    els.uploadTopProcessRow.classList.add('hidden');
+    els.uploadTopProcessRow.innerHTML = '';
+  }
   if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = String(label || '');
   if (els.uploadTopStatusBar) {
     const v = pct == null ? null : Math.max(0, Math.min(100, Number(pct || 0)));
@@ -340,9 +358,14 @@ function showTopStatusMessage(label, pct = null) {
 function hideTopStatusMessage() {
   ensureUploadTopStatusRefs();
   if (!els.uploadTopStatus) return;
+  els.uploadTopStatus.classList.remove('multi');
   els.uploadTopStatus.classList.add('hidden');
   if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
   if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
+  if (els.uploadTopProcessRow) {
+    els.uploadTopProcessRow.classList.add('hidden');
+    els.uploadTopProcessRow.innerHTML = '';
+  }
 }
 
 // Toggle indeterminate animation for the top status bar (no known percentage)
@@ -354,6 +377,66 @@ function setTopStatusIndeterminate(on = true) {
   if (!on) {
     els.uploadTopStatusBar.style.width = '0%';
   }
+}
+
+function _uploadProcessLabel(key) {
+  const k = String(key || '').toLowerCase();
+  if (k === 'metadata') return tr('upload_proc_metadata');
+  if (k === 'thumbnails') return tr('upload_proc_thumbnails');
+  if (k === 'faces') return tr('upload_proc_faces');
+  if (k === 'embeddings') return tr('upload_proc_embeddings');
+  if (k === 'descriptions') return tr('upload_proc_descriptions');
+  return k || '-';
+}
+
+function clearUploadTopProcessStatus() {
+  ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus) return;
+  els.uploadTopStatus.classList.remove('multi');
+  if (els.uploadTopProcessRow) {
+    els.uploadTopProcessRow.classList.add('hidden');
+    els.uploadTopProcessRow.innerHTML = '';
+  }
+}
+
+function renderUploadTopProcessStatus(processStatus) {
+  ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus || !els.uploadTopProcessRow || !processStatus || typeof processStatus !== 'object') {
+    clearUploadTopProcessStatus();
+    return false;
+  }
+  const order = ['metadata', 'thumbnails', 'faces', 'embeddings', 'descriptions'];
+  const cards = [];
+  for (const key of order) {
+    const src = processStatus[key];
+    if (!src || typeof src !== 'object') continue;
+    const enabled = src.enabled !== false;
+    const total = Math.max(0, Number(src.total || 0));
+    const processed = Math.max(0, Number(src.processed || 0));
+    const errors = Math.max(0, Number(src.errors || 0));
+    const running = !!src.running;
+    const queued = Math.max(0, Number(src.queued || Math.max(0, total - processed)));
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
+    const statusText = enabled ? `${processed}/${total}${errors ? ` · ${tr('status_errors_label')} ${errors}` : ''}` : tr('upload_proc_off');
+    const queueText = enabled ? tr('upload_proc_queue').replace('{count}', String(queued)) : '';
+    cards.push(
+      `<div class="upload-top-proc ${enabled ? '' : 'off'} ${running ? 'run' : ''}" data-proc="${escapeHtml(key)}">` +
+      `<div class="upload-top-proc-name">${escapeHtml(_uploadProcessLabel(key))}</div>` +
+      `<div class="upload-top-proc-meta">${escapeHtml(statusText)}</div>` +
+      `<div class="upload-top-proc-queue">${escapeHtml(queueText)}</div>` +
+      `<div class="upload-top-proc-bar"><span style="width:${enabled ? pct : 0}%"></span></div>` +
+      `</div>`
+    );
+  }
+  if (!cards.length) {
+    clearUploadTopProcessStatus();
+    return false;
+  }
+  els.uploadTopStatus.classList.add('multi');
+  els.uploadTopStatus.classList.remove('hidden');
+  els.uploadTopProcessRow.innerHTML = cards.join('');
+  els.uploadTopProcessRow.classList.remove('hidden');
+  return true;
 }
 
 function showDownloadTopStatusMessage(label, pct = null) {
@@ -527,6 +610,7 @@ const I18N = {
     search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
     tab_maint: 'Vedligeholdelse',
     tab_ai: 'AI',
+    tab_upload_workflow: 'Upload workflow',
     tab_dns: 'DNS',
     tab_shared: 'Delte',
     tab_logs: 'Logs',
@@ -535,6 +619,25 @@ const I18N = {
     profile_open_twofa: 'Administrer 2FA',
     tab_profile: 'Profil',
     tab_other: 'Andet',
+    upload_workflow_title: 'Upload workflow',
+    upload_workflow_desc: 'Vælg hvordan upload-efterbehandling kører.',
+    upload_workflow_gentle_title: 'Skånsom',
+    upload_workflow_gentle_desc: 'Kører én fase ad gangen for at skåne systemet.',
+    upload_workflow_aggressive_title: 'Kraftig',
+    upload_workflow_aggressive_desc: 'Kører faser parallelt. Ansigter behandles i batch på 10 filer.',
+    upload_workflow_extra_info: 'Thumbnail runtime: {thumb_runtime} · Ansigtsbatch: {batch_size}',
+    upload_workflow_save: 'Gem workflow',
+    upload_workflow_saved: 'Upload workflow gemt.',
+    upload_workflow_load_failed: 'Kunne ikke hente upload workflow.',
+    upload_workflow_save_failed: 'Kunne ikke gemme upload workflow.',
+    upload_workflow_running: 'Parallel behandling…',
+    upload_proc_metadata: 'Metadata',
+    upload_proc_thumbnails: 'Thumbnails',
+    upload_proc_faces: 'Ansigter',
+    upload_proc_embeddings: 'Embeddings',
+    upload_proc_descriptions: 'Beskrivelser',
+    upload_proc_off: 'Slået fra',
+    upload_proc_queue: 'i kø: {count}',
     view_timeline_title: 'Tidlinje',
     view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
     view_favorites_title: 'Favoritter',
@@ -1116,6 +1219,7 @@ const I18N = {
     search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
     tab_maint: 'Maintenance',
     tab_ai: 'AI',
+    tab_upload_workflow: 'Upload workflow',
     tab_dns: 'DNS',
     tab_shared: 'Shared',
     tab_logs: 'Logs',
@@ -1124,6 +1228,25 @@ const I18N = {
     profile_open_twofa: 'Manage 2FA',
     tab_profile: 'Profile',
     tab_other: 'Other',
+    upload_workflow_title: 'Upload workflow',
+    upload_workflow_desc: 'Choose how upload post-processing runs.',
+    upload_workflow_gentle_title: 'Gentle',
+    upload_workflow_gentle_desc: 'Runs one phase at a time to keep system load low.',
+    upload_workflow_aggressive_title: 'Power mode',
+    upload_workflow_aggressive_desc: 'Runs phases in parallel. Faces are processed in batches of 10 files.',
+    upload_workflow_extra_info: 'Thumbnail runtime: {thumb_runtime} · Face batch: {batch_size}',
+    upload_workflow_save: 'Save workflow',
+    upload_workflow_saved: 'Upload workflow saved.',
+    upload_workflow_load_failed: 'Could not load upload workflow.',
+    upload_workflow_save_failed: 'Could not save upload workflow.',
+    upload_workflow_running: 'Parallel processing…',
+    upload_proc_metadata: 'Metadata',
+    upload_proc_thumbnails: 'Thumbnails',
+    upload_proc_faces: 'Faces',
+    upload_proc_embeddings: 'Embeddings',
+    upload_proc_descriptions: 'Descriptions',
+    upload_proc_off: 'Disabled',
+    upload_proc_queue: 'queued: {count}',
     view_timeline_title: 'Timeline',
     view_timeline_sub: 'Date grouped overview (year/month)',
     view_favorites_title: 'Favorites',
@@ -1846,6 +1969,9 @@ let state = {
   sharedLinks: [],
   sharedEditShareId: 0,
   sharedFolderOptions: [],
+  uploadWorkflowMode: 'gentle',
+  uploadWorkflowBatchSize: 10,
+  uploadWorkflowThumbnailsUseGpu: false,
 };
 
 const PHOTOFRAME_STATUS_POLL_MS = 7000;
@@ -5514,6 +5640,8 @@ const uploadUiState = {
   currentPhaseLabel: '',
   currentLoaded: 0,
   currentTotal: 0,
+  workflowMode: 'gentle',
+  processStatus: null,
   collapsed: false,
 };
 
@@ -5731,6 +5859,8 @@ function resetUploadUiState() {
   uploadUiState.currentPhaseLabel = '';
   uploadUiState.currentLoaded = 0;
   uploadUiState.currentTotal = 0;
+  uploadUiState.workflowMode = 'gentle';
+  uploadUiState.processStatus = null;
   uploadMonitorItemsByKey.clear();
 }
 
@@ -5791,6 +5921,8 @@ function renderUploadMonitor() {
     : 0;
   const phaseKey = String(uploadUiState.currentPhaseLabel || '').toLowerCase();
   const isPostprocess = !!phaseKey && phaseKey !== 'uploader';
+  const workflowMode = String(uploadUiState.workflowMode || 'gentle').toLowerCase();
+  const useMultiTopStatus = isPostprocess && workflowMode === 'aggressive' && !!uploadUiState.processStatus;
   const stagePct = uploadUiState.currentTotal > 0
     ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
     : 0;
@@ -5801,15 +5933,22 @@ function renderUploadMonitor() {
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
     if (hasTopStatus) {
-      const activePct = isPostprocess ? stagePct : overallPct;
-      const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
-      const topLabel = isPostprocess
-        ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
-        : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%`;
-      els.uploadTopStatus.classList.remove('hidden');
-      if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
-      if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
+      if (useMultiTopStatus && renderUploadTopProcessStatus(uploadUiState.processStatus)) {
+        if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = '';
+        if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
+      } else {
+        clearUploadTopProcessStatus();
+        const activePct = isPostprocess ? stagePct : overallPct;
+        const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
+        const topLabel = isPostprocess
+          ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
+          : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%`;
+        els.uploadTopStatus.classList.remove('hidden');
+        if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
+        if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
+      }
     } else {
+      clearUploadTopProcessStatus();
       els.uploadTopStatus.classList.add('hidden');
       if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
       if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
@@ -6008,6 +6147,7 @@ function postprocessPhaseLabel(phase) {
   if (key === 'faces') return 'Ansigtsgenkendelse';
   if (key === 'embeddings') return 'AI embeddings';
   if (key === 'descriptions') return 'AI beskrivelser';
+  if (key === 'parallel') return tr('tab_upload_workflow');
   if (key === 'starting') return 'Starter efterbehandling';
   if (key === 'done') return 'Efterbehandling færdig';
   if (key === 'error') return 'Efterbehandling fejl';
@@ -6125,15 +6265,19 @@ async function resumeUploadPostprocessAfterRefresh() {
       const stageProcessed = Number(status.stage_processed || 0);
       if (stageTotal > 0) uploadUiState.totalFiles = Math.max(uploadUiState.totalFiles, stageTotal);
       if (stageProcessed > 0) uploadUiState.processedFiles = Math.max(uploadUiState.processedFiles, stageProcessed);
-
-      uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
-      uploadUiState.currentFileName = shortRelName(status.current_rel) || 'Arbejder…';
+      uploadUiState.workflowMode = String(status.workflow_mode || uploadUiState.workflowMode || 'gentle').toLowerCase();
+      uploadUiState.processStatus = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
+      const useParallel = uploadUiState.workflowMode === 'aggressive' && !!uploadUiState.processStatus;
+      uploadUiState.currentPhaseLabel = useParallel ? tr('tab_upload_workflow') : postprocessPhaseLabel(status.phase);
+      uploadUiState.currentFileName = useParallel ? tr('upload_workflow_running') : (shortRelName(status.current_rel) || 'Arbejder…');
       uploadUiState.currentLoaded = stageProcessed;
       uploadUiState.currentTotal = stageTotal;
       renderUploadMonitor();
 
       const phase = String(status.phase || '').toLowerCase();
-      if (phase === 'metadata' || phase === 'thumbnails' || phase === 'faces') {
+      const proc = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
+      const parallelRefresh = (phase === 'parallel') && !!proc;
+      if (phase === 'metadata' || phase === 'thumbnails' || phase === 'faces' || parallelRefresh) {
         // Refresh during 'faces' too to reveal any thumbnails that finished
         // right at the phase boundary.
         maybeRefreshPhotosDuringPostprocess(false);
@@ -6147,6 +6291,8 @@ async function resumeUploadPostprocessAfterRefresh() {
     uploadUiState.currentPhaseLabel = '';
     uploadUiState.currentLoaded = 0;
     uploadUiState.currentTotal = 0;
+    uploadUiState.workflowMode = 'gentle';
+    uploadUiState.processStatus = null;
     renderUploadMonitor();
 
     await maybeRefreshPhotosDuringPostprocess(true);
@@ -6437,12 +6583,18 @@ async function uploadFiles(fileList, options = {}) {
 
           try {
             post = await runUploadPostprocess((status) => {
-              uploadUiState.currentPhaseLabel = postprocessPhaseLabel(status.phase);
+              uploadUiState.workflowMode = String(status.workflow_mode || uploadUiState.workflowMode || 'gentle').toLowerCase();
+              uploadUiState.processStatus = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
+              const useParallel = uploadUiState.workflowMode === 'aggressive' && !!uploadUiState.processStatus;
+              uploadUiState.currentPhaseLabel = useParallel ? tr('tab_upload_workflow') : postprocessPhaseLabel(status.phase);
               const n = shortRelName(status.current_rel);
-              uploadUiState.currentFileName = n || 'Arbejder…';
+              uploadUiState.currentFileName = useParallel ? tr('upload_workflow_running') : (n || 'Arbejder…');
               uploadUiState.currentLoaded = Number(status.stage_processed || 0);
               uploadUiState.currentTotal = Number(status.stage_total || 0);
-              if (['metadata','thumbnails','faces'].includes(String(status.phase || '').toLowerCase())) {
+              const phase = String(status.phase || '').toLowerCase();
+              const proc = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
+              const parallelRefresh = (phase === 'parallel') && !!proc;
+              if (['metadata','thumbnails','faces'].includes(phase) || parallelRefresh) {
                 maybeRefreshPhotosDuringPostprocess(false);
               }
               renderUploadMonitor();
@@ -6464,6 +6616,8 @@ async function uploadFiles(fileList, options = {}) {
         uploadUiState.currentPhaseLabel = '';
         uploadUiState.currentLoaded = 0;
         uploadUiState.currentTotal = 0;
+        uploadUiState.workflowMode = 'gentle';
+        uploadUiState.processStatus = null;
         renderUploadMonitor();
         // Ensure the monitor auto-hides after uploads are fully done
         scheduleUploadMonitorAutoHide(10000);
@@ -7470,6 +7624,87 @@ function applyAiPerfPreset(kind) {
   const p = presets[kind] || presets.normal;
   els.aiIngestThrottleInput.value = p.ai.toFixed(2);
   els.facesThrottleInput.value = p.faces.toFixed(2);
+}
+
+function showUploadWorkflowStatus(message, kind = 'ok') {
+  if (!els.uploadWorkflowStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.uploadWorkflowStatus.classList.add('hidden');
+    els.uploadWorkflowStatus.textContent = '';
+    els.uploadWorkflowStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.uploadWorkflowStatus.textContent = msg;
+  els.uploadWorkflowStatus.classList.remove('hidden');
+  els.uploadWorkflowStatus.classList.toggle('ok', kind === 'ok');
+  els.uploadWorkflowStatus.classList.toggle('err', kind !== 'ok');
+}
+
+function _applyUploadWorkflowData(data) {
+  if (!data || typeof data !== 'object') return;
+  const mode = String(data.mode || 'gentle').toLowerCase() === 'aggressive' ? 'aggressive' : 'gentle';
+  state.uploadWorkflowMode = mode;
+  state.uploadWorkflowBatchSize = Number(data.batch_size || 10) || 10;
+  state.uploadWorkflowThumbnailsUseGpu = !!data.thumbnails_use_gpu;
+  if (els.uploadWorkflowModeGentle) els.uploadWorkflowModeGentle.checked = mode === 'gentle';
+  if (els.uploadWorkflowModeAggressive) els.uploadWorkflowModeAggressive.checked = mode === 'aggressive';
+  if (els.uploadWorkflowExtraInfo) {
+    const runtimeText = state.uploadWorkflowThumbnailsUseGpu ? tr('status_runtime_gpu') : tr('status_runtime_cpu');
+    els.uploadWorkflowExtraInfo.textContent = tr('upload_workflow_extra_info')
+      .replace('{thumb_runtime}', runtimeText)
+      .replace('{batch_size}', String(state.uploadWorkflowBatchSize || 10));
+  }
+}
+
+async function loadUploadWorkflowSettings() {
+  if (!els.uploadWorkflowModeGentle || !els.uploadWorkflowModeAggressive) return;
+  showUploadWorkflowStatus('');
+  try {
+    const res = await fetch('/api/settings/upload-workflow');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showUploadWorkflowStatus((data && data.error) || tr('upload_workflow_load_failed'), 'err');
+      return;
+    }
+    _applyUploadWorkflowData(data);
+  } catch {
+    showUploadWorkflowStatus(tr('upload_workflow_load_failed'), 'err');
+  }
+}
+
+async function saveUploadWorkflowSettings() {
+  if (!els.uploadWorkflowModeGentle || !els.uploadWorkflowModeAggressive) return;
+  const saveBtn = els.uploadWorkflowSaveBtn;
+  const original = saveBtn ? saveBtn.textContent : tr('upload_workflow_save');
+  showUploadWorkflowStatus('');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+    }
+    const mode = (els.uploadWorkflowModeAggressive && els.uploadWorkflowModeAggressive.checked) ? 'aggressive' : 'gentle';
+    const res = await fetch('/api/settings/upload-workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showUploadWorkflowStatus((data && data.error) || tr('upload_workflow_save_failed'), 'err');
+      return;
+    }
+    _applyUploadWorkflowData(data);
+    showUploadWorkflowStatus(tr('upload_workflow_saved'), 'ok');
+  } catch {
+    showUploadWorkflowStatus(tr('upload_workflow_save_failed'), 'err');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('loading');
+      saveBtn.textContent = original || tr('upload_workflow_save');
+    }
+  }
 }
 
 async function loadMapperTools(preferred = null) {
@@ -8996,6 +9231,7 @@ function applyUiLanguage() {
   const tabText = {
     maint: tr('tab_maint'),
     ai: tr('tab_ai'),
+    upload_workflow: tr('tab_upload_workflow'),
     dns: tr('tab_dns'),
     shared: tr('tab_shared'),
     logs: tr('tab_logs'),
@@ -9006,6 +9242,10 @@ function applyUiLanguage() {
   Object.entries(tabText).forEach(([tab, text]) => {
     const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
     if (btn) btn.textContent = text;
+  });
+  Object.entries(tabText).forEach(([tab, text]) => {
+    const opt = document.querySelector(`#settingsTabSelect option[value="${tab}"]`);
+    if (opt) opt.textContent = text;
   });
 
   const settingsHeaderTitle = document.querySelector('#settingsPanel .settings-header h1');
@@ -9023,6 +9263,21 @@ function applyUiLanguage() {
   if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
+  if (els.uploadWorkflowTitle) els.uploadWorkflowTitle.textContent = tr('upload_workflow_title');
+  if (els.uploadWorkflowDesc) els.uploadWorkflowDesc.textContent = tr('upload_workflow_desc');
+  if (els.uploadWorkflowGentleTitle) els.uploadWorkflowGentleTitle.textContent = tr('upload_workflow_gentle_title');
+  if (els.uploadWorkflowGentleDesc) els.uploadWorkflowGentleDesc.textContent = tr('upload_workflow_gentle_desc');
+  if (els.uploadWorkflowAggressiveTitle) els.uploadWorkflowAggressiveTitle.textContent = tr('upload_workflow_aggressive_title');
+  if (els.uploadWorkflowAggressiveDesc) els.uploadWorkflowAggressiveDesc.textContent = tr('upload_workflow_aggressive_desc');
+  if (els.uploadWorkflowSaveBtn && !els.uploadWorkflowSaveBtn.classList.contains('loading')) {
+    els.uploadWorkflowSaveBtn.textContent = tr('upload_workflow_save');
+  }
+  if (els.uploadWorkflowExtraInfo) {
+    const runtimeText = state.uploadWorkflowThumbnailsUseGpu ? tr('status_runtime_gpu') : tr('status_runtime_cpu');
+    els.uploadWorkflowExtraInfo.textContent = tr('upload_workflow_extra_info')
+      .replace('{thumb_runtime}', runtimeText)
+      .replace('{batch_size}', String(state.uploadWorkflowBatchSize || 10));
+  }
   updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
   updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
   updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
@@ -10580,6 +10835,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'ai') {
       loadAiPerformanceSettings();
     }
+    if (tab === 'upload_workflow') {
+      loadUploadWorkflowSettings();
+    }
     if (tab === 'dns') {
       loadDnsSettings();
     }
@@ -10612,6 +10870,11 @@ if (els.dnsSaveBtn) {
 if (els.aiPerfSaveBtn) {
   els.aiPerfSaveBtn.addEventListener('click', async () => {
     await saveAiPerformanceSettings();
+  });
+}
+if (els.uploadWorkflowSaveBtn) {
+  els.uploadWorkflowSaveBtn.addEventListener('click', async () => {
+    await saveUploadWorkflowSettings();
   });
 }
 if (els.aiPerfPresetLow) {
