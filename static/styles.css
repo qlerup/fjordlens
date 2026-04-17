@@ -576,6 +576,15 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 body.view-mapper .mapper-header-actions {
   display: flex;
 }
+.timeline-header-actions {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+body.view-timeline .timeline-header-actions {
+  display: flex;
+}
 .upload-top-status {
   min-width: 240px;
   max-width: 520px;
@@ -2934,13 +2943,7 @@ body.view-settings .gallery-grid { display: none !important; }
 /* Photoframe uses its own content header/panel, so hide the global topbar */
 body.view-photoframe .topbar { display: none !important; }
 
-body.view-timeline .topbar {
-  border: none;
-  background: transparent;
-  padding: 0;
-  margin-bottom: 10px;
-  border-radius: 0;
-}
+body.view-timeline .topbar { display: none !important; }
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
@@ -3014,10 +3017,7 @@ body.view-timeline .topbar {
   /* Hold topbar skjult i Indstillinger for at spare plads */
   body.view-settings .topbar { display: none !important; }
 
-  body.view-timeline .topbar {
-    justify-content: flex-end;
-    gap: 8px;
-  }
+  body.view-timeline .topbar { display: none !important; }
   body.view-timeline .select {
     height: 42px;
     min-height: 42px;

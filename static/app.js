@@ -1,9 +1,11 @@
 ﻿const els = {
   grid: document.getElementById("galleryGrid"),
+  topbar: document.getElementById("topbar"),
   searchShell: document.getElementById("searchShell"),
   searchToggleBtn: document.getElementById("searchToggleBtn"),
   search: document.getElementById("searchInput"),
   sort: document.getElementById("sortSelect"),
+  timelineHeaderActions: document.getElementById("timelineHeaderActions"),
   scanBtn: document.getElementById("scanBtn"),
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
@@ -289,6 +291,31 @@
   downloadTopStatusBar: document.getElementById("downloadTopStatusBar"),
   downloadTopStatusCancel: document.getElementById("downloadTopStatusCancel"),
 };
+
+function ensureTimelineHeaderActions() {
+  if (els.timelineHeaderActions) return els.timelineHeaderActions;
+  const header = document.querySelector(".content-header");
+  if (!header) return null;
+  const node = document.createElement("div");
+  node.id = "timelineHeaderActions";
+  node.className = "timeline-header-actions";
+  node.setAttribute("aria-label", "Tidslinje handlinger");
+  const mapperActions = els.mapperHeaderActions || document.getElementById("mapperHeaderActions");
+  if (mapperActions && mapperActions.parentElement === header) header.insertBefore(node, mapperActions);
+  else header.appendChild(node);
+  els.timelineHeaderActions = node;
+  return node;
+}
+
+function placeGlobalSearchSortForView() {
+  const topbar = els.topbar || document.getElementById("topbar") || document.querySelector(".topbar");
+  if (!topbar || !els.searchShell || !els.sort) return;
+  const timelineActions = ensureTimelineHeaderActions();
+  const inTimeline = !!(state && state.view === "timeline");
+  const target = (inTimeline && timelineActions) ? timelineActions : topbar;
+  if (els.searchShell.parentElement !== target) target.appendChild(els.searchShell);
+  if (els.sort.parentElement !== target) target.appendChild(els.sort);
+}
 
 function isSmallMobile() {
   try {
@@ -9151,6 +9178,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
   document.body.classList.toggle("view-photoframe", nextView === "photoframe");
+  placeGlobalSearchSortForView();
   // Toggle compact Settings layout on small viewports
   try {
     const isSmall = window.matchMedia('(max-width: 760px)').matches;
