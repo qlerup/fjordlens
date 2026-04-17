@@ -1681,6 +1681,36 @@ def _postprocess_uploaded_rels(
             "stage_total": len(rels),
         })
         disk_path = _disk_path_from_rel_path(rel)
+        extl = disk_path.suffix.lower()
+        needs_conversion = (
+            ((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled())
+            or (extl in RAW_EXTS)
+        )
+
+        # Metadata may already be extracted during upload commit. Reuse it unless
+        # conversion is pending for HEIC/RAW files.
+        if not needs_conversion:
+            checksum_ready = ""
+            try:
+                with closing(get_conn()) as conn:
+                    row = conn.execute(
+                        "SELECT checksum_sha256 FROM photos WHERE rel_path=?",
+                        (rel,),
+                    ).fetchone()
+                if row:
+                    checksum_ready = str(row["checksum_sha256"] or "").strip()
+            except Exception:
+                checksum_ready = ""
+            if checksum_ready:
+                indexed_ok.append(rel)
+                _emit_progress({
+                    "phase": "metadata",
+                    "current_rel": rel,
+                    "stage_processed": i,
+                    "stage_total": len(rels),
+                })
+                continue
+
         orig_rel_for_convert = rel
         conversion_from_rel: Optional[str] = None
         conversion_from_ext: Optional[str] = None
@@ -1688,8 +1718,7 @@ def _postprocess_uploaded_rels(
         conversion_to_ext: Optional[str] = None
         # Optional: convert HEIC/HEIF and RAW to JPEG in-place (preserve EXIF when possible for HEIC)
         try:
-            extl = disk_path.suffix.lower()
-            if (((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled()) or (extl in RAW_EXTS)) and disk_path.exists():
+            if needs_conversion and disk_path.exists():
                 # Announce explicit converting phase in UI
                 _emit_progress({
                     "phase": "converting",
@@ -2572,7 +2601,16 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> N
             pass
 
 
-def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source_path: Path, original_name: str, last_modified_ms: Optional[int], uploaded_by: str) -> Tuple[bool, str, Optional[str]]:
+def _commit_uploaded_file(
+    target_dir: Path,
+    rel_prefix: str,
+    subdir: str,
+    source_path: Path,
+    original_name: str,
+    last_modified_ms: Optional[int],
+    uploaded_by: str,
+    autostart_postprocess: bool = True,
+) -> Tuple[bool, str, Optional[str]]:
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -2607,17 +2645,44 @@ def _commit_uploaded_file(target_dir: Path, rel_prefix: str, subdir: str, source
     except Exception as e:
         return (False, target.name, f"Queue fail: {target.name}: {e}")
 
-    # Ensure postprocess runs in the container even if the browser refreshes/closes.
+    # Extract/store metadata immediately when each upload finalizes so metadata
+    # can progress during transfer. Downstream phases are still handled later.
+    metadata_written = False
     try:
-        _ensure_upload_postprocess_running(uploaded_by)
+        meta = extract_metadata(target, rel, generate_thumb=False)
+        meta["uploaded_by"] = str(uploaded_by or "")
+        upsert_photo(meta)
+        metadata_written = True
+        try:
+            log_event(
+                "upload_indexed",
+                rel_path=rel,
+                width=meta.get("width"),
+                height=meta.get("height"),
+                has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")),
+                source="upload_commit",
+            )
+        except Exception:
+            pass
     except Exception as e:
         try:
-            log_event("error", rel_path=rel, error=f"postprocess_autostart: {e}")
+            log_event("error", rel_path=rel, error=f"upload_commit_metadata: {e}")
         except Exception:
             pass
 
+    # Ensure postprocess runs in the container even if the browser refreshes/closes.
+    if autostart_postprocess:
+        try:
+            _ensure_upload_postprocess_running(uploaded_by)
+        except Exception as e:
+            try:
+                log_event("error", rel_path=rel, error=f"postprocess_autostart: {e}")
+            except Exception:
+                pass
+
     # Make file visible in UI immediately; full metadata/thumb comes from postprocess.
-    _upsert_uploaded_stub(rel, target, uploaded_by)
+    if not metadata_written:
+        _upsert_uploaded_stub(rel, target, uploaded_by)
     return (True, target.name, None)
 
 
@@ -15110,6 +15175,7 @@ def api_upload_tus_file(upload_id: str):
                 original_name=filename,
                 last_modified_ms=last_modified_ms,
                 uploaded_by=uploaded_by,
+                autostart_postprocess=False,
             )
             try:
                 meta_path.unlink(missing_ok=True)
