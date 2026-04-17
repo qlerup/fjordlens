@@ -9179,6 +9179,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-favorites", nextView === "favorites");
   document.body.classList.toggle("view-steder", nextView === "steder");
   document.body.classList.toggle("view-kameraer", nextView === "kameraer");
+  document.body.classList.toggle("view-personer", nextView === "personer");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
   document.body.classList.toggle("view-photoframe", nextView === "photoframe");
   placeGlobalSearchSortForView();

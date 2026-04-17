@@ -2955,7 +2955,8 @@ body.view-photoframe .topbar { display: none !important; }
 body.view-timeline .topbar,
 body.view-favorites .topbar,
 body.view-steder .topbar,
-body.view-kameraer .topbar { display: none !important; }
+body.view-kameraer .topbar,
+body.view-personer .topbar { display: none !important; }
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
