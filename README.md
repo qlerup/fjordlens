@@ -320,6 +320,10 @@ Then verify Docker GPU passthrough is enabled on the host/runtime and rebuild:
 docker compose up -d --build
 ```
 
+Manual recovery checklist is available in:
+
+- `GPU_RECOVERY_LXC.md`
+
 ## Project Layout
 
 ```txt
