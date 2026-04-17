@@ -585,6 +585,9 @@ body.view-mapper .mapper-header-actions {
 body.view-timeline .timeline-header-actions {
   display: flex;
 }
+body.view-favorites .timeline-header-actions {
+  display: flex;
+}
 .upload-top-status {
   min-width: 240px;
   max-width: 520px;
@@ -2943,7 +2946,8 @@ body.view-settings .gallery-grid { display: none !important; }
 /* Photoframe uses its own content header/panel, so hide the global topbar */
 body.view-photoframe .topbar { display: none !important; }
 
-body.view-timeline .topbar { display: none !important; }
+body.view-timeline .topbar,
+body.view-favorites .topbar { display: none !important; }
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
@@ -3017,17 +3021,21 @@ body.view-timeline .topbar { display: none !important; }
   /* Hold topbar skjult i Indstillinger for at spare plads */
   body.view-settings .topbar { display: none !important; }
 
-  body.view-timeline .topbar { display: none !important; }
-  body.view-timeline .select {
+  body.view-timeline .topbar,
+  body.view-favorites .topbar { display: none !important; }
+  body.view-timeline .select,
+  body.view-favorites .select {
     height: 42px;
     min-height: 42px;
     padding: 0 10px;
   }
-  body.view-timeline .search-shell {
+  body.view-timeline .search-shell,
+  body.view-favorites .search-shell {
     height: 42px;
     min-height: 42px;
   }
-  body.view-timeline .search-shell .search-toggle-btn {
+  body.view-timeline .search-shell .search-toggle-btn,
+  body.view-favorites .search-shell .search-toggle-btn {
     height: 40px;
     min-height: 40px;
     width: 40px;
@@ -3039,7 +3047,8 @@ body.view-timeline .topbar { display: none !important; }
     align-items: center;
     justify-content: center;
   }
-  body.view-timeline .search-shell .search-wrap input {
+  body.view-timeline .search-shell .search-wrap input,
+  body.view-favorites .search-shell .search-wrap input {
     height: 40px;
     padding-top: 0;
     padding-bottom: 0;
