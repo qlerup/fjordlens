@@ -311,7 +311,7 @@ function placeGlobalSearchSortForView() {
   const topbar = els.topbar || document.getElementById("topbar") || document.querySelector(".topbar");
   if (!topbar || !els.searchShell || !els.sort) return;
   const timelineActions = ensureTimelineHeaderActions();
-  const inHeaderBarView = !!(state && (state.view === "timeline" || state.view === "favorites"));
+  const inHeaderBarView = !!(state && (state.view === "timeline" || state.view === "favorites" || state.view === "steder"));
   const target = (inHeaderBarView && timelineActions) ? timelineActions : topbar;
   if (els.searchShell.parentElement !== target) target.appendChild(els.searchShell);
   if (els.sort.parentElement !== target) target.appendChild(els.sort);
@@ -9177,6 +9177,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-settings", nextView === "settings");
   document.body.classList.toggle("view-timeline", nextView === "timeline");
   document.body.classList.toggle("view-favorites", nextView === "favorites");
+  document.body.classList.toggle("view-steder", nextView === "steder");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
   document.body.classList.toggle("view-photoframe", nextView === "photoframe");
   placeGlobalSearchSortForView();

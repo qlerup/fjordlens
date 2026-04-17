@@ -588,6 +588,9 @@ body.view-timeline .timeline-header-actions {
 body.view-favorites .timeline-header-actions {
   display: flex;
 }
+body.view-steder .timeline-header-actions {
+  display: flex;
+}
 .upload-top-status {
   min-width: 240px;
   max-width: 520px;
@@ -2947,7 +2950,8 @@ body.view-settings .gallery-grid { display: none !important; }
 body.view-photoframe .topbar { display: none !important; }
 
 body.view-timeline .topbar,
-body.view-favorites .topbar { display: none !important; }
+body.view-favorites .topbar,
+body.view-steder .topbar { display: none !important; }
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
@@ -3022,20 +3026,24 @@ body.view-favorites .topbar { display: none !important; }
   body.view-settings .topbar { display: none !important; }
 
   body.view-timeline .topbar,
-  body.view-favorites .topbar { display: none !important; }
+  body.view-favorites .topbar,
+  body.view-steder .topbar { display: none !important; }
   body.view-timeline .select,
-  body.view-favorites .select {
+  body.view-favorites .select,
+  body.view-steder .select {
     height: 42px;
     min-height: 42px;
     padding: 0 10px;
   }
   body.view-timeline .search-shell,
-  body.view-favorites .search-shell {
+  body.view-favorites .search-shell,
+  body.view-steder .search-shell {
     height: 42px;
     min-height: 42px;
   }
   body.view-timeline .search-shell .search-toggle-btn,
-  body.view-favorites .search-shell .search-toggle-btn {
+  body.view-favorites .search-shell .search-toggle-btn,
+  body.view-steder .search-shell .search-toggle-btn {
     height: 40px;
     min-height: 40px;
     width: 40px;
@@ -3048,7 +3056,8 @@ body.view-favorites .topbar { display: none !important; }
     justify-content: center;
   }
   body.view-timeline .search-shell .search-wrap input,
-  body.view-favorites .search-shell .search-wrap input {
+  body.view-favorites .search-shell .search-wrap input,
+  body.view-steder .search-shell .search-wrap input {
     height: 40px;
     padding-top: 0;
     padding-bottom: 0;
