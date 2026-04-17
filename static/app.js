@@ -442,10 +442,16 @@ function renderUploadTopProcessStatus(processStatus) {
     const processed = Math.max(0, Number(src.processed || 0));
     const errors = Math.max(0, Number(src.errors || 0));
     const running = !!src.running;
-    const queued = Math.max(0, Number(src.queued || Math.max(0, total - processed)));
+    const inFlight = Math.max(0, Number(src.in_flight || 0));
+    const queued = Math.max(0, Number(src.queued || Math.max(0, total - processed - inFlight)));
     const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
     const statusText = enabled ? `${processed}/${total}${errors ? ` · ${tr('status_errors_label')} ${errors}` : ''}` : tr('upload_proc_off');
-    const queueText = enabled ? tr('upload_proc_queue').replace('{count}', String(queued)) : '';
+    const queueText = enabled
+      ? [
+          tr('upload_proc_queue').replace('{count}', String(queued)),
+          inFlight > 0 ? tr('upload_proc_running').replace('{count}', String(inFlight)) : '',
+        ].filter(Boolean).join(' · ')
+      : '';
     cards.push(
       `<div class="upload-top-proc ${enabled ? '' : 'off'} ${running ? 'run' : ''}" data-proc="${escapeHtml(key)}">` +
       `<div class="upload-top-proc-name">${escapeHtml(_uploadProcessLabel(key))}</div>` +
@@ -665,6 +671,7 @@ const I18N = {
     upload_proc_descriptions: 'Beskrivelser',
     upload_proc_off: 'Slået fra',
     upload_proc_queue: 'i kø: {count}',
+    upload_proc_running: 'kører: {count}',
     view_timeline_title: 'Tidlinje',
     view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
     view_favorites_title: 'Favoritter',
@@ -1274,6 +1281,7 @@ const I18N = {
     upload_proc_descriptions: 'Descriptions',
     upload_proc_off: 'Disabled',
     upload_proc_queue: 'queued: {count}',
+    upload_proc_running: 'running: {count}',
     view_timeline_title: 'Timeline',
     view_timeline_sub: 'Date grouped overview (year/month)',
     view_favorites_title: 'Favorites',

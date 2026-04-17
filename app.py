@@ -1887,6 +1887,7 @@ def _postprocess_uploaded_rels(
                 "total": len(rels),
                 "errors": index_errors,
                 "queued": 0,
+                "in_flight": 0,
             },
             "thumbnails": {
                 "enabled": True,
@@ -1895,6 +1896,7 @@ def _postprocess_uploaded_rels(
                 "total": len(indexed_ok),
                 "errors": 0,
                 "queued": len(indexed_ok),
+                "in_flight": 0,
             },
             "faces": {
                 "enabled": bool(faces_enabled),
@@ -1903,6 +1905,7 @@ def _postprocess_uploaded_rels(
                 "total": len(indexed_ok) if faces_enabled else 0,
                 "errors": 0,
                 "queued": len(indexed_ok) if faces_enabled else 0,
+                "in_flight": 0,
                 "batch_size": int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE),
             },
             "embeddings": {
@@ -1912,6 +1915,7 @@ def _postprocess_uploaded_rels(
                 "total": len(indexed_ok) if ai_enabled else 0,
                 "errors": 0,
                 "queued": len(indexed_ok) if ai_enabled else 0,
+                "in_flight": 0,
             },
             "descriptions": {
                 "enabled": bool(ai_desc_enabled),
@@ -1920,6 +1924,7 @@ def _postprocess_uploaded_rels(
                 "total": len(indexed_ok) if ai_desc_enabled else 0,
                 "errors": 0,
                 "queued": len(indexed_ok) if ai_desc_enabled else 0,
+                "in_flight": 0,
             },
         }
 
@@ -1930,7 +1935,13 @@ def _postprocess_uploaded_rels(
                     out[k] = dict(v)
             return out
 
-        def _update_stage(stage: str, processed_inc: int = 0, errors_inc: int = 0, set_running: Optional[bool] = None) -> None:
+        def _update_stage(
+            stage: str,
+            processed_inc: int = 0,
+            errors_inc: int = 0,
+            in_flight_inc: int = 0,
+            set_running: Optional[bool] = None,
+        ) -> None:
             with process_lock:
                 st = process_status.get(stage)
                 if not st:
@@ -1939,7 +1950,14 @@ def _postprocess_uploaded_rels(
                     st["processed"] = int(st.get("processed") or 0) + int(processed_inc)
                 if errors_inc:
                     st["errors"] = int(st.get("errors") or 0) + int(errors_inc)
-                st["queued"] = max(0, int(st.get("total") or 0) - int(st.get("processed") or 0))
+                if in_flight_inc:
+                    st["in_flight"] = max(0, int(st.get("in_flight") or 0) + int(in_flight_inc))
+                st["queued"] = max(
+                    0,
+                    int(st.get("total") or 0)
+                    - int(st.get("processed") or 0)
+                    - int(st.get("in_flight") or 0),
+                )
                 if set_running is not None:
                     st["running"] = bool(set_running)
 
@@ -2024,7 +2042,7 @@ def _postprocess_uploaded_rels(
                         log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
                     except Exception:
                         pass
-                _update_stage("faces", processed_inc=1, errors_inc=err_inc)
+                _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
                 _emit_parallel(rel)
 
             for start in range(0, len(indexed_ok), int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)):
@@ -2037,6 +2055,7 @@ def _postprocess_uploaded_rels(
                 started_threads: list[threading.Thread] = []
                 for rel in batch:
                     try:
+                        _update_stage("faces", in_flight_inc=1)
                         t = threading.Thread(target=_run_face_job, args=(rel,), daemon=True)
                         t.start()
                         started_threads.append(t)
@@ -2048,7 +2067,7 @@ def _postprocess_uploaded_rels(
                         except Exception:
                             pass
 
-                        _update_stage("faces", processed_inc=1, errors_inc=1)
+                        _update_stage("faces", processed_inc=1, errors_inc=1, in_flight_inc=-1)
                         _emit_parallel(rel)
 
                 for t in started_threads:
@@ -2121,6 +2140,7 @@ def _postprocess_uploaded_rels(
         with process_lock:
             for st in process_status.values():
                 st["running"] = False
+                st["in_flight"] = 0
                 st["queued"] = max(0, int(st.get("total") or 0) - int(st.get("processed") or 0))
         _emit_parallel()
     else:
