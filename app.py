@@ -1849,6 +1849,7 @@ def _postprocess_uploaded_rels(
 
     if mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE:
         process_lock = threading.Lock()
+        faces_metric_lock = threading.Lock()
         process_status = {
             "metadata": {
                 "enabled": True,
@@ -1971,31 +1972,62 @@ def _postprocess_uploaded_rels(
 
         def _faces_worker() -> None:
             nonlocal faces_done, faces_found, faces_errors
+
+            def _run_face_job(rel: str) -> None:
+                nonlocal faces_done, faces_found, faces_errors
+                err_inc = 0
+                found_inc = 0
+                try:
+                    fc = index_faces_for_photo(rel)
+                    try:
+                        if int(fc or 0) > 0:
+                            found_inc = 1
+                    except Exception:
+                        found_inc = 0
+                    with faces_metric_lock:
+                        faces_done += 1
+                        faces_found += found_inc
+                except Exception as e:
+                    err_inc = 1
+                    with faces_metric_lock:
+                        faces_errors += 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
+                    except Exception:
+                        pass
+                _update_stage("faces", processed_inc=1, errors_inc=err_inc)
+                _emit_parallel(rel)
+
             for start in range(0, len(indexed_ok), int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)):
                 batch = indexed_ok[start : start + int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)]
                 try:
-                    log_event("faces_batch_start", batch_size=len(batch))
+                    log_event("faces_batch_start", batch_size=len(batch), concurrent=len(batch))
                 except Exception:
                     pass
+
+                started_threads: list[threading.Thread] = []
                 for rel in batch:
-                    err_inc = 0
                     try:
-                        fc = index_faces_for_photo(rel)
-                        faces_done += 1
-                        try:
-                            if int(fc or 0) > 0:
-                                faces_found += 1
-                        except Exception:
-                            pass
+                        t = threading.Thread(target=_run_face_job, args=(rel,), daemon=True)
+                        t.start()
+                        started_threads.append(t)
                     except Exception as e:
-                        faces_errors += 1
-                        err_inc = 1
+                        with faces_metric_lock:
+                            faces_errors += 1
                         try:
                             log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
                         except Exception:
                             pass
-                    _update_stage("faces", processed_inc=1, errors_inc=err_inc)
-                    _emit_parallel(rel)
+
+                        _update_stage("faces", processed_inc=1, errors_inc=1)
+                        _emit_parallel(rel)
+
+                for t in started_threads:
+                    try:
+                        t.join()
+                    except Exception:
+                        pass
+
             _update_stage("faces", set_running=False)
             _emit_parallel()
 
