@@ -13,6 +13,7 @@ import os
 import sqlite3
 import zipfile
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta
 import time
@@ -2019,9 +2020,11 @@ def _postprocess_uploaded_rels(
 
         def _faces_worker() -> None:
             nonlocal faces_done, faces_found, faces_errors
+            max_concurrency = max(1, int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE))
 
             def _run_face_job(rel: str) -> None:
                 nonlocal faces_done, faces_found, faces_errors
+                _update_stage("faces", in_flight_inc=1)
                 err_inc = 0
                 found_inc = 0
                 try:
@@ -2045,36 +2048,24 @@ def _postprocess_uploaded_rels(
                 _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
                 _emit_parallel(rel)
 
-            for start in range(0, len(indexed_ok), int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)):
-                batch = indexed_ok[start : start + int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)]
-                try:
-                    log_event("faces_batch_start", batch_size=len(batch), concurrent=len(batch))
-                except Exception:
-                    pass
+            try:
+                log_event("faces_batch_start", batch_size=max_concurrency, concurrent=max_concurrency, mode="pool")
+            except Exception:
+                pass
 
-                started_threads: list[threading.Thread] = []
-                for rel in batch:
-                    try:
-                        _update_stage("faces", in_flight_inc=1)
-                        t = threading.Thread(target=_run_face_job, args=(rel,), daemon=True)
-                        t.start()
-                        started_threads.append(t)
-                    except Exception as e:
-                        with faces_metric_lock:
-                            faces_errors += 1
+            try:
+                with ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="faces-pool") as executor:
+                    futures = [executor.submit(_run_face_job, rel) for rel in indexed_ok]
+                    for fut in futures:
                         try:
-                            log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
+                            fut.result()
                         except Exception:
                             pass
-
-                        _update_stage("faces", processed_inc=1, errors_inc=1, in_flight_inc=-1)
-                        _emit_parallel(rel)
-
-                for t in started_threads:
-                    try:
-                        t.join()
-                    except Exception:
-                        pass
+            except Exception as e:
+                try:
+                    log_event("error", error=f"postprocess_faces_pool: {e}")
+                except Exception:
+                    pass
 
             _update_stage("faces", set_running=False)
             _emit_parallel()
