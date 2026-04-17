@@ -4155,6 +4155,104 @@ def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
     return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed}
 
 
+def _normalize_photo_rel_for_delete(rel_path: Any) -> str:
+    try:
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/").strip()
+    except Exception:
+        return ""
+    if not rel or ".." in rel:
+        return ""
+    return rel
+
+
+def _upload_path_to_rel(path: Path) -> str:
+    try:
+        tail = str(path.resolve().relative_to(UPLOAD_DIR.resolve())).replace("\\", "/")
+    except Exception:
+        return ""
+    return _normalize_photo_rel_for_delete(f"uploads/{tail}")
+
+
+def _conversion_related_upload_rels(metadata_json_raw: Any) -> set[str]:
+    out: set[str] = set()
+    try:
+        if isinstance(metadata_json_raw, dict):
+            mj = metadata_json_raw
+        else:
+            raw = str(metadata_json_raw or "").strip()
+            if not raw:
+                return out
+            mj = json.loads(raw)
+    except Exception:
+        return out
+    if not isinstance(mj, dict):
+        return out
+
+    conv = mj.get("conversion")
+    if isinstance(conv, dict):
+        for key in ("from_rel_path", "to_rel_path"):
+            rel = _normalize_photo_rel_for_delete(conv.get(key))
+            if rel.startswith("uploads/"):
+                out.add(rel)
+
+    for key in ("converted_from_rel", "converted_to_rel"):
+        rel = _normalize_photo_rel_for_delete(mj.get(key))
+        if rel.startswith("uploads/"):
+            out.add(rel)
+    return out
+
+
+def _related_photo_rel_paths_for_delete(rel_path: str, metadata_json_raw: Any = None) -> set[str]:
+    rel = _normalize_photo_rel_for_delete(rel_path)
+    if not rel:
+        return set()
+
+    rels: set[str] = {rel}
+
+    # Prefer exact conversion links when present.
+    rels.update(_conversion_related_upload_rels(metadata_json_raw))
+
+    # Fallback for legacy rows without conversion metadata.
+    if rel.startswith("uploads/"):
+        conv_path = _find_existing_converted_for_upload_rel(rel)
+        if conv_path is not None:
+            conv_rel = _upload_path_to_rel(conv_path)
+            if conv_rel:
+                rels.add(conv_rel)
+        if rel.startswith("uploads/converted/"):
+            orig_path = _find_existing_original_for_converted_rel(rel)
+            if orig_path is not None:
+                orig_rel = _upload_path_to_rel(orig_path)
+                if orig_rel:
+                    rels.add(orig_rel)
+
+    return rels
+
+
+def _delete_photo_disk_variants(rel_path: str, metadata_json_raw: Any = None, already_deleted: Optional[set[str]] = None) -> int:
+    removed = 0
+    for rel in _related_photo_rel_paths_for_delete(rel_path, metadata_json_raw):
+        try:
+            fp = _disk_path_from_rel_path(rel)
+            key = str(fp.resolve(strict=False))
+        except Exception:
+            try:
+                key = str(_disk_path_from_rel_path(rel))
+            except Exception:
+                continue
+        if already_deleted is not None and key in already_deleted:
+            continue
+        try:
+            if fp.exists() and fp.is_file():
+                fp.unlink()
+                removed += 1
+                if already_deleted is not None:
+                    already_deleted.add(key)
+        except Exception:
+            continue
+    return removed
+
+
 def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
     ids = sorted({int(pid) for pid in (photo_ids or []) if str(pid).isdigit()})
     if not ids:
@@ -4163,7 +4261,7 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
     with closing(get_conn()) as conn:
         ph = ",".join(["?"] * len(ids))
         rows = conn.execute(
-            f"SELECT id, rel_path, thumb_name FROM photos WHERE id IN ({ph})",
+            f"SELECT id, rel_path, thumb_name, metadata_json FROM photos WHERE id IN ({ph})",
             ids,
         ).fetchall()
         if not rows:
@@ -4171,7 +4269,11 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
 
         resolved_ids = [int(r["id"]) for r in rows]
         thumbs = [str(r["thumb_name"]) for r in rows if r["thumb_name"]]
-        rel_paths = [str(r["rel_path"]) for r in rows if r["rel_path"]]
+        photo_file_refs = [
+            (str(r["rel_path"]), r["metadata_json"])
+            for r in rows
+            if r["rel_path"]
+        ]
 
         ph2 = ",".join(["?"] * len(resolved_ids))
         faces_removed = int(
@@ -4196,14 +4298,9 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
             continue
 
     files_removed = 0
-    for rel in rel_paths:
-        try:
-            fp = _disk_path_from_rel_path(rel)
-            if fp.exists() and fp.is_file():
-                fp.unlink()
-                files_removed += 1
-        except Exception:
-            continue
+    deleted_keys: set[str] = set()
+    for rel, metadata_json_raw in photo_file_refs:
+        files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
 
     return {
         "photos": len(resolved_ids),
@@ -9609,14 +9706,13 @@ def api_duplicates_merge():
 
             # Resolve disk path for the dropped photo
             drop_rel = str(drop["rel_path"] or "")
+            drop_metadata_json = drop["metadata_json"]
             conn.execute("DELETE FROM photos WHERE id=?", (drop_id,))
             conn.commit()
         # Optionally remove file from disk
         if delete_file and drop_rel:
             try:
-                path = _disk_path_from_rel_path(drop_rel)
-                if path.exists():
-                    path.unlink(missing_ok=True)  # type: ignore[call-arg]
+                _delete_photo_disk_variants(drop_rel, drop_metadata_json)
             except Exception:
                 pass
         return jsonify({"ok": True, "kept": keep_id, "removed": drop_id})
@@ -9751,14 +9847,13 @@ def api_duplicates_merge_impl(keep_id: int, drop_id: int):
                 pass
 
             drop_rel = str(drop["rel_path"] or "")
+            drop_metadata_json = drop["metadata_json"]
             conn.execute("DELETE FROM photos WHERE id=?", (drop_id,))
             conn.commit()
         # Remove file from disk if exists
         try:
             if drop_rel:
-                p = _disk_path_from_rel_path(drop_rel)
-                if p.exists():
-                    p.unlink(missing_ok=True)  # type: ignore[call-arg]
+                _delete_photo_disk_variants(drop_rel, drop_metadata_json)
         except Exception:
             pass
         return jsonify({"ok": True, "kept": keep_id, "removed": drop_id})
