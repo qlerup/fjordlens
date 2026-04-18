@@ -5,17 +5,20 @@ from typing import List
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import insightface
-import numpy as np
-import open_clip
 import torch
 import uvicorn
 from PIL import Image
 
+# Import onnxruntime right after torch so CUDA-dependent libs provided by
+# torch wheels are loaded before InsightFace initializes ONNX sessions.
 try:
     import onnxruntime as ort
 except Exception:
     ort = None
+
+import insightface
+import numpy as np
+import open_clip
 
 try:
     # Enable HEIC/HEIF decoding when the wheel is available
