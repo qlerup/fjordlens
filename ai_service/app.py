@@ -53,6 +53,7 @@ FACE_PROVIDER_CHAIN = (
     if FACE_USE_CUDA
     else ["CPUExecutionProvider"]
 )
+FACE_DEVICE_CONFIGURED = "cuda" if FACE_USE_CUDA else "cpu"
 
 
 def _face_detection_runtime_providers_for(app_obj) -> list[str]:
@@ -104,7 +105,7 @@ model.eval()
 face_app = None
 face_detection_available = False
 face_detection_error = None
-face_device = "cuda" if FACE_USE_CUDA else "cpu"
+face_device = FACE_DEVICE_CONFIGURED
 face_providers_kw_supported = None
 if FACE_USE_CUDA:
     cuda_init_errors: list[str] = []
@@ -225,7 +226,7 @@ def health():
     detection_runtime_providers = _face_detection_runtime_providers()
     runtime_face_device = _face_runtime_device()
     runtime_warning = None
-    if face_device == "cuda" and runtime_face_device != "cuda":
+    if FACE_DEVICE_CONFIGURED == "cuda" and runtime_face_device != "cuda":
         runtime_warning = "configured_cuda_but_runtime_cpu"
     return {
         "ok": True,
@@ -238,7 +239,7 @@ def health():
         "pretrained": MODEL_PRETRAINED,
         "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
         "face_device": runtime_face_device,
-        "face_device_configured": face_device,
+        "face_device_configured": FACE_DEVICE_CONFIGURED,
         "face_providers_kw_supported": face_providers_kw_supported,
         "face_provider_chain": FACE_PROVIDER_CHAIN,
         "face_runtime_providers": runtime_providers,

@@ -28,21 +28,21 @@ RUN set -eux; \
       pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; \
     fi
 
-# Install ONNX Runtime with GPU-first fallback:
-# - Prefer onnxruntime-gpu when available
-# - Fall back to CPU package if GPU wheel is unavailable
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install ONNX Runtime last so dependency resolution (e.g. insightface -> onnxruntime)
+# cannot silently replace GPU runtime with CPU runtime.
 ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu>=1.16,<2.0
 ARG ONNXRUNTIME_CPU_SPEC=onnxruntime>=1.16,<2.0
 RUN set -eux; \
+    pip uninstall -y onnxruntime onnxruntime-gpu || true; \
     if pip install --no-cache-dir "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
       pip install --no-cache-dir "${ONNXRUNTIME_CPU_SPEC}"; \
     fi
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
