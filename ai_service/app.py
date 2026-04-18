@@ -107,33 +107,56 @@ except Exception as exc:
 
 
 def _face_runtime_providers() -> list[str]:
-    """Best-effort read of ONNX providers actually bound to loaded face sessions."""
+    """Best-effort read of ONNX providers across loaded face sessions."""
     try:
         if face_app is None:
             return []
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _append_all(providers: list[str]) -> None:
+            for p in providers:
+                sp = str(p)
+                if sp in seen:
+                    continue
+                seen.add(sp)
+                ordered.append(sp)
+
+        # Detection session is most relevant for face indexing throughput.
+        det_model = getattr(face_app, "det_model", None)
+        det_sess = getattr(det_model, "session", None)
+        if det_sess is not None and hasattr(det_sess, "get_providers"):
+            _append_all([str(p) for p in (det_sess.get_providers() or [])])
 
         models = getattr(face_app, "models", None)
         if isinstance(models, dict):
             for model in models.values():
                 sess = getattr(model, "session", None)
                 if sess is not None and hasattr(sess, "get_providers"):
-                    providers = sess.get_providers() or []
-                    if providers:
-                        return [str(p) for p in providers]
+                    _append_all([str(p) for p in (sess.get_providers() or [])])
+        return ordered
+    except Exception:
+        pass
+    return []
 
+
+def _face_detection_runtime_providers() -> list[str]:
+    """Providers bound to detection model session specifically."""
+    try:
+        if face_app is None:
+            return []
         det_model = getattr(face_app, "det_model", None)
         sess = getattr(det_model, "session", None)
         if sess is not None and hasattr(sess, "get_providers"):
-            providers = sess.get_providers() or []
-            if providers:
-                return [str(p) for p in providers]
+            return [str(p) for p in (sess.get_providers() or [])]
     except Exception:
         pass
     return []
 
 
 def _face_runtime_device() -> str:
-    providers = _face_runtime_providers()
+    providers = _face_detection_runtime_providers() or _face_runtime_providers()
     if any(str(p) == "CUDAExecutionProvider" for p in providers):
         return "cuda"
     if providers:
@@ -159,7 +182,11 @@ class EmbedOut(BaseModel):
 @app.get("/health")
 def health():
     runtime_providers = _face_runtime_providers()
+    detection_runtime_providers = _face_detection_runtime_providers()
     runtime_face_device = _face_runtime_device()
+    runtime_warning = None
+    if face_device == "cuda" and runtime_face_device != "cuda":
+        runtime_warning = "configured_cuda_but_runtime_cpu"
     return {
         "ok": True,
         "device": DEVICE,
@@ -174,6 +201,8 @@ def health():
         "face_device_configured": face_device,
         "face_provider_chain": FACE_PROVIDER_CHAIN,
         "face_runtime_providers": runtime_providers,
+        "face_detection_runtime_providers": detection_runtime_providers,
+        "face_runtime_warning": runtime_warning,
         "face_ctx_id": FACE_CTX_ID if runtime_face_device == "cuda" else -1,
         "face_detection_available": face_detection_available,
         "face_detection_error": face_detection_error,
