@@ -54,6 +54,39 @@ FACE_PROVIDER_CHAIN = (
     else ["CPUExecutionProvider"]
 )
 
+
+def _face_detection_runtime_providers_for(app_obj) -> list[str]:
+    """Providers bound to detection model session for a specific FaceAnalysis instance."""
+    try:
+        if app_obj is None:
+            return []
+        det_model = getattr(app_obj, "det_model", None)
+        sess = getattr(det_model, "session", None)
+        if sess is not None and hasattr(sess, "get_providers"):
+            return [str(p) for p in (sess.get_providers() or [])]
+    except Exception:
+        pass
+    return []
+
+
+def _build_face_analysis(preferred_providers: list[str], ctx_id: int):
+    """Create and prepare FaceAnalysis with best-effort provider support details."""
+    providers_kw_supported = True
+    try:
+        app_obj = insightface.app.FaceAnalysis(name="buffalo_l", providers=preferred_providers)
+    except TypeError:
+        # Older insightface versions may not expose providers kwarg.
+        providers_kw_supported = False
+        app_obj = insightface.app.FaceAnalysis(name="buffalo_l")
+
+    try:
+        app_obj.prepare(ctx_id=ctx_id, det_size=(640, 640))
+    except Exception:
+        app_obj.prepare(ctx_id=ctx_id)
+
+    det_runtime_providers = _face_detection_runtime_providers_for(app_obj)
+    return app_obj, providers_kw_supported, det_runtime_providers
+
 app = FastAPI(title="FjordLens AI Service")
 app.add_middleware(
     CORSMiddleware,
@@ -72,37 +105,44 @@ face_app = None
 face_detection_available = False
 face_detection_error = None
 face_device = "cuda" if FACE_USE_CUDA else "cpu"
-try:
-    try:
-        face_app = insightface.app.FaceAnalysis(name="buffalo_l", providers=FACE_PROVIDER_CHAIN)
-    except TypeError:
-        # Older insightface versions might not expose the providers kwarg.
-        face_app = insightface.app.FaceAnalysis(name="buffalo_l")
-
-    try:
-        face_app.prepare(ctx_id=FACE_CTX_ID, det_size=(640, 640))
-    except Exception:
-        # Fallback without det_size if necessary
-        face_app.prepare(ctx_id=FACE_CTX_ID)
-    face_detection_available = True
-except Exception as exc:
-    if FACE_USE_CUDA:
-        # If CUDA init fails for InsightFace, retry CPU instead of failing startup.
+face_providers_kw_supported = None
+if FACE_USE_CUDA:
+    cuda_init_errors: list[str] = []
+    # Try normal chain first, then strict CUDA-only to force explicit failure if CUDA binding fails.
+    for providers, label in ((FACE_PROVIDER_CHAIN, "chain"), (["CUDAExecutionProvider"], "cuda_only")):
         try:
-            try:
-                face_app = insightface.app.FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-            except TypeError:
-                face_app = insightface.app.FaceAnalysis(name="buffalo_l")
-            try:
-                face_app.prepare(ctx_id=-1, det_size=(640, 640))
-            except Exception:
-                face_app.prepare(ctx_id=-1)
+            app_obj, kw_supported, det_runtime_providers = _build_face_analysis(providers, ctx_id=0)
+            if "CUDAExecutionProvider" not in det_runtime_providers:
+                raise RuntimeError(
+                    f"{label}_runtime_providers={det_runtime_providers or ['none']}, providers_kw_supported={kw_supported}"
+                )
+            face_app = app_obj
+            face_detection_available = True
+            face_device = "cuda"
+            face_providers_kw_supported = bool(kw_supported)
+            break
+        except Exception as exc:
+            cuda_init_errors.append(f"{label}:{exc}")
+
+    if not face_detection_available:
+        # Explicit CPU fallback with retained reason for diagnostics.
+        try:
+            app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
+            face_app = app_obj
             face_detection_available = True
             face_device = "cpu"
-            face_detection_error = f"cuda_init_failed: {exc}; fell back to cpu"
+            face_providers_kw_supported = bool(kw_supported)
+            face_detection_error = "cuda_init_failed: " + " | ".join(cuda_init_errors)
         except Exception as exc2:
-            face_detection_error = f"cuda_init_failed: {exc}; cpu_fallback_failed: {exc2}"
-    else:
+            face_detection_error = "cuda_init_failed: " + " | ".join(cuda_init_errors) + f"; cpu_fallback_failed: {exc2}"
+else:
+    try:
+        app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
+        face_app = app_obj
+        face_detection_available = True
+        face_device = "cpu"
+        face_providers_kw_supported = bool(kw_supported)
+    except Exception as exc:
         face_detection_error = str(exc)
 
 
@@ -199,6 +239,7 @@ def health():
         "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
         "face_device": runtime_face_device,
         "face_device_configured": face_device,
+        "face_providers_kw_supported": face_providers_kw_supported,
         "face_provider_chain": FACE_PROVIDER_CHAIN,
         "face_runtime_providers": runtime_providers,
         "face_detection_runtime_providers": detection_runtime_providers,
