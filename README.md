@@ -155,6 +155,49 @@ sh scripts/fresh_setup_lxc.sh
 - runs CUDA + PyTorch GPU smoke tests before `docker compose up`
 - prints exact Proxmox host `pct`/`/etc/pve/lxc/<CTID>.conf` hints if passthrough is still incomplete
 
+### Proxmox Host -> LXC Bind-Mount (Manual quick commands)
+
+Use this if you want NAS-backed uploads with host mount + LXC bind mount.
+
+1. Mount NFS share on the Proxmox host:
+
+```bash
+mkdir -p /mnt/pve/synology-fjordlens
+mount -t nfs 10.10.0.161:/volume1/FjordlensProxmox /mnt/pve/synology-fjordlens
+```
+
+2. Verify host mount:
+
+```bash
+ls -la /mnt/pve/synology-fjordlens
+```
+
+3. Bind-mount share into the LXC (example CTID `1001`):
+
+```bash
+pct set 1001 -mp0 /mnt/pve/synology-fjordlens,mp=/mnt/fjordlens-nfs
+pct restart 1001
+```
+
+4. Enter container and verify:
+
+```bash
+pct enter 1001
+ls -la /mnt/fjordlens-nfs
+```
+
+5. Create upload/library folders inside container:
+
+```bash
+mkdir -p /mnt/fjordlens-nfs/uploads
+mkdir -p /mnt/fjordlens-nfs/photos
+```
+
+Then use these in setup when relevant:
+
+- `UPLOADS_HOST_DIR=/mnt/fjordlens-nfs/uploads`
+- `PHOTO_DIR=/mnt/fjordlens-nfs/photos` (only if `ENABLE_LIBRARY_SOURCE=1`)
+
 ## Photoframe Quick Start
 
 ### 1) Create a frame token in FjordLens
