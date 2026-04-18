@@ -6196,6 +6196,17 @@ function shortRelName(relPath) {
   return parts.length ? parts[parts.length - 1] : rel;
 }
 
+function uploadPostprocessPollDelayMs(statusLike = null) {
+  const status = (statusLike && typeof statusLike === 'object') ? statusLike : {};
+  const mode = String((status.workflow_mode || uploadUiState.workflowMode || 'gentle')).toLowerCase();
+  const phase = String(status.phase || '').toLowerCase();
+  const proc = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
+  if (mode === 'aggressive' && (phase === 'parallel' || phase === 'faces' || !!proc)) {
+    return 250;
+  }
+  return 900;
+}
+
 async function runUploadPostprocess(onProgress = null) {
   const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
   let startData = {};
@@ -6225,7 +6236,6 @@ async function runUploadPostprocess(onProgress = null) {
 
   const deadline = Date.now() + (30 * 60 * 1000);
   while (Date.now() < deadline) {
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
     const statusRes = await fetch('/api/upload/postprocess/status');
     let statusData = {};
     try { statusData = await statusRes.json(); } catch {}
@@ -6254,6 +6264,7 @@ async function runUploadPostprocess(onProgress = null) {
         ai_desc_errors: 0,
       };
     }
+    await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(statusData)));
   }
 
   throw new Error('Efterbehandling timeout');
@@ -6318,7 +6329,7 @@ async function resumeUploadPostprocessAfterRefresh() {
         maybeRefreshPhotosDuringPostprocess(false);
       }
 
-      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(status)));
       status = await readStatus();
     }
 
