@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1
 
 # Ensure CUDA-related shared libs from pip wheels are discoverable at runtime.
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:/usr/local/lib/python3.11/site-packages/torch/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_nvrtc/lib:/usr/local/lib/python3.11/site-packages/nvidia/cufft/lib:/usr/local/lib/python3.11/site-packages/nvidia/curand/lib:/usr/local/lib/python3.11/site-packages/nvidia/cusolver/lib:/usr/local/lib/python3.11/site-packages/nvidia/cusparse/lib:/usr/local/lib/python3.11/site-packages/nvidia/nvjitlink/lib:/usr/local/lib/python3.11/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /srv
 
@@ -39,11 +39,28 @@ RUN pip install --no-cache-dir -r requirements.txt
 ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu>=1.16,<2.0
 ARG ONNXRUNTIME_CPU_SPEC=onnxruntime>=1.16,<2.0
 ARG CUDNN_CU12_SPEC=nvidia-cudnn-cu12>=9,<10
+ARG CUDA_RUNTIME_CU12_SPEC=nvidia-cuda-runtime-cu12>=12,<13
+ARG CUDA_NVRTC_CU12_SPEC=nvidia-cuda-nvrtc-cu12>=12,<13
+ARG CUBLAS_CU12_SPEC=nvidia-cublas-cu12>=12,<13
+ARG CUFFT_CU12_SPEC=nvidia-cufft-cu12>=11,<12
+ARG CURAND_CU12_SPEC=nvidia-curand-cu12>=10,<11
+ARG CUSOLVER_CU12_SPEC=nvidia-cusolver-cu12>=11,<12
+ARG CUSPARSE_CU12_SPEC=nvidia-cusparse-cu12>=12,<13
+ARG NVJITLINK_CU12_SPEC=nvidia-nvjitlink-cu12>=12,<13
 RUN set -eux; \
     pip uninstall -y onnxruntime onnxruntime-gpu || true; \
     if pip install --no-cache-dir "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
-      pip install --no-cache-dir "${CUDNN_CU12_SPEC}"; \
+      pip install --no-cache-dir \
+        "${CUDA_RUNTIME_CU12_SPEC}" \
+        "${CUDA_NVRTC_CU12_SPEC}" \
+        "${CUBLAS_CU12_SPEC}" \
+        "${CUDNN_CU12_SPEC}" \
+        "${CUFFT_CU12_SPEC}" \
+        "${CURAND_CU12_SPEC}" \
+        "${CUSOLVER_CU12_SPEC}" \
+        "${CUSPARSE_CU12_SPEC}" \
+        "${NVJITLINK_CU12_SPEC}"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
       pip install --no-cache-dir "${ONNXRUNTIME_CPU_SPEC}"; \
