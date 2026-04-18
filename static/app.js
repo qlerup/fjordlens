@@ -11426,6 +11426,24 @@ function positionViewerInfoTrigger() {
   if (!viMediaBtn) return;
   if (!els.viewer || els.viewer.classList.contains('hidden')) return;
   try {
+    if (!isMobileViewerLayout()) {
+      const closeBtn = els.viewerClose || document.getElementById('viewerClose');
+      if (closeBtn) {
+        const closeRect = closeBtn.getBoundingClientRect();
+        const btnH = viMediaBtn.offsetHeight || 24;
+        const top = Math.round(closeRect.top + Math.max(0, (closeRect.height - btnH) / 2));
+        const left = Math.round(closeRect.right + 8);
+        viMediaBtn.style.left = `${left}px`;
+        viMediaBtn.style.top = `${top}px`;
+        viMediaBtn.style.right = 'auto';
+        return;
+      }
+      viMediaBtn.style.left = '62px';
+      viMediaBtn.style.top = '12px';
+      viMediaBtn.style.right = 'auto';
+      return;
+    }
+
     const items = getViewerItems();
     const it = items[state.selectedIndex] || {};
     const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
