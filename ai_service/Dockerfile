@@ -1,7 +1,10 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1
+
+# Ensure CUDA-related shared libs from pip wheels are discoverable at runtime.
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:/usr/local/lib/python3.11/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /srv
 
@@ -35,10 +38,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # cannot silently replace GPU runtime with CPU runtime.
 ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu>=1.16,<2.0
 ARG ONNXRUNTIME_CPU_SPEC=onnxruntime>=1.16,<2.0
+ARG CUDNN_CU12_SPEC=nvidia-cudnn-cu12>=9,<10
 RUN set -eux; \
     pip uninstall -y onnxruntime onnxruntime-gpu || true; \
     if pip install --no-cache-dir "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
+      pip install --no-cache-dir "${CUDNN_CU12_SPEC}"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
       pip install --no-cache-dir "${ONNXRUNTIME_CPU_SPEC}"; \
