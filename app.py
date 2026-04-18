@@ -13,7 +13,6 @@ import os
 import sqlite3
 import zipfile
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta
 import time
@@ -2022,12 +2021,13 @@ def _postprocess_uploaded_rels(
             nonlocal faces_done, faces_found, faces_errors
             max_concurrency = max(1, int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE))
 
-            def _run_face_job(rel: str) -> None:
+            def _run_face_job(rel: str, start_event: threading.Event) -> None:
                 nonlocal faces_done, faces_found, faces_errors
-                _update_stage("faces", in_flight_inc=1)
                 err_inc = 0
                 found_inc = 0
                 try:
+                    # Ensure each batch starts work simultaneously.
+                    start_event.wait(timeout=5.0)
                     fc = index_faces_for_photo(rel)
                     try:
                         if int(fc or 0) > 0:
@@ -2048,24 +2048,42 @@ def _postprocess_uploaded_rels(
                 _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
                 _emit_parallel(rel)
 
-            try:
-                log_event("faces_batch_start", batch_size=max_concurrency, concurrent=max_concurrency, mode="pool")
-            except Exception:
-                pass
-
-            try:
-                with ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="faces-pool") as executor:
-                    futures = [executor.submit(_run_face_job, rel) for rel in indexed_ok]
-                    for fut in futures:
-                        try:
-                            fut.result()
-                        except Exception:
-                            pass
-            except Exception as e:
+            for start in range(0, len(indexed_ok), max_concurrency):
+                batch = indexed_ok[start : start + max_concurrency]
+                if not batch:
+                    continue
                 try:
-                    log_event("error", error=f"postprocess_faces_pool: {e}")
+                    log_event("faces_batch_start", batch_size=len(batch), concurrent=len(batch), mode="simultaneous")
                 except Exception:
                     pass
+
+                start_event = threading.Event()
+                started_threads: list[threading.Thread] = []
+                for rel in batch:
+                    try:
+                        t = threading.Thread(target=_run_face_job, args=(rel, start_event), daemon=True)
+                        t.start()
+                        started_threads.append(t)
+                    except Exception as e:
+                        with faces_metric_lock:
+                            faces_errors += 1
+                        try:
+                            log_event("error", rel_path=rel, error=f"postprocess_faces_start: {e}")
+                        except Exception:
+                            pass
+                        _update_stage("faces", processed_inc=1, errors_inc=1)
+                        _emit_parallel(rel)
+
+                if started_threads:
+                    _update_stage("faces", in_flight_inc=len(started_threads))
+                    _emit_parallel()
+                    start_event.set()
+
+                for t in started_threads:
+                    try:
+                        t.join()
+                    except Exception:
+                        pass
 
             _update_stage("faces", set_running=False)
             _emit_parallel()
