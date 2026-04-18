@@ -106,6 +106,41 @@ except Exception as exc:
         face_detection_error = str(exc)
 
 
+def _face_runtime_providers() -> list[str]:
+    """Best-effort read of ONNX providers actually bound to loaded face sessions."""
+    try:
+        if face_app is None:
+            return []
+
+        models = getattr(face_app, "models", None)
+        if isinstance(models, dict):
+            for model in models.values():
+                sess = getattr(model, "session", None)
+                if sess is not None and hasattr(sess, "get_providers"):
+                    providers = sess.get_providers() or []
+                    if providers:
+                        return [str(p) for p in providers]
+
+        det_model = getattr(face_app, "det_model", None)
+        sess = getattr(det_model, "session", None)
+        if sess is not None and hasattr(sess, "get_providers"):
+            providers = sess.get_providers() or []
+            if providers:
+                return [str(p) for p in providers]
+    except Exception:
+        pass
+    return []
+
+
+def _face_runtime_device() -> str:
+    providers = _face_runtime_providers()
+    if any(str(p) == "CUDAExecutionProvider" for p in providers):
+        return "cuda"
+    if providers:
+        return "cpu"
+    return face_device
+
+
 def _to_list(t: torch.Tensor) -> List[float]:
     v = t.detach().cpu().numpy().astype("float32").ravel()
     # Normalize (unit length)
@@ -123,6 +158,8 @@ class EmbedOut(BaseModel):
 
 @app.get("/health")
 def health():
+    runtime_providers = _face_runtime_providers()
+    runtime_face_device = _face_runtime_device()
     return {
         "ok": True,
         "device": DEVICE,
@@ -133,8 +170,11 @@ def health():
         "model": MODEL_NAME,
         "pretrained": MODEL_PRETRAINED,
         "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
-        "face_device": face_device,
-        "face_ctx_id": FACE_CTX_ID if face_device == "cuda" else -1,
+        "face_device": runtime_face_device,
+        "face_device_configured": face_device,
+        "face_provider_chain": FACE_PROVIDER_CHAIN,
+        "face_runtime_providers": runtime_providers,
+        "face_ctx_id": FACE_CTX_ID if runtime_face_device == "cuda" else -1,
         "face_detection_available": face_detection_available,
         "face_detection_error": face_detection_error,
     }
