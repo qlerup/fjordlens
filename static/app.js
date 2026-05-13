@@ -117,6 +117,10 @@
   detailGps: document.getElementById("detailGps"),
   detailCountry: document.getElementById("detailCountry"),
   detailCity: document.getElementById("detailCity"),
+  detailWeather: document.getElementById("detailWeather"),
+  detailWeatherBtn: document.getElementById("detailWeatherBtn"),
+  viWeather: document.getElementById("viWeather"),
+  viWeatherBtn: document.getElementById("viWeatherBtn"),
   detailUploader: document.getElementById("detailUploader"),
   detailAiTags: document.getElementById("detailAiTags"),
   similarBtn: document.getElementById("similarBtn"),
@@ -1228,6 +1232,13 @@ const I18N = {
     update_error: 'Fejl ved opdatering',
     gps_update_failed: 'Kunne ikke opdatere GPS',
     gps_updated: 'GPS opdateret',
+    weather_fetching: 'Henter vejr...',
+    weather_fetch_failed: 'Kunne ikke hente vejr',
+    weather_ready_to_fetch: 'Klar til hentning',
+    weather_missing_inputs: 'Kræver GPS og dato',
+    weather_updated: 'Vejrdata gemt',
+    weather_no_rain: 'Ingen regn',
+    weather_wind: 'Vind',
     similar_fetch_failed: 'Kunne ikke hente lignende',
     similar_fetch_error: 'Fejl ved hentning af lignende',
     similar_view_title: 'Lignende billeder',
@@ -1838,6 +1849,13 @@ const I18N = {
     update_error: 'Update error',
     gps_update_failed: 'Could not update GPS',
     gps_updated: 'GPS updated',
+    weather_fetching: 'Fetching weather...',
+    weather_fetch_failed: 'Could not fetch weather',
+    weather_ready_to_fetch: 'Ready to fetch',
+    weather_missing_inputs: 'Requires GPS and date',
+    weather_updated: 'Weather saved',
+    weather_no_rain: 'No rain',
+    weather_wind: 'Wind',
     similar_fetch_failed: 'Could not load similar photos',
     similar_fetch_error: 'Error while loading similar photos',
     similar_view_title: 'Similar photos',
@@ -2247,6 +2265,8 @@ document.body.classList.add("view-timeline");
 // Map state for "Steder"
 let placesMap = null;
 let placesSourceReady = false;
+const weatherFetches = new Set();
+const weatherAutoTried = new Set();
 
 function showStatus(text, type = "ok") {
   els.status.textContent = text;
@@ -2353,6 +2373,124 @@ function _getItemConversionInfo(item) {
   const fromLabel = fromExt || 'Ukendt';
   const toLabel = toExt || 'Ukendt';
   return { converted: true, label: `${fromLabel} -> ${toLabel}` };
+}
+
+function _itemWeather(item) {
+  const metadata = (item && item.metadata_json && typeof item.metadata_json === 'object') ? item.metadata_json : {};
+  const weather = metadata && metadata.weather && typeof metadata.weather === 'object' ? metadata.weather : null;
+  return weather;
+}
+
+function _numOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function canFetchWeather(item) {
+  if (!item) return false;
+  const lat = _numOrNull(item.gps_lat);
+  const lon = _numOrNull(item.gps_lon);
+  const captured = String(item.captured_at || item.modified_fs || item.created_fs || '').trim();
+  return lat != null && lon != null && !!captured;
+}
+
+function formatWeatherSummary(item) {
+  const weather = _itemWeather(item);
+  if (!weather) return '';
+  const lang = resolveUiLanguage(state.uiLanguage || 'da');
+  const temp = _numOrNull(weather.temperature_2m);
+  const precipitation = _numOrNull(weather.precipitation);
+  const wind = _numOrNull(weather.wind_speed_10m);
+  const label = String((lang === 'en' ? weather.weather_label_en : weather.weather_label_da) || weather.weather_label_da || weather.weather_label_en || '').trim();
+  const tempUnit = String(weather.temperature_2m_unit || '°C');
+  const precipUnit = String(weather.precipitation_unit || 'mm');
+  const windUnit = String(weather.wind_speed_10m_unit || 'm/s');
+  const parts = [];
+  if (temp != null) parts.push(`${temp.toFixed(Math.abs(temp) >= 10 ? 0 : 1)} ${tempUnit}`);
+  if (label) parts.push(label);
+  if (precipitation != null) {
+    parts.push(precipitation > 0 ? `${precipitation.toFixed(precipitation >= 10 ? 0 : 1)} ${precipUnit}` : tr('weather_no_rain'));
+  }
+  if (wind != null) parts.push(`${tr('weather_wind')} ${wind.toFixed(wind >= 10 ? 0 : 1)} ${windUnit}`);
+  return parts.length ? parts.join(' · ') : '';
+}
+
+function setWeatherEl(text, button, item, { fetching = false } = {}) {
+  const canFetch = canFetchWeather(item);
+  const hasWeather = !!_itemWeather(item);
+  const value = fetching ? tr('weather_fetching') : (formatWeatherSummary(item) || (canFetch ? tr('weather_ready_to_fetch') : tr('weather_missing_inputs')));
+  if (text) {
+    text.textContent = value;
+    const weather = _itemWeather(item);
+    const observed = weather && weather.observed_at ? ` · ${weather.observed_at}` : '';
+    const source = weather && weather.source ? ` · ${weather.source}` : '';
+    text.title = weather ? `${value}${observed}${source}` : value;
+  }
+  if (button) {
+    button.classList.toggle('hidden', !canFetch);
+    button.disabled = !canFetch || fetching;
+    button.title = hasWeather ? 'Opdater vejr' : 'Hent vejr';
+  }
+}
+
+function renderWeatherInfo(item, opts = {}) {
+  setWeatherEl(els.detailWeather, els.detailWeatherBtn, item, opts);
+  setWeatherEl(els.viWeather, els.viWeatherBtn, item, opts);
+}
+
+function maybeFetchWeather(item) {
+  if (!canFetchWeather(item) || _itemWeather(item)) return;
+  const id = String(item && item.id ? item.id : '');
+  if (!id || weatherAutoTried.has(id)) return;
+  weatherAutoTried.add(id);
+  fetchWeatherForItem(item, { force: false, silent: true });
+}
+
+async function fetchWeatherForItem(item, { force = false, silent = false } = {}) {
+  const id = Number(item && item.id ? item.id : 0);
+  if (!id || !canFetchWeather(item)) return;
+  const key = `${id}:${force ? 'force' : 'auto'}`;
+  if (weatherFetches.has(key)) return;
+  weatherFetches.add(key);
+  renderWeatherInfo(item, { fetching: true });
+  try {
+    const res = await fetch(`/api/photos/${encodeURIComponent(id)}/weather`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: !!force }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !data.ok) {
+      if (!silent) showStatus((data && data.error) || tr('weather_fetch_failed'), 'err');
+      if (Number(state.selectedId || 0) === id) {
+        if (els.detailWeather) els.detailWeather.textContent = tr('weather_fetch_failed');
+        if (els.viWeather) els.viWeather.textContent = tr('weather_fetch_failed');
+      }
+      return;
+    }
+    const next = data.item;
+    if (next && next.id) {
+      const idx = state.items.findIndex(i => Number(i.id) === Number(next.id));
+      if (idx >= 0) state.items[idx] = next;
+      if (Number(state.selectedId || 0) === Number(next.id)) {
+        renderWeatherInfo(next);
+        if (els.rawMeta) els.rawMeta.textContent = JSON.stringify(next.metadata_json || {}, null, 2);
+      }
+      try {
+        const viewerItems = getViewerItems();
+        const viewerItem = viewerItems[state.selectedIndex];
+        if (viewerItem && Number(viewerItem.id) === Number(next.id)) {
+          viewerItems[state.selectedIndex] = next;
+          renderWeatherInfo(next);
+        }
+      } catch {}
+      if (!silent || force) showStatus(tr('weather_updated'), 'ok');
+    }
+  } catch (e) {
+    if (!silent) showStatus(tr('weather_fetch_failed'), 'err');
+  } finally {
+    weatherFetches.delete(key);
+  }
 }
 
 function renderStats() {
@@ -4147,6 +4285,8 @@ function setDetail(item) {
   const geo = (item.metadata_json && item.metadata_json.geo) ? item.metadata_json.geo : {};
   els.detailCountry.textContent = geo.country || "-";
   els.detailCity.textContent = geo.city || "-";
+  renderWeatherInfo(item);
+  maybeFetchWeather(item);
   els.rawMeta.textContent = JSON.stringify(item.metadata_json || {}, null, 2);
   els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
 
@@ -5463,6 +5603,8 @@ function openViewer(index) {
       setText('viCountry', geo.country || '-');
       setText('viCity', geo.city || '-');
     } catch {}
+    renderWeatherInfo(it);
+    maybeFetchWeather(it);
     const viDL = q('viDownload'); if (viDL) viDL.href = dl;
     try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
   } catch {}
@@ -10430,6 +10572,7 @@ if (els.dateSaveBtn) {
       const item = data.item;
       const idx = state.items.findIndex(i => i.id === item.id);
       if (idx >= 0) state.items[idx] = item;
+      weatherAutoTried.delete(String(item.id));
       showStatus(tr('date_updated'), 'ok');
       renderGrid();
       setDetail(item);
@@ -10441,6 +10584,30 @@ if (els.dateSaveBtn) {
     } catch (e) {
       showStatus(tr('update_error'), 'err');
     }
+  });
+}
+
+function selectedWeatherItem() {
+  const sid = Number(state.selectedId || 0);
+  if (!sid) return null;
+  return (state.items || []).find(i => Number(i.id) === sid) || null;
+}
+
+if (els.detailWeatherBtn) {
+  els.detailWeatherBtn.addEventListener('click', async () => {
+    const item = selectedWeatherItem();
+    if (item) await fetchWeatherForItem(item, { force: true, silent: false });
+  });
+}
+
+if (els.viWeatherBtn) {
+  els.viWeatherBtn.addEventListener('click', async () => {
+    let item = selectedWeatherItem();
+    try {
+      const viewerItems = getViewerItems();
+      item = viewerItems[state.selectedIndex] || item;
+    } catch {}
+    if (item) await fetchWeatherForItem(item, { force: true, silent: false });
   });
 }
 
@@ -10593,6 +10760,7 @@ if (els.gpsSaveBtn) {
       const data = await res.json();
       if (!res.ok || !data.ok) { showStatus(data.error || tr('gps_update_failed'), 'err'); return; }
       const item = data.item; const idx = state.items.findIndex(i => i.id === item.id); if (idx>=0) state.items[idx]=item;
+      weatherAutoTried.delete(String(item.id));
       showStatus(tr('gps_updated'), 'ok'); renderGrid(); setDetail(item);
       if (els.gpsEditWrap) { els.gpsEditWrap.classList.add('hidden'); els.gpsEditWrap.classList.remove('floating'); els.gpsEditWrap.classList.remove('gps-modal');
         try { if (gpsPrevParent) { if (gpsPrevNext) gpsPrevParent.insertBefore(els.gpsEditWrap, gpsPrevNext); else gpsPrevParent.appendChild(els.gpsEditWrap); } } catch {}
@@ -13123,5 +13291,3 @@ els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
-
-

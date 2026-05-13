@@ -259,9 +259,16 @@ Useful options:
 ```bash
 sh scripts/update.sh --no-cache
 sh scripts/update.sh --no-build
-sh scripts/update.sh --no-prune
 sh scripts/update.sh --branch main
 ```
+
+Docker cleanup when you intentionally want to free space:
+
+```bash
+sh scripts/cleanup.sh
+```
+
+The cleanup script prunes Docker build cache and unused Docker objects, but preserves volumes and mounted data directories.
 
 ### Full restart
 

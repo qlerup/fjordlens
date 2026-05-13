@@ -22,7 +22,6 @@ DO_BUILD=1
 NO_CACHE=0
 SKIP_DB_BACKUP=0
 SHOW_LOGS=1
-PRUNE_DOCKER=1
 
 usage() {
 	cat <<EOF
@@ -33,13 +32,14 @@ Normal FjordLens update:
   - pulls the current Git branch with --ff-only
   - runs docker compose up -d --build
   - waits for /api/health
+  - does not prune Docker cache/images; use scripts/cleanup.sh when needed
 
 Options:
   --app-dir DIR        FjordLens app directory (default: auto, then /volume1/docker/fjordlens)
   --branch BRANCH     Git branch to pull (default: current branch, then main)
   --no-build          Do not build images; only docker compose up -d
   --no-cache          Rebuild images without Docker cache
-  --no-prune          Skip Docker prune before update
+  --no-prune          No-op kept for old commands; update no longer prunes
   --skip-db-backup    Skip SQLite backup before updating
   --no-logs           Do not print recent container logs at the end
   -h, --help          Show this help
@@ -75,7 +75,7 @@ while [ "$#" -gt 0 ]; do
 			DO_BUILD=1
 			;;
 		--no-prune)
-			PRUNE_DOCKER=0
+			echo "==> --no-prune er ikke laengere noedvendig; update rydder ikke Docker cache."
 			;;
 		--skip-db-backup)
 			SKIP_DB_BACKUP=1
@@ -132,19 +132,6 @@ docker_cmd() {
 	else
 		docker "$@"
 	fi
-}
-
-prune_docker_space() {
-	if [ "$PRUNE_DOCKER" != "1" ]; then
-		return 0
-	fi
-
-	echo "==> Rydder Docker build-cache og ubrugte objekter (bevarer volumes/data)"
-	docker_cmd builder prune -af || true
-	docker_cmd image prune -af || true
-	docker_cmd container prune -f || true
-	docker_cmd network prune -f || true
-	docker_cmd system df || true
 }
 
 read_env_value() {
@@ -326,8 +313,6 @@ if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ]; then
 else
 	echo "==> Opdateret: ${OLD_REV:-unknown} -> $NEW_REV"
 fi
-
-prune_docker_space
 
 if [ "$NO_CACHE" = "1" ]; then
 	echo "==> Bygger uden Docker cache"

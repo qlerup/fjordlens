@@ -2663,6 +2663,11 @@ body.detail-open .detail-panel {
   text-overflow: ellipsis;
 }
 .detail-val { display:flex; align-items:center; gap:8px; justify-content:flex-end; max-width:60%; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.detail-val.detail-weather-val { max-width:72%; white-space:normal; overflow:visible; }
+.detail-weather-val strong {
+  white-space: normal;
+  line-height: 1.25;
+}
 .accordion { margin-top: 12px; }
 .raw-meta {
   margin-top: 8px;
