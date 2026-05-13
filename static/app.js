@@ -10793,6 +10793,10 @@ let gpsSearchTimer = null;
 
 function initGpsMap(item) {
   if (!els.gpsMapEl) return;
+  if (typeof window.maplibregl === 'undefined') {
+    if (els.gpsCoordText) els.gpsCoordText.textContent = 'Kunne ikke indlaese kort.';
+    return;
+  }
   if (!gpsMap) {
     gpsMap = new maplibregl.Map({
       container: els.gpsMapEl,
@@ -10804,6 +10808,7 @@ function initGpsMap(item) {
     try { gpsMap.on('load', ()=> { gpsMap.getCanvas().style.cursor='crosshair'; }); } catch{}
   }
   ensureEarthLayer();
+  ensurePickLayer();
   try { if (gpsMap.getLayer('esri')) gpsMap.setLayoutProperty('esri','visibility', gpsEarthOn ? 'visible' : 'none'); } catch{}
   applySatelliteLabelMode();
   if (item && item.gps_lon != null && item.gps_lat != null) {
@@ -10844,18 +10849,28 @@ function applySatelliteLabelMode(){
   if (!gpsMap) return;
   try {
     const style = gpsMap.getStyle(); if (!style || !style.layers) return;
+    let hasEarthLayer = false;
+    try { hasEarthLayer = !!gpsMap.getLayer('esri'); } catch {}
+    const useSatellite = !!gpsEarthOn && hasEarthLayer;
     for (const lyr of style.layers) {
       const id = lyr.id; const tp = lyr.type;
-      if (id === 'esri') continue; // keep satellite
+      if (id === 'pickCircle') {
+        try { gpsMap.setLayoutProperty(id, 'visibility', 'visible'); } catch {}
+        continue;
+      }
+      if (id === 'esri') {
+        try { gpsMap.setLayoutProperty(id, 'visibility', useSatellite ? 'visible' : 'none'); } catch {}
+        continue;
+      }
       if (tp && tp !== 'symbol') {
-        if (id !== 'esri' && id !== 'pickCircle') {
-          try { gpsMap.setLayoutProperty(id, 'visibility', 'none'); } catch {}
-        }
+        try { gpsMap.setLayoutProperty(id, 'visibility', useSatellite ? 'none' : 'visible'); } catch {}
       } else if (tp === 'symbol') {
         try { gpsMap.setLayoutProperty(id, 'visibility', 'visible'); } catch {}
-        try { gpsMap.setPaintProperty(id, 'text-color', '#000000'); } catch {}
-        try { gpsMap.setPaintProperty(id, 'text-halo-color', '#ffffff'); } catch {}
-        try { gpsMap.setPaintProperty(id, 'text-halo-width', 0.8); } catch {}
+        if (useSatellite) {
+          try { gpsMap.setPaintProperty(id, 'text-color', '#000000'); } catch {}
+          try { gpsMap.setPaintProperty(id, 'text-halo-color', '#ffffff'); } catch {}
+          try { gpsMap.setPaintProperty(id, 'text-halo-width', 0.8); } catch {}
+        }
       }
     }
   } catch {}
@@ -10880,7 +10895,7 @@ function setGpsPoint(lon, lat, opts={}){
   if (opts.fly) { try { gpsMap.jumpTo({ center:[lon,lat], zoom:11 }); } catch {} }
 }
 if (els.editGpsBtn) {
-  els.editGpsBtn.addEventListener('click', () => {
+  els.editGpsBtn.addEventListener('click', async () => {
     // Safety: remove any stray backdrops before opening
     try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
     if (els.gpsEditWrap) {
@@ -10898,6 +10913,11 @@ if (els.editGpsBtn) {
       els.gpsEditWrap.classList.remove('hidden');
       els.gpsEditWrap.classList.add('gps-modal');
       gpsBackdrop.classList.add('active');
+      const mapReady = await ensureMaplibre();
+      if (!mapReady || typeof window.maplibregl === 'undefined') {
+        if (els.gpsCoordText) els.gpsCoordText.textContent = 'Kunne ikke indlaese kort.';
+        return;
+      }
       const item = state.items.find(i => i.id === state.selectedId);
       initGpsMap(item);
       // Ensure correct size/transform after showing modal (fixes wrong click coords)
