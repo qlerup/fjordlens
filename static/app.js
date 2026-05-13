@@ -11697,6 +11697,11 @@ function resetViewerInfoDragState() {
   viewerInfoDragStartTime = 0;
 }
 
+function setViewerInfoOpenLayout(open) {
+  if (!els.viewer) return;
+  els.viewer.classList.toggle('viewer-info-open', !!open && !isMobileViewerLayout());
+}
+
 function positionViewerInfoPanel() {
   if (!viPanel) return;
   if (isMobileViewerLayout()) {
@@ -11712,7 +11717,11 @@ function positionViewerInfoPanel() {
     if (!r) return;
     const w = viPanel.offsetWidth || 360;
     const underOffset = 8;
-    viPanel.style.left = `${Math.round(r.right - w - underOffset)}px`;
+    const viewportPad = 16;
+    const preferredVisibleLeft = Math.round(r.right - underOffset);
+    const maxVisibleLeft = Math.max(viewportPad, Math.round(window.innerWidth - w - viewportPad));
+    const visibleLeft = Math.min(preferredVisibleLeft, maxVisibleLeft);
+    viPanel.style.left = `${Math.round(visibleLeft - w)}px`;
     viPanel.style.right = 'auto';
     const vPad = 16;
     const top = Math.max(0, Math.round(r.top + vPad));
@@ -11754,6 +11763,7 @@ function toggleViewerInfoPanel(forceOpen = null) {
   viPanel.style.transform = '';
   const shouldOpen = forceOpen === null ? !viPanel.classList.contains('open') : !!forceOpen;
   if (!shouldOpen) {
+    setViewerInfoOpenLayout(false);
     viPanel.classList.remove('open');
     if (isMobileViewerLayout()) {
       viPanel.classList.add('hidden');
@@ -11767,10 +11777,14 @@ function toggleViewerInfoPanel(forceOpen = null) {
     }, isMobileViewerLayout() ? 260 : 220);
     return;
   }
+  setViewerInfoOpenLayout(true);
   viPanel.classList.remove('hidden');
+  try { void els.viewer.offsetWidth; } catch {}
   positionViewerInfoPanel();
+  positionViewerInfoTrigger();
   void viPanel.offsetWidth;
   viPanel.classList.add('open');
+  scheduleViewerInfoPosition();
 }
 
 if (viBtn && viPanel) {
@@ -11899,6 +11913,7 @@ closeViewer = function(){
       viPanel.style.transform = '';
       resetViewerInfoDragState();
     }
+    setViewerInfoOpenLayout(false);
     if (viewerMenu) { viewerMenu.classList.add('hidden'); }
     cleanupViewerMediaAnimation();
     removeViewerSwipePreview();
@@ -11912,6 +11927,7 @@ closeViewer = function(){
 window.addEventListener('resize', ()=>{
   try {
     if (!els.viewer || els.viewer.classList.contains('hidden')) return;
+    setViewerInfoOpenLayout(isViewerInfoPanelOpen());
     positionViewerInfoPanel();
     positionViewerInfoTrigger();
   } catch {}
