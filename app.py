@@ -193,9 +193,19 @@ PHOTOFRAME_WIFI_COUNTRY_CHOICES = (
     ("ES", "Spanien"),
     ("IT", "Italien"),
 )
+
+
+def _normalize_ai_desc_model(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"qwen", "qwen-vl", "qwen_vl", "qwen2.5-vl", "qwen2_5_vl"}:
+        return "qwen"
+    return "light"
+
+
 AI_ENV_ENABLED_DEFAULT = (os.environ.get("AI_ENABLED", "1") not in {"0", "false", "False"})
 AI_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_AUTO_INGEST", "0") in {"1", "true", "True"})
 AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in {"1", "true", "True"})
+AI_DESC_MODEL_ENV_DEFAULT = _normalize_ai_desc_model(os.environ.get("AI_DESC_MODEL", "light"))
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
 HEIC_CONVERT_ON_UPLOAD_DEFAULT = (os.environ.get("HEIC_CONVERT_ON_UPLOAD", "0") in {"1", "true", "True"})
 UPLOAD_WORKFLOW_MODE_GENTLE = "gentle"
@@ -755,12 +765,15 @@ def _ai_runtime_info() -> Dict[str, Any]:
     health = _ai_health_cached()
     ai_device_raw = health.get("device")
     face_device_raw = health.get("face_device") or ai_device_raw
+    qwen_device_raw = health.get("qwen_device") or ai_device_raw
     return {
         "service_ok": bool(health.get("ok")),
         "ai_device": _runtime_device_label(ai_device_raw),
         "face_device": _runtime_device_label(face_device_raw),
+        "qwen_device": _runtime_device_label(qwen_device_raw),
         "ai_device_raw": ai_device_raw,
         "face_device_raw": face_device_raw,
+        "qwen_device_raw": qwen_device_raw,
     }
 
 
@@ -803,6 +816,58 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
             log_event("ai_http_error", rel_path=str(path), error=f"status:{r.status_code}{detail}")
     except Exception as e:
         log_event("ai_http_error", rel_path=str(path), error=str(e))
+    return None
+
+
+def _normalize_ai_desc_tags(value: Any, max_tags: int = 10) -> list[str]:
+    out: list[str] = []
+    if isinstance(value, str):
+        parts = re.split(r"[,;|]", value)
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        parts = []
+    for part in parts:
+        tag = str(part or "").strip().lower()
+        if not tag or tag in out:
+            continue
+        out.append(tag)
+        if len(out) >= max_tags:
+            break
+    return out
+
+
+def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        rel_guess = None
+        try:
+            rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
+        except Exception:
+            rel_guess = path.name
+        ai_src = ensure_viewable_copy(path, rel_guess)
+        with ai_src.open("rb") as f:
+            files = {"file": (ai_src.name, f, "application/octet-stream")}
+            r = requests.post(f"{AI_URL}/describe/image", files=files, timeout=180)
+        if r.ok:
+            js = r.json() or {}
+            caption = str(js.get("caption") or "").strip()
+            tags = _normalize_ai_desc_tags(js.get("tags"))
+            if not caption and not tags:
+                return None
+            return {
+                "caption": caption or None,
+                "tags": tags,
+            }
+        detail = ""
+        try:
+            body = " ".join(str(r.text or "").split())
+            if body:
+                detail = f" body:{body[:240]}"
+        except Exception:
+            detail = ""
+        log_event("ai_http_error", rel_path=str(path), error=f"describe_status:{r.status_code}{detail}")
+    except Exception as e:
+        log_event("ai_http_error", rel_path=str(path), error=f"describe_error:{e}")
     return None
 
 
@@ -3229,6 +3294,9 @@ def init_db() -> None:
             row2a = conn.execute("SELECT value FROM settings WHERE key='ai_desc_auto_ingest'").fetchone()
             if not row2a:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_auto_ingest", "1" if AI_DESC_ENV_AUTO_INGEST_DEFAULT else "0"))
+            row2aa = conn.execute("SELECT value FROM settings WHERE key='ai_desc_model'").fetchone()
+            if not row2aa:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_model", AI_DESC_MODEL_ENV_DEFAULT))
             row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
             if not row2b:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
@@ -3787,6 +3855,10 @@ def raw_keep_originals_enabled() -> bool:
 
 def ai_desc_auto_ingest_enabled() -> bool:
     return _get_setting_bool("ai_desc_auto_ingest", AI_DESC_ENV_AUTO_INGEST_DEFAULT)
+
+
+def ai_desc_model_enabled() -> str:
+    return _normalize_ai_desc_model(_get_setting("ai_desc_model", AI_DESC_MODEL_ENV_DEFAULT))
 
 
 def faces_auto_index_enabled() -> bool:
@@ -13496,7 +13568,7 @@ def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
         log_event("ai_embed_fail", rel_path=rel_path, source="upload", error=str(e))
 
 
-def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
+def _describe_one_photo_light(photo_id: int, rel_path: str) -> bool:
     emb = None
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT embedding_json FROM photos WHERE id=?", (photo_id,)).fetchone()
@@ -13528,6 +13600,34 @@ def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
         )
         conn.commit()
     return True
+
+
+def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
+    try:
+        src = _disk_path_from_rel_path(rel_path)
+        if not src.exists() or not src.is_file():
+            return False
+        result = _ai_describe_image_path(src)
+        if not result:
+            return False
+        tags = _normalize_ai_desc_tags(result.get("tags"))
+        caption = str(result.get("caption") or "").strip() or _build_desc_caption(tags)
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE photos SET ai_desc_tags=?, ai_desc_caption=? WHERE id=?",
+                (json.dumps(tags or [], ensure_ascii=False), caption, photo_id),
+            )
+            conn.commit()
+        return bool(caption or tags)
+    except Exception:
+        return False
+
+
+def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
+    model = ai_desc_model_enabled()
+    if model == "qwen":
+        return _describe_one_photo_qwen(photo_id, rel_path)
+    return _describe_one_photo_light(photo_id, rel_path)
 
 
 def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
@@ -13636,7 +13736,7 @@ def api_ai_describe_ingest():
     scope = (request.args.get("scope") or "").strip().lower()
     _set_setting("ai_desc_auto_ingest", "1")
     if scope == "new":
-        return jsonify({"ok": True, "started": False, "running": False, "auto_ingest": True, "scope": "new"})
+        return jsonify({"ok": True, "started": False, "running": False, "auto_ingest": True, "scope": "new", "model": ai_desc_model_enabled()})
     scan_stop_event.clear()
 
     def run():
@@ -13644,7 +13744,7 @@ def api_ai_describe_ingest():
 
     ai_desc_thread = threading.Thread(target=run, daemon=True)
     ai_desc_thread.start()
-    return jsonify({"ok": True, "started": True, "auto_ingest": True, "scope": (scope or "all")})
+    return jsonify({"ok": True, "started": True, "auto_ingest": True, "scope": (scope or "all"), "model": ai_desc_model_enabled()})
 
 
 @app.route("/api/ai/describe/stop", methods=["POST"])
@@ -13659,23 +13759,75 @@ def api_ai_describe_stop():
 @app.route("/api/ai/describe/status")
 def api_ai_describe_status():
     rt = _ai_runtime_info()
+    model = ai_desc_model_enabled()
     resp: Dict[str, Any] = {
         "ok": True,
         "running": ai_desc_running,
         "auto_ingest": ai_desc_auto_ingest_enabled(),
+        "model": model,
+        "model_options": ["light", "qwen"],
         **ai_desc_counts,
         "runtime": {
             "service_ok": rt["service_ok"],
-            "describe": rt["ai_device"],
+            "describe": (rt["qwen_device"] if model == "qwen" else rt["ai_device"]),
             "ai": rt["ai_device"],
+            "qwen": rt["qwen_device"],
             "faces": rt["face_device"],
             "ai_raw": rt["ai_device_raw"],
+            "qwen_raw": rt["qwen_device_raw"],
             "faces_raw": rt["face_device_raw"],
         },
     }
     if not ai_desc_running and last_ai_desc_result:
         resp["last"] = last_ai_desc_result
     return jsonify(resp)
+
+
+@app.route("/api/ai/describe/model", methods=["POST"])
+def api_ai_describe_model():
+    global ai_desc_thread
+    payload = request.get_json(silent=True) or {}
+    model = _normalize_ai_desc_model(payload.get("model"))
+    scope = str(payload.get("scope") or "new").strip().lower()
+    if scope not in {"new", "all"}:
+        scope = "new"
+
+    _set_setting("ai_desc_model", model)
+
+    started = False
+    running_now = bool(ai_desc_running or (ai_desc_thread and ai_desc_thread.is_alive()))
+    auto_enabled = ai_desc_auto_ingest_enabled()
+
+    if scope == "all" and auto_enabled:
+        if running_now:
+            return jsonify({"ok": False, "error": "AI description ingest already running", "running": True, "model": model}), 409
+        try:
+            with closing(get_conn()) as conn:
+                conn.execute("UPDATE photos SET ai_desc_tags=NULL, ai_desc_caption=NULL")
+                conn.commit()
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"clear_desc_failed: {e}", "model": model}), 500
+
+        scan_stop_event.clear()
+
+        def run():
+            _describe_missing_photos(stop_event=scan_stop_event)
+
+        ai_desc_thread = threading.Thread(target=run, daemon=True)
+        ai_desc_thread.start()
+        started = True
+        running_now = True
+
+    return jsonify(
+        {
+            "ok": True,
+            "model": model,
+            "scope": scope,
+            "auto_ingest": ai_desc_auto_ingest_enabled(),
+            "running": running_now,
+            "started": started,
+        }
+    )
 
 
 @app.route("/api/ai/search")

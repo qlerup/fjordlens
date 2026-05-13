@@ -387,6 +387,17 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.ai-desc-model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px 0 8px;
+}
+.ai-desc-model-row .ai-desc-model-select {
+  width: min(320px, 100%);
+  min-width: 180px;
+}
 .input-number {
   background: var(--panel);
   border: 1px solid var(--border);

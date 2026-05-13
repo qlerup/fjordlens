@@ -1,7 +1,9 @@
 import io
+import json
 import os
+import re
 import threading
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +24,26 @@ import numpy as np
 import open_clip
 
 try:
+    from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+    try:
+        from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
+    except Exception:
+        Qwen2_5_VLForConditionalGeneration = None
+except Exception:
+    AutoModelForVision2Seq = None
+    AutoProcessor = None
+    BitsAndBytesConfig = None
+    Qwen2_5_VLForConditionalGeneration = None
+
+try:
+    import bitsandbytes as bnb  # type: ignore
+
+    _BITSANDBYTES_AVAILABLE = True
+except Exception:
+    bnb = None
+    _BITSANDBYTES_AVAILABLE = False
+
+try:
     # Enable HEIC/HEIF decoding when the wheel is available
     from pillow_heif import register_heif_opener  # type: ignore
 
@@ -31,6 +53,24 @@ except Exception:
 
 MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
+QWEN_VL_MODEL = str(os.environ.get("QWEN_VL_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct") or "Qwen/Qwen2.5-VL-3B-Instruct").strip()
+QWEN_VL_ENABLE_4BIT = str(os.environ.get("QWEN_VL_4BIT", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+QWEN_VL_PROMPT = str(
+    os.environ.get(
+        "QWEN_VL_PROMPT",
+        (
+            "Du analyserer et foto. Returner kun JSON med felterne caption og tags. "
+            "caption skal være en kort dansk sætning (maks 18 ord). "
+            "tags skal være 3-8 korte danske nøgleord i lower-case."
+        ),
+    )
+    or ""
+).strip()
+try:
+    QWEN_VL_MAX_NEW_TOKENS = int(os.environ.get("QWEN_VL_MAX_NEW_TOKENS", "120") or 120)
+except Exception:
+    QWEN_VL_MAX_NEW_TOKENS = 120
+QWEN_VL_MAX_NEW_TOKENS = max(32, min(256, QWEN_VL_MAX_NEW_TOKENS))
 DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
 if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
@@ -116,6 +156,12 @@ embed_device_active = DEVICE
 embed_runtime_warning = None
 _embed_cpu_model = None
 _embed_cpu_preprocess = None
+_qwen_lock = threading.RLock()
+_qwen_model = None
+_qwen_processor = None
+_qwen_runtime_device = "unavailable"
+_qwen_runtime_error = None
+_qwen_quantization = "none"
 
 # Load InsightFace for face detection/recognition
 face_app = None
@@ -293,6 +339,256 @@ def _warmup_embed_runtime() -> None:
 _warmup_embed_runtime()
 
 
+def _infer_qwen_runtime_device(model_obj: Any) -> str:
+    try:
+        device_map = getattr(model_obj, "hf_device_map", None)
+        if isinstance(device_map, dict):
+            vals = [str(v).lower() for v in device_map.values()]
+            if any("cuda" in v for v in vals):
+                return "cuda"
+            if any("cpu" in v for v in vals):
+                return "cpu"
+        p = next(model_obj.parameters())
+        dev = str(getattr(p, "device", "") or "").lower()
+        if "cuda" in dev:
+            return "cuda"
+        if "cpu" in dev:
+            return "cpu"
+    except Exception:
+        pass
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    candidate = raw[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[str, List[str]]:
+    caption = str(caption_value or "").strip()
+    tags: List[str] = []
+    if isinstance(tags_value, (list, tuple)):
+        for v in tags_value:
+            t = str(v or "").strip().lower()
+            if not t or t in tags:
+                continue
+            tags.append(t)
+            if len(tags) >= 10:
+                break
+    elif isinstance(tags_value, str):
+        for part in re.split(r"[,;|]", tags_value):
+            t = str(part or "").strip().lower()
+            if not t or t in tags:
+                continue
+            tags.append(t)
+            if len(tags) >= 10:
+                break
+
+    if not tags and caption:
+        stop = {
+            "og",
+            "det",
+            "der",
+            "som",
+            "med",
+            "for",
+            "the",
+            "and",
+            "with",
+            "this",
+            "that",
+            "photo",
+            "image",
+            "billede",
+        }
+        for token in re.findall(r"[a-zA-Z0-9æøåÆØÅ\-]{3,}", caption.lower()):
+            if token in stop or token in tags:
+                continue
+            tags.append(token)
+            if len(tags) >= 8:
+                break
+
+    return caption, tags
+
+
+def _parse_qwen_output_text(text: str) -> tuple[str, List[str]]:
+    parsed = _extract_first_json_object(text)
+    if parsed is not None:
+        return _normalize_caption_and_tags(parsed.get("caption"), parsed.get("tags"))
+    return _normalize_caption_and_tags(text, None)
+
+
+def _ensure_qwen_model_loaded():
+    global _qwen_model, _qwen_processor, _qwen_runtime_device, _qwen_runtime_error, _qwen_quantization
+    with _qwen_lock:
+        if _qwen_model is not None and _qwen_processor is not None:
+            return _qwen_model, _qwen_processor
+
+        if AutoProcessor is None or AutoModelForVision2Seq is None:
+            _qwen_runtime_error = "transformers_not_installed"
+            raise RuntimeError(_qwen_runtime_error)
+
+        model_kwargs: Dict[str, Any] = {
+            "device_map": "auto",
+            "trust_remote_code": True,
+        }
+        if torch.cuda.is_available():
+            model_kwargs["torch_dtype"] = torch.float16
+        else:
+            model_kwargs["torch_dtype"] = torch.float32
+
+        quantization = "none"
+        if (
+            torch.cuda.is_available()
+            and QWEN_VL_ENABLE_4BIT
+            and BitsAndBytesConfig is not None
+            and _BITSANDBYTES_AVAILABLE
+        ):
+            try:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+                quantization = "4bit"
+            except Exception:
+                quantization = "none"
+
+        try:
+            model_cls = Qwen2_5_VLForConditionalGeneration or AutoModelForVision2Seq
+            model_obj = model_cls.from_pretrained(QWEN_VL_MODEL, **model_kwargs)
+            processor_obj = AutoProcessor.from_pretrained(QWEN_VL_MODEL, trust_remote_code=True)
+            model_obj.eval()
+
+            _qwen_model = model_obj
+            _qwen_processor = processor_obj
+            _qwen_runtime_device = _infer_qwen_runtime_device(model_obj)
+            _qwen_runtime_error = None
+            _qwen_quantization = quantization
+            return _qwen_model, _qwen_processor
+        except Exception as exc:
+            _qwen_runtime_error = str(exc)[:800]
+            _qwen_runtime_device = "error"
+            _qwen_model = None
+            _qwen_processor = None
+            _qwen_quantization = "none"
+            raise
+
+
+def _qwen_input_device(model_obj: Any) -> str:
+    try:
+        device_map = getattr(model_obj, "hf_device_map", None)
+        if isinstance(device_map, dict):
+            vals = [str(v).lower() for v in device_map.values()]
+            if any("cuda" in v for v in vals):
+                return "cuda"
+            if any("cpu" in v for v in vals):
+                return "cpu"
+    except Exception:
+        pass
+    try:
+        p = next(model_obj.parameters())
+        dev = str(getattr(p, "device", "") or "").strip()
+        if dev:
+            return dev
+    except Exception:
+        pass
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
+    model_obj, processor_obj = _ensure_qwen_model_loaded()
+
+    prompt_text = QWEN_VL_PROMPT
+    fallback_prompt_text = f"<|vision_start|><|image_pad|><|vision_end|>\n{QWEN_VL_PROMPT}"
+    if hasattr(processor_obj, "apply_chat_template"):
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": img},
+                        {"type": "text", "text": prompt_text},
+                    ],
+                }
+            ]
+            prompt_text = processor_obj.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            prompt_text = fallback_prompt_text
+
+    try:
+        inputs = processor_obj(
+            text=[prompt_text],
+            images=[img],
+            return_tensors="pt",
+        )
+    except Exception:
+        inputs = processor_obj(
+            text=[fallback_prompt_text],
+            images=[img],
+            return_tensors="pt",
+        )
+
+    device = _qwen_input_device(model_obj)
+    for key, value in list(inputs.items()):
+        if hasattr(value, "to"):
+            try:
+                inputs[key] = value.to(device)
+            except Exception:
+                pass
+
+    with torch.no_grad():
+        output_ids = model_obj.generate(
+            **inputs,
+            max_new_tokens=QWEN_VL_MAX_NEW_TOKENS,
+            do_sample=False,
+        )
+
+    prompt_len = 0
+    try:
+        in_ids = inputs.get("input_ids")
+        if in_ids is not None and hasattr(in_ids, "shape"):
+            prompt_len = int(in_ids.shape[-1])
+    except Exception:
+        prompt_len = 0
+
+    decode_ids = output_ids
+    try:
+        if prompt_len > 0 and hasattr(output_ids, "shape") and int(output_ids.shape[-1]) > prompt_len:
+            decode_ids = output_ids[:, prompt_len:]
+    except Exception:
+        decode_ids = output_ids
+
+    raw_text = ""
+    try:
+        decoded = processor_obj.batch_decode(decode_ids, skip_special_tokens=True)
+        if decoded:
+            raw_text = str(decoded[0] or "").strip()
+    except Exception:
+        raw_text = ""
+
+    caption, tags = _parse_qwen_output_text(raw_text)
+    return {
+        "caption": caption,
+        "tags": tags,
+        "raw": raw_text,
+    }
+
+
 class TextIn(BaseModel):
     text: str
 
@@ -331,6 +627,13 @@ def health():
         "face_ctx_id": FACE_CTX_ID if runtime_face_device == "cuda" else -1,
         "face_detection_available": face_detection_available,
         "face_detection_error": face_detection_error,
+        "qwen_model": QWEN_VL_MODEL,
+        "qwen_loaded": bool(_qwen_model is not None and _qwen_processor is not None),
+        "qwen_device": _qwen_runtime_device,
+        "qwen_quantization": _qwen_quantization,
+        "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
+        "qwen_max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
+        "qwen_runtime_error": _qwen_runtime_error,
     }
 
 
@@ -353,6 +656,28 @@ def embed_image(file: UploadFile = File(...)):
         return {"embedding": _encode_image_with_fallback(img)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"embed_image_failed: {exc}")
+
+
+@app.post("/describe/image")
+def describe_image(file: UploadFile = File(...)):
+    data = file.file.read()
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_image: {exc}")
+
+    try:
+        out = _qwen_describe_image(img)
+        return {
+            "ok": True,
+            "caption": out.get("caption") or None,
+            "tags": out.get("tags") or [],
+            "model": QWEN_VL_MODEL,
+            "device": _qwen_runtime_device,
+            "quantization": _qwen_quantization,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"describe_image_failed: {exc}")
 
 
 @app.post("/faces/detect")

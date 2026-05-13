@@ -19,8 +19,10 @@
   aiEmbedDesc: document.getElementById("aiEmbedDesc"),
   aiDescTitle: document.getElementById("aiDescTitle"),
   aiDescDesc: document.getElementById("aiDescDesc"),
+  aiDescModelLabel: document.getElementById("aiDescModelLabel"),
   aiDescribeToggle: document.getElementById("aiDescribeToggle"),
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
+  aiDescribeModelSelect: document.getElementById("aiDescribeModelSelect"),
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiDescribeRuntime: document.getElementById("aiDescribeRuntime"),
   aiFacesTitle: document.getElementById("aiFacesTitle"),
@@ -860,6 +862,9 @@ const I18N = {
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
     ai_desc_title: 'AI beskrivelser',
     ai_desc_desc: 'Finder handlinger/scener (fx personer der svømmer) til bedre søgning.',
+    ai_desc_model_label: 'Model',
+    ai_desc_model_light: 'Light (hurtig)',
+    ai_desc_model_qwen: 'Qwen (bedre kvalitet)',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
@@ -1065,6 +1070,7 @@ const I18N = {
     scan_modal_start: 'Start scan',
     ai_scope_title_ai: 'Start AI-embeddings',
     ai_scope_title_desc: 'Start AI beskrivelser',
+    ai_scope_title_desc_model: 'Skift model for AI beskrivelser',
     ai_scope_title_faces: 'Start ansigtsindeksering',
     ai_scope_text: 'Vil du køre på alle eksisterende filer, eller kun på nye uploads fremover?',
     ai_scope_all: 'Alle eksisterende',
@@ -1216,9 +1222,13 @@ const I18N = {
     ai_desc_enabled_new_uploads: 'AI-beskrivelser aktiveret for nye uploads fremover.',
     ai_desc_started_bg: 'AI-beskrivelser er startet i baggrunden.',
     ai_desc_start_error: 'Fejl ved start af AI-beskrivelser.',
+    ai_desc_model_changed_new: 'Beskrivelsesmodel ændret for nye uploads fremover.',
+    ai_desc_model_changed_all: 'Beskrivelsesmodel ændret. Genkører på alle eksisterende filer i baggrunden.',
+    ai_desc_model_change_failed: 'Kunne ikke ændre beskrivelsesmodel.',
     ai_desc_stop_failed: 'Kunne ikke stoppe AI-beskrivelser.',
     ai_desc_stopped: 'AI-beskrivelser stoppet.',
     ai_desc_stop_error: 'Fejl ved stop af AI-beskrivelser.',
+    status_model_label: 'Model',
     faces_starting: 'Starter ansigtsindeksering…',
     faces_start_failed: 'Kunne ikke starte ansigtsindeksering',
     faces_enabled_new_uploads: 'Ansigtsindeksering aktiveret for nye uploads fremover.',
@@ -1477,6 +1487,9 @@ const I18N = {
     ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
     ai_desc_title: 'AI descriptions',
     ai_desc_desc: 'Finds actions/scenes (for example people swimming) for better search.',
+    ai_desc_model_label: 'Model',
+    ai_desc_model_light: 'Light (fast)',
+    ai_desc_model_qwen: 'Qwen (better quality)',
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
     dns_title: 'DNS',
@@ -1682,6 +1695,7 @@ const I18N = {
     scan_modal_start: 'Start scan',
     ai_scope_title_ai: 'Start AI embeddings',
     ai_scope_title_desc: 'Start AI descriptions',
+    ai_scope_title_desc_model: 'Change AI description model',
     ai_scope_title_faces: 'Start face indexing',
     ai_scope_text: 'Do you want to run on all existing files, or only on new uploads from now on?',
     ai_scope_all: 'All existing',
@@ -1833,9 +1847,13 @@ const I18N = {
     ai_desc_enabled_new_uploads: 'AI descriptions enabled for new uploads from now on.',
     ai_desc_started_bg: 'AI descriptions started in the background.',
     ai_desc_start_error: 'Error while starting AI descriptions.',
+    ai_desc_model_changed_new: 'Description model changed for new uploads from now on.',
+    ai_desc_model_changed_all: 'Description model changed. Reprocessing all existing files in the background.',
+    ai_desc_model_change_failed: 'Could not change description model.',
     ai_desc_stop_failed: 'Could not stop AI descriptions.',
     ai_desc_stopped: 'AI descriptions stopped.',
     ai_desc_stop_error: 'Error while stopping AI descriptions.',
+    status_model_label: 'Model',
     faces_starting: 'Starting face indexing…',
     faces_start_failed: 'Could not start face indexing',
     faces_enabled_new_uploads: 'Face indexing enabled for new uploads from now on.',
@@ -1905,6 +1923,20 @@ function tr(key) {
   if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
   if (Object.prototype.hasOwnProperty.call(I18N.da, key)) return I18N.da[key];
   return key;
+}
+
+function normalizeAiDescribeModel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'qwen' || raw === 'qwen-vl' || raw === 'qwen_vl' || raw === 'qwen2.5-vl' || raw === 'qwen2_5_vl') {
+    return 'qwen';
+  }
+  return 'light';
+}
+
+function updateAiDescribeModelSelect() {
+  if (!els.aiDescribeModelSelect) return;
+  const current = normalizeAiDescribeModel(state.aiDescribeModel || 'light');
+  els.aiDescribeModelSelect.value = current;
 }
 
 function updateAiToggleButton() {
@@ -2004,6 +2036,8 @@ let state = {
   aiDescribeRunning: false,
   aiDescribeAutoEnabled: false,
   aiDescribeRuntime: 'unknown',
+  aiDescribeModel: 'light',
+  aiDescribePendingModel: null,
   facesRunning: false,
   facesAutoEnabled: false,
   facesRuntime: 'unknown',
@@ -9705,6 +9739,14 @@ function applyUiLanguage() {
   if (els.aiEmbedDesc) els.aiEmbedDesc.textContent = tr('ai_embed_desc');
   if (els.aiDescTitle) els.aiDescTitle.textContent = tr('ai_desc_title');
   if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
+  if (els.aiDescModelLabel) els.aiDescModelLabel.textContent = tr('ai_desc_model_label');
+  if (els.aiDescribeModelSelect) {
+    const lightOpt = els.aiDescribeModelSelect.querySelector('option[value="light"]');
+    const qwenOpt = els.aiDescribeModelSelect.querySelector('option[value="qwen"]');
+    if (lightOpt) lightOpt.textContent = tr('ai_desc_model_light');
+    if (qwenOpt) qwenOpt.textContent = tr('ai_desc_model_qwen');
+  }
+  updateAiDescribeModelSelect();
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
   if (els.uploadWorkflowTitle) els.uploadWorkflowTitle.textContent = tr('upload_workflow_title');
@@ -9835,6 +9877,7 @@ function applyUiLanguage() {
   if (els.aiScopeModalTitle) {
     const feature = state.aiScopePendingFeature;
     if (feature === 'faces') els.aiScopeModalTitle.textContent = tr('ai_scope_title_faces');
+    else if (feature === 'describe_model') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc_model');
     else if (feature === 'describe') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc');
     else els.aiScopeModalTitle.textContent = tr('ai_scope_title_ai');
   }
@@ -10184,9 +10227,13 @@ function closeScanModal() {
 }
 
 function openAiScopeModal(feature) {
-  state.aiScopePendingFeature = feature === 'faces' ? 'faces' : (feature === 'describe' ? 'describe' : 'ai');
+  if (feature === 'faces') state.aiScopePendingFeature = 'faces';
+  else if (feature === 'describe_model') state.aiScopePendingFeature = 'describe_model';
+  else if (feature === 'describe') state.aiScopePendingFeature = 'describe';
+  else state.aiScopePendingFeature = 'ai';
   if (els.aiScopeModalTitle) {
     if (state.aiScopePendingFeature === 'faces') els.aiScopeModalTitle.textContent = tr('ai_scope_title_faces');
+    else if (state.aiScopePendingFeature === 'describe_model') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc_model');
     else if (state.aiScopePendingFeature === 'describe') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc');
     else els.aiScopeModalTitle.textContent = tr('ai_scope_title_ai');
   }
@@ -10201,8 +10248,10 @@ function openAiScopeModal(feature) {
 function closeAiScopeModal() {
   if (els.aiScopeModal) els.aiScopeModal.classList.add('hidden');
   state.aiScopePendingFeature = null;
+  state.aiDescribePendingModel = null;
   updateAiToggleButton();
   updateAiDescribeToggleButton();
+  updateAiDescribeModelSelect();
   updateFacesToggleButton();
 }
 
@@ -10526,6 +10575,40 @@ async function stopAiIngest() {
   }
 }
 
+async function setAiDescribeModel(model, scope = 'new') {
+  const wantedModel = normalizeAiDescribeModel(model);
+  const wantedScope = (scope === 'all') ? 'all' : 'new';
+  try {
+    const res = await fetch('/api/ai/describe/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: wantedModel, scope: wantedScope }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) {
+      showStatus((data && data.error) || tr('ai_desc_model_change_failed'), 'err');
+      updateAiDescribeModelSelect();
+      return false;
+    }
+
+    state.aiDescribeModel = normalizeAiDescribeModel((data && data.model) || wantedModel);
+    if (typeof data.auto_ingest !== 'undefined') state.aiDescribeAutoEnabled = !!data.auto_ingest;
+    if (typeof data.running !== 'undefined') state.aiDescribeRunning = !!data.running;
+    updateAiDescribeModelSelect();
+    updateAiDescribeToggleButton();
+
+    if (wantedScope === 'all') showStatus(tr('ai_desc_model_changed_all'), 'ok');
+    else showStatus(tr('ai_desc_model_changed_new'), 'ok');
+
+    pollAiDescribeStatus();
+    return true;
+  } catch {
+    showStatus(tr('ai_desc_model_change_failed'), 'err');
+    updateAiDescribeModelSelect();
+    return false;
+  }
+}
+
 async function startAiDescribeIngest(scope = 'all') {
   try {
     showStatus(tr('ai_desc_starting'), 'ok');
@@ -10536,6 +10619,7 @@ async function startAiDescribeIngest(scope = 'all') {
       showStatus(tr('ai_desc_start_failed'), 'err');
       return;
     }
+    state.aiDescribeModel = normalizeAiDescribeModel((data && data.model) || state.aiDescribeModel);
     if (scope === 'new') {
       showStatus(tr('ai_desc_enabled_new_uploads'), 'ok');
     } else {
@@ -10543,6 +10627,7 @@ async function startAiDescribeIngest(scope = 'all') {
     }
     state.aiDescribeAutoEnabled = true;
     state.aiDescribeRunning = !!(data && data.running);
+    updateAiDescribeModelSelect();
     updateAiDescribeToggleButton();
     pollAiDescribeStatus();
   } catch {
@@ -10583,6 +10668,25 @@ els.aiDescribeToggle && els.aiDescribeToggle.addEventListener('change', async ()
   }
   await stopAiDescribeIngest();
 });
+
+if (els.aiDescribeModelSelect) {
+  els.aiDescribeModelSelect.addEventListener('change', async () => {
+    const nextModel = normalizeAiDescribeModel(els.aiDescribeModelSelect.value);
+    const currentModel = normalizeAiDescribeModel(state.aiDescribeModel || 'light');
+    if (nextModel === currentModel) {
+      updateAiDescribeModelSelect();
+      return;
+    }
+
+    if (state.aiDescribeAutoEnabled || state.aiDescribeRunning) {
+      state.aiDescribePendingModel = nextModel;
+      openAiScopeModal('describe_model');
+      return;
+    }
+
+    await setAiDescribeModel(nextModel, 'new');
+  });
+}
 
 // Faces indexing controls
 async function pollFacesStatus() {
@@ -10735,7 +10839,9 @@ async function pollAiDescribeStatus() {
     const s = await r.json();
     state.aiDescribeRunning = !!(s && s.ok && s.running);
     state.aiDescribeAutoEnabled = !!(s && s.ok && s.auto_ingest);
+    state.aiDescribeModel = normalizeAiDescribeModel(s && s.model);
     state.aiDescribeRuntime = String((s && s.runtime && (s.runtime.describe || s.runtime.ai)) || state.aiRuntime || 'unknown');
+    updateAiDescribeModelSelect();
     updateAiDescribeToggleButton();
     updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
     if (els.aiDescribeStatus) {
@@ -10747,7 +10853,8 @@ async function pollAiDescribeStatus() {
         const described = Number(source && source.described) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
+        const modelLabel = (state.aiDescribeModel === 'qwen') ? tr('ai_desc_model_qwen') : tr('ai_desc_model_light');
+        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_model_label')} ${modelLabel} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
       }
     }
   } catch {
@@ -11278,9 +11385,12 @@ if (els.aiScopeModalCancel) {
 if (els.aiScopeModalNew) {
   els.aiScopeModalNew.addEventListener('click', async () => {
     const feature = state.aiScopePendingFeature;
+    const pendingModel = state.aiDescribePendingModel;
     closeAiScopeModal();
     if (feature === 'faces') {
       await startFacesIndex('new');
+    } else if (feature === 'describe_model') {
+      await setAiDescribeModel(pendingModel, 'new');
     } else if (feature === 'describe') {
       await startAiDescribeIngest('new');
     } else {
@@ -11291,9 +11401,12 @@ if (els.aiScopeModalNew) {
 if (els.aiScopeModalAll) {
   els.aiScopeModalAll.addEventListener('click', async () => {
     const feature = state.aiScopePendingFeature;
+    const pendingModel = state.aiDescribePendingModel;
     closeAiScopeModal();
     if (feature === 'faces') {
       await startFacesIndex('all');
+    } else if (feature === 'describe_model') {
+      await setAiDescribeModel(pendingModel, 'all');
     } else if (feature === 'describe') {
       await startAiDescribeIngest('all');
     } else {
