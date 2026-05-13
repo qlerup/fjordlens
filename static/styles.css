@@ -1317,7 +1317,6 @@ body.view-kameraer .timeline-header-actions {
   transform: scale(0.92);
   transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease, opacity .12s ease, box-shadow .18s ease;
 }
-.photo-card.active .photo-select-badge,
 .photo-card.selected .photo-select-badge {
   opacity: 1;
   background: var(--accent);
@@ -1327,7 +1326,6 @@ body.view-kameraer .timeline-header-actions {
   box-shadow: 0 0 0 3px rgba(91,140,255,0.20);
   animation: selectPop .28s cubic-bezier(.2,.9,.2,1.1) both;
 }
-.photo-card.active .photo-select-badge::after,
 .photo-card.selected .photo-select-badge::after {
   content: '';
   position: absolute;
