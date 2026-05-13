@@ -5465,6 +5465,29 @@ function scheduleViewerInfoPosition() {
   } catch {}
 }
 
+  function updateViewerLandscapeClass(fallbackItem = null) {
+    if (!els.viewer) return;
+
+    let width = 0;
+    let height = 0;
+    if (els.viewerVideo && els.viewerVideo.style.display !== 'none') {
+      width = Number(els.viewerVideo.videoWidth || 0);
+      height = Number(els.viewerVideo.videoHeight || 0);
+    } else if (els.viewerImg && els.viewerImg.style.display !== 'none') {
+      width = Number(els.viewerImg.naturalWidth || 0);
+      height = Number(els.viewerImg.naturalHeight || 0);
+    }
+
+    if (!(width > 0 && height > 0) && fallbackItem) {
+      width = Number(fallbackItem.width || 0);
+      height = Number(fallbackItem.height || 0);
+    }
+
+    const isLandscape = width > 0 && height > 0 && width > (height * 1.05);
+    els.viewer.classList.toggle('viewer-landscape', isLandscape);
+    scheduleViewerInfoPosition();
+  }
+
 function viewerInfoOpenTransform(offsetX = 0) {
   const x = Math.round(Number(offsetX) || 0);
   if (!x) return 'translateX(100%)';
@@ -5640,11 +5663,13 @@ function openViewer(index) {
     if (Number.isFinite(pid) && pid > 0) state.selectedId = pid;
   } catch {}
   if (!els.viewer) return;
+  els.viewer.classList.remove('viewer-landscape');
   // Toggle media elements
   if (els.viewerImg) {
     els.viewerImg.setAttribute('draggable', 'false');
     els.viewerImg.onload = () => {
       try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+      updateViewerLandscapeClass(it);
     };
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
@@ -5675,6 +5700,7 @@ function openViewer(index) {
     els.viewerVideo.setAttribute('draggable', 'false');
     els.viewerVideo.onloadedmetadata = () => {
       try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+      updateViewerLandscapeClass(it);
     };
     els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch(_) {}
@@ -5685,6 +5711,7 @@ function openViewer(index) {
       els.viewerVideo.removeAttribute('src');
     }
   }
+  updateViewerLandscapeClass(it);
   els.viewer.classList.remove("hidden");
   try {
     requestAnimationFrame(() => {
@@ -5755,6 +5782,7 @@ function openViewer(index) {
 function closeViewer() {
   if (!els.viewer) return;
   els.viewer.classList.add("hidden");
+  els.viewer.classList.remove('viewer-landscape');
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
   if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.removeAttribute('src'); }
 }
@@ -11927,6 +11955,7 @@ closeViewer = function(){
 window.addEventListener('resize', ()=>{
   try {
     if (!els.viewer || els.viewer.classList.contains('hidden')) return;
+    updateViewerLandscapeClass();
     setViewerInfoOpenLayout(isViewerInfoPanelOpen());
     positionViewerInfoPanel();
     positionViewerInfoTrigger();
