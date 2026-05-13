@@ -5436,6 +5436,35 @@ function getActiveViewerMediaElement() {
   return els.viewerImg || els.viewerVideo || null;
 }
 
+function getViewerMediaAnchorRect() {
+  const mediaEl = getActiveViewerMediaElement();
+  if (!mediaEl) return null;
+  try {
+    const w = Number(mediaEl.offsetWidth || mediaEl.clientWidth || 0);
+    const h = Number(mediaEl.offsetHeight || mediaEl.clientHeight || 0);
+    if (w > 0 && h > 0 && els.viewer) {
+      const viewerRect = els.viewer.getBoundingClientRect();
+      const left = Number(viewerRect.left || 0) + Number(mediaEl.offsetLeft || 0);
+      const top = Number(viewerRect.top || 0) + Number(mediaEl.offsetTop || 0);
+      return { left, top, right: left + w, bottom: top + h, width: w, height: h };
+    }
+  } catch {}
+  try {
+    const r = mediaEl.getBoundingClientRect();
+    if (r && Number.isFinite(r.left) && r.width > 0 && r.height > 0) return r;
+  } catch {}
+  return null;
+}
+
+function scheduleViewerInfoPosition() {
+  if (!els.viewer || els.viewer.classList.contains('hidden')) return;
+  try {
+    requestAnimationFrame(() => {
+      try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+    });
+  } catch {}
+}
+
 function animateViewerSlideTransition(step, applyUpdate) {
   if (!els.viewer || els.viewer.classList.contains('hidden')) {
     applyUpdate();
@@ -5462,6 +5491,8 @@ function animateViewerSlideTransition(step, applyUpdate) {
     const toEl = getActiveViewerMediaElement();
     if (!toEl) {
       cleanupViewerMediaAnimation();
+      scheduleViewerInfoPosition();
+      viewerTransitionRunning = false;
       return;
     }
 
@@ -5478,6 +5509,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
 
     window.setTimeout(() => {
       cleanupViewerMediaAnimation();
+      scheduleViewerInfoPosition();
       viewerTransitionRunning = false;
       if (viewerPendingStep !== 0) {
         const pending = viewerPendingStep;
@@ -11362,6 +11394,7 @@ function animateViewerDragReset() {
   window.setTimeout(() => {
     cleanupViewerMediaAnimation();
     removeViewerSwipePreview();
+    scheduleViewerInfoPosition();
   }, 190);
 }
 
@@ -11378,6 +11411,7 @@ function commitViewerDragSwipe(step) {
     state.selectedIndex = targetIndex;
     openViewer(targetIndex);
     removeViewerSwipePreview();
+    scheduleViewerInfoPosition();
     viewerTransitionRunning = false;
     return;
   }
@@ -11400,6 +11434,7 @@ function commitViewerDragSwipe(step) {
     removeViewerSwipePreview();
     openViewer(targetIndex);
     cleanupViewerMediaAnimation();
+    scheduleViewerInfoPosition();
     viewerTransitionRunning = false;
     if (viewerPendingStep !== 0) {
       const pending = viewerPendingStep;
@@ -11563,10 +11598,8 @@ function positionViewerInfoPanel() {
     return;
   }
   try {
-    const items = getViewerItems();
-    const it = items[state.selectedIndex] || {};
-    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-    const r = mediaEl.getBoundingClientRect();
+    const r = getViewerMediaAnchorRect();
+    if (!r) return;
     const w = viPanel.offsetWidth || 360;
     const underOffset = 8;
     viPanel.style.left = `${Math.round(r.right - w - underOffset)}px`;
@@ -11584,16 +11617,13 @@ function positionViewerInfoTrigger() {
   if (!viMediaBtn) return;
   if (!els.viewer || els.viewer.classList.contains('hidden')) return;
   try {
-    const items = getViewerItems();
-    const it = items[state.selectedIndex] || {};
-    const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-    if (!mediaEl) {
+    const r = getViewerMediaAnchorRect();
+    if (!r) {
       viMediaBtn.style.left = isMobileViewerLayout() ? '10px' : '62px';
       viMediaBtn.style.top = isMobileViewerLayout() ? 'calc(env(safe-area-inset-top) + 10px)' : '12px';
       viMediaBtn.style.right = 'auto';
       return;
     }
-    const r = mediaEl.getBoundingClientRect();
     if (!Number.isFinite(r.left) || !Number.isFinite(r.right) || r.width <= 0 || r.height <= 0) return;
 
     const pad = isMobileViewerLayout() ? 10 : 8;
