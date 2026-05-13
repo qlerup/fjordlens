@@ -5465,6 +5465,106 @@ function scheduleViewerInfoPosition() {
   } catch {}
 }
 
+function viewerInfoOpenTransform(offsetX = 0) {
+  const x = Math.round(Number(offsetX) || 0);
+  if (!x) return 'translateX(100%)';
+  return `translateX(calc(100% ${x >= 0 ? '+' : '-'} ${Math.abs(x)}px))`;
+}
+
+function beginViewerInfoSlideOut(offsetX, duration) {
+  if (!viPanel || !isViewerInfoPanelOpen() || isMobileViewerLayout()) return false;
+  try {
+    positionViewerInfoPanel();
+    viPanel.style.willChange = 'transform, opacity';
+    viPanel.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+    viPanel.style.transform = viewerInfoOpenTransform(offsetX);
+    viPanel.style.opacity = '0';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function prepareViewerInfoSlideIn(offsetX) {
+  if (!viPanel || !isViewerInfoPanelOpen() || isMobileViewerLayout()) return false;
+  try {
+    positionViewerInfoPanel();
+    viPanel.style.willChange = 'transform, opacity';
+    viPanel.style.transition = 'none';
+    viPanel.style.transform = viewerInfoOpenTransform(offsetX);
+    viPanel.style.opacity = '0';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runViewerInfoSlideIn(duration) {
+  if (!viPanel || !isViewerInfoPanelOpen() || isMobileViewerLayout()) return;
+  viPanel.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+  viPanel.style.transform = viewerInfoOpenTransform(0);
+  viPanel.style.opacity = '1';
+}
+
+function finishViewerInfoSlideAnimation() {
+  if (!viPanel) return;
+  try {
+    if (isViewerInfoPanelOpen() && !isMobileViewerLayout()) {
+      viPanel.style.transition = '';
+      viPanel.style.transform = '';
+      viPanel.style.opacity = '';
+      viPanel.style.willChange = '';
+      positionViewerInfoPanel();
+    }
+  } catch {}
+}
+
+function beginViewerInfoButtonSlideOut(offsetX, duration) {
+  if (!viMediaBtn || !els.viewer || els.viewer.classList.contains('hidden')) return false;
+  try {
+    positionViewerInfoTrigger();
+    viMediaBtn.style.willChange = 'transform, opacity';
+    viMediaBtn.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+    viMediaBtn.style.transform = `translateX(${Math.round(Number(offsetX) || 0)}px)`;
+    viMediaBtn.style.opacity = '0';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function prepareViewerInfoButtonSlideIn(offsetX) {
+  if (!viMediaBtn || !els.viewer || els.viewer.classList.contains('hidden')) return false;
+  try {
+    positionViewerInfoTrigger();
+    viMediaBtn.style.willChange = 'transform, opacity';
+    viMediaBtn.style.transition = 'none';
+    viMediaBtn.style.transform = `translateX(${Math.round(Number(offsetX) || 0)}px)`;
+    viMediaBtn.style.opacity = '0';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runViewerInfoButtonSlideIn(duration) {
+  if (!viMediaBtn || !els.viewer || els.viewer.classList.contains('hidden')) return;
+  viMediaBtn.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
+  viMediaBtn.style.transform = 'translateX(0)';
+  viMediaBtn.style.opacity = '1';
+}
+
+function finishViewerInfoButtonSlideAnimation() {
+  if (!viMediaBtn) return;
+  try {
+    viMediaBtn.style.transition = '';
+    viMediaBtn.style.transform = '';
+    viMediaBtn.style.opacity = '';
+    viMediaBtn.style.willChange = '';
+    positionViewerInfoTrigger();
+  } catch {}
+}
+
 function animateViewerSlideTransition(step, applyUpdate) {
   if (!els.viewer || els.viewer.classList.contains('hidden')) {
     applyUpdate();
@@ -5480,6 +5580,8 @@ function animateViewerSlideTransition(step, applyUpdate) {
   const distance = Math.min(Math.round(window.innerWidth * 0.22), 160);
   const outX = step > 0 ? -distance : distance;
   const inStartX = step > 0 ? distance : -distance;
+  const animateInfoPanel = beginViewerInfoSlideOut(outX, duration);
+  const animateInfoButton = beginViewerInfoButtonSlideOut(outX, duration);
 
   fromEl.style.willChange = 'transform, opacity';
   fromEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
@@ -5488,9 +5590,13 @@ function animateViewerSlideTransition(step, applyUpdate) {
 
   window.setTimeout(() => {
     applyUpdate();
+    const infoPanelIn = animateInfoPanel && prepareViewerInfoSlideIn(inStartX);
+    const infoButtonIn = animateInfoButton && prepareViewerInfoButtonSlideIn(inStartX);
     const toEl = getActiveViewerMediaElement();
     if (!toEl) {
       cleanupViewerMediaAnimation();
+      finishViewerInfoSlideAnimation();
+      finishViewerInfoButtonSlideAnimation();
       scheduleViewerInfoPosition();
       viewerTransitionRunning = false;
       return;
@@ -5505,10 +5611,14 @@ function animateViewerSlideTransition(step, applyUpdate) {
       toEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
       toEl.style.transform = 'translateX(0)';
       toEl.style.opacity = '1';
+      if (infoPanelIn) runViewerInfoSlideIn(duration);
+      if (infoButtonIn) runViewerInfoButtonSlideIn(duration);
     });
 
     window.setTimeout(() => {
       cleanupViewerMediaAnimation();
+      finishViewerInfoSlideAnimation();
+      finishViewerInfoButtonSlideAnimation();
       scheduleViewerInfoPosition();
       viewerTransitionRunning = false;
       if (viewerPendingStep !== 0) {
