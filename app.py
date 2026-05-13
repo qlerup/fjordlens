@@ -1790,11 +1790,13 @@ def _postprocess_uploaded_rels(
                     # Determine destination path under uploads/converted/<subdir>/
                     sub_rel = ""
                     try:
-                        parts = str(orig_rel_for_convert).split("/", 2)
-                        if len(parts) >= 3:
-                            sub_rel = parts[2]  # '<sub>/<file>'
+                        orig_rel_norm = str(orig_rel_for_convert).replace("\\", "/").lstrip("/")
+                        if orig_rel_norm.startswith("uploads/originals/"):
+                            sub_rel = orig_rel_norm[len("uploads/originals/"):]  # '<sub>/<file>'
+                        elif orig_rel_norm.startswith("uploads/"):
+                            sub_rel = orig_rel_norm[len("uploads/"):]  # '<sub>/<file>'
                         else:
-                            sub_rel = Path(orig_rel_for_convert).name
+                            sub_rel = Path(orig_rel_norm).name
                     except Exception:
                         sub_rel = Path(orig_rel_for_convert).name
                     subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
@@ -1839,8 +1841,8 @@ def _postprocess_uploaded_rels(
                     except Exception:
                         pass
                     # Switch rel/disk_path to the converted copy (optionally keep the original under 'originals')
-                    if rel.startswith("uploads/originals/"):
-                        # mirror to /uploads/converted/<...>.jpg
+                    if str(orig_rel_for_convert).replace("\\", "/").lstrip("/").startswith("uploads/"):
+                        # Mirror uploaded source to /uploads/converted/<...>.jpg
                         try:
                             tail = str(Path(sub_rel).with_suffix(".jpg")).replace("\\", "/")
                         except Exception:
@@ -1849,9 +1851,9 @@ def _postprocess_uploaded_rels(
                     else:
                         # Library fallback
                         try:
-                            new_rel = str(Path(rel).with_suffix(".jpg")).replace("\\", "/")
+                            new_rel = str(Path(orig_rel_for_convert).with_suffix(".jpg")).replace("\\", "/")
                         except Exception:
-                            new_rel = rel + ".jpg"
+                            new_rel = str(orig_rel_for_convert) + ".jpg"
                     rel = new_rel
                     disk_path = new_path
                     conversion_from_rel = orig_rel_for_convert
@@ -9326,6 +9328,75 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
     return result
 
 
+def _normalize_rel_for_view_candidate(value: Any) -> str:
+    try:
+        rel = str(value or "").replace("\\", "/").lstrip("/").strip()
+    except Exception:
+        return ""
+    if not rel or ".." in rel:
+        return ""
+    return rel
+
+
+def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
+    rel = _normalize_rel_for_view_candidate(row_data.get("rel_path") or row_data.get("filename"))
+    if not rel:
+        return ""
+
+    ext = str((row_data.get("ext") or Path(rel).suffix or "")).strip().lower()
+    is_video = ext in VIDEO_EXTS
+    metadata = row_data.get("metadata_json") if isinstance(row_data.get("metadata_json"), dict) else {}
+    candidates: list[str] = []
+
+    # Prefer explicit conversion targets from metadata when present.
+    try:
+        conv = metadata.get("conversion") if isinstance(metadata, dict) else None
+        if isinstance(conv, dict):
+            c = _normalize_rel_for_view_candidate(conv.get("to_rel_path"))
+            if c:
+                candidates.append(c)
+        c2 = _normalize_rel_for_view_candidate(metadata.get("converted_to_rel") if isinstance(metadata, dict) else None)
+        if c2:
+            candidates.append(c2)
+    except Exception:
+        pass
+
+    # With HEIC conversion enabled, prefer converted upload copies for faster browser loads.
+    try:
+        if (not is_video) and rel.startswith("uploads/") and ext in {".heic", ".heif"} and heic_convert_on_upload_enabled():
+            conv_path = _find_existing_converted_for_upload_rel(rel)
+            conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
+            if conv_rel:
+                candidates.insert(0, conv_rel)
+    except Exception:
+        pass
+
+    # Safety net for stale upload rows: if rel_path is missing on disk, try converted mirror.
+    try:
+        if (not is_video) and rel.startswith("uploads/"):
+            src = _disk_path_from_rel_path(rel)
+            if not src.exists():
+                conv_path = _find_existing_converted_for_upload_rel(rel)
+                conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
+                if conv_rel:
+                    candidates.insert(0, conv_rel)
+    except Exception:
+        pass
+
+    seen: set[str] = set()
+    for cand in [*candidates, rel]:
+        norm = _normalize_rel_for_view_candidate(cand)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        try:
+            if _disk_path_from_rel_path(norm).exists():
+                return norm
+        except Exception:
+            continue
+    return rel
+
+
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
     for key in ("ai_tags", "ai_desc_tags", "embedding_json", "metadata_json", "exif_json"):
@@ -9345,12 +9416,14 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
         d["thumb_url"] = f"/api/thumbs/{d['thumb_name']}"
     else:
         d["thumb_url"] = None
-    # Public URL to original (for viewer)
-    rel = d.get("rel_path") or d.get("filename")
+    # Public URLs:
+    # - original_url is what the viewer opens (prefer converted view when available)
+    # - download_url remains the row rel_path for direct/original download semantics
+    rel = _normalize_rel_for_view_candidate(d.get("rel_path") or d.get("filename"))
+    view_rel = _resolve_row_view_rel_path(d)
     if rel:
         try:
-            # Serve a browser-friendly copy when needed
-            d["original_url"] = f"/api/viewable/{quote(rel)}"
+            d["original_url"] = f"/api/viewable/{quote(view_rel or rel)}"
             d["download_url"] = f"/api/original/{quote(rel)}"
         except Exception:
             d["original_url"] = None
