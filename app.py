@@ -793,7 +793,14 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
             except Exception as e:
                 log_event("ai_http_error", rel_path=str(path), error=f"json:{e}")
         else:
-            log_event("ai_http_error", rel_path=str(path), error=f"status:{r.status_code}")
+            detail = ""
+            try:
+                body = " ".join(str(r.text or "").split())
+                if body:
+                    detail = f" body:{body[:240]}"
+            except Exception:
+                detail = ""
+            log_event("ai_http_error", rel_path=str(path), error=f"status:{r.status_code}{detail}")
     except Exception as e:
         log_event("ai_http_error", rel_path=str(path), error=str(e))
     return None
@@ -8660,6 +8667,19 @@ def _write_photo_weather_metadata(photo_id: int, payload: Optional[Dict[str, Any
             mj["weather"] = payload
         else:
             mj.pop("weather", None)
+        mj.pop("weather_fetch_failed", None)
+        conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(mj, ensure_ascii=False, default=str), photo_id))
+        conn.commit()
+
+
+def _mark_photo_weather_fetch_failed(photo_id: int) -> None:
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+        if not row:
+            return
+        mj = _json_object(row["metadata_json"])
+        mj.pop("weather", None)
+        mj["weather_fetch_failed"] = True
         conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(mj, ensure_ascii=False, default=str), photo_id))
         conn.commit()
 
@@ -8669,9 +8689,10 @@ def _clear_photo_weather_metadata(conn: sqlite3.Connection, photo_id: int) -> No
     if not row:
         return
     mj = _json_object(row["metadata_json"])
-    if "weather" not in mj:
+    if "weather" not in mj and "weather_fetch_failed" not in mj:
         return
     mj.pop("weather", None)
+    mj.pop("weather_fetch_failed", None)
     conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(mj, ensure_ascii=False, default=str), photo_id))
 
 
@@ -8828,6 +8849,7 @@ def _enrich_metadata_weather(metadata: Dict[str, Any]) -> None:
             mj,
             force=False,
         )
+        mj.pop("weather_fetch_failed", None)
         mj["weather"] = payload
         metadata["metadata_json"] = mj
         try:
@@ -8878,6 +8900,10 @@ def _refresh_photo_weather_if_possible(photo_id: int, *, force: bool = False) ->
     except ValueError:
         pass
     except Exception as e:
+        try:
+            _mark_photo_weather_fetch_failed(int(photo_id))
+        except Exception:
+            pass
         try:
             log_event("error", rel_path=f"weather:{photo_id}", error=f"weather_refresh: {e}")
         except Exception:
@@ -14128,6 +14154,10 @@ def api_photo_weather(photo_id: int):
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         try:
+            _mark_photo_weather_fetch_failed(int(photo_id))
+        except Exception:
+            pass
+        try:
             log_event("error", rel_path=f"weather:{photo_id}", error=str(e))
         except Exception:
             pass
@@ -14209,6 +14239,7 @@ def api_update_gps(photo_id: int):
             if city: geo["city"] = city
             mj["geo"] = geo
             mj.pop("weather", None)
+            mj.pop("weather_fetch_failed", None)
             conn.execute(
                 "UPDATE photos SET gps_lat=?, gps_lon=?, gps_name=?, metadata_json=? WHERE id=?",
                 (lat_f, lon_f, name, json.dumps(mj, ensure_ascii=False), photo_id),

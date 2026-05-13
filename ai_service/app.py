@@ -1,5 +1,6 @@
 import io
 import os
+import threading
 from typing import List
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -99,10 +100,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model at startup
-model, _, preprocess = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=MODEL_PRETRAINED, device=DEVICE)
+
+def _create_clip_model(device: str):
+    mdl, _, prep = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=MODEL_PRETRAINED, device=device)
+    mdl.eval()
+    return mdl, prep
+
+
+# Load CLIP with preferred runtime; fallback behavior is handled below.
+model, preprocess = _create_clip_model(DEVICE)
 tokenizer = open_clip.get_tokenizer(MODEL_NAME)
-model.eval()
+_embed_lock = threading.RLock()
+embed_device_configured = DEVICE
+embed_device_active = DEVICE
+embed_runtime_warning = None
+_embed_cpu_model = None
+_embed_cpu_preprocess = None
 
 # Load InsightFace for face detection/recognition
 face_app = None
@@ -215,6 +228,71 @@ def _to_list(t: torch.Tensor) -> List[float]:
     return (v / n).tolist()
 
 
+def _ensure_cpu_clip_model():
+    global _embed_cpu_model, _embed_cpu_preprocess
+    if (_embed_cpu_model is None) or (_embed_cpu_preprocess is None):
+        _embed_cpu_model, _embed_cpu_preprocess = _create_clip_model("cpu")
+    return _embed_cpu_model, _embed_cpu_preprocess
+
+
+def _set_embed_runtime_cpu_fallback(reason: str) -> None:
+    global model, preprocess, embed_device_active, embed_runtime_warning
+    cpu_model, cpu_preprocess = _ensure_cpu_clip_model()
+    model = cpu_model
+    preprocess = cpu_preprocess
+    embed_device_active = "cpu"
+    embed_runtime_warning = str(reason or "cuda_runtime_fallback")[:600]
+
+
+def _run_text_embedding(text: str) -> List[float]:
+    with torch.no_grad():
+        tokens = tokenizer([text]).to(embed_device_active)
+        text_features = model.encode_text(tokens)
+        return _to_list(text_features)
+
+
+def _run_image_embedding(img: Image.Image) -> List[float]:
+    img_t = preprocess(img).unsqueeze(0).to(embed_device_active)
+    with torch.no_grad():
+        image_features = model.encode_image(img_t)
+        return _to_list(image_features)
+
+
+def _encode_text_with_fallback(text: str) -> List[float]:
+    with _embed_lock:
+        try:
+            return _run_text_embedding(text)
+        except Exception as exc:
+            if embed_device_active == "cuda":
+                _set_embed_runtime_cpu_fallback(f"cuda_text_runtime_failed: {exc}")
+                return _run_text_embedding(text)
+            raise
+
+
+def _encode_image_with_fallback(img: Image.Image) -> List[float]:
+    with _embed_lock:
+        try:
+            return _run_image_embedding(img)
+        except Exception as exc:
+            if embed_device_active == "cuda":
+                _set_embed_runtime_cpu_fallback(f"cuda_image_runtime_failed: {exc}")
+                return _run_image_embedding(img)
+            raise
+
+
+def _warmup_embed_runtime() -> None:
+    if embed_device_active != "cuda":
+        return
+    with _embed_lock:
+        try:
+            _ = _run_text_embedding("fjordlens warmup")
+        except Exception as exc:
+            _set_embed_runtime_cpu_fallback(f"cuda_startup_warmup_failed: {exc}")
+
+
+_warmup_embed_runtime()
+
+
 class TextIn(BaseModel):
     text: str
 
@@ -233,13 +311,15 @@ def health():
         runtime_warning = "configured_cuda_but_runtime_cpu"
     return {
         "ok": True,
-        "device": DEVICE,
+        "device": embed_device_active,
+        "device_configured": embed_device_configured,
         "device_preference": DEVICE_PREF,
         "torch_version": str(getattr(torch, "__version__", "")),
         "torch_cuda_version": str(getattr(torch.version, "cuda", "")),
         "torch_cuda_available": TORCH_CUDA_AVAILABLE,
         "model": MODEL_NAME,
         "pretrained": MODEL_PRETRAINED,
+        "embed_runtime_warning": embed_runtime_warning,
         "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
         "face_device": runtime_face_device,
         "face_device_configured": FACE_DEVICE_CONFIGURED,
@@ -256,20 +336,23 @@ def health():
 
 @app.post("/embed/text", response_model=EmbedOut)
 def embed_text(payload: TextIn):
-    with torch.no_grad():
-        tokens = tokenizer([payload.text]).to(DEVICE)
-        text_features = model.encode_text(tokens)
-        return {"embedding": _to_list(text_features)}
+    try:
+        return {"embedding": _encode_text_with_fallback(payload.text)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"embed_text_failed: {exc}")
 
 
 @app.post("/embed/image", response_model=EmbedOut)
 def embed_image(file: UploadFile = File(...)):
     data = file.file.read()
-    img = Image.open(io.BytesIO(data)).convert("RGB")
-    img = preprocess(img).unsqueeze(0).to(DEVICE)
-    with torch.no_grad():
-        image_features = model.encode_image(img)
-        return {"embedding": _to_list(image_features)}
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_image: {exc}")
+    try:
+        return {"embedding": _encode_image_with_fallback(img)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"embed_image_failed: {exc}")
 
 
 @app.post("/faces/detect")

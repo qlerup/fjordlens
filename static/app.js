@@ -1233,7 +1233,7 @@ const I18N = {
     gps_update_failed: 'Kunne ikke opdatere GPS',
     gps_updated: 'GPS opdateret',
     weather_fetching: 'Henter vejr...',
-    weather_fetch_failed: 'Kunne ikke hente vejr',
+    weather_fetch_failed: 'Vejret kan ikke hentes',
     weather_ready_to_fetch: 'Klar til hentning',
     weather_missing_inputs: 'Kræver GPS/by og dato',
     weather_updated: 'Vejrdata gemt',
@@ -1850,7 +1850,7 @@ const I18N = {
     gps_update_failed: 'Could not update GPS',
     gps_updated: 'GPS updated',
     weather_fetching: 'Fetching weather...',
-    weather_fetch_failed: 'Could not fetch weather',
+    weather_fetch_failed: 'Weather could not be fetched',
     weather_ready_to_fetch: 'Ready to fetch',
     weather_missing_inputs: 'Requires GPS/city and date',
     weather_updated: 'Weather saved',
@@ -2380,6 +2380,21 @@ function _itemWeather(item) {
   return weather;
 }
 
+function _weatherFetchFailed(item) {
+  const metadata = (item && item.metadata_json && typeof item.metadata_json === 'object') ? item.metadata_json : {};
+  const value = metadata ? metadata.weather_fetch_failed : null;
+  return value === true || value === 1 || value === '1' || value === 'true' || value === 'True';
+}
+
+function _markItemWeatherFetchFailed(item) {
+  if (!item || typeof item !== 'object') return item;
+  const metadata = (item.metadata_json && typeof item.metadata_json === 'object') ? item.metadata_json : {};
+  delete metadata.weather;
+  metadata.weather_fetch_failed = true;
+  item.metadata_json = metadata;
+  return item;
+}
+
 function _numOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -2420,7 +2435,11 @@ function formatWeatherSummary(item) {
 function setWeatherEl(text, button, item, { fetching = false } = {}) {
   const canFetch = canFetchWeather(item);
   const hasWeather = !!_itemWeather(item);
-  const value = fetching ? tr('weather_fetching') : (formatWeatherSummary(item) || (canFetch ? tr('weather_ready_to_fetch') : tr('weather_missing_inputs')));
+  const summary = formatWeatherSummary(item);
+  const hasFetchFailure = _weatherFetchFailed(item);
+  const value = fetching
+    ? tr('weather_fetching')
+    : (summary || (hasFetchFailure ? tr('weather_fetch_failed') : (canFetch ? tr('weather_ready_to_fetch') : tr('weather_missing_inputs'))));
   if (text) {
     text.textContent = value;
     const weather = _itemWeather(item);
@@ -2455,11 +2474,27 @@ async function fetchWeatherForItem(item, { force = false, silent = false } = {})
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || !data.ok) {
+      const idx = state.items.findIndex(i => Number(i.id) === id);
+      let failedItem = item;
+      if (idx >= 0) {
+        failedItem = _markItemWeatherFetchFailed(state.items[idx]);
+        state.items[idx] = failedItem;
+      } else {
+        failedItem = _markItemWeatherFetchFailed(item);
+      }
       if (!silent) showStatus((data && data.error) || tr('weather_fetch_failed'), 'err');
       if (Number(state.selectedId || 0) === id) {
-        if (els.detailWeather) els.detailWeather.textContent = tr('weather_fetch_failed');
-        if (els.viWeather) els.viWeather.textContent = tr('weather_fetch_failed');
+        renderWeatherInfo(failedItem);
+        if (els.rawMeta) els.rawMeta.textContent = JSON.stringify((failedItem && failedItem.metadata_json) || {}, null, 2);
       }
+      try {
+        const viewerItems = getViewerItems();
+        const viewerItem = viewerItems[state.selectedIndex];
+        if (viewerItem && Number(viewerItem.id) === id) {
+          viewerItems[state.selectedIndex] = failedItem;
+          renderWeatherInfo(failedItem);
+        }
+      } catch {}
       return;
     }
     const next = data.item;
@@ -2481,6 +2516,26 @@ async function fetchWeatherForItem(item, { force = false, silent = false } = {})
       if (!silent || force) showStatus(tr('weather_updated'), 'ok');
     }
   } catch (e) {
+    const idx = state.items.findIndex(i => Number(i.id) === id);
+    let failedItem = item;
+    if (idx >= 0) {
+      failedItem = _markItemWeatherFetchFailed(state.items[idx]);
+      state.items[idx] = failedItem;
+    } else {
+      failedItem = _markItemWeatherFetchFailed(item);
+    }
+    if (Number(state.selectedId || 0) === id) {
+      renderWeatherInfo(failedItem);
+      if (els.rawMeta) els.rawMeta.textContent = JSON.stringify((failedItem && failedItem.metadata_json) || {}, null, 2);
+    }
+    try {
+      const viewerItems = getViewerItems();
+      const viewerItem = viewerItems[state.selectedIndex];
+      if (viewerItem && Number(viewerItem.id) === id) {
+        viewerItems[state.selectedIndex] = failedItem;
+        renderWeatherInfo(failedItem);
+      }
+    } catch {}
     if (!silent) showStatus(tr('weather_fetch_failed'), 'err');
   } finally {
     weatherFetches.delete(key);
