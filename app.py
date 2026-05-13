@@ -4314,7 +4314,7 @@ def _conversion_related_upload_rels(metadata_json_raw: Any) -> set[str]:
     if not isinstance(mj, dict):
         return out
 
-    conv = mj.get("conversion")
+    conv = mj.get("conversion    docker compose exec -T fjordshare sh -lc "curl -fsS http://127.0.0.1:8080/api/health"")
     if isinstance(conv, dict):
         for key in ("from_rel_path", "to_rel_path"):
             rel = _normalize_photo_rel_for_delete(conv.get(key))

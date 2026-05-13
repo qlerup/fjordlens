@@ -251,8 +251,16 @@ If Cloudflare challenge pages are returned, frames cannot parse feed JSON.
 
 ```bash
 cd fjordlens
-git pull
-docker compose up -d --build
+sh scripts/update.sh
+```
+
+Useful options:
+
+```bash
+sh scripts/update.sh --no-cache
+sh scripts/update.sh --no-build
+sh scripts/update.sh --no-prune
+sh scripts/update.sh --branch main
 ```
 
 ### Full restart
