@@ -2439,6 +2439,12 @@ body.view-photoframe .photoframe-header-actions {
 #viewer.viewer-info-open {
   padding-right: 0;
 }
+@media (min-width: 761px) {
+  #viewer.viewer-landscape #viewerImg,
+  #viewer.viewer-landscape #viewerVideo {
+    max-width: calc(92vw - 80px) !important;
+  }
+}
 .viewer-info { position: absolute; top: 0; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(0); transition: transform .44s cubic-bezier(.22,1,.36,1); box-shadow: -6px 0 18px rgba(0,0,0,0.35); z-index: 1; will-change: transform; pointer-events: none; border-top-left-radius: 0; border-bottom-left-radius: 0; border-top-right-radius: 12px; border-bottom-right-radius: 12px; overflow: hidden; }
 .viewer-info.open { transform: translateX(100%); pointer-events: auto; }
 .viewer-info.hidden { display: none; }
