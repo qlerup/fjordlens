@@ -13,6 +13,7 @@ This repository contains two parts:
 
 - Timeline, Favorites, Folders, Places, Cameras, People views
 - Metadata indexing (EXIF/file info)
+- Historical weather enrichment from photo date + GPS, with city fallback
 - Thumbnail generation and cache management
 - Per-photo editing for captured date, GPS and favorite state
 - Duplicate detection and merge tools
@@ -90,6 +91,8 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
+
+Weather enrichment is enabled by default with `WEATHER_AUTO_FETCH=1`. New uploads and metadata rescans store weather under each photo's metadata when the photo has a date plus either GPS coordinates or a city/country value. FjordLens uses Open-Meteo's historical weather endpoint and caches both weather lookups and city geocoding locally.
 
 `scripts/Fresh_start_ubuntu_vm.sh` is a guided A-Z wizard. It asks for paths and options, writes `.env`, runs mount preflight checks, and starts containers.
 

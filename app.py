@@ -215,11 +215,21 @@ DEFAULT_UI_LANGUAGE = LANG_DA
 DEFAULT_SEARCH_LANGUAGE = LANG_DA
 WEATHER_PROVIDER = "open-meteo"
 WEATHER_HISTORY_API_URL = str(os.environ.get("WEATHER_HISTORY_API_URL", "https://archive-api.open-meteo.com/v1/archive") or "").strip()
+WEATHER_GEOCODING_API_URL = str(os.environ.get("WEATHER_GEOCODING_API_URL", "https://geocoding-api.open-meteo.com/v1/search") or "").strip()
+WEATHER_AUTO_FETCH = (
+    str(os.environ.get("WEATHER_AUTO_FETCH", "1") or "1").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 try:
     WEATHER_HISTORY_TIMEOUT_SEC = float(os.environ.get("WEATHER_HISTORY_TIMEOUT_SEC", "10") or 10)
 except Exception:
     WEATHER_HISTORY_TIMEOUT_SEC = 10.0
 WEATHER_HISTORY_TIMEOUT_SEC = max(2.0, min(30.0, WEATHER_HISTORY_TIMEOUT_SEC))
+try:
+    WEATHER_GEOCODING_TIMEOUT_SEC = float(os.environ.get("WEATHER_GEOCODING_TIMEOUT_SEC", "8") or 8)
+except Exception:
+    WEATHER_GEOCODING_TIMEOUT_SEC = 8.0
+WEATHER_GEOCODING_TIMEOUT_SEC = max(2.0, min(30.0, WEATHER_GEOCODING_TIMEOUT_SEC))
 WEATHER_HOURLY_FIELDS = (
     "temperature_2m",
     "relative_humidity_2m",
@@ -2850,6 +2860,16 @@ def init_db() -> None:
                     UNIQUE(lat_rounded, lon_rounded, observed_hour, provider)
                 );
                 CREATE INDEX IF NOT EXISTS idx_weather_cache_key ON weather_cache(lat_rounded, lon_rounded, observed_hour, provider);
+                CREATE TABLE IF NOT EXISTS place_geocode_cache (
+                    query_key TEXT PRIMARY KEY,
+                    city TEXT,
+                    country TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    provider TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL
+                );
             CREATE INDEX IF NOT EXISTS idx_photos_favorite ON photos(favorite);
             CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(gps_lat, gps_lon);
             CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
@@ -3167,6 +3187,24 @@ def init_db() -> None:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_weather_cache_key ON weather_cache(lat_rounded, lon_rounded, observed_hour, provider)")
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS place_geocode_cache (
+                    query_key TEXT PRIMARY KEY,
+                    city TEXT,
+                    country TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    provider TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
         except Exception:
             pass
@@ -8300,6 +8338,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         "faces": []
     }
     metadata["metadata_json"] = mj
+    _enrich_metadata_weather(metadata)
     return metadata
 
 
@@ -8375,6 +8414,32 @@ def _weather_cache_key(lat: float, lon: float, observed_hour: datetime) -> Tuple
     return (lat_r, lon_r, hour)
 
 
+def _weather_text_key(value: Any) -> str:
+    txt = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    return re.sub(r"\s+", " ", txt)
+
+
+def _weather_country_code(value: Any) -> str:
+    txt = str(value or "").strip()
+    if not txt:
+        return ""
+    if re.fullmatch(r"[A-Za-z]{2}", txt):
+        return txt.upper()
+    try:
+        country = pycountry.countries.lookup(txt)
+        code = getattr(country, "alpha_2", "")
+        return str(code or "").upper()
+    except Exception:
+        return ""
+
+
+def _weather_location_query_key(city: Any, country: Any = None) -> str:
+    city_key = _weather_text_key(city)
+    country_code = _weather_country_code(country)
+    country_key = country_code or _weather_text_key(country)
+    return f"{city_key}|{country_key}"
+
+
 def _weather_payload_from_cache(lat_r: int, lon_r: int, observed_hour: str) -> Optional[Dict[str, Any]]:
     try:
         with closing(get_conn()) as conn:
@@ -8411,6 +8476,171 @@ def _store_weather_payload_in_cache(lat_r: int, lon_r: int, observed_hour: str, 
         pass
 
 
+def _place_geocode_from_cache(query_key: str) -> Optional[Tuple[float, float, Dict[str, Any]]]:
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                """
+                SELECT city, country, latitude, longitude, payload_json
+                FROM place_geocode_cache
+                WHERE query_key=?
+                """,
+                (query_key,),
+            ).fetchone()
+        if not row:
+            return None
+        lat = float(row["latitude"])
+        lon = float(row["longitude"])
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        payload = _json_object(row["payload_json"])
+        context = payload if payload else {}
+        context.update(
+            {
+                "location_source": "city",
+                "location_city": row["city"],
+                "location_country": row["country"],
+                "geocoded_latitude": lat,
+                "geocoded_longitude": lon,
+            }
+        )
+        return (lat, lon, context)
+    except Exception:
+        return None
+
+
+def _store_place_geocode_cache(query_key: str, city: str, country: str, lat: float, lon: float, context: Dict[str, Any]) -> None:
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                """
+                INSERT INTO place_geocode_cache(query_key, city, country, latitude, longitude, provider, payload_json, created_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(query_key) DO UPDATE SET
+                    city=excluded.city,
+                    country=excluded.country,
+                    latitude=excluded.latitude,
+                    longitude=excluded.longitude,
+                    provider=excluded.provider,
+                    payload_json=excluded.payload_json,
+                    created_at=excluded.created_at
+                """,
+                (
+                    query_key,
+                    city,
+                    country,
+                    float(lat),
+                    float(lon),
+                    WEATHER_PROVIDER,
+                    json.dumps(context, ensure_ascii=False, default=str),
+                    now_iso(),
+                ),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _geocode_city_for_weather(city: Any, country: Any = None) -> Tuple[float, float, Dict[str, Any]]:
+    city_txt = str(city or "").strip()
+    country_txt = str(country or "").strip()
+    if not city_txt:
+        raise ValueError("Billedet mangler GPS-koordinater eller by")
+
+    query_key = _weather_location_query_key(city_txt, country_txt)
+    cached = _place_geocode_from_cache(query_key)
+    if cached:
+        return cached
+
+    if not WEATHER_GEOCODING_API_URL:
+        raise RuntimeError("Weather geocoding is disabled")
+
+    params: Dict[str, Any] = {
+        "name": city_txt,
+        "count": 5,
+        "language": "en",
+        "format": "json",
+    }
+    country_code = _weather_country_code(country_txt)
+    if country_code:
+        params["countryCode"] = country_code
+
+    resp = requests.get(WEATHER_GEOCODING_API_URL, params=params, timeout=WEATHER_GEOCODING_TIMEOUT_SEC)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Weather geocoding returned HTTP {resp.status_code}")
+    data = resp.json()
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        raise ValueError("Kunne ikke finde byen til vejrdata")
+
+    country_key = _weather_text_key(country_txt)
+    best = None
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if country_code and str(result.get("country_code") or "").upper() != country_code:
+            continue
+        if country_key and not country_code and _weather_text_key(result.get("country")) != country_key:
+            continue
+        best = result
+        break
+    if best is None:
+        best = next((r for r in results if isinstance(r, dict)), None)
+    if not isinstance(best, dict):
+        raise ValueError("Kunne ikke finde byen til vejrdata")
+
+    try:
+        lat = float(best.get("latitude"))
+        lon = float(best.get("longitude"))
+    except Exception:
+        raise ValueError("Byen havde ingen gyldige koordinater") from None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("Byen havde ugyldige koordinater")
+
+    context: Dict[str, Any] = {
+        "location_source": "city",
+        "location_city": city_txt,
+        "location_country": country_txt or best.get("country"),
+        "geocoded_name": best.get("name"),
+        "geocoded_country": best.get("country"),
+        "geocoded_country_code": best.get("country_code"),
+        "geocoded_admin1": best.get("admin1"),
+        "geocoded_latitude": lat,
+        "geocoded_longitude": lon,
+        "geocoding_provider": "Open-Meteo Geocoding API",
+    }
+    _store_place_geocode_cache(query_key, city_txt, country_txt, lat, lon, context)
+    return (lat, lon, context)
+
+
+def _weather_location_from_values(gps_lat: Any, gps_lon: Any, metadata_json: Any = None) -> Tuple[float, float, Dict[str, Any]]:
+    try:
+        lat = float(gps_lat)
+        lon = float(gps_lon)
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            mj = _json_object(metadata_json)
+            geo = mj.get("geo") if isinstance(mj.get("geo"), dict) else {}
+            return (
+                lat,
+                lon,
+                {
+                    "location_source": "gps",
+                    "location_city": geo.get("city"),
+                    "location_country": geo.get("country"),
+                },
+            )
+    except Exception:
+        pass
+
+    mj = _json_object(metadata_json)
+    geo = mj.get("geo") if isinstance(mj.get("geo"), dict) else {}
+    city = str(geo.get("city") or mj.get("city") or "").strip()
+    country = str(geo.get("country") or mj.get("country") or "").strip()
+    if city:
+        return _geocode_city_for_weather(city, country)
+    raise ValueError("Billedet mangler GPS-koordinater eller by")
+
+
 def _write_photo_weather_metadata(photo_id: int, payload: Optional[Dict[str, Any]]) -> None:
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
@@ -8434,7 +8664,14 @@ def _clear_photo_weather_metadata(conn: sqlite3.Connection, photo_id: int) -> No
     conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(mj, ensure_ascii=False, default=str), photo_id))
 
 
-def _fetch_open_meteo_weather(lat: float, lon: float, captured_at: str, observed_hour: datetime, cache_key: str) -> Dict[str, Any]:
+def _fetch_open_meteo_weather(
+    lat: float,
+    lon: float,
+    captured_at: str,
+    observed_hour: datetime,
+    cache_key: str,
+    location_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     if not WEATHER_HISTORY_API_URL:
         raise RuntimeError("Weather API is disabled")
 
@@ -8489,6 +8726,7 @@ def _fetch_open_meteo_weather(lat: float, lon: float, captured_at: str, observed
         code = None
     label_da, label_en = _photo_weather_labels(code)
     units = data.get("hourly_units") if isinstance(data.get("hourly_units"), dict) else {}
+    context = dict(location_context or {})
 
     payload: Dict[str, Any] = {
         "provider": WEATHER_PROVIDER,
@@ -8503,6 +8741,16 @@ def _fetch_open_meteo_weather(lat: float, lon: float, captured_at: str, observed
         "requested_longitude": float(lon),
         "latitude": data.get("latitude") if isinstance(data, dict) else None,
         "longitude": data.get("longitude") if isinstance(data, dict) else None,
+        "location_source": context.get("location_source") or "gps",
+        "location_city": context.get("location_city"),
+        "location_country": context.get("location_country"),
+        "geocoded_name": context.get("geocoded_name"),
+        "geocoded_country": context.get("geocoded_country"),
+        "geocoded_country_code": context.get("geocoded_country_code"),
+        "geocoded_admin1": context.get("geocoded_admin1"),
+        "geocoded_latitude": context.get("geocoded_latitude"),
+        "geocoded_longitude": context.get("geocoded_longitude"),
+        "geocoding_provider": context.get("geocoding_provider"),
         "weather_code": code,
         "weather_label_da": label_da,
         "weather_label_en": label_en,
@@ -8526,40 +8774,103 @@ def _fetch_open_meteo_weather(lat: float, lon: float, captured_at: str, observed
     return payload
 
 
-def get_or_fetch_photo_weather(row: sqlite3.Row, force: bool = False) -> Tuple[Dict[str, Any], str]:
-    photo_id = int(row["id"])
-    try:
-        lat = float(row["gps_lat"])
-        lon = float(row["gps_lon"])
-    except Exception:
-        raise ValueError("Billedet mangler GPS-koordinater")
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        raise ValueError("Billedets GPS-koordinater er ugyldige")
-
-    captured_raw = str(row["captured_at"] or row["modified_fs"] or row["created_fs"] or "").strip()
+def get_or_fetch_weather_payload(
+    captured_raw: Any,
+    gps_lat: Any,
+    gps_lon: Any,
+    metadata_json: Any,
+    *,
+    force: bool = False,
+) -> Tuple[Dict[str, Any], str]:
+    captured_raw = str(captured_raw or "").strip()
     captured_dt = _parse_photo_datetime(captured_raw)
     if not captured_dt:
         raise ValueError("Billedet mangler dato/tid")
 
+    lat, lon, location_context = _weather_location_from_values(gps_lat, gps_lon, metadata_json)
     observed_hour_dt = _nearest_weather_hour(captured_dt)
     lat_r, lon_r, observed_hour = _weather_cache_key(lat, lon, observed_hour_dt)
     cache_key = f"{WEATHER_PROVIDER}:{lat_r}:{lon_r}:{observed_hour}"
 
-    mj = _json_object(row["metadata_json"])
-    existing = mj.get("weather") if isinstance(mj.get("weather"), dict) else None
-    if existing and not force and existing.get("cache_key") == cache_key:
-        return (existing, "photo")
-
     if not force:
         cached = _weather_payload_from_cache(lat_r, lon_r, observed_hour)
         if cached:
-            _write_photo_weather_metadata(photo_id, cached)
             return (cached, "cache")
 
-    payload = _fetch_open_meteo_weather(lat, lon, captured_raw, observed_hour_dt, cache_key)
+    payload = _fetch_open_meteo_weather(lat, lon, captured_raw, observed_hour_dt, cache_key, location_context)
     _store_weather_payload_in_cache(lat_r, lon_r, observed_hour, payload)
-    _write_photo_weather_metadata(photo_id, payload)
     return (payload, "api")
+
+
+def _enrich_metadata_weather(metadata: Dict[str, Any]) -> None:
+    if not WEATHER_AUTO_FETCH:
+        return
+    mj = metadata.get("metadata_json") if isinstance(metadata.get("metadata_json"), dict) else {}
+    if isinstance(mj.get("weather"), dict):
+        return
+    captured_raw = metadata.get("captured_at") or metadata.get("modified_fs") or metadata.get("created_fs")
+    try:
+        payload, source = get_or_fetch_weather_payload(
+            captured_raw,
+            metadata.get("gps_lat"),
+            metadata.get("gps_lon"),
+            mj,
+            force=False,
+        )
+        mj["weather"] = payload
+        metadata["metadata_json"] = mj
+        try:
+            log_event(
+                "weather_indexed",
+                rel_path=str(metadata.get("rel_path") or ""),
+                source=source,
+                location_source=str(payload.get("location_source") or ""),
+            )
+        except Exception:
+            pass
+    except ValueError:
+        pass
+    except Exception as e:
+        try:
+            log_event("error", rel_path=str(metadata.get("rel_path") or "weather"), error=f"weather_index: {e}")
+        except Exception:
+            pass
+
+
+def get_or_fetch_photo_weather(row: sqlite3.Row, force: bool = False) -> Tuple[Dict[str, Any], str]:
+    photo_id = int(row["id"])
+    mj = _json_object(row["metadata_json"])
+    existing = mj.get("weather") if isinstance(mj.get("weather"), dict) else None
+    if existing and not force:
+        return (existing, "photo")
+
+    captured_raw = str(row["captured_at"] or row["modified_fs"] or row["created_fs"] or "").strip()
+    payload, source = get_or_fetch_weather_payload(
+        captured_raw,
+        row["gps_lat"],
+        row["gps_lon"],
+        mj,
+        force=force,
+    )
+    _write_photo_weather_metadata(photo_id, payload)
+    return (payload, source)
+
+
+def _refresh_photo_weather_if_possible(photo_id: int, *, force: bool = False) -> None:
+    if not WEATHER_AUTO_FETCH:
+        return
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT * FROM photos WHERE id=?", (int(photo_id),)).fetchone()
+        if row:
+            get_or_fetch_photo_weather(row, force=force)
+    except ValueError:
+        pass
+    except Exception as e:
+        try:
+            log_event("error", rel_path=f"weather:{photo_id}", error=f"weather_refresh: {e}")
+        except Exception:
+            pass
 
 
 def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Optional[str]]:
@@ -8717,6 +9028,15 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
                     changed = True
                 elif (meta.get("gps_name") or None) != (row["gps_name"] or None):
                     changed = True
+                else:
+                    old_weather = old_mj.get("weather") if isinstance(old_mj.get("weather"), dict) else None
+                    new_weather = new_mj.get("weather") if isinstance(new_mj.get("weather"), dict) else None
+                    if new_weather and (
+                        not old_weather
+                        or new_weather.get("cache_key") != old_weather.get("cache_key")
+                        or new_weather.get("fetched_at") != old_weather.get("fetched_at")
+                    ):
+                        changed = True
             if changed:
                 upsert_photo(meta)
                 updated += 1
@@ -13561,6 +13881,7 @@ def api_factory_reset():
         # Step 3: Clear non-user content tables (shares, geo cache)
         geo_deleted = 0
         weather_deleted = 0
+        place_geocode_deleted = 0
         share_deleted = 0
         share_folders_deleted = 0
         login_audit_deleted = 0
@@ -13576,6 +13897,12 @@ def api_factory_reset():
                     row = conn.execute("SELECT COUNT(*) AS c FROM weather_cache").fetchone()
                     weather_deleted = int(row["c"]) if row else 0
                     conn.execute("DELETE FROM weather_cache")
+                except Exception:
+                    pass
+                try:
+                    row = conn.execute("SELECT COUNT(*) AS c FROM place_geocode_cache").fetchone()
+                    place_geocode_deleted = int(row["c"]) if row else 0
+                    conn.execute("DELETE FROM place_geocode_cache")
                 except Exception:
                     pass
                 try:
@@ -13631,6 +13958,7 @@ def api_factory_reset():
                 "tus_tmp_dirs": tus_tmp.get("dirs", 0),
                 "geo_rows": geo_deleted,
                 "weather_rows": weather_deleted,
+                "place_geocode_rows": place_geocode_deleted,
                 "share_links": share_deleted,
                 "share_link_folders": share_folders_deleted,
                 "login_audit": login_audit_deleted,
@@ -13760,6 +14088,7 @@ def api_update_captured_at(photo_id: int):
                     os.utime(fpath, (ts, ts))
         except Exception:
             pass
+        _refresh_photo_weather_if_possible(photo_id, force=False)
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
         return jsonify({"ok": True, "item": row_to_public(row)})
@@ -13803,6 +14132,8 @@ def api_update_gps(photo_id: int):
                 (lat_f, lon_f, name, json.dumps(mj, ensure_ascii=False), photo_id),
             )
             conn.commit()
+        _refresh_photo_weather_if_possible(photo_id, force=False)
+        with closing(get_conn()) as conn:
             row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
         return jsonify({"ok": True, "item": row_to_public(row)})
     except Exception as e:

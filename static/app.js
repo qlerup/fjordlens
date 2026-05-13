@@ -1235,7 +1235,7 @@ const I18N = {
     weather_fetching: 'Henter vejr...',
     weather_fetch_failed: 'Kunne ikke hente vejr',
     weather_ready_to_fetch: 'Klar til hentning',
-    weather_missing_inputs: 'Kræver GPS og dato',
+    weather_missing_inputs: 'Kræver GPS/by og dato',
     weather_updated: 'Vejrdata gemt',
     weather_no_rain: 'Ingen regn',
     weather_wind: 'Vind',
@@ -1852,7 +1852,7 @@ const I18N = {
     weather_fetching: 'Fetching weather...',
     weather_fetch_failed: 'Could not fetch weather',
     weather_ready_to_fetch: 'Ready to fetch',
-    weather_missing_inputs: 'Requires GPS and date',
+    weather_missing_inputs: 'Requires GPS/city and date',
     weather_updated: 'Weather saved',
     weather_no_rain: 'No rain',
     weather_wind: 'Wind',
@@ -2266,7 +2266,6 @@ document.body.classList.add("view-timeline");
 let placesMap = null;
 let placesSourceReady = false;
 const weatherFetches = new Set();
-const weatherAutoTried = new Set();
 
 function showStatus(text, type = "ok") {
   els.status.textContent = text;
@@ -2390,8 +2389,11 @@ function canFetchWeather(item) {
   if (!item) return false;
   const lat = _numOrNull(item.gps_lat);
   const lon = _numOrNull(item.gps_lon);
+  const metadata = (item.metadata_json && typeof item.metadata_json === 'object') ? item.metadata_json : {};
+  const geo = (metadata.geo && typeof metadata.geo === 'object') ? metadata.geo : {};
+  const city = String(geo.city || metadata.city || '').trim();
   const captured = String(item.captured_at || item.modified_fs || item.created_fs || '').trim();
-  return lat != null && lon != null && !!captured;
+  return !!captured && ((lat != null && lon != null) || !!city);
 }
 
 function formatWeatherSummary(item) {
@@ -2438,18 +2440,10 @@ function renderWeatherInfo(item, opts = {}) {
   setWeatherEl(els.viWeather, els.viWeatherBtn, item, opts);
 }
 
-function maybeFetchWeather(item) {
-  if (!canFetchWeather(item) || _itemWeather(item)) return;
-  const id = String(item && item.id ? item.id : '');
-  if (!id || weatherAutoTried.has(id)) return;
-  weatherAutoTried.add(id);
-  fetchWeatherForItem(item, { force: false, silent: true });
-}
-
 async function fetchWeatherForItem(item, { force = false, silent = false } = {}) {
   const id = Number(item && item.id ? item.id : 0);
   if (!id || !canFetchWeather(item)) return;
-  const key = `${id}:${force ? 'force' : 'auto'}`;
+  const key = `${id}:${force ? 'force' : 'manual'}`;
   if (weatherFetches.has(key)) return;
   weatherFetches.add(key);
   renderWeatherInfo(item, { fetching: true });
@@ -4286,7 +4280,6 @@ function setDetail(item) {
   els.detailCountry.textContent = geo.country || "-";
   els.detailCity.textContent = geo.city || "-";
   renderWeatherInfo(item);
-  maybeFetchWeather(item);
   els.rawMeta.textContent = JSON.stringify(item.metadata_json || {}, null, 2);
   els.favoriteBtn.textContent = item.favorite ? "★" : "☆";
 
@@ -5604,7 +5597,6 @@ function openViewer(index) {
       setText('viCity', geo.city || '-');
     } catch {}
     renderWeatherInfo(it);
-    maybeFetchWeather(it);
     const viDL = q('viDownload'); if (viDL) viDL.href = dl;
     try { const fbtn = q('viFavoriteBtn'); if (fbtn) fbtn.textContent = it.favorite ? '★' : '☆'; } catch {}
   } catch {}
@@ -10572,7 +10564,6 @@ if (els.dateSaveBtn) {
       const item = data.item;
       const idx = state.items.findIndex(i => i.id === item.id);
       if (idx >= 0) state.items[idx] = item;
-      weatherAutoTried.delete(String(item.id));
       showStatus(tr('date_updated'), 'ok');
       renderGrid();
       setDetail(item);
@@ -10760,7 +10751,6 @@ if (els.gpsSaveBtn) {
       const data = await res.json();
       if (!res.ok || !data.ok) { showStatus(data.error || tr('gps_update_failed'), 'err'); return; }
       const item = data.item; const idx = state.items.findIndex(i => i.id === item.id); if (idx>=0) state.items[idx]=item;
-      weatherAutoTried.delete(String(item.id));
       showStatus(tr('gps_updated'), 'ok'); renderGrid(); setDetail(item);
       if (els.gpsEditWrap) { els.gpsEditWrap.classList.add('hidden'); els.gpsEditWrap.classList.remove('floating'); els.gpsEditWrap.classList.remove('gps-modal');
         try { if (gpsPrevParent) { if (gpsPrevNext) gpsPrevParent.insertBefore(els.gpsEditWrap, gpsPrevNext); else gpsPrevParent.appendChild(els.gpsEditWrap); } } catch {}
@@ -11594,30 +11584,17 @@ function positionViewerInfoTrigger() {
   if (!viMediaBtn) return;
   if (!els.viewer || els.viewer.classList.contains('hidden')) return;
   try {
-    if (!isMobileViewerLayout()) {
-      const closeBtn = els.viewerClose || document.getElementById('viewerClose');
-      if (closeBtn) {
-        const closeRect = closeBtn.getBoundingClientRect();
-        const btnH = viMediaBtn.offsetHeight || 24;
-        const top = Math.round(closeRect.top + Math.max(0, (closeRect.height - btnH) / 2));
-        const left = Math.round(closeRect.right + 8);
-        viMediaBtn.style.left = `${left}px`;
-        viMediaBtn.style.top = `${top}px`;
-        viMediaBtn.style.right = 'auto';
-        return;
-      }
-      viMediaBtn.style.left = '62px';
-      viMediaBtn.style.top = '12px';
-      viMediaBtn.style.right = 'auto';
-      return;
-    }
-
     const items = getViewerItems();
     const it = items[state.selectedIndex] || {};
     const mediaEl = (it.is_video ? els.viewerVideo : els.viewerImg);
-    if (!mediaEl) return;
+    if (!mediaEl) {
+      viMediaBtn.style.left = isMobileViewerLayout() ? '10px' : '62px';
+      viMediaBtn.style.top = isMobileViewerLayout() ? 'calc(env(safe-area-inset-top) + 10px)' : '12px';
+      viMediaBtn.style.right = 'auto';
+      return;
+    }
     const r = mediaEl.getBoundingClientRect();
-    if (!Number.isFinite(r.left) || !Number.isFinite(r.right)) return;
+    if (!Number.isFinite(r.left) || !Number.isFinite(r.right) || r.width <= 0 || r.height <= 0) return;
 
     const pad = isMobileViewerLayout() ? 10 : 8;
     viMediaBtn.style.left = `${Math.round(r.left + pad)}px`;
