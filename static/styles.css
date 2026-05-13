@@ -2435,10 +2435,9 @@ body.view-photoframe .photoframe-header-actions {
 /* Viewer slide-out info */
 #viewer {
   box-sizing: border-box;
-  transition: padding-right .26s cubic-bezier(.22,1,.36,1);
 }
 #viewer.viewer-info-open {
-  padding-right: min(388px, 34vw);
+  padding-right: 0;
 }
 @media (min-width: 761px) {
   #viewer.viewer-info-open #viewerImg,
