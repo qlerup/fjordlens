@@ -2442,8 +2442,8 @@ body.view-photoframe .photoframe-header-actions {
 @media (min-width: 761px) {
   #viewer.viewer-landscape #viewerImg,
   #viewer.viewer-landscape #viewerVideo {
-    max-width: min(84vw, calc(100vw - 80px)) !important;
-    max-height: calc(100vh - 110px) !important;
+    max-width: min(72vw, 980px) !important;
+    max-height: calc(100vh - 150px) !important;
   }
 
   #viewer.viewer-info-open #viewerImg,
@@ -2453,8 +2453,8 @@ body.view-photoframe .photoframe-header-actions {
 
   #viewer.viewer-info-open.viewer-landscape #viewerImg,
   #viewer.viewer-info-open.viewer-landscape #viewerVideo {
-    max-width: calc(100vw - min(388px, 34vw) - 92px) !important;
-    max-height: calc(100vh - 120px) !important;
+    max-width: min(calc(100vw - min(388px, 34vw) - 180px), 860px) !important;
+    max-height: calc(100vh - 170px) !important;
   }
 }
 .viewer-info { position: absolute; top: 0; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(0); transition: transform .44s cubic-bezier(.22,1,.36,1); box-shadow: -6px 0 18px rgba(0,0,0,0.35); z-index: 1; will-change: transform; pointer-events: none; border-top-left-radius: 0; border-bottom-left-radius: 0; border-top-right-radius: 12px; border-bottom-right-radius: 12px; overflow: hidden; }

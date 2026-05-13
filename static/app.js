@@ -5483,6 +5483,14 @@ function scheduleViewerInfoPosition() {
       height = Number(fallbackItem.height || 0);
     }
 
+    if (!(width > 0 && height > 0)) {
+      const active = getActiveViewerMediaElement();
+      if (active) {
+        width = Number(active.clientWidth || active.offsetWidth || 0);
+        height = Number(active.clientHeight || active.offsetHeight || 0);
+      }
+    }
+
     const isLandscape = width > 0 && height > 0 && width > (height * 1.05);
     els.viewer.classList.toggle('viewer-landscape', isLandscape);
     scheduleViewerInfoPosition();
