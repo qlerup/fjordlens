@@ -4063,6 +4063,10 @@ def _ensure_default_upload_subdir(destination: str, target_root: Path, current_s
     try:
         target = target_root / safe
         target.mkdir(parents=True, exist_ok=True)
+        if destination == UPLOAD_DEST_UPLOADS:
+            # Keep internal storage roots mirrored for mapper folders.
+            mirror = UPLOAD_DIR / "converted" / safe
+            mirror.mkdir(parents=True, exist_ok=True)
         _set_upload_subdir(destination, safe)
         return safe
     except Exception:
@@ -8067,8 +8071,13 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
         if under_uploads:
             # uploads/<subdir>/<file> -> uploads/converted/<subdir>/<stem>.jpg
             try:
-                parts = str(rel_path).split("/", 1)
-                sub = parts[1] if len(parts) >= 2 else Path(rel_path).name
+                rel_norm = str(rel_path).replace("\\", "/").lstrip("/")
+                if rel_norm.startswith("uploads/originals/"):
+                    sub = rel_norm[len("uploads/originals/"):]
+                elif rel_norm.startswith("uploads/"):
+                    sub = rel_norm[len("uploads/"):]
+                else:
+                    sub = Path(rel_norm).name
             except Exception:
                 sub = Path(rel_path).name
             subdir_only = str(Path(sub).parent).replace("\\", "/").strip("./")
@@ -14406,14 +14415,29 @@ def api_viewable(rel_path: str):
     view_path = ensure_viewable_copy(src, safe_rel)
     # Serve from the appropriate root
     try:
-        vp = str(view_path)
-        if vp.startswith(str(CONVERT_DIR)):
+        vp = str(view_path.resolve(strict=False))
+        convert_root = str(CONVERT_DIR.resolve(strict=False))
+        uploads_root = str(UPLOAD_DIR.resolve(strict=False))
+        photo_root = str(PHOTO_DIR.resolve(strict=False))
+        if vp.startswith(convert_root):
             rel_conv = str(view_path.relative_to(CONVERT_DIR)).replace("\\", "/")
             resp = send_from_directory(CONVERT_DIR, rel_conv)
             try: resp.headers["Cache-Control"] = "public, max-age=86400"  # 1 day
             except Exception: pass
             return resp
-        # No conversion: serve from the original location
+        if vp.startswith(uploads_root):
+            rel_up = str(view_path.relative_to(UPLOAD_DIR)).replace("\\", "/")
+            resp = send_from_directory(UPLOAD_DIR, rel_up)
+            try: resp.headers["Cache-Control"] = "public, max-age=86400"
+            except Exception: pass
+            return resp
+        if vp.startswith(photo_root):
+            rel_photo = str(view_path.relative_to(PHOTO_DIR)).replace("\\", "/")
+            resp = send_from_directory(PHOTO_DIR, rel_photo)
+            try: resp.headers["Cache-Control"] = "public, max-age=86400"
+            except Exception: pass
+            return resp
+        # Last-resort fallback to original request path
         if safe_rel.startswith("uploads/"):
             resp = send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
             try: resp.headers["Cache-Control"] = "public, max-age=86400"
@@ -14440,10 +14464,33 @@ def _find_existing_converted_for_upload_rel(rel_path: str) -> Optional[Path]:
     base = Path(tail).with_suffix("")
     parent = base.parent
     stem = base.name
+    found: list[Path] = []
     for ext in (".jpg", ".jpeg", ".png", ".webp"):
         cand = UPLOAD_DIR / "converted" / parent / f"{stem}{ext}"
         if cand.exists() and cand.is_file():
-            return cand
+            found.append(cand)
+    if found:
+        try:
+            return sorted(found, key=lambda p: (p.stat().st_mtime, p.stat().st_size), reverse=True)[0]
+        except Exception:
+            return found[0]
+
+    # Fallback: include collision-resolved names like stem_1.jpg, stem_2.jpg, ...
+    conv_parent = UPLOAD_DIR / "converted" / parent
+    if not conv_parent.exists() or not conv_parent.is_dir():
+        return None
+    try:
+        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+            for cand in conv_parent.glob(f"{stem}_*{ext}"):
+                if cand.exists() and cand.is_file():
+                    found.append(cand)
+    except Exception:
+        return None
+    if found:
+        try:
+            return sorted(found, key=lambda p: (p.stat().st_mtime, p.stat().st_size), reverse=True)[0]
+        except Exception:
+            return found[0]
     return None
 
 
@@ -14706,6 +14753,18 @@ def api_settings_upload_folder():
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
 
+    if destination == UPLOAD_DEST_UPLOADS:
+        # Canonicalize internal storage roots so mapper paths stay logical
+        # (no nested uploads/originals/originals or uploads/converted/originals).
+        if new_subdir == "originals" or new_subdir == "converted":
+            return jsonify({"ok": False, "error": "Ugyldigt mappenavn"}), 400
+        if new_subdir.startswith("originals/"):
+            new_subdir = new_subdir[len("originals/"):]
+        elif new_subdir.startswith("converted/"):
+            new_subdir = new_subdir[len("converted/"):]
+        if not new_subdir:
+            return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+
     target_root, _ = _upload_target_for_destination(destination)
     try:
         target_root.mkdir(parents=True, exist_ok=True)
@@ -14723,6 +14782,15 @@ def api_settings_upload_folder():
         target.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         return jsonify({"ok": False, "error": f"Kunne ikke oprette mappe: {e}"}), 400
+
+    if destination == UPLOAD_DEST_UPLOADS:
+        try:
+            mirror_root = (UPLOAD_DIR / "converted").resolve()
+            mirror_target = (UPLOAD_DIR / "converted" / new_subdir).resolve()
+            mirror_target.relative_to(mirror_root)
+            mirror_target.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Kunne ikke oprette konverteret mappe: {e}"}), 400
 
     _set_upload_subdir(destination, new_subdir)
     # Record folder owner for access control (owner and admins can always see; others need explicit ACL)
