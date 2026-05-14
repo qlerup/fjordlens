@@ -5554,62 +5554,36 @@ function scheduleViewerInfoPosition() {
   } catch {}
 }
 
-function setViewerMediaSizeForInfoPanel(isLandscape) {
-  const nodes = [els.viewerImg, els.viewerVideo].filter(Boolean);
-  const desktop = !isMobileViewerLayout();
-  const infoLayoutOpen = !!(els.viewer && els.viewer.classList.contains('viewer-info-open'));
-  let maxWidth = '92vw';
-  let maxHeight = '90vh';
+  function updateViewerLandscapeClass(fallbackItem = null) {
+    if (!els.viewer) return;
 
-  if (desktop && infoLayoutOpen && isLandscape) {
-    const panelW = Number((viPanel && viPanel.offsetWidth) || 360);
-    const viewportW = Math.max(1, Number(window.innerWidth || 0));
-    const viewportPad = 16;
-    const gap = 12;
-    const maxPanelLeft = viewportW - panelW - viewportPad;
-    const centeredMax = Math.floor(2 * (maxPanelLeft - (viewportW / 2) - gap));
-    const hardMax = Math.floor(viewportW * 0.92);
-    const computed = Math.min(hardMax, centeredMax);
-    maxWidth = `${Math.max(320, computed)}px`;
-  }
-
-  nodes.forEach((node) => {
-    node.style.maxWidth = maxWidth;
-    node.style.maxHeight = maxHeight;
-  });
-}
-
-function updateViewerLandscapeClass(fallbackItem = null) {
-  if (!els.viewer) return;
-
-  let width = 0;
-  let height = 0;
-  if (els.viewerVideo && els.viewerVideo.style.display !== 'none') {
-    width = Number(els.viewerVideo.videoWidth || 0);
-    height = Number(els.viewerVideo.videoHeight || 0);
-  } else if (els.viewerImg && els.viewerImg.style.display !== 'none') {
-    width = Number(els.viewerImg.naturalWidth || 0);
-    height = Number(els.viewerImg.naturalHeight || 0);
-  }
-
-  if (!(width > 0 && height > 0) && fallbackItem) {
-    width = Number(fallbackItem.width || 0);
-    height = Number(fallbackItem.height || 0);
-  }
-
-  if (!(width > 0 && height > 0)) {
-    const active = getActiveViewerMediaElement();
-    if (active) {
-      width = Number(active.clientWidth || active.offsetWidth || 0);
-      height = Number(active.clientHeight || active.offsetHeight || 0);
+    let width = 0;
+    let height = 0;
+    if (els.viewerVideo && els.viewerVideo.style.display !== 'none') {
+      width = Number(els.viewerVideo.videoWidth || 0);
+      height = Number(els.viewerVideo.videoHeight || 0);
+    } else if (els.viewerImg && els.viewerImg.style.display !== 'none') {
+      width = Number(els.viewerImg.naturalWidth || 0);
+      height = Number(els.viewerImg.naturalHeight || 0);
     }
-  }
 
-  const isLandscape = width > 0 && height > 0 && width > (height * 1.05);
-  els.viewer.classList.toggle('viewer-landscape', isLandscape);
-  setViewerMediaSizeForInfoPanel(isLandscape);
-  scheduleViewerInfoPosition();
-}
+    if (!(width > 0 && height > 0) && fallbackItem) {
+      width = Number(fallbackItem.width || 0);
+      height = Number(fallbackItem.height || 0);
+    }
+
+    if (!(width > 0 && height > 0)) {
+      const active = getActiveViewerMediaElement();
+      if (active) {
+        width = Number(active.clientWidth || active.offsetWidth || 0);
+        height = Number(active.clientHeight || active.offsetHeight || 0);
+      }
+    }
+
+    const isLandscape = width > 0 && height > 0 && width > (height * 1.05);
+    els.viewer.classList.toggle('viewer-landscape', isLandscape);
+    scheduleViewerInfoPosition();
+  }
 
 function viewerInfoOpenTransform(offsetX = 0) {
   const x = Math.round(Number(offsetX) || 0);
@@ -11950,7 +11924,6 @@ function resetViewerInfoDragState() {
 function setViewerInfoOpenLayout(open) {
   if (!els.viewer) return;
   els.viewer.classList.toggle('viewer-info-open', !!open && !isMobileViewerLayout());
-  updateViewerLandscapeClass();
 }
 
 function positionViewerInfoPanel() {
