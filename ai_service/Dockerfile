@@ -66,6 +66,16 @@ RUN set -eux; \
       pip install --no-cache-dir "${ONNXRUNTIME_CPU_SPEC}"; \
     fi
 
+# Re-pin torch last to avoid resolver upgrades from transitive deps (e.g. transformers)
+# that can select a newer CUDA build unsupported by older host drivers.
+RUN set -eux; \
+    if pip install --no-cache-dir --index-url "${TORCH_GPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; then \
+      echo "Re-pinned CUDA torch/torchvision build"; \
+    else \
+      echo "CUDA torch re-pin unavailable, using CPU torch/torchvision build"; \
+      pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; \
+    fi
+
 COPY app.py .
 
 EXPOSE 8000
