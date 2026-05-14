@@ -7,6 +7,6 @@ numpy>=1.25,<2.0
 pillow-heif>=0.16,<1.0
 insightface>=0.7.3,<1.0
 opencv-python>=4.8,<5.0
-transformers>=4.50,<5.0
-accelerate>=0.30,<1.0
-bitsandbytes>=0.43,<1.0; platform_system == "Linux" and platform_machine == "x86_64"
+transformers==4.51.3
+accelerate==0.34.2
+bitsandbytes==0.43.3; platform_system == "Linux" and platform_machine == "x86_64"

@@ -117,6 +117,15 @@ if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
 
 TORCH_CUDA_AVAILABLE = bool(torch.cuda.is_available())
+TORCH_CUDA_DEVICE_COUNT = 0
+TORCH_CUDA_DEVICE_NAME = None
+TORCH_CUDA_PROBE_ERROR = None
+try:
+    TORCH_CUDA_DEVICE_COUNT = int(torch.cuda.device_count())
+    if TORCH_CUDA_AVAILABLE and TORCH_CUDA_DEVICE_COUNT > 0:
+        TORCH_CUDA_DEVICE_NAME = str(torch.cuda.get_device_name(0))
+except Exception as exc:
+    TORCH_CUDA_PROBE_ERROR = str(exc)[:800]
 if DEVICE_PREF == "cpu":
     DEVICE = "cpu"
 elif DEVICE_PREF == "cuda":
@@ -131,7 +140,7 @@ if ort is not None:
     except Exception:
         ONNX_AVAILABLE_PROVIDERS = []
 
-FACE_USE_CUDA = DEVICE == "cuda" and "CUDAExecutionProvider" in ONNX_AVAILABLE_PROVIDERS
+FACE_USE_CUDA = DEVICE_PREF != "cpu" and "CUDAExecutionProvider" in ONNX_AVAILABLE_PROVIDERS
 FACE_CTX_ID = 0 if FACE_USE_CUDA else -1
 FACE_PROVIDER_CHAIN = (
     ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -200,7 +209,7 @@ _embed_cpu_preprocess = None
 _qwen_lock = threading.RLock()
 _qwen_model = None
 _qwen_processor = None
-_qwen_runtime_device = "unavailable"
+_qwen_runtime_device = DEVICE
 _qwen_runtime_error = None
 _qwen_quantization = "none"
 
@@ -654,9 +663,13 @@ def health():
         "torch_version": str(getattr(torch, "__version__", "")),
         "torch_cuda_version": str(getattr(torch.version, "cuda", "")),
         "torch_cuda_available": TORCH_CUDA_AVAILABLE,
+        "torch_cuda_device_count": TORCH_CUDA_DEVICE_COUNT,
+        "torch_cuda_device_name": TORCH_CUDA_DEVICE_NAME,
+        "torch_cuda_probe_error": TORCH_CUDA_PROBE_ERROR,
         "model": MODEL_NAME,
         "pretrained": MODEL_PRETRAINED,
         "embed_runtime_warning": embed_runtime_warning,
+        "onnxruntime_version": str(getattr(ort, "__version__", "")) if ort is not None else None,
         "onnx_available_providers": ONNX_AVAILABLE_PROVIDERS,
         "face_device": runtime_face_device,
         "face_device_configured": FACE_DEVICE_CONFIGURED,

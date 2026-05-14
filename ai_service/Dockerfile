@@ -31,39 +31,22 @@ RUN set -eux; \
       pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; \
     fi
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 # Install ONNX Runtime last so dependency resolution (e.g. insightface -> onnxruntime)
-# cannot silently replace GPU runtime with CPU runtime.
-ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu>=1.16,<2.0
-ARG ONNXRUNTIME_CPU_SPEC=onnxruntime>=1.16,<2.0
-ARG CUDNN_CU12_SPEC=nvidia-cudnn-cu12>=9,<10
-ARG CUDA_RUNTIME_CU12_SPEC=nvidia-cuda-runtime-cu12>=12,<13
-ARG CUDA_NVRTC_CU12_SPEC=nvidia-cuda-nvrtc-cu12>=12,<13
-ARG CUBLAS_CU12_SPEC=nvidia-cublas-cu12>=12,<13
-ARG CUFFT_CU12_SPEC=nvidia-cufft-cu12>=11,<12
-ARG CURAND_CU12_SPEC=nvidia-curand-cu12>=10,<11
-ARG CUSOLVER_CU12_SPEC=nvidia-cusolver-cu12>=11,<12
-ARG CUSPARSE_CU12_SPEC=nvidia-cusparse-cu12>=12,<13
-ARG NVJITLINK_CU12_SPEC=nvidia-nvjitlink-cu12>=12,<13
+# cannot silently replace GPU runtime with CPU runtime. Keep this on the
+# CUDA 12/cuDNN 8 line used by torch 2.1.2+cu121; newer ORT/cuDNN 9 builds
+# are for newer PyTorch stacks and make InsightFace fall back to CPU here.
+ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu==1.17.1
+ARG ONNXRUNTIME_CPU_SPEC=onnxruntime==1.17.3
 RUN set -eux; \
     pip uninstall -y onnxruntime onnxruntime-gpu || true; \
-    if pip install --no-cache-dir "${ONNXRUNTIME_GPU_SPEC}"; then \
+    if pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
-      pip install --no-cache-dir \
-        "${CUDA_RUNTIME_CU12_SPEC}" \
-        "${CUDA_NVRTC_CU12_SPEC}" \
-        "${CUBLAS_CU12_SPEC}" \
-        "${CUDNN_CU12_SPEC}" \
-        "${CUFFT_CU12_SPEC}" \
-        "${CURAND_CU12_SPEC}" \
-        "${CUSOLVER_CU12_SPEC}" \
-        "${CUSPARSE_CU12_SPEC}" \
-        "${NVJITLINK_CU12_SPEC}"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
-      pip install --no-cache-dir "${ONNXRUNTIME_CPU_SPEC}"; \
+      pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_CPU_SPEC}"; \
     fi
 
 # Re-pin torch last to avoid resolver upgrades from transitive deps (e.g. transformers)
@@ -75,6 +58,8 @@ RUN set -eux; \
       echo "CUDA torch re-pin unavailable, using CPU torch/torchvision build"; \
       pip install --no-cache-dir --index-url "${TORCH_CPU_INDEX_URL}" "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"; \
     fi
+
+RUN python -c "import torch, onnxruntime as ort; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('onnxruntime', ort.__version__, ort.get_available_providers())"
 
 COPY app.py .
 
