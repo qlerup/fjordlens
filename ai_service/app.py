@@ -142,6 +142,12 @@ QWEN_VL_MAX_NEW_TOKENS = max(32, min(256, QWEN_VL_MAX_NEW_TOKENS))
 DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
 if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
+try:
+    FACE_ONNX_THREADS = int(os.environ.get("FACE_ONNX_THREADS", "1") or 1)
+except Exception:
+    FACE_ONNX_THREADS = 1
+FACE_ONNX_THREADS = max(1, min(8, FACE_ONNX_THREADS))
+FACE_ALLOWED_MODULES = ["detection", "recognition"]
 
 TORCH_CUDA_AVAILABLE = bool(torch.cuda.is_available())
 TORCH_CUDA_DEVICE_COUNT = 0
@@ -191,15 +197,48 @@ def _face_detection_runtime_providers_for(app_obj) -> list[str]:
     return []
 
 
+def _face_provider_options(providers: list[str]) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    for provider in providers:
+        if provider == "CUDAExecutionProvider":
+            options.append({"device_id": 0})
+        else:
+            options.append({})
+    return options
+
+
+def _face_session_options():
+    if ort is None:
+        return None
+    try:
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = FACE_ONNX_THREADS
+        opts.inter_op_num_threads = 1
+        return opts
+    except Exception:
+        return None
+
+
 def _build_face_analysis(preferred_providers: list[str], ctx_id: int):
     """Create and prepare FaceAnalysis with best-effort provider support details."""
     providers_kw_supported = True
+    kwargs: dict[str, Any] = {
+        "providers": preferred_providers,
+        "provider_options": _face_provider_options(preferred_providers),
+    }
+    sess_options = _face_session_options()
+    if sess_options is not None:
+        kwargs["sess_options"] = sess_options
     try:
-        app_obj = insightface.app.FaceAnalysis(name="buffalo_l", providers=preferred_providers)
+        app_obj = insightface.app.FaceAnalysis(
+            name="buffalo_l",
+            allowed_modules=FACE_ALLOWED_MODULES,
+            **kwargs,
+        )
     except TypeError:
         # Older insightface versions may not expose providers kwarg.
         providers_kw_supported = False
-        app_obj = insightface.app.FaceAnalysis(name="buffalo_l")
+        app_obj = insightface.app.FaceAnalysis(name="buffalo_l", allowed_modules=FACE_ALLOWED_MODULES)
 
     try:
         app_obj.prepare(ctx_id=ctx_id, det_size=(640, 640))
@@ -246,8 +285,8 @@ face_detection_available = False
 face_detection_error = None
 face_device = FACE_DEVICE_CONFIGURED
 face_providers_kw_supported = None
+face_cuda_init_errors: list[str] = []
 if FACE_USE_CUDA:
-    cuda_init_errors: list[str] = []
     # Try normal chain first, then strict CUDA-only to force explicit failure if CUDA binding fails.
     for providers, label in ((FACE_PROVIDER_CHAIN, "chain"), (["CUDAExecutionProvider"], "cuda_only")):
         try:
@@ -262,7 +301,7 @@ if FACE_USE_CUDA:
             face_providers_kw_supported = bool(kw_supported)
             break
         except Exception as exc:
-            cuda_init_errors.append(f"{label}:{exc}")
+            face_cuda_init_errors.append(f"{label}:{exc}")
 
     if not face_detection_available:
         # Explicit CPU fallback with retained reason for diagnostics.
@@ -272,9 +311,9 @@ if FACE_USE_CUDA:
             face_detection_available = True
             face_device = "cpu"
             face_providers_kw_supported = bool(kw_supported)
-            face_detection_error = "cuda_init_failed: " + " | ".join(cuda_init_errors)
+            face_detection_error = "cuda_init_failed: " + " | ".join(face_cuda_init_errors)
         except Exception as exc2:
-            face_detection_error = "cuda_init_failed: " + " | ".join(cuda_init_errors) + f"; cpu_fallback_failed: {exc2}"
+            face_detection_error = "cuda_init_failed: " + " | ".join(face_cuda_init_errors) + f"; cpu_fallback_failed: {exc2}"
 else:
     try:
         app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
@@ -702,11 +741,15 @@ def health():
         "face_device_configured": FACE_DEVICE_CONFIGURED,
         "face_providers_kw_supported": face_providers_kw_supported,
         "face_provider_chain": FACE_PROVIDER_CHAIN,
+        "face_provider_options": _face_provider_options(FACE_PROVIDER_CHAIN),
+        "face_allowed_modules": FACE_ALLOWED_MODULES,
+        "face_onnx_threads": FACE_ONNX_THREADS,
         "face_runtime_providers": runtime_providers,
         "face_detection_runtime_providers": detection_runtime_providers,
         "face_runtime_warning": runtime_warning,
         "face_ctx_id": FACE_CTX_ID if runtime_face_device == "cuda" else -1,
         "face_detection_available": face_detection_available,
+        "face_cuda_init_errors": face_cuda_init_errors,
         "face_detection_error": face_detection_error,
         "qwen_model": QWEN_VL_MODEL,
         "qwen_loaded": bool(_qwen_model is not None and _qwen_processor is not None),
