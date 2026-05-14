@@ -1,4 +1,5 @@
 import io
+import inspect
 import json
 import os
 import re
@@ -21,6 +22,46 @@ except Exception:
 
 import insightface
 import numpy as np
+
+
+def _patch_torch_pytree_for_transformers() -> None:
+    """Compatibility shim for transformers expecting torch pytree newer API.
+
+    Some torch builds expose only _register_pytree_node while newer
+    transformers calls register_pytree_node with extra kwargs. We provide a
+    best-effort adapter before importing modules that may pull transformers.
+    """
+
+    try:
+        pytree_mod = getattr(torch.utils, "_pytree", None)
+        if pytree_mod is None:
+            return
+        if hasattr(pytree_mod, "register_pytree_node"):
+            return
+        legacy_register = getattr(pytree_mod, "_register_pytree_node", None)
+        if legacy_register is None:
+            return
+
+        try:
+            legacy_params = set(inspect.signature(legacy_register).parameters.keys())
+        except Exception:
+            legacy_params = set()
+
+        def _compat_register_pytree_node(node_type, flatten_fn, unflatten_fn, **kwargs):
+            filtered_kwargs = {k: v for k, v in kwargs.items() if (not legacy_params) or (k in legacy_params)}
+            try:
+                return legacy_register(node_type, flatten_fn, unflatten_fn, **filtered_kwargs)
+            except TypeError:
+                return legacy_register(node_type, flatten_fn, unflatten_fn)
+
+        setattr(pytree_mod, "register_pytree_node", _compat_register_pytree_node)
+    except Exception:
+        # Never block service startup on compatibility patching.
+        pass
+
+
+_patch_torch_pytree_for_transformers()
+
 import open_clip
 
 try:
