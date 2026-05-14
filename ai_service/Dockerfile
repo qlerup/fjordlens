@@ -38,12 +38,31 @@ RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 # cannot silently replace GPU runtime with CPU runtime. Keep this on the
 # CUDA 12/cuDNN 8 line used by torch 2.1.2+cu121; newer ORT/cuDNN 9 builds
 # are for newer PyTorch stacks and make InsightFace fall back to CPU here.
-ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu==1.17.1
-ARG ONNXRUNTIME_CPU_SPEC=onnxruntime==1.17.3
+ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu==1.18.0
+ARG ONNXRUNTIME_CPU_SPEC=onnxruntime==1.18.0
+ARG CUDA_RUNTIME_CU12_SPEC=nvidia-cuda-runtime-cu12==12.1.105
+ARG CUDA_NVRTC_CU12_SPEC=nvidia-cuda-nvrtc-cu12==12.1.105
+ARG CUBLAS_CU12_SPEC=nvidia-cublas-cu12==12.1.3.1
+ARG CUDNN_CU12_SPEC=nvidia-cudnn-cu12==8.9.7.29
+ARG CUFFT_CU12_SPEC=nvidia-cufft-cu12==11.0.2.54
+ARG CURAND_CU12_SPEC=nvidia-curand-cu12==10.3.2.106
+ARG CUSOLVER_CU12_SPEC=nvidia-cusolver-cu12==11.4.5.107
+ARG CUSPARSE_CU12_SPEC=nvidia-cusparse-cu12==12.1.0.106
+ARG NVJITLINK_CU12_SPEC=nvidia-nvjitlink-cu12==12.2.140
 RUN set -eux; \
     pip uninstall -y onnxruntime onnxruntime-gpu || true; \
     if pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
+      pip install --no-cache-dir -c constraints.txt \
+        "${CUDA_RUNTIME_CU12_SPEC}" \
+        "${CUDA_NVRTC_CU12_SPEC}" \
+        "${CUBLAS_CU12_SPEC}" \
+        "${CUDNN_CU12_SPEC}" \
+        "${CUFFT_CU12_SPEC}" \
+        "${CURAND_CU12_SPEC}" \
+        "${CUSOLVER_CU12_SPEC}" \
+        "${CUSPARSE_CU12_SPEC}" \
+        "${NVJITLINK_CU12_SPEC}"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
       pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_CPU_SPEC}"; \

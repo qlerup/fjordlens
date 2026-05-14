@@ -64,25 +64,52 @@ _patch_torch_pytree_for_transformers()
 
 import open_clip
 
-try:
-    from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+AutoModelForVision2Seq = None
+AutoProcessor = None
+BitsAndBytesConfig = None
+Qwen2_5_VLForConditionalGeneration = None
+bnb = None
+_BITSANDBYTES_AVAILABLE = False
+_QWEN_DEPS_IMPORT_ATTEMPTED = False
+_QWEN_DEPS_IMPORT_ERROR = None
+
+
+def _ensure_qwen_deps_loaded() -> bool:
+    global AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
+    global bnb, _BITSANDBYTES_AVAILABLE, _QWEN_DEPS_IMPORT_ATTEMPTED, _QWEN_DEPS_IMPORT_ERROR
+    if _QWEN_DEPS_IMPORT_ATTEMPTED:
+        return AutoProcessor is not None and AutoModelForVision2Seq is not None
+
+    _QWEN_DEPS_IMPORT_ATTEMPTED = True
     try:
-        from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
+        from transformers import AutoModelForVision2Seq as _AutoModelForVision2Seq
+        from transformers import AutoProcessor as _AutoProcessor
+        from transformers import BitsAndBytesConfig as _BitsAndBytesConfig
+
+        AutoModelForVision2Seq = _AutoModelForVision2Seq
+        AutoProcessor = _AutoProcessor
+        BitsAndBytesConfig = _BitsAndBytesConfig
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration as _Qwen2_5_VLForConditionalGeneration  # type: ignore
+
+            Qwen2_5_VLForConditionalGeneration = _Qwen2_5_VLForConditionalGeneration
+        except Exception:
+            Qwen2_5_VLForConditionalGeneration = None
+    except Exception as exc:
+        _QWEN_DEPS_IMPORT_ERROR = str(exc)[:800]
+        return False
+
+    try:
+        import bitsandbytes as _bnb  # type: ignore
+
+        bnb = _bnb
+        _BITSANDBYTES_AVAILABLE = True
     except Exception:
-        Qwen2_5_VLForConditionalGeneration = None
-except Exception:
-    AutoModelForVision2Seq = None
-    AutoProcessor = None
-    BitsAndBytesConfig = None
-    Qwen2_5_VLForConditionalGeneration = None
+        bnb = None
+        _BITSANDBYTES_AVAILABLE = False
 
-try:
-    import bitsandbytes as bnb  # type: ignore
-
-    _BITSANDBYTES_AVAILABLE = True
-except Exception:
-    bnb = None
-    _BITSANDBYTES_AVAILABLE = False
+    _QWEN_DEPS_IMPORT_ERROR = None
+    return True
 
 try:
     # Enable HEIC/HEIF decoding when the wheel is available
@@ -140,7 +167,7 @@ if ort is not None:
     except Exception:
         ONNX_AVAILABLE_PROVIDERS = []
 
-FACE_USE_CUDA = DEVICE_PREF != "cpu" and "CUDAExecutionProvider" in ONNX_AVAILABLE_PROVIDERS
+FACE_USE_CUDA = DEVICE == "cuda" and "CUDAExecutionProvider" in ONNX_AVAILABLE_PROVIDERS
 FACE_CTX_ID = 0 if FACE_USE_CUDA else -1
 FACE_PROVIDER_CHAIN = (
     ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -487,8 +514,8 @@ def _ensure_qwen_model_loaded():
         if _qwen_model is not None and _qwen_processor is not None:
             return _qwen_model, _qwen_processor
 
-        if AutoProcessor is None or AutoModelForVision2Seq is None:
-            _qwen_runtime_error = "transformers_not_installed"
+        if not _ensure_qwen_deps_loaded():
+            _qwen_runtime_error = _QWEN_DEPS_IMPORT_ERROR or "transformers_not_installed"
             raise RuntimeError(_qwen_runtime_error)
 
         model_kwargs: Dict[str, Any] = {
@@ -687,6 +714,8 @@ def health():
         "qwen_quantization": _qwen_quantization,
         "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
         "qwen_max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
+        "qwen_deps_loaded": _QWEN_DEPS_IMPORT_ATTEMPTED and AutoProcessor is not None and AutoModelForVision2Seq is not None,
+        "qwen_deps_import_error": _QWEN_DEPS_IMPORT_ERROR,
         "qwen_runtime_error": _qwen_runtime_error,
     }
 
