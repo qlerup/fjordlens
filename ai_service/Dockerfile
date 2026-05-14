@@ -35,34 +35,28 @@ COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 # Install ONNX Runtime last so dependency resolution (e.g. insightface -> onnxruntime)
-# cannot silently replace GPU runtime with CPU runtime. Keep this on the
-# CUDA 12/cuDNN 8 line used by torch 2.1.2+cu121; newer ORT/cuDNN 9 builds
-# are for newer PyTorch stacks and make InsightFace fall back to CPU here.
+# cannot silently replace GPU runtime with CPU runtime. The 1.18.0 PyPI wheel
+# links CUDA 11 libraries (libcublas.so.11, libcufft.so.10, libcurand.so.10),
+# while torch itself still uses the separate cu121 wheel installed above.
 ARG ONNXRUNTIME_GPU_SPEC=onnxruntime-gpu==1.18.0
 ARG ONNXRUNTIME_CPU_SPEC=onnxruntime==1.18.0
-ARG CUDA_RUNTIME_CU12_SPEC=nvidia-cuda-runtime-cu12==12.1.105
-ARG CUDA_NVRTC_CU12_SPEC=nvidia-cuda-nvrtc-cu12==12.1.105
-ARG CUBLAS_CU12_SPEC=nvidia-cublas-cu12==12.1.3.1
-ARG CUDNN_CU12_SPEC=nvidia-cudnn-cu12==8.9.7.29
-ARG CUFFT_CU12_SPEC=nvidia-cufft-cu12==11.0.2.54
-ARG CURAND_CU12_SPEC=nvidia-curand-cu12==10.3.2.106
-ARG CUSOLVER_CU12_SPEC=nvidia-cusolver-cu12==11.4.5.107
-ARG CUSPARSE_CU12_SPEC=nvidia-cusparse-cu12==12.1.0.106
-ARG NVJITLINK_CU12_SPEC=nvidia-nvjitlink-cu12==12.2.140
+ARG CUDA_RUNTIME_CU11_SPEC=nvidia-cuda-runtime-cu11==11.8.89
+ARG CUDA_NVRTC_CU11_SPEC=nvidia-cuda-nvrtc-cu11==11.8.89
+ARG CUBLAS_CU11_SPEC=nvidia-cublas-cu11==11.11.3.6
+ARG CUDNN_CU11_SPEC=nvidia-cudnn-cu11==8.9.5.30
+ARG CUFFT_CU11_SPEC=nvidia-cufft-cu11==10.9.0.58
+ARG CURAND_CU11_SPEC=nvidia-curand-cu11==10.3.0.86
 RUN set -eux; \
     pip uninstall -y onnxruntime onnxruntime-gpu || true; \
     if pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_GPU_SPEC}"; then \
       echo "Installed onnxruntime-gpu"; \
       pip install --no-cache-dir -c constraints.txt \
-        "${CUDA_RUNTIME_CU12_SPEC}" \
-        "${CUDA_NVRTC_CU12_SPEC}" \
-        "${CUBLAS_CU12_SPEC}" \
-        "${CUDNN_CU12_SPEC}" \
-        "${CUFFT_CU12_SPEC}" \
-        "${CURAND_CU12_SPEC}" \
-        "${CUSOLVER_CU12_SPEC}" \
-        "${CUSPARSE_CU12_SPEC}" \
-        "${NVJITLINK_CU12_SPEC}"; \
+        "${CUDA_RUNTIME_CU11_SPEC}" \
+        "${CUDA_NVRTC_CU11_SPEC}" \
+        "${CUBLAS_CU11_SPEC}" \
+        "${CUDNN_CU11_SPEC}" \
+        "${CUFFT_CU11_SPEC}" \
+        "${CURAND_CU11_SPEC}"; \
     else \
       echo "onnxruntime-gpu unavailable, using onnxruntime (CPU)"; \
       pip install --no-cache-dir -c constraints.txt "${ONNXRUNTIME_CPU_SPEC}"; \
