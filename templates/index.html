@@ -203,6 +203,7 @@
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
           <button class="tab-btn" data-tab="ai">AI</button>
           <button class="tab-btn" data-tab="upload_workflow">Upload workflow</button>
+          <button class="tab-btn" data-tab="hardware">Hardware</button>
           <button class="tab-btn" data-tab="dns">DNS</button>
           <button class="tab-btn" data-tab="heic">Konvertering</button>
           <button class="tab-btn" data-tab="shared">Delte</button>
@@ -216,6 +217,7 @@
             <option value="maint" selected>Vedligeholdelse</option>
             <option value="ai">AI</option>
             <option value="upload_workflow">Upload workflow</option>
+            <option value="hardware">Hardware</option>
             <option value="dns">DNS</option>
             <option value="heic">Konvertering</option>
             <option value="shared">Delte</option>
@@ -239,6 +241,18 @@
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
               <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
             </div>
+          </div>
+        </div>
+
+        <!-- Hardware -->
+        <div class="tab-panel hidden" data-tabpanel="hardware">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">GPU</div>
+            <p class="hint" style="margin:0 0 10px 0;">Frigør VRAM ved at aflæsse Qwen fra GPU. Modellen indlæses automatisk igen ved næste AI-beskrivelse.</p>
+            <div class="actions" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
+              <button id="hardwareUnloadQwenBtn" class="btn">Frigiv GPU (Qwen)</button>
+            </div>
+            <div id="hardwareStatus" class="status hidden" style="margin-top:10px;"></div>
           </div>
         </div>
 

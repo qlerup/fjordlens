@@ -24,6 +24,8 @@
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
   aiDescribeForceStopBtn: document.getElementById("aiDescribeForceStopBtn"),
   aiDescribeRerunBtn: document.getElementById("aiDescribeRerunBtn"),
+  hardwareUnloadQwenBtn: document.getElementById('hardwareUnloadQwenBtn'),
+  hardwareStatus: document.getElementById('hardwareStatus'),
   aiDescribeModelSelect: document.getElementById("aiDescribeModelSelect"),
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiDescribeRuntime: document.getElementById("aiDescribeRuntime"),
@@ -872,6 +874,8 @@ const I18N = {
     ai_desc_rerun_starting: 'Genkører beskrivelser for alle (overskriver)...',
     ai_desc_rerun_failed: 'Kunne ikke starte genkørsel',
     ai_desc_rerun_started: 'Genkørsel startet i baggrunden',
+    hw_unload_qwen_ok: 'Qwen er aflæst fra GPU (VRAM frigivet).',
+    hw_unload_qwen_err: 'Kunne ikke aflæse Qwen fra GPU.',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
@@ -1506,6 +1510,8 @@ const I18N = {
     ai_desc_rerun_starting: 'Rerunning descriptions for all (overwrite)...',
     ai_desc_rerun_failed: 'Failed to start rerun',
     ai_desc_rerun_started: 'Rerun started in background',
+    hw_unload_qwen_ok: 'Qwen unloaded from GPU (VRAM freed).',
+    hw_unload_qwen_err: 'Failed to unload Qwen from GPU.',
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
     dns_title: 'DNS',
@@ -10812,6 +10818,23 @@ async function rerunAiDescribe() {
 }
 
 els.aiDescribeRerunBtn && els.aiDescribeRerunBtn.addEventListener('click', rerunAiDescribe);
+
+async function unloadQwenGpu() {
+  try {
+    if (els.hardwareStatus) { els.hardwareStatus.classList.remove('hidden','err'); els.hardwareStatus.textContent = tr('please_wait') || 'Arbejder...'; }
+    const res = await fetch('/api/ai/hardware/qwen/unload', { method: 'POST' });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok || !data || data.ok === false) {
+      if (els.hardwareStatus) { els.hardwareStatus.classList.remove('hidden'); els.hardwareStatus.classList.add('err'); els.hardwareStatus.textContent = tr('hw_unload_qwen_err'); }
+      return;
+    }
+    if (els.hardwareStatus) { els.hardwareStatus.classList.remove('hidden','err'); els.hardwareStatus.textContent = tr('hw_unload_qwen_ok'); }
+  } catch {
+    if (els.hardwareStatus) { els.hardwareStatus.classList.remove('hidden'); els.hardwareStatus.classList.add('err'); els.hardwareStatus.textContent = tr('hw_unload_qwen_err'); }
+  }
+}
+
+els.hardwareUnloadQwenBtn && els.hardwareUnloadQwenBtn.addEventListener('click', unloadQwenGpu);
 
 if (els.aiDescribeModelSelect) {
   els.aiDescribeModelSelect.addEventListener('change', async () => {

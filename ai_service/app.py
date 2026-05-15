@@ -285,6 +285,40 @@ app.add_middleware(
 )
 
 
+def _start_qwen_idle_unloader():
+    if QWEN_VL_AUTO_UNLOAD_IDLE_SEC <= 0:
+        return
+
+    def _loop():
+        import time as _t
+        while True:
+            try:
+                _t.sleep(60)
+                # Only consider unloading when model is loaded
+                if _qwen_model is None and _qwen_processor is None:
+                    continue
+                last = float(globals().get("_qwen_last_used_ts", 0.0) or 0.0)
+                if last <= 0:
+                    # Never used since load — start grace timer now
+                    globals()["_qwen_last_used_ts"] = float(_t.time())
+                    continue
+                idle = float(_t.time()) - last
+                if idle >= float(QWEN_VL_AUTO_UNLOAD_IDLE_SEC):
+                    _unload_qwen_model()
+            except Exception:
+                # Never crash loop; keep trying
+                continue
+
+    try:
+        t = threading.Thread(target=_loop, name="qwen-idle-unloader", daemon=True)
+        t.start()
+    except Exception:
+        pass
+
+
+_start_qwen_idle_unloader()
+
+
 def _create_clip_model(device: str):
     mdl, _, prep = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=MODEL_PRETRAINED, device=device)
     mdl.eval()
@@ -307,6 +341,12 @@ _qwen_runtime_device = DEVICE
 _qwen_runtime_error = None
 _qwen_quantization = "none"
 _qwen_abort_event = threading.Event()
+_qwen_last_used_ts = 0.0
+try:
+    QWEN_VL_AUTO_UNLOAD_IDLE_SEC = int(os.environ.get("QWEN_VL_AUTO_UNLOAD_IDLE_SEC", "600") or 600)
+except Exception:
+    QWEN_VL_AUTO_UNLOAD_IDLE_SEC = 600
+QWEN_VL_AUTO_UNLOAD_IDLE_SEC = max(0, min(86400, QWEN_VL_AUTO_UNLOAD_IDLE_SEC))
 
 # Load InsightFace for face detection/recognition
 face_app = None
@@ -770,6 +810,11 @@ def _ensure_qwen_model_loaded():
             _qwen_runtime_device = _infer_qwen_runtime_device(model_obj)
             _qwen_runtime_error = None
             _qwen_quantization = quantization
+            try:
+                import time as _t
+                globals()["_qwen_last_used_ts"] = float(_t.time())
+            except Exception:
+                pass
             return _qwen_model, _qwen_processor
         except Exception as exc:
             primary_error = str(exc)[:800]
@@ -793,6 +838,11 @@ def _ensure_qwen_model_loaded():
                     _qwen_runtime_device = "cpu"
                     _qwen_runtime_error = f"cuda_load_failed_cpu_fallback: {primary_error}"[:800]
                     _qwen_quantization = "none"
+                    try:
+                        import time as _t
+                        globals()["_qwen_last_used_ts"] = float(_t.time())
+                    except Exception:
+                        pass
                     return _qwen_model, _qwen_processor
                 except Exception as cpu_exc:
                     _qwen_runtime_error = f"{primary_error} | cpu_fallback_failed: {cpu_exc}"[:800]
@@ -825,6 +875,36 @@ def _qwen_input_device(model_obj: Any) -> str:
     except Exception:
         pass
     return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _mark_qwen_used() -> None:
+    try:
+        import time as _t
+        globals()["_qwen_last_used_ts"] = float(_t.time())
+    except Exception:
+        pass
+
+
+def _unload_qwen_model() -> bool:
+    global _qwen_model, _qwen_processor
+    changed = False
+    try:
+        if _qwen_model is not None or _qwen_processor is not None:
+            _qwen_model = None
+            _qwen_processor = None
+            changed = True
+    except Exception:
+        pass
+    try:
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    return changed
 
 
 def _prepare_qwen_image(img: Image.Image) -> Image.Image:
@@ -866,6 +946,7 @@ def _prepare_qwen_image(img: Image.Image) -> Image.Image:
 def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
     _qwen_abort_event.clear()
     model_obj, processor_obj = _ensure_qwen_model_loaded()
+    _mark_qwen_used()
     img = _prepare_qwen_image(img)
 
     prompt_text = QWEN_VL_PROMPT
@@ -1161,6 +1242,12 @@ def expand_query(payload: QueryIn):
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"expand_query_failed: {exc}")
+
+
+@app.post("/qwen/unload")
+def qwen_unload():
+    changed = _unload_qwen_model()
+    return {"ok": True, "unloaded": bool(changed)}
 
 
 @app.post("/describe/image")

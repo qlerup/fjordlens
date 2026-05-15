@@ -14171,6 +14171,21 @@ def api_ai_search():
     return jsonify({"items": items, "count": len(items), "q": q})
 
 
+@app.route("/api/ai/hardware/qwen/unload", methods=["POST"])
+def api_ai_hardware_qwen_unload():
+    try:
+        r = requests.post(f"{AI_URL}/qwen/unload", timeout=5)
+        if r.ok:
+            try:
+                js = r.json()
+            except Exception:
+                js = {"ok": True}
+            return jsonify({"ok": True, **(js or {})})
+        return jsonify({"ok": False, "status": int(r.status_code)}), int(r.status_code or 500)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)[:240]}), 502
+
+
 @app.route("/api/photos/<int:photo_id>/similar")
 def api_similar(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "60"))))
