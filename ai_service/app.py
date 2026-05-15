@@ -126,6 +126,8 @@ MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
 QWEN_VL_MODEL = str(os.environ.get("QWEN_VL_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct") or "Qwen/Qwen2.5-VL-3B-Instruct").strip()
 QWEN_VL_ENABLE_4BIT = str(os.environ.get("QWEN_VL_4BIT", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 QWEN_VL_RESERVE_GPU = str(os.environ.get("QWEN_VL_RESERVE_GPU", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+QWEN_VL_CPU_FALLBACK = str(os.environ.get("QWEN_VL_CPU_FALLBACK", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+QWEN_VL_LOW_CPU_MEM_USAGE = str(os.environ.get("QWEN_VL_LOW_CPU_MEM_USAGE", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 QWEN_VL_PROMPT = str(
     os.environ.get(
         "QWEN_VL_PROMPT",
@@ -621,6 +623,8 @@ def _ensure_qwen_model_loaded():
             "device_map": "auto",
             "trust_remote_code": True,
         }
+        if QWEN_VL_LOW_CPU_MEM_USAGE:
+            model_kwargs["low_cpu_mem_usage"] = True
         if torch.cuda.is_available():
             model_kwargs["torch_dtype"] = torch.float16
         else:
@@ -661,13 +665,15 @@ def _ensure_qwen_model_loaded():
             primary_error = str(exc)[:800]
             _clear_cuda_cache()
 
-            if torch.cuda.is_available():
+            if torch.cuda.is_available() and QWEN_VL_CPU_FALLBACK:
                 try:
                     cpu_kwargs: Dict[str, Any] = {
                         "device_map": {"": "cpu"},
                         "trust_remote_code": True,
                         "torch_dtype": torch.float32,
                     }
+                    if QWEN_VL_LOW_CPU_MEM_USAGE:
+                        cpu_kwargs["low_cpu_mem_usage"] = True
                     model_obj = model_cls.from_pretrained(QWEN_VL_MODEL, **cpu_kwargs)
                     processor_obj = AutoProcessor.from_pretrained(QWEN_VL_MODEL, trust_remote_code=True)
                     model_obj.eval()
@@ -880,6 +886,8 @@ def health():
         "qwen_quantization": _qwen_quantization,
         "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
         "qwen_reserve_gpu": QWEN_VL_RESERVE_GPU,
+        "qwen_cpu_fallback": QWEN_VL_CPU_FALLBACK,
+        "qwen_low_cpu_mem_usage": QWEN_VL_LOW_CPU_MEM_USAGE,
         "qwen_max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
         "qwen_max_image_side": QWEN_VL_MAX_IMAGE_SIDE,
         "qwen_max_image_pixels": QWEN_VL_MAX_IMAGE_PIXELS,
