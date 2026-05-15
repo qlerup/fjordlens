@@ -2370,6 +2370,14 @@ function _collectItemTags(item) {
   return Array.from(new Set(primary.concat(secondary)));
 }
 
+function _formatAiAnalysisText(item) {
+  const caption = String(item && item.ai_desc_caption ? item.ai_desc_caption : '').trim();
+  const tags = _collectItemTags(item);
+  if (caption && tags.length) return `${caption} · ${tags.join(", ")}`;
+  if (tags.length) return tags.join(", ");
+  return caption || "-";
+}
+
 function _extractFileExt(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -4360,8 +4368,9 @@ function setDetail(item) {
   } else {
     els.detailGps.textContent = item.gps_name || "-";
   }
-  const dedupAiTags = _collectItemTags(item);
-  els.detailAiTags.textContent = dedupAiTags.length ? dedupAiTags.join(", ") : "-";
+  const aiAnalysisText = _formatAiAnalysisText(item);
+  els.detailAiTags.textContent = aiAnalysisText;
+  els.detailAiTags.title = aiAnalysisText;
   const conversion = _getItemConversionInfo(item);
   if (els.detailConvertedRow) els.detailConvertedRow.classList.toggle('hidden', !conversion.converted);
   if (els.detailConverted) els.detailConverted.textContent = conversion.converted ? conversion.label : '-';
@@ -5836,8 +5845,7 @@ function openViewer(index) {
     const lens = it.lens_label || it.lens_model || "-";
     const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
     const uploader = String(it && it.uploaded_by ? it.uploaded_by : '').trim();
-    const tagsList = _collectItemTags(it);
-    const tags = tagsList.length ? tagsList.join(", ") : "-";
+    const tags = _formatAiAnalysisText(it);
     const conversion = _getItemConversionInfo(it);
     const dl = (it.download_url || it.original_url || '#');
     const q = (id) => document.getElementById(id);
@@ -5854,6 +5862,7 @@ function openViewer(index) {
     setText('viGps', gps);
     setText('viUploader', uploader || '—');
     setText('viTags', tags);
+    try { const viTags = q('viTags'); if (viTags) viTags.title = tags; } catch {}
     const convRow = q('viConvertedRow');
     if (convRow) convRow.classList.toggle('hidden', !conversion.converted);
     setText('viConverted', conversion.converted ? conversion.label : '—');

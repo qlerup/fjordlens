@@ -837,6 +837,60 @@ def _normalize_ai_desc_tags(value: Any, max_tags: int = 16) -> list[str]:
     return out
 
 
+def _json_list_or_empty(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, (tuple, set)):
+        return list(raw)
+    if raw in (None, "", "null"):
+        return []
+    try:
+        parsed = json.loads(str(raw))
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _ai_desc_has_content(tags_raw: Any, caption_raw: Any = None) -> bool:
+    if str(caption_raw or "").strip():
+        return True
+    return bool(_normalize_ai_desc_tags(_json_list_or_empty(tags_raw)))
+
+
+def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: list[str], caption: Optional[str]) -> None:
+    clean_tags = _normalize_ai_desc_tags(tags)
+    clean_caption = str(caption or "").strip() or None
+
+    prev_ai_tags: list[str] = []
+    prev_meta: Dict[str, Any] = {}
+    try:
+        cur = conn.execute("SELECT ai_tags, metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+        if cur:
+            prev_ai_tags = _normalize_ai_desc_tags(_json_list_or_empty(cur["ai_tags"]), max_tags=64)
+            prev_meta = _json_object(cur["metadata_json"])
+    except Exception:
+        pass
+
+    merged_ai_tags = sorted({*prev_ai_tags, *clean_tags})
+    meta = dict(prev_meta or {})
+    ai_meta = dict(meta.get("ai") or {})
+    ai_meta["tags"] = merged_ai_tags
+    ai_meta["desc_tags"] = clean_tags
+    ai_meta["desc_caption"] = clean_caption
+    meta["ai"] = ai_meta
+
+    conn.execute(
+        "UPDATE photos SET ai_tags=?, ai_desc_tags=?, ai_desc_caption=?, metadata_json=? WHERE id=?",
+        (
+            json.dumps(merged_ai_tags, ensure_ascii=False),
+            json.dumps(clean_tags, ensure_ascii=False),
+            clean_caption,
+            json.dumps(meta, ensure_ascii=False),
+            photo_id,
+        ),
+    )
+
+
 def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
     try:
         rel_guess = None
@@ -13666,12 +13720,9 @@ def _describe_one_photo_light(photo_id: int, rel_path: str) -> bool:
     tags = _classify_descriptive_tags(emb)
     caption = _build_desc_caption(tags)
     with closing(get_conn()) as conn:
-        conn.execute(
-            "UPDATE photos SET ai_desc_tags=?, ai_desc_caption=? WHERE id=?",
-            (json.dumps(tags or [], ensure_ascii=False), caption, photo_id),
-        )
+        _store_photo_ai_description(conn, photo_id, tags or [], caption)
         conn.commit()
-    return True
+    return bool(caption or tags)
 
 
 def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
@@ -13685,10 +13736,7 @@ def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
         tags = _normalize_ai_desc_tags(result.get("tags"))
         caption = str(result.get("caption") or "").strip() or _build_desc_caption(tags)
         with closing(get_conn()) as conn:
-            conn.execute(
-                "UPDATE photos SET ai_desc_tags=?, ai_desc_caption=? WHERE id=?",
-                (json.dumps(tags or [], ensure_ascii=False), caption, photo_id),
-            )
+            _store_photo_ai_description(conn, photo_id, tags or [], caption)
             conn.commit()
         return bool(caption or tags)
     except Exception:
@@ -13709,7 +13757,17 @@ def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
     log_event("ai_desc_start")
     with closing(get_conn()) as conn:
         rows = conn.execute(
-            "SELECT id, rel_path FROM photos WHERE (ai_desc_tags IS NULL OR ai_desc_tags = '')"
+            """
+            SELECT id, rel_path
+            FROM photos
+            WHERE (
+                ai_desc_tags IS NULL
+                OR TRIM(ai_desc_tags) = ''
+                OR TRIM(ai_desc_tags) IN ('[]', 'null')
+                OR ai_desc_caption IS NULL
+                OR TRIM(ai_desc_caption) = ''
+            )
+            """
         ).fetchall()
     for row in rows:
         if stop_event and stop_event.is_set():
@@ -13739,10 +13797,10 @@ def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
 def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
     try:
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, ai_desc_tags FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+            row = conn.execute("SELECT id, ai_desc_tags, ai_desc_caption FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
             return
-        if row["ai_desc_tags"] is not None and str(row["ai_desc_tags"]).strip() != "":
+        if _ai_desc_has_content(row["ai_desc_tags"], row["ai_desc_caption"]):
             return
         pid = int(row["id"])
         if _describe_one_photo(pid, rel_path):
