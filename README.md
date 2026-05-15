@@ -263,9 +263,11 @@ Useful options:
 sh scripts/update.sh --no-cache
 sh scripts/update.sh --no-build
 sh scripts/update.sh --branch main
+sh scripts/update.sh --cleanup
+sh scripts/update.sh --no-cleanup
 ```
 
-Docker cleanup when you intentionally want to free space:
+The update script asks about optional Docker cleanup when run interactively. To intentionally free space outside an update:
 
 ```bash
 sh scripts/cleanup.sh

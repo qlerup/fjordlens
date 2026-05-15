@@ -22,6 +22,8 @@ DO_BUILD=1
 NO_CACHE=0
 SKIP_DB_BACKUP=0
 SHOW_LOGS=1
+CLEANUP_DOCKER="${CLEANUP_DOCKER:-ask}"
+COMPOSE_SERVICES="${COMPOSE_SERVICES:-}"
 
 usage() {
 	cat <<EOF
@@ -30,22 +32,24 @@ Usage: $0 [options]
 Normal FjordLens update:
   - backs up .env and fjordlens.db when possible
   - pulls the current Git branch with --ff-only
+  - asks whether to run optional Docker cleanup
   - runs docker compose up -d --build
   - waits for /api/health
-  - does not prune Docker cache/images; use scripts/cleanup.sh when needed
 
 Options:
   --app-dir DIR        FjordLens app directory (default: auto, then /volume1/docker/fjordlens)
   --branch BRANCH     Git branch to pull (default: current branch, then main)
   --no-build          Do not build images; only docker compose up -d
   --no-cache          Rebuild images without Docker cache
-  --no-prune          No-op kept for old commands; update no longer prunes
+  --cleanup           Run optional Docker cleanup without asking
+  --no-cleanup        Skip optional Docker cleanup without asking
+  --no-prune          Alias for --no-cleanup, kept for old commands
   --skip-db-backup    Skip SQLite backup before updating
   --no-logs           Do not print recent container logs at the end
   -h, --help          Show this help
 
 Environment:
-  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC
+  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC, CLEANUP_DOCKER, COMPOSE_SERVICES
 EOF
 }
 
@@ -74,8 +78,14 @@ while [ "$#" -gt 0 ]; do
 			NO_CACHE=1
 			DO_BUILD=1
 			;;
+		--cleanup)
+			CLEANUP_DOCKER="yes"
+			;;
+		--no-cleanup)
+			CLEANUP_DOCKER="no"
+			;;
 		--no-prune)
-			echo "==> --no-prune er ikke laengere noedvendig; update rydder ikke Docker cache."
+			CLEANUP_DOCKER="no"
 			;;
 		--skip-db-backup)
 			SKIP_DB_BACKUP=1
@@ -131,6 +141,84 @@ docker_cmd() {
 		sudo docker "$@"
 	else
 		docker "$@"
+	fi
+}
+
+cleanup_docker_space() {
+	echo "==> Rydder Docker build-cache og ubrugte objekter (bevarer volumes/data)"
+	docker_cmd builder prune -af || true
+	docker_cmd image prune -af || true
+	docker_cmd container prune -f || true
+	docker_cmd network prune -f || true
+	docker_cmd system df || true
+}
+
+run_optional_cleanup() {
+	case "$CLEANUP_DOCKER" in
+		yes|YES|true|TRUE|1)
+			cleanup_docker_space
+			return 0
+			;;
+		no|NO|false|FALSE|0)
+			echo "==> Springer Docker oprydning over"
+			return 0
+			;;
+		ask|"")
+			;;
+		*)
+			echo "Fejl: CLEANUP_DOCKER skal vaere ask, yes eller no."
+			exit 1
+			;;
+	esac
+
+	if [ ! -t 0 ]; then
+		echo "==> Springer Docker oprydning over (ingen interaktiv terminal). Brug --cleanup hvis den skal koeres."
+		return 0
+	fi
+
+	echo "==> Docker oprydning er valgfri."
+	printf "Vil du rydde Docker build-cache og ubrugte objekter nu? Svarer du ja, tager updaten lidt laengere tid. [y/N]: "
+	answer=""
+	read answer || answer=""
+	case "$answer" in
+		y|Y|yes|YES|j|J|ja|JA)
+			cleanup_docker_space
+			;;
+		*)
+			echo "==> Springer Docker oprydning over"
+			;;
+	esac
+}
+
+compose_build_no_cache() {
+	if [ -n "$COMPOSE_SERVICES" ]; then
+		docker_compose build --no-cache $COMPOSE_SERVICES
+	else
+		docker_compose build --no-cache
+	fi
+}
+
+compose_up() {
+	if [ -n "$COMPOSE_SERVICES" ]; then
+		docker_compose up -d $COMPOSE_SERVICES
+	else
+		docker_compose up -d
+	fi
+}
+
+compose_up_build() {
+	if [ -n "$COMPOSE_SERVICES" ]; then
+		docker_compose up -d --build $COMPOSE_SERVICES
+	else
+		docker_compose up -d --build
+	fi
+}
+
+compose_logs_tail() {
+	if [ -n "$COMPOSE_SERVICES" ]; then
+		docker_compose logs --tail=50 $COMPOSE_SERVICES
+	else
+		docker_compose logs --tail=50
 	fi
 }
 
@@ -314,17 +402,19 @@ else
 	echo "==> Opdateret: ${OLD_REV:-unknown} -> $NEW_REV"
 fi
 
+run_optional_cleanup
+
 if [ "$NO_CACHE" = "1" ]; then
 	echo "==> Bygger uden Docker cache"
-	docker_compose build --no-cache
+	compose_build_no_cache
 	echo "==> Starter FjordLens"
-	docker_compose up -d
+	compose_up
 elif [ "$DO_BUILD" = "1" ]; then
 	echo "==> Bygger og starter FjordLens"
-	docker_compose up -d --build
+	compose_up_build
 else
 	echo "==> Starter FjordLens uden build"
-	docker_compose up -d
+	compose_up
 fi
 
 wait_for_fjordlens
@@ -334,5 +424,5 @@ docker_compose ps
 
 if [ "$SHOW_LOGS" = "1" ]; then
 	echo "==> Seneste logs"
-	docker_compose logs --tail=50
+	compose_logs_tail
 fi
