@@ -316,9 +316,6 @@ def _start_qwen_idle_unloader():
         pass
 
 
-_start_qwen_idle_unloader()
-
-
 def _create_clip_model(device: str):
     mdl, _, prep = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=MODEL_PRETRAINED, device=device)
     mdl.eval()
@@ -347,6 +344,8 @@ try:
 except Exception:
     QWEN_VL_AUTO_UNLOAD_IDLE_SEC = 600
 QWEN_VL_AUTO_UNLOAD_IDLE_SEC = max(0, min(86400, QWEN_VL_AUTO_UNLOAD_IDLE_SEC))
+
+_start_qwen_idle_unloader()
 
 # Load InsightFace for face detection/recognition
 face_app = None
