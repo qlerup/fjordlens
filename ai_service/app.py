@@ -1,5 +1,6 @@
 import io
 import inspect
+import gc
 import json
 import os
 import re
@@ -123,6 +124,7 @@ MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
 QWEN_VL_MODEL = str(os.environ.get("QWEN_VL_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct") or "Qwen/Qwen2.5-VL-3B-Instruct").strip()
 QWEN_VL_ENABLE_4BIT = str(os.environ.get("QWEN_VL_4BIT", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+QWEN_VL_RESERVE_GPU = str(os.environ.get("QWEN_VL_RESERVE_GPU", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 QWEN_VL_PROMPT = str(
     os.environ.get(
         "QWEN_VL_PROMPT",
@@ -140,10 +142,10 @@ QWEN_VL_PROMPT = str(
     or ""
 ).strip()
 try:
-    QWEN_VL_MAX_NEW_TOKENS = int(os.environ.get("QWEN_VL_MAX_NEW_TOKENS", "180") or 180)
+    QWEN_VL_MAX_NEW_TOKENS = int(os.environ.get("QWEN_VL_MAX_NEW_TOKENS", "120") or 120)
 except Exception:
-    QWEN_VL_MAX_NEW_TOKENS = 180
-QWEN_VL_MAX_NEW_TOKENS = max(32, min(384, QWEN_VL_MAX_NEW_TOKENS))
+    QWEN_VL_MAX_NEW_TOKENS = 120
+QWEN_VL_MAX_NEW_TOKENS = max(32, min(256, QWEN_VL_MAX_NEW_TOKENS))
 DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
 if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
@@ -460,6 +462,47 @@ def _warmup_embed_runtime() -> None:
 _warmup_embed_runtime()
 
 
+def _clear_cuda_cache() -> None:
+    try:
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _reserve_gpu_memory_for_qwen() -> None:
+    """Move other optional GPU runtimes to CPU before Qwen claims VRAM."""
+
+    global face_app, face_device, face_detection_available, face_detection_error, face_providers_kw_supported
+
+    if not (QWEN_VL_RESERVE_GPU and torch.cuda.is_available()):
+        return
+
+    if embed_device_active == "cuda":
+        with _embed_lock:
+            if embed_device_active == "cuda":
+                _set_embed_runtime_cpu_fallback("cuda_reserved_for_qwen")
+
+    if _face_runtime_device() == "cuda":
+        try:
+            app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
+            face_app = app_obj
+            face_detection_available = True
+            face_device = "cpu"
+            face_providers_kw_supported = bool(kw_supported)
+            msg = "cuda_reserved_for_qwen"
+            face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
+        except Exception as exc:
+            msg = f"qwen_gpu_reserve_cpu_face_failed: {exc}"
+            face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
+
+    _clear_cuda_cache()
+
+
 def _infer_qwen_runtime_device(model_obj: Any) -> str:
     try:
         device_map = getattr(model_obj, "hf_device_map", None)
@@ -589,8 +632,9 @@ def _ensure_qwen_model_loaded():
             except Exception:
                 quantization = "none"
 
+        model_cls = Qwen2_5_VLForConditionalGeneration or AutoModelForVision2Seq
         try:
-            model_cls = Qwen2_5_VLForConditionalGeneration or AutoModelForVision2Seq
+            _reserve_gpu_memory_for_qwen()
             model_obj = model_cls.from_pretrained(QWEN_VL_MODEL, **model_kwargs)
             processor_obj = AutoProcessor.from_pretrained(QWEN_VL_MODEL, trust_remote_code=True)
             model_obj.eval()
@@ -602,7 +646,31 @@ def _ensure_qwen_model_loaded():
             _qwen_quantization = quantization
             return _qwen_model, _qwen_processor
         except Exception as exc:
-            _qwen_runtime_error = str(exc)[:800]
+            primary_error = str(exc)[:800]
+            _clear_cuda_cache()
+
+            if torch.cuda.is_available():
+                try:
+                    cpu_kwargs: Dict[str, Any] = {
+                        "device_map": {"": "cpu"},
+                        "trust_remote_code": True,
+                        "torch_dtype": torch.float32,
+                    }
+                    model_obj = model_cls.from_pretrained(QWEN_VL_MODEL, **cpu_kwargs)
+                    processor_obj = AutoProcessor.from_pretrained(QWEN_VL_MODEL, trust_remote_code=True)
+                    model_obj.eval()
+
+                    _qwen_model = model_obj
+                    _qwen_processor = processor_obj
+                    _qwen_runtime_device = "cpu"
+                    _qwen_runtime_error = f"cuda_load_failed_cpu_fallback: {primary_error}"[:800]
+                    _qwen_quantization = "none"
+                    return _qwen_model, _qwen_processor
+                except Exception as cpu_exc:
+                    _qwen_runtime_error = f"{primary_error} | cpu_fallback_failed: {cpu_exc}"[:800]
+            else:
+                _qwen_runtime_error = primary_error
+
             _qwen_runtime_device = "error"
             _qwen_model = None
             _qwen_processor = None
@@ -761,6 +829,7 @@ def health():
         "qwen_device": _qwen_runtime_device,
         "qwen_quantization": _qwen_quantization,
         "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
+        "qwen_reserve_gpu": QWEN_VL_RESERVE_GPU,
         "qwen_max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
         "qwen_deps_loaded": _QWEN_DEPS_IMPORT_ATTEMPTED and AutoProcessor is not None and AutoModelForVision2Seq is not None,
         "qwen_deps_import_error": _QWEN_DEPS_IMPORT_ERROR,
