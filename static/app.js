@@ -22,6 +22,7 @@
   aiDescModelLabel: document.getElementById("aiDescModelLabel"),
   aiDescribeToggle: document.getElementById("aiDescribeToggle"),
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
+  aiDescribeForceStopBtn: document.getElementById("aiDescribeForceStopBtn"),
   aiDescribeModelSelect: document.getElementById("aiDescribeModelSelect"),
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiDescribeRuntime: document.getElementById("aiDescribeRuntime"),
@@ -941,6 +942,7 @@ const I18N = {
     btn_stop_ai: 'Stop AI',
     btn_start_ai_desc: 'Start beskrivelser',
     btn_stop_ai_desc: 'Stop beskrivelser',
+    btn_force_stop_qwen: 'Afbryd Qwen',
     btn_start_faces: 'Start ansigter',
     btn_stop_faces: 'Stop ansigter',
     btn_index_faces: 'Indekser ansigter',
@@ -952,6 +954,7 @@ const I18N = {
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
     status_running: 'kører',
+    status_stopping: 'stopper',
     status_runtime_label: 'Runtime',
     status_runtime_gpu: 'GPU',
     status_runtime_cpu: 'CPU',
@@ -1228,6 +1231,9 @@ const I18N = {
     ai_desc_stop_failed: 'Kunne ikke stoppe AI-beskrivelser.',
     ai_desc_stopped: 'AI-beskrivelser stoppet.',
     ai_desc_stop_error: 'Fejl ved stop af AI-beskrivelser.',
+    ai_desc_force_stopping: 'Afbryder Qwen...',
+    ai_desc_force_failed: 'Kunne ikke afbryde Qwen.',
+    ai_desc_force_error: 'Fejl ved afbrydelse af Qwen.',
     status_model_label: 'Model',
     faces_starting: 'Starter ansigtsindeksering…',
     faces_start_failed: 'Kunne ikke starte ansigtsindeksering',
@@ -1566,6 +1572,7 @@ const I18N = {
     btn_stop_ai: 'Stop AI',
     btn_start_ai_desc: 'Start descriptions',
     btn_stop_ai_desc: 'Stop descriptions',
+    btn_force_stop_qwen: 'Abort Qwen',
     btn_start_faces: 'Start faces',
     btn_stop_faces: 'Stop faces',
     btn_index_faces: 'Index faces',
@@ -1577,6 +1584,7 @@ const I18N = {
     status_processed_label: 'processed',
     status_stopped: 'stopped',
     status_running: 'running',
+    status_stopping: 'stopping',
     status_runtime_label: 'Runtime',
     status_runtime_gpu: 'GPU',
     status_runtime_cpu: 'CPU',
@@ -1853,6 +1861,9 @@ const I18N = {
     ai_desc_stop_failed: 'Could not stop AI descriptions.',
     ai_desc_stopped: 'AI descriptions stopped.',
     ai_desc_stop_error: 'Error while stopping AI descriptions.',
+    ai_desc_force_stopping: 'Aborting Qwen...',
+    ai_desc_force_failed: 'Could not abort Qwen.',
+    ai_desc_force_error: 'Error while aborting Qwen.',
     status_model_label: 'Model',
     faces_starting: 'Starting face indexing…',
     faces_start_failed: 'Could not start face indexing',
@@ -1955,6 +1966,11 @@ function updateAiDescribeToggleButton() {
   if (els.aiDescribeToggleText) {
     els.aiDescribeToggleText.textContent = enabled ? tr('btn_stop_ai_desc') : tr('btn_start_ai_desc');
   }
+  if (els.aiDescribeForceStopBtn) {
+    const showForce = !!state.aiDescribeRunning && normalizeAiDescribeModel(state.aiDescribeModel) === 'qwen';
+    els.aiDescribeForceStopBtn.classList.toggle('hidden', !showForce);
+    els.aiDescribeForceStopBtn.disabled = !showForce || !!state.aiDescribeForceStopPending;
+  }
 }
 
 function updateFacesToggleButton() {
@@ -2034,6 +2050,8 @@ let state = {
   aiAutoEnabled: false,
   aiRuntime: 'unknown',
   aiDescribeRunning: false,
+  aiDescribeStopping: false,
+  aiDescribeForceStopPending: false,
   aiDescribeAutoEnabled: false,
   aiDescribeRuntime: 'unknown',
   aiDescribeModel: 'light',
@@ -9723,6 +9741,7 @@ function applyUiLanguage() {
   if (els.aiDescTitle) els.aiDescTitle.textContent = tr('ai_desc_title');
   if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
   if (els.aiDescModelLabel) els.aiDescModelLabel.textContent = tr('ai_desc_model_label');
+  if (els.aiDescribeForceStopBtn) els.aiDescribeForceStopBtn.textContent = tr('btn_force_stop_qwen');
   if (els.aiDescribeModelSelect) {
     const lightOpt = els.aiDescribeModelSelect.querySelector('option[value="light"]');
     const qwenOpt = els.aiDescribeModelSelect.querySelector('option[value="qwen"]');
@@ -10586,6 +10605,8 @@ async function setAiDescribeModel(model, scope = 'new') {
     state.aiDescribeModel = normalizeAiDescribeModel((data && data.model) || wantedModel);
     if (typeof data.auto_ingest !== 'undefined') state.aiDescribeAutoEnabled = !!data.auto_ingest;
     if (typeof data.running !== 'undefined') state.aiDescribeRunning = !!data.running;
+    state.aiDescribeStopping = false;
+    state.aiDescribeForceStopPending = false;
     updateAiDescribeModelSelect();
     updateAiDescribeToggleButton();
 
@@ -10619,6 +10640,8 @@ async function startAiDescribeIngest(scope = 'all') {
     }
     state.aiDescribeAutoEnabled = true;
     state.aiDescribeRunning = !!(data && data.running);
+    state.aiDescribeStopping = false;
+    state.aiDescribeForceStopPending = false;
     updateAiDescribeModelSelect();
     updateAiDescribeToggleButton();
     pollAiDescribeStatus();
@@ -10636,12 +10659,39 @@ async function stopAiDescribeIngest() {
       return;
     }
     showStatus(tr('ai_desc_stopped'), 'ok');
-    state.aiDescribeRunning = false;
+    state.aiDescribeRunning = !!(data && data.running);
+    state.aiDescribeStopping = !!(data && data.stopping);
     state.aiDescribeAutoEnabled = false;
     updateAiDescribeToggleButton();
     pollAiDescribeStatus();
   } catch {
     showStatus(tr('ai_desc_stop_error'), 'err');
+  }
+}
+
+async function forceStopAiDescribeIngest() {
+  state.aiDescribeForceStopPending = true;
+  state.aiDescribeStopping = true;
+  updateAiDescribeToggleButton();
+  try {
+    const res = await fetch('/api/ai/describe/stop?force=1', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data && data.ok === false)) {
+      state.aiDescribeForceStopPending = false;
+      state.aiDescribeStopping = false;
+      updateAiDescribeToggleButton();
+      showStatus(tr('ai_desc_force_failed'), 'err');
+      return;
+    }
+    showStatus(tr('ai_desc_force_stopping'), 'ok');
+    state.aiDescribeForceStopPending = false;
+    state.aiDescribeAutoEnabled = false;
+    pollAiDescribeStatus();
+  } catch {
+    state.aiDescribeForceStopPending = false;
+    state.aiDescribeStopping = false;
+    updateAiDescribeToggleButton();
+    showStatus(tr('ai_desc_force_error'), 'err');
   }
 }
 
@@ -10659,6 +10709,10 @@ els.aiDescribeToggle && els.aiDescribeToggle.addEventListener('change', async ()
     return;
   }
   await stopAiDescribeIngest();
+});
+
+els.aiDescribeForceStopBtn && els.aiDescribeForceStopBtn.addEventListener('click', async () => {
+  await forceStopAiDescribeIngest();
 });
 
 if (els.aiDescribeModelSelect) {
@@ -10830,6 +10884,8 @@ async function pollAiDescribeStatus() {
     const r = await fetch('/api/ai/describe/status');
     const s = await r.json();
     state.aiDescribeRunning = !!(s && s.ok && s.running);
+    state.aiDescribeStopping = !!(s && s.ok && s.stopping);
+    if (!state.aiDescribeStopping) state.aiDescribeForceStopPending = false;
     state.aiDescribeAutoEnabled = !!(s && s.ok && s.auto_ingest);
     state.aiDescribeModel = normalizeAiDescribeModel(s && s.model);
     state.aiDescribeRuntime = String((s && s.runtime && (s.runtime.describe || s.runtime.ai)) || state.aiRuntime || 'unknown');
@@ -10840,7 +10896,7 @@ async function pollAiDescribeStatus() {
       if (!s || !s.ok) {
         els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('status_dash')}`;
       } else {
-        const run = s.running ? tr('status_running') : tr('status_stopped');
+        const run = s.stopping ? tr('status_stopping') : (s.running ? tr('status_running') : tr('status_stopped'));
         const source = (!s.running && s.last) ? s.last : s;
         const described = Number(source && source.described) || 0;
         const total = Number(source && source.total) || 0;
@@ -10851,6 +10907,8 @@ async function pollAiDescribeStatus() {
     }
   } catch {
     state.aiDescribeRunning = false;
+    state.aiDescribeStopping = false;
+    state.aiDescribeForceStopPending = false;
     state.aiDescribeAutoEnabled = false;
     state.aiDescribeRuntime = 'unknown';
     updateAiDescribeToggleButton();

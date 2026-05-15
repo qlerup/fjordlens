@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -146,6 +147,16 @@ try:
 except Exception:
     QWEN_VL_MAX_NEW_TOKENS = 120
 QWEN_VL_MAX_NEW_TOKENS = max(32, min(256, QWEN_VL_MAX_NEW_TOKENS))
+try:
+    QWEN_VL_MAX_IMAGE_SIDE = int(os.environ.get("QWEN_VL_MAX_IMAGE_SIDE", "1280") or 1280)
+except Exception:
+    QWEN_VL_MAX_IMAGE_SIDE = 1280
+QWEN_VL_MAX_IMAGE_SIDE = max(0, min(4096, QWEN_VL_MAX_IMAGE_SIDE))
+try:
+    QWEN_VL_MAX_IMAGE_PIXELS = int(os.environ.get("QWEN_VL_MAX_IMAGE_PIXELS", "1500000") or 1500000)
+except Exception:
+    QWEN_VL_MAX_IMAGE_PIXELS = 1500000
+QWEN_VL_MAX_IMAGE_PIXELS = max(0, min(12000000, QWEN_VL_MAX_IMAGE_PIXELS))
 DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
 if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
@@ -285,6 +296,7 @@ _qwen_processor = None
 _qwen_runtime_device = DEVICE
 _qwen_runtime_error = None
 _qwen_quantization = "none"
+_qwen_abort_event = threading.Event()
 
 # Load InsightFace for face detection/recognition
 face_app = None
@@ -699,8 +711,31 @@ def _qwen_input_device(model_obj: Any) -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def _prepare_qwen_image(img: Image.Image) -> Image.Image:
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        return img
+
+    scale = 1.0
+    if QWEN_VL_MAX_IMAGE_SIDE > 0:
+        scale = min(scale, float(QWEN_VL_MAX_IMAGE_SIDE) / float(max(width, height)))
+    if QWEN_VL_MAX_IMAGE_PIXELS > 0:
+        pixels = width * height
+        if pixels > QWEN_VL_MAX_IMAGE_PIXELS:
+            scale = min(scale, (float(QWEN_VL_MAX_IMAGE_PIXELS) / float(pixels)) ** 0.5)
+
+    if scale >= 1.0:
+        return img
+
+    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+    return img.resize(new_size, resample)
+
+
 def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
+    _qwen_abort_event.clear()
     model_obj, processor_obj = _ensure_qwen_model_loaded()
+    img = _prepare_qwen_image(img)
 
     prompt_text = QWEN_VL_PROMPT
     fallback_prompt_text = f"<|vision_start|><|image_pad|><|vision_end|>\n{QWEN_VL_PROMPT}"
@@ -740,12 +775,27 @@ def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
             except Exception:
                 pass
 
+    generate_kwargs: Dict[str, Any] = {
+        **inputs,
+        "max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
+        "do_sample": False,
+    }
+    try:
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        class _QwenAbortCriteria(StoppingCriteria):
+            def __call__(self, input_ids, scores, **kwargs):  # type: ignore[no-untyped-def]
+                return _qwen_abort_event.is_set()
+
+        generate_kwargs["stopping_criteria"] = StoppingCriteriaList([_QwenAbortCriteria()])
+    except Exception:
+        pass
+
     with torch.no_grad():
-        output_ids = model_obj.generate(
-            **inputs,
-            max_new_tokens=QWEN_VL_MAX_NEW_TOKENS,
-            do_sample=False,
-        )
+        output_ids = model_obj.generate(**generate_kwargs)
+
+    if _qwen_abort_event.is_set():
+        raise RuntimeError("qwen_describe_aborted")
 
     prompt_len = 0
     try:
@@ -831,6 +881,8 @@ def health():
         "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
         "qwen_reserve_gpu": QWEN_VL_RESERVE_GPU,
         "qwen_max_new_tokens": QWEN_VL_MAX_NEW_TOKENS,
+        "qwen_max_image_side": QWEN_VL_MAX_IMAGE_SIDE,
+        "qwen_max_image_pixels": QWEN_VL_MAX_IMAGE_PIXELS,
         "qwen_deps_loaded": _QWEN_DEPS_IMPORT_ATTEMPTED and AutoProcessor is not None and AutoModelForVision2Seq is not None,
         "qwen_deps_import_error": _QWEN_DEPS_IMPORT_ERROR,
         "qwen_runtime_error": _qwen_runtime_error,
@@ -856,6 +908,18 @@ def embed_image(file: UploadFile = File(...)):
         return {"embedding": _encode_image_with_fallback(img)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"embed_image_failed: {exc}")
+
+
+@app.post("/describe/stop")
+def stop_describe(hard: bool = False):
+    _qwen_abort_event.set()
+    if hard:
+        def _exit_soon() -> None:
+            time.sleep(0.2)
+            os._exit(0)
+
+        threading.Thread(target=_exit_soon, daemon=True).start()
+    return {"ok": True, "hard": bool(hard)}
 
 
 @app.post("/describe/image")

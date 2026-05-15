@@ -21,6 +21,7 @@ services:
       THUMB_DIR: /thumbs
       AI_URL: http://fjordlens-ai:8000
       AI_DESC_MODEL: ${AI_DESC_MODEL:-qwen}
+      AI_DESC_REQUEST_TIMEOUT_SEC: ${AI_DESC_REQUEST_TIMEOUT_SEC:-120}
       AI_INGEST_THROTTLE_SEC: ${AI_INGEST_THROTTLE_SEC:-0.04}
       FACES_INDEX_THROTTLE_SEC: ${FACES_INDEX_THROTTLE_SEC:-0.06}
       TZ: ${TZ:-Europe/Copenhagen}
@@ -59,6 +60,8 @@ services:
       QWEN_VL_4BIT: ${QWEN_VL_4BIT:-1}
       QWEN_VL_RESERVE_GPU: ${QWEN_VL_RESERVE_GPU:-1}
       QWEN_VL_MAX_NEW_TOKENS: ${QWEN_VL_MAX_NEW_TOKENS:-120}
+      QWEN_VL_MAX_IMAGE_SIDE: ${QWEN_VL_MAX_IMAGE_SIDE:-1280}
+      QWEN_VL_MAX_IMAGE_PIXELS: ${QWEN_VL_MAX_IMAGE_PIXELS:-1500000}
       PORT: "8000"
       # Persist model/weights downloads between restarts
       XDG_CACHE_HOME: /cache

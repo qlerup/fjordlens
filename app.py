@@ -142,6 +142,11 @@ ENABLE_SCAN_FEATURES = (
     in {"1", "true", "yes", "on"}
 )
 AI_URL = os.environ.get("AI_URL", "http://localhost:8001").rstrip("/")
+try:
+    AI_DESC_REQUEST_TIMEOUT_SEC = float(os.environ.get("AI_DESC_REQUEST_TIMEOUT_SEC", "120") or 120)
+except Exception:
+    AI_DESC_REQUEST_TIMEOUT_SEC = 120.0
+AI_DESC_REQUEST_TIMEOUT_SEC = max(10.0, min(600.0, AI_DESC_REQUEST_TIMEOUT_SEC))
 SHARE_DUCKDNS_BASE_URL = str(os.environ.get("SHARE_DUCKDNS_BASE_URL", "")).strip()
 PHOTOFRAME_FRAMES_ENV = str(os.environ.get("PHOTOFRAME_FRAMES", "") or "").strip()
 PHOTOFRAME_FRAMES_PATH = DATA_DIR / "photoframes.json"
@@ -901,7 +906,7 @@ def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
         ai_src = ensure_viewable_copy(path, rel_guess)
         with ai_src.open("rb") as f:
             files = {"file": (ai_src.name, f, "application/octet-stream")}
-            r = requests.post(f"{AI_URL}/describe/image", files=files, timeout=180)
+            r = requests.post(f"{AI_URL}/describe/image", files=files, timeout=AI_DESC_REQUEST_TIMEOUT_SEC)
         if r.ok:
             js = r.json() or {}
             caption = str(js.get("caption") or "").strip()
@@ -923,6 +928,25 @@ def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
     except Exception as e:
         log_event("ai_http_error", rel_path=str(path), error=f"describe_error:{e}")
     return None
+
+
+def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
+    try:
+        r = requests.post(
+            f"{AI_URL}/describe/stop",
+            params={"hard": "1" if force else "0"},
+            timeout=3,
+        )
+        detail: Dict[str, Any] = {"ok": bool(r.ok), "status": int(r.status_code)}
+        try:
+            detail["body"] = r.json()
+        except Exception:
+            body = str(r.text or "").strip()
+            if body:
+                detail["body"] = body[:240]
+        return detail
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:240]}
 
 
 def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
@@ -13607,6 +13631,7 @@ ai_desc_thread = None
 ai_desc_running = False
 ai_desc_counts: Dict[str, int] = {"described": 0, "failed": 0, "total": 0}
 last_ai_desc_result: Optional[Dict[str, Any]] = None
+ai_desc_stop_event = threading.Event()
 
 
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
@@ -13755,42 +13780,67 @@ def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
     ai_desc_running = True
     ai_desc_counts = {"described": 0, "failed": 0, "total": 0}
     log_event("ai_desc_start")
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            """
-            SELECT id, rel_path
-            FROM photos
-            WHERE (
-                ai_desc_tags IS NULL
-                OR TRIM(ai_desc_tags) = ''
-                OR TRIM(ai_desc_tags) IN ('[]', 'null')
-                OR ai_desc_caption IS NULL
-                OR TRIM(ai_desc_caption) = ''
-            )
-            """
-        ).fetchall()
-    for row in rows:
-        if stop_event and stop_event.is_set():
-            break
-        pid = int(row["id"])
-        rel = row["rel_path"]
-        ai_desc_counts["total"] += 1
-        try:
-            if _describe_one_photo(pid, rel):
-                ai_desc_counts["described"] += 1
-                log_event("ai_desc_ok", rel_path=rel)
-            else:
+    stopped = False
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, rel_path
+                FROM photos
+                WHERE (
+                    ai_desc_tags IS NULL
+                    OR TRIM(ai_desc_tags) = ''
+                    OR TRIM(ai_desc_tags) IN ('[]', 'null')
+                    OR ai_desc_caption IS NULL
+                    OR TRIM(ai_desc_caption) = ''
+                )
+                """
+            ).fetchall()
+        for row in rows:
+            if stop_event and stop_event.is_set():
+                stopped = True
+                break
+            pid = int(row["id"])
+            rel = row["rel_path"]
+            ai_desc_counts["total"] += 1
+            try:
+                ok = _describe_one_photo(pid, rel)
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    break
+                if ok:
+                    ai_desc_counts["described"] += 1
+                    log_event("ai_desc_ok", rel_path=rel)
+                else:
+                    ai_desc_counts["failed"] += 1
+                    log_event("ai_desc_fail", rel_path=rel)
+            except Exception:
+                if stop_event and stop_event.is_set():
+                    stopped = True
+                    break
                 ai_desc_counts["failed"] += 1
                 log_event("ai_desc_fail", rel_path=rel)
-        except Exception:
-            ai_desc_counts["failed"] += 1
-            log_event("ai_desc_fail", rel_path=rel)
-        ai_delay = ai_ingest_throttle_enabled_sec()
-        if ai_delay > 0:
-            time.sleep(ai_delay)
-    ai_desc_running = False
-    last_ai_desc_result = {"ok": True, **ai_desc_counts}
-    log_event("ai_desc_done", **ai_desc_counts)
+            ai_delay = ai_ingest_throttle_enabled_sec()
+            if ai_delay > 0:
+                slept = 0.0
+                while slept < ai_delay:
+                    if stop_event and stop_event.is_set():
+                        stopped = True
+                        break
+                    step = min(0.25, ai_delay - slept)
+                    time.sleep(step)
+                    slept += step
+                if stopped:
+                    break
+    finally:
+        if stop_event and stop_event.is_set():
+            stopped = True
+        ai_desc_running = False
+        last_ai_desc_result = {"ok": True, "stopped": stopped, **ai_desc_counts}
+        if stopped:
+            log_event("ai_desc_stopped", **ai_desc_counts)
+        else:
+            log_event("ai_desc_done", **ai_desc_counts)
     return last_ai_desc_result
 
 
@@ -13867,10 +13917,10 @@ def api_ai_describe_ingest():
     _set_setting("ai_desc_auto_ingest", "1")
     if scope == "new":
         return jsonify({"ok": True, "started": False, "running": False, "auto_ingest": True, "scope": "new", "model": ai_desc_model_enabled()})
-    scan_stop_event.clear()
+    ai_desc_stop_event.clear()
 
     def run():
-        _describe_missing_photos(stop_event=scan_stop_event)
+        _describe_missing_photos(stop_event=ai_desc_stop_event)
 
     ai_desc_thread = threading.Thread(target=run, daemon=True)
     ai_desc_thread.start()
@@ -13880,10 +13930,16 @@ def api_ai_describe_ingest():
 @app.route("/api/ai/describe/stop", methods=["POST"])
 def api_ai_describe_stop():
     _set_setting("ai_desc_auto_ingest", "0")
+    force = str(request.args.get("force") or request.args.get("hard") or "").strip().lower() in {"1", "true", "yes", "on"}
+    ai_desc_stop_event.set()
+    runtime_stop = _ai_stop_description_runtime(force=force)
     if not ai_desc_running:
-        return jsonify({"ok": True, "running": False, "auto_ingest": False})
-    scan_stop_event.set()
-    return jsonify({"ok": True, "running": True, "stopping": True, "auto_ingest": False})
+        return jsonify({"ok": True, "running": False, "stopping": False, "force": force, "auto_ingest": False, "runtime_stop": runtime_stop})
+    if force:
+        log_event("ai_desc_force_stop", runtime=runtime_stop)
+    else:
+        log_event("ai_desc_stop_requested", runtime=runtime_stop)
+    return jsonify({"ok": True, "running": True, "stopping": True, "force": force, "auto_ingest": False, "runtime_stop": runtime_stop})
 
 
 @app.route("/api/ai/describe/status")
@@ -13893,9 +13949,11 @@ def api_ai_describe_status():
     resp: Dict[str, Any] = {
         "ok": True,
         "running": ai_desc_running,
+        "stopping": bool(ai_desc_running and ai_desc_stop_event.is_set()),
         "auto_ingest": ai_desc_auto_ingest_enabled(),
         "model": model,
         "model_options": ["light", "qwen"],
+        "request_timeout_sec": AI_DESC_REQUEST_TIMEOUT_SEC,
         **ai_desc_counts,
         "runtime": {
             "service_ok": rt["service_ok"],
@@ -13938,10 +13996,10 @@ def api_ai_describe_model():
         except Exception as e:
             return jsonify({"ok": False, "error": f"clear_desc_failed: {e}", "model": model}), 500
 
-        scan_stop_event.clear()
+        ai_desc_stop_event.clear()
 
         def run():
-            _describe_missing_photos(stop_event=scan_stop_event)
+            _describe_missing_photos(stop_event=ai_desc_stop_event)
 
         ai_desc_thread = threading.Thread(target=run, daemon=True)
         ai_desc_thread.start()
