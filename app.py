@@ -918,16 +918,43 @@ def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
                 "tags": tags,
             }
         detail = ""
+        body = ""
         try:
             body = " ".join(str(r.text or "").split())
             if body:
                 detail = f" body:{body[:240]}"
         except Exception:
             detail = ""
-        log_event("ai_http_error", rel_path=str(path), error=f"describe_status:{r.status_code}{detail}")
+            body = ""
+        err = f"describe_status:{r.status_code}{detail}"
+        log_event("ai_http_error", rel_path=str(path), error=err)
+        if _is_ai_describe_runtime_error(int(r.status_code), body):
+            raise AiDescribeRuntimeUnavailable(err)
+    except AiDescribeRuntimeUnavailable:
+        raise
     except Exception as e:
         log_event("ai_http_error", rel_path=str(path), error=f"describe_error:{e}")
     return None
+
+
+class AiDescribeRuntimeUnavailable(RuntimeError):
+    pass
+
+
+def _is_ai_describe_runtime_error(status_code: int, body: str) -> bool:
+    text = str(body or "").lower()
+    if int(status_code or 0) < 500:
+        return False
+    needles = (
+        "describe_image_failed",
+        "cuda_load_failed",
+        "quantize",
+        "bitsandbytes",
+        "out of memory",
+        "dispatched on the cpu or the disk",
+        "qwen",
+    )
+    return any(n in text for n in needles)
 
 
 def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
@@ -13764,6 +13791,8 @@ def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
             _store_photo_ai_description(conn, photo_id, tags or [], caption)
             conn.commit()
         return bool(caption or tags)
+    except AiDescribeRuntimeUnavailable:
+        raise
     except Exception:
         return False
 
@@ -13814,6 +13843,11 @@ def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
                 else:
                     ai_desc_counts["failed"] += 1
                     log_event("ai_desc_fail", rel_path=rel)
+            except AiDescribeRuntimeUnavailable as exc:
+                ai_desc_counts["failed"] += 1
+                stopped = True
+                log_event("ai_desc_runtime_error_stop", rel_path=rel, error=str(exc))
+                break
             except Exception:
                 if stop_event and stop_event.is_set():
                     stopped = True

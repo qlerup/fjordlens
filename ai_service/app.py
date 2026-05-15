@@ -125,6 +125,9 @@ MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
 QWEN_VL_MODEL = str(os.environ.get("QWEN_VL_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct") or "Qwen/Qwen2.5-VL-3B-Instruct").strip()
 QWEN_VL_ENABLE_4BIT = str(os.environ.get("QWEN_VL_4BIT", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+QWEN_VL_4BIT_QUANT_TYPE = str(os.environ.get("QWEN_VL_4BIT_QUANT_TYPE", "fp4") or "fp4").strip().lower()
+if QWEN_VL_4BIT_QUANT_TYPE not in {"fp4", "nf4"}:
+    QWEN_VL_4BIT_QUANT_TYPE = "fp4"
 QWEN_VL_RESERVE_GPU = str(os.environ.get("QWEN_VL_RESERVE_GPU", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 QWEN_VL_CPU_FALLBACK = str(os.environ.get("QWEN_VL_CPU_FALLBACK", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 QWEN_VL_LOW_CPU_MEM_USAGE = str(os.environ.get("QWEN_VL_LOW_CPU_MEM_USAGE", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -641,10 +644,10 @@ def _ensure_qwen_model_loaded():
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_quant_type=QWEN_VL_4BIT_QUANT_TYPE,
                     bnb_4bit_use_double_quant=True,
                 )
-                quantization = "4bit"
+                quantization = f"4bit-{QWEN_VL_4BIT_QUANT_TYPE}"
             except Exception:
                 quantization = "none"
 
@@ -885,6 +888,7 @@ def health():
         "qwen_device": _qwen_runtime_device,
         "qwen_quantization": _qwen_quantization,
         "qwen_4bit_enabled": QWEN_VL_ENABLE_4BIT,
+        "qwen_4bit_quant_type": QWEN_VL_4BIT_QUANT_TYPE,
         "qwen_reserve_gpu": QWEN_VL_RESERVE_GPU,
         "qwen_cpu_fallback": QWEN_VL_CPU_FALLBACK,
         "qwen_low_cpu_mem_usage": QWEN_VL_LOW_CPU_MEM_USAGE,
