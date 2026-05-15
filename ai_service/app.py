@@ -69,6 +69,7 @@ import open_clip
 AutoModelForVision2Seq = None
 AutoProcessor = None
 BitsAndBytesConfig = None
+Qwen2VLForConditionalGeneration = None
 Qwen2_5_VLForConditionalGeneration = None
 bnb = None
 _BITSANDBYTES_AVAILABLE = False
@@ -77,7 +78,7 @@ _QWEN_DEPS_IMPORT_ERROR = None
 
 
 def _ensure_qwen_deps_loaded() -> bool:
-    global AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
+    global AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig, Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration
     global bnb, _BITSANDBYTES_AVAILABLE, _QWEN_DEPS_IMPORT_ATTEMPTED, _QWEN_DEPS_IMPORT_ERROR
     if _QWEN_DEPS_IMPORT_ATTEMPTED:
         return AutoProcessor is not None and AutoModelForVision2Seq is not None
@@ -91,6 +92,12 @@ def _ensure_qwen_deps_loaded() -> bool:
         AutoModelForVision2Seq = _AutoModelForVision2Seq
         AutoProcessor = _AutoProcessor
         BitsAndBytesConfig = _BitsAndBytesConfig
+        try:
+            from transformers import Qwen2VLForConditionalGeneration as _Qwen2VLForConditionalGeneration  # type: ignore
+
+            Qwen2VLForConditionalGeneration = _Qwen2VLForConditionalGeneration
+        except Exception:
+            Qwen2VLForConditionalGeneration = None
         try:
             from transformers import Qwen2_5_VLForConditionalGeneration as _Qwen2_5_VLForConditionalGeneration  # type: ignore
 
@@ -612,6 +619,15 @@ def _parse_qwen_output_text(text: str) -> tuple[str, List[str]]:
     return _normalize_caption_and_tags(text, None)
 
 
+def _select_qwen_model_class():
+    model_key = QWEN_VL_MODEL.lower().replace("_", "-")
+    if "qwen2-vl" in model_key and "qwen2.5-vl" not in model_key and "qwen2-5-vl" not in model_key:
+        return Qwen2VLForConditionalGeneration or AutoModelForVision2Seq
+    if "qwen2.5-vl" in model_key or "qwen2-5-vl" in model_key:
+        return Qwen2_5_VLForConditionalGeneration or AutoModelForVision2Seq
+    return AutoModelForVision2Seq
+
+
 def _ensure_qwen_model_loaded():
     global _qwen_model, _qwen_processor, _qwen_runtime_device, _qwen_runtime_error, _qwen_quantization
     with _qwen_lock:
@@ -651,7 +667,7 @@ def _ensure_qwen_model_loaded():
             except Exception:
                 quantization = "none"
 
-        model_cls = Qwen2_5_VLForConditionalGeneration or AutoModelForVision2Seq
+        model_cls = _select_qwen_model_class()
         try:
             _reserve_gpu_memory_for_qwen()
             model_obj = model_cls.from_pretrained(QWEN_VL_MODEL, **model_kwargs)
@@ -884,6 +900,7 @@ def health():
         "face_cuda_init_errors": face_cuda_init_errors,
         "face_detection_error": face_detection_error,
         "qwen_model": QWEN_VL_MODEL,
+        "qwen_model_class": getattr(_select_qwen_model_class(), "__name__", None) if _QWEN_DEPS_IMPORT_ATTEMPTED else None,
         "qwen_loaded": bool(_qwen_model is not None and _qwen_processor is not None),
         "qwen_device": _qwen_runtime_device,
         "qwen_quantization": _qwen_quantization,
