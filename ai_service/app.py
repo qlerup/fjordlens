@@ -127,18 +127,23 @@ QWEN_VL_PROMPT = str(
     os.environ.get(
         "QWEN_VL_PROMPT",
         (
-            "Du analyserer et foto. Returner kun JSON med felterne caption og tags. "
-            "caption skal være en kort dansk sætning (maks 18 ord). "
-            "tags skal være 3-8 korte danske nøgleord i lower-case."
+            "Du analyserer et foto til søgning i et familiealbum. "
+            "Returner kun gyldig JSON med felterne caption og tags. "
+            "caption skal være en kort dansk sætning (maks 18 ord), der beskriver hovedmotiv, handling og sted. "
+            "tags skal være 6-14 korte danske søgeord i lower-case. "
+            "Medtag personer/alder/køn når det tydeligt kan ses, handlinger både som udsagnsord og navneord, "
+            "vigtige objekter, sted og almindelige synonymer. "
+            "Eksempel: {\"caption\":\"en pige gynger på en legeplads\","
+            "\"tags\":[\"pige\",\"barn\",\"gynger\",\"gynge\",\"legeplads\"]}."
         ),
     )
     or ""
 ).strip()
 try:
-    QWEN_VL_MAX_NEW_TOKENS = int(os.environ.get("QWEN_VL_MAX_NEW_TOKENS", "120") or 120)
+    QWEN_VL_MAX_NEW_TOKENS = int(os.environ.get("QWEN_VL_MAX_NEW_TOKENS", "180") or 180)
 except Exception:
-    QWEN_VL_MAX_NEW_TOKENS = 120
-QWEN_VL_MAX_NEW_TOKENS = max(32, min(256, QWEN_VL_MAX_NEW_TOKENS))
+    QWEN_VL_MAX_NEW_TOKENS = 180
+QWEN_VL_MAX_NEW_TOKENS = max(32, min(384, QWEN_VL_MAX_NEW_TOKENS))
 DEVICE_PREF = str(os.environ.get("AI_DEVICE", "auto") or "auto").strip().lower()
 if DEVICE_PREF not in {"auto", "cpu", "cuda"}:
     DEVICE_PREF = "auto"
@@ -502,7 +507,7 @@ def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[st
             if not t or t in tags:
                 continue
             tags.append(t)
-            if len(tags) >= 10:
+            if len(tags) >= 16:
                 break
     elif isinstance(tags_value, str):
         for part in re.split(r"[,;|]", tags_value):
@@ -510,7 +515,7 @@ def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[st
             if not t or t in tags:
                 continue
             tags.append(t)
-            if len(tags) >= 10:
+            if len(tags) >= 16:
                 break
 
     if not tags and caption:
@@ -534,7 +539,7 @@ def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[st
             if token in stop or token in tags:
                 continue
             tags.append(token)
-            if len(tags) >= 8:
+            if len(tags) >= 16:
                 break
 
     return caption, tags

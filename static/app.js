@@ -10293,6 +10293,15 @@ function _syncSearchInputs(value, source = null) {
   if (els.mapperSearchInput && source !== 'mapper') els.mapperSearchInput.value = v;
 }
 
+let searchLoadTimer = null;
+function scheduleSearchLoad(delay = 320) {
+  if (searchLoadTimer) clearTimeout(searchLoadTimer);
+  searchLoadTimer = setTimeout(() => {
+    searchLoadTimer = null;
+    loadPhotos();
+  }, delay);
+}
+
 function expandSearchField(focusInput = true) {
   if (!els.searchShell) return;
   els.searchShell.classList.add('expanded');
@@ -10387,7 +10396,7 @@ if (els.mapperSearchInput) {
   els.mapperSearchInput.addEventListener('input', () => {
     state.q = els.mapperSearchInput.value.trim();
     _syncSearchInputs(els.mapperSearchInput.value, 'mapper');
-    loadPhotos();
+    scheduleSearchLoad();
   });
 }
 if (els.mapperEditBtn) {
@@ -10489,7 +10498,7 @@ if (els.search) {
 els.search.addEventListener("input", () => {
   state.q = els.search.value.trim();
   _syncSearchInputs(els.search.value, 'top');
-  loadPhotos();
+  scheduleSearchLoad();
 });
 els.sort.addEventListener("change", () => {
   state.sort = els.sort.value;

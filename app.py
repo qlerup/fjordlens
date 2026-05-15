@@ -819,7 +819,7 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     return None
 
 
-def _normalize_ai_desc_tags(value: Any, max_tags: int = 10) -> list[str]:
+def _normalize_ai_desc_tags(value: Any, max_tags: int = 16) -> list[str]:
     out: list[str] = []
     if isinstance(value, str):
         parts = re.split(r"[,;|]", value)
@@ -1311,16 +1311,19 @@ def _classify_labels(img_vec: list[float], top_k: int = 5, thr: float = 0.24) ->
 
 
 AI_DESC_PROMPTS: list[Dict[str, Any]] = [
-    {"prompt": "people swimming in water", "tags": ["personer", "svÃ¸mning", "vand"]},
-    {"prompt": "a person swimming at the beach", "tags": ["personer", "svÃ¸mning", "strand"]},
-    {"prompt": "a person running outdoors", "tags": ["personer", "lÃ¸b", "udendÃ¸rs"]},
+    {"prompt": "people swimming in water", "tags": ["personer", "svømning", "vand"]},
+    {"prompt": "a person swimming at the beach", "tags": ["personer", "svømning", "strand"]},
+    {"prompt": "a person running outdoors", "tags": ["personer", "løb", "udendørs"]},
     {"prompt": "a person riding a bicycle", "tags": ["personer", "cykling"]},
     {"prompt": "people hiking in nature", "tags": ["personer", "natur", "vandring"]},
     {"prompt": "a family having dinner", "tags": ["familie", "mad"]},
     {"prompt": "people on a beach", "tags": ["personer", "strand"]},
     {"prompt": "a person in the sea", "tags": ["personer", "hav", "vand"]},
-    {"prompt": "an indoor photo", "tags": ["indendÃ¸rs"]},
-    {"prompt": "an outdoor photo", "tags": ["udendÃ¸rs"]},
+    {"prompt": "a child on a swing at a playground", "tags": ["barn", "gynge", "gynger", "legeplads"]},
+    {"prompt": "a girl swinging on a swing", "tags": ["pige", "barn", "gynge", "gynger"]},
+    {"prompt": "a child playing on a playground slide", "tags": ["barn", "legeplads", "rutsjebane", "leger"]},
+    {"prompt": "an indoor photo", "tags": ["indendørs"]},
+    {"prompt": "an outdoor photo", "tags": ["udendørs"]},
 ]
 _DESC_PROMPT_VECS: Optional[list[Tuple[str, list[str], list[float]]]] = None
 
@@ -1374,12 +1377,14 @@ def _build_desc_caption(tags: list[str]) -> Optional[str]:
     if not vals:
         return None
     s = set(vals)
-    if "personer" in s and "svÃ¸mning" in s:
+    if "personer" in s and "svømning" in s:
         if "strand" in s:
-            return "personer der svÃ¸mmer pÃ¥ stranden"
+            return "personer der svømmer på stranden"
         if "hav" in s:
-            return "personer der svÃ¸mmer i havet"
-        return "personer der svÃ¸mmer"
+            return "personer der svømmer i havet"
+        return "personer der svømmer"
+    if "barn" in s and ("gynge" in s or "gynger" in s):
+        return "barn der gynger"
     return ", ".join(vals[:4])
 
 
@@ -10265,8 +10270,10 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 QUERY_STOPWORDS_DA = {
-    "der", "som", "og", "i", "pÃ¥", "ved", "til", "af", "for", "med",
-    "en", "et", "den", "det", "de", "er", "at", "om",
+    "der", "som", "og", "i", "på", "ved", "til", "af", "for", "med",
+    "en", "et", "den", "det", "de", "er", "at", "om", "fra", "har",
+    "var", "blev", "bliver", "kan", "skal", "vil", "foto", "billede",
+    "billeder",
 }
 
 QUERY_STOPWORDS_EN = {
@@ -10276,58 +10283,116 @@ QUERY_STOPWORDS_EN = {
 
 
 DANISH_SYNONYM_GROUPS = [
-    {"person", "personer", "menneske", "mennesker", "people", "man", "woman", "child", "barn"},
+    {
+        "person", "personer", "menneske", "mennesker", "people", "mand", "kvinde",
+        "man", "woman", "child", "children", "kid", "kids", "barn", "børn", "boern",
+    },
+    {
+        "pige", "piger", "girl", "girls", "datter", "barn", "børn", "boern",
+        "child", "children", "kid", "kids",
+    },
+    {
+        "dreng", "drenge", "boy", "boys", "søn", "soen", "barn", "børn", "boern",
+        "child", "children", "kid", "kids",
+    },
+    {"baby", "spædbarn", "spaedbarn", "infant", "nyfødt", "nyfoedt", "barn", "child"},
+    {"mor", "mama", "mother", "kvinde", "woman"},
+    {"far", "papa", "father", "mand", "man"},
     {"strand", "beach", "hav", "kyst"},
-    {"hav", "sea", "ocean", "strand", "kyst"},
+    {"hav", "sea", "ocean", "strand", "kyst", "vand", "water"},
+    {"pool", "swimmingpool", "bassin", "vand", "water"},
     {"skov", "forest", "woods"},
     {"bil", "car", "auto", "tesla"},
     {"solnedgang", "sunset", "aftenhimmel"},
     {"kamera", "camera"},
     {"familie", "family", "jul", "middag"},
-    {"lÃ¸ber", "lÃ¸b", "loeb", "running", "runner", "jogging"},
+    {"løber", "løb", "loeb", "running", "runner", "jogging"},
     {"cykler", "cykle", "cykel", "cycling", "bicycle", "bike"},
     {
-        "svÃ¸mmer", "svÃ¸m", "svÃ¸mme", "svÃ¸mning", "bader", "bade", "badning",
+        "svømmer", "svøm", "svømme", "svømning", "bader", "bade", "badning",
         "svommer", "svoemmer", "swim", "swimming", "bathing",
     },
+    {
+        "gynge", "gynger", "gyngende", "gyngestativ", "legeplads",
+        "swing", "swings", "swinging", "playground",
+    },
+    {"rutsjebane", "rutchebane", "slide", "slides", "sliding", "legeplads"},
+    {"leger", "lege", "leg", "play", "playing", "legeplads"},
 ]
 
 
+def _repair_mojibake(text: str) -> str:
+    raw = str(text or "")
+    if "Ã" not in raw and "Â" not in raw:
+        return raw
+    try:
+        fixed = raw.encode("latin1").decode("utf-8")
+        if fixed:
+            return fixed
+    except Exception:
+        pass
+    return raw
+
+
 def _fold_danish(text: str) -> str:
-    return (
-        (text or "")
-        .lower()
-        .replace("Ã¦", "ae")
-        .replace("Ã¸", "oe")
-        .replace("Ã¥", "aa")
-    )
+    folded = _repair_mojibake(str(text or "")).lower()
+    for src, dst in (
+        ("æ", "ae"),
+        ("ø", "oe"),
+        ("å", "aa"),
+        ("ä", "a"),
+        ("ö", "o"),
+        ("ü", "u"),
+    ):
+        folded = folded.replace(src, dst)
+    folded = unicodedata.normalize("NFKD", folded)
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+DANISH_SEARCH_SUFFIXES = (
+    "ernes", "ende", "erne", "ene", "ers", "ens", "ets", "ere",
+    "en", "et", "er", "es", "e", "r", "s",
+)
+
+
+def _search_term_variants(term: str) -> set[str]:
+    base = re.sub(r"[^0-9a-z]+", "", _fold_danish(term))
+    if not base:
+        return set()
+    variants = {base}
+    for suffix in DANISH_SEARCH_SUFFIXES:
+        if base.endswith(suffix) and len(base) - len(suffix) >= 3:
+            variants.add(base[: -len(suffix)])
+    return variants
 
 
 SYNONYM_LOOKUP: Dict[str, set[str]] = {}
 for _group in DANISH_SYNONYM_GROUPS:
-    expanded = set(_group)
-    for _term in list(_group):
-        expanded.add(_fold_danish(_term))
+    expanded: set[str] = set()
+    for _term in _group:
+        expanded.update(_search_term_variants(_term))
     for _term in expanded:
-        SYNONYM_LOOKUP[_term] = expanded
+        SYNONYM_LOOKUP.setdefault(_term, set()).update(expanded)
 
 
 def _query_term_groups(q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -> list[set[str]]:
-    q = (q or "").strip().lower()
+    q = _repair_mojibake(q or "").strip().lower()
     if not q:
         return []
     lang = _normalize_language(search_language, DEFAULT_SEARCH_LANGUAGE)
     stopwords = QUERY_STOPWORDS_DA if lang == LANG_DA else QUERY_STOPWORDS_EN
-    raw_words = [w for w in re.findall(r"[0-9a-zA-ZÃ¦Ã¸Ã¥Ã†Ã˜Ã…]+", q) if w]
-    words = [w.lower() for w in raw_words if w.lower() not in stopwords]
+    stopword_keys = {_fold_danish(w) for w in stopwords}
+    raw_words = [w for w in re.findall(r"[\w\-]+", q, flags=re.UNICODE) if w]
     groups: list[set[str]] = []
-    for w in words:
-        key = _fold_danish(w)
-        group = SYNONYM_LOOKUP.get(key)
+    for w in raw_words:
+        variants = {v for v in _search_term_variants(w) if v and v not in stopword_keys}
+        if not variants:
+            continue
+        group: set[str] = set()
+        for variant in variants:
+            group.update(SYNONYM_LOOKUP.get(variant, {variant}))
         if group:
             groups.append(group)
-        else:
-            groups.append({w, key})
     return groups
 
 
@@ -10353,10 +10418,17 @@ def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT
     blob = " ".join(fields)
     blob_folded = _fold_danish(blob)
 
+    matched = 0
     for group in term_groups:
-        if not any(((term in blob) or (_fold_danish(term) in blob_folded)) for term in group):
-            return False
-    return True
+        if any(term and term in blob_folded for term in group):
+            matched += 1
+
+    if matched == len(term_groups):
+        return True
+    if len(term_groups) >= 3:
+        minimum = max(2, (len(term_groups) * 2 + 2) // 3)
+        return matched >= minimum
+    return False
 
 
 def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dict[str, Any]]:
