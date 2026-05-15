@@ -125,6 +125,7 @@
   viWeather: document.getElementById("viWeather"),
   viWeatherBtn: document.getElementById("viWeatherBtn"),
   detailUploader: document.getElementById("detailUploader"),
+  detailAiCaption: document.getElementById("detailAiCaption"),
   detailAiTags: document.getElementById("detailAiTags"),
   similarBtn: document.getElementById("similarBtn"),
   rawMeta: document.getElementById("rawMeta"),
@@ -2367,17 +2368,57 @@ function fmtDate(s) {
   }
 }
 
+function _repairMojibakeText(value) {
+  const txt = String(value || '');
+  if (!/[ÃÂ]/.test(txt) || typeof TextDecoder === 'undefined') return txt;
+  try {
+    const bytes = Uint8Array.from(Array.from(txt).map((ch) => ch.charCodeAt(0) & 255));
+    const fixed = new TextDecoder('utf-8').decode(bytes);
+    return fixed || txt;
+  } catch {
+    return txt;
+  }
+}
+
+function _splitTagParts(value) {
+  return _repairMojibakeText(value).split(/[,;|]|\s+[–—-]\s+/g);
+}
+
+function _cleanUiTag(value) {
+  return _repairMojibakeText(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^[\s"'`\[\]{}()]+|[\s"'`\[\]{}()]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
 function _normalizeTagList(raw) {
-  if (Array.isArray(raw)) return raw.map((v) => String(v || '').trim()).filter(Boolean);
+  const addParts = (arr, value) => {
+    _splitTagParts(value).forEach((part) => {
+      const tag = _cleanUiTag(part);
+      if (tag && tag.length <= 40) arr.push(tag);
+    });
+  };
+  if (Array.isArray(raw)) {
+    const out = [];
+    raw.forEach((v) => addParts(out, v));
+    return out;
+  }
   if (raw == null) return [];
   if (typeof raw === 'string') {
     const txt = raw.trim();
     if (!txt) return [];
     try {
       const parsed = JSON.parse(txt);
-      if (Array.isArray(parsed)) return parsed.map((v) => String(v || '').trim()).filter(Boolean);
+      if (Array.isArray(parsed)) {
+        const out = [];
+        parsed.forEach((v) => addParts(out, v));
+        return out;
+      }
     } catch {}
-    return txt.split(',').map((v) => String(v || '').trim()).filter(Boolean);
+    const out = [];
+    addParts(out, txt);
+    return out;
   }
   return [];
 }
@@ -2385,15 +2426,32 @@ function _normalizeTagList(raw) {
 function _collectItemTags(item) {
   const primary = _normalizeTagList(item && item.ai_tags);
   const secondary = _normalizeTagList(item && item.ai_desc_tags);
-  return Array.from(new Set(primary.concat(secondary)));
+  const seen = new Set();
+  const out = [];
+  primary.concat(secondary).forEach((tag) => {
+    const key = tag.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tag);
+  });
+  return out;
 }
 
 function _formatAiAnalysisText(item) {
-  const caption = String(item && item.ai_desc_caption ? item.ai_desc_caption : '').trim();
+  const caption = _repairMojibakeText(item && item.ai_desc_caption ? item.ai_desc_caption : '').trim();
   const tags = _collectItemTags(item);
   if (caption && tags.length) return `${caption} · ${tags.join(", ")}`;
   if (tags.length) return tags.join(", ");
   return caption || "-";
+}
+
+function _formatAiCaptionText(item) {
+  return _repairMojibakeText(item && item.ai_desc_caption ? item.ai_desc_caption : '').trim() || "-";
+}
+
+function _formatAiTagsText(item) {
+  const tags = _collectItemTags(item);
+  return tags.length ? tags.join(", ") : "-";
 }
 
 function _extractFileExt(value) {
@@ -4386,9 +4444,14 @@ function setDetail(item) {
   } else {
     els.detailGps.textContent = item.gps_name || "-";
   }
-  const aiAnalysisText = _formatAiAnalysisText(item);
-  els.detailAiTags.textContent = aiAnalysisText;
-  els.detailAiTags.title = aiAnalysisText;
+  const aiCaptionText = _formatAiCaptionText(item);
+  const aiTagsText = _formatAiTagsText(item);
+  if (els.detailAiCaption) {
+    els.detailAiCaption.textContent = aiCaptionText;
+    els.detailAiCaption.title = aiCaptionText === "-" ? "" : aiCaptionText;
+  }
+  els.detailAiTags.textContent = aiTagsText;
+  els.detailAiTags.title = aiTagsText === "-" ? "" : aiTagsText;
   const conversion = _getItemConversionInfo(item);
   if (els.detailConvertedRow) els.detailConvertedRow.classList.toggle('hidden', !conversion.converted);
   if (els.detailConverted) els.detailConverted.textContent = conversion.converted ? conversion.label : '-';
@@ -5863,7 +5926,8 @@ function openViewer(index) {
     const lens = it.lens_label || it.lens_model || "-";
     const gps = (it.gps_lat!=null && it.gps_lon!=null) ? `${Number(it.gps_lat).toFixed(5)}, ${Number(it.gps_lon).toFixed(5)}` : (it.gps_name || "-");
     const uploader = String(it && it.uploaded_by ? it.uploaded_by : '').trim();
-    const tags = _formatAiAnalysisText(it);
+    const caption = _formatAiCaptionText(it);
+    const tags = _formatAiTagsText(it);
     const conversion = _getItemConversionInfo(it);
     const dl = (it.download_url || it.original_url || '#');
     const q = (id) => document.getElementById(id);
@@ -5879,7 +5943,9 @@ function openViewer(index) {
     setText('viLens', lens);
     setText('viGps', gps);
     setText('viUploader', uploader || '—');
+    setText('viCaption', caption);
     setText('viTags', tags);
+    try { const viCaption = q('viCaption'); if (viCaption) viCaption.title = caption === '-' ? '' : caption; } catch {}
     try { const viTags = q('viTags'); if (viTags) viTags.title = tags; } catch {}
     const convRow = q('viConvertedRow');
     if (convRow) convRow.classList.toggle('hidden', !conversion.converted);

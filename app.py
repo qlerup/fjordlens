@@ -286,6 +286,10 @@ WEATHER_CODE_LABELS: Dict[int, Tuple[str, str]] = {
     96: ("Torden med let hagl", "Thunderstorm with slight hail"),
     99: ("Torden med hagl", "Thunderstorm with hail"),
 }
+# Enable AI-assisted query expansion via Qwen text when available
+AI_QUERY_EXPAND_ENABLED = (
+    str(os.environ.get("AI_QUERY_EXPAND", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+)
 # Static directories (for icons and assets resolved outside templates)
 STATIC_DIR = Path(__file__).parent / "static"
 ICONS_DIR = STATIC_DIR / "icons"
@@ -792,6 +796,22 @@ def _ai_embed_text(text: str) -> Optional[list[float]]:
     return None
 
 
+def _ai_expand_query_tags(text: str, language: Optional[str] = None) -> list[str]:
+    if not AI_QUERY_EXPAND_ENABLED or not text or not AI_URL:
+        return []
+    payload = {"text": str(text), "language": str(language or "").strip() or None}
+    try:
+        r = requests.post(f"{AI_URL}/query/expand", json=payload, timeout=8)
+        if r.ok:
+            js = r.json() or {}
+            tags = js.get("tags") or []
+            if isinstance(tags, list):
+                return [t for t in _normalize_ai_desc_tags(tags, max_tags=24) if t]
+    except Exception:
+        pass
+    return []
+
+
 def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     try:
         # Use a browser/AI-friendly copy for HEIC/HEIF
@@ -824,18 +844,41 @@ def _ai_embed_image_path(path: Path) -> Optional[list[float]]:
     return None
 
 
+def _ai_tag_parts(value: Any) -> list[str]:
+    return [p for p in re.split(r"[,;|]|\s+[–—-]\s+", str(value or "")) if p]
+
+
+def _clean_ai_tag(value: Any) -> str:
+    tag = _repair_mojibake(str(value or "")).strip().lower()
+    tag = tag.strip(" \t\r\n\"'`[]{}()")
+    tag = re.sub(r"\s+", " ", tag)
+    if (
+        not tag
+        or len(tag) > 40
+        or any(ch in tag for ch in "\n\r\t")
+        or tag in {"caption", "tags", "json", "null", "none"}
+    ):
+        return ""
+    return tag
+
+
 def _normalize_ai_desc_tags(value: Any, max_tags: int = 16) -> list[str]:
     out: list[str] = []
+    seen: set[str] = set()
     if isinstance(value, str):
-        parts = re.split(r"[,;|]", value)
+        parts = _ai_tag_parts(value)
     elif isinstance(value, (list, tuple, set)):
-        parts = list(value)
+        parts = []
+        for item in value:
+            parts.extend(_ai_tag_parts(item))
     else:
         parts = []
     for part in parts:
-        tag = str(part or "").strip().lower()
-        if not tag or tag in out:
+        tag = _clean_ai_tag(part)
+        key = _fold_danish(tag)
+        if not tag or key in seen:
             continue
+        seen.add(key)
         out.append(tag)
         if len(out) >= max_tags:
             break
@@ -864,7 +907,7 @@ def _ai_desc_has_content(tags_raw: Any, caption_raw: Any = None) -> bool:
 
 def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: list[str], caption: Optional[str]) -> None:
     clean_tags = _normalize_ai_desc_tags(tags)
-    clean_caption = str(caption or "").strip() or None
+    clean_caption = _repair_mojibake(str(caption or "")).strip() or None
 
     prev_ai_tags: list[str] = []
     prev_meta: Dict[str, Any] = {}
@@ -9624,8 +9667,10 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
                 pass
         else:
             d[key] = [] if key in {"ai_tags", "ai_desc_tags"} else None
+    d["ai_tags"] = _normalize_ai_desc_tags(d.get("ai_tags"), max_tags=64)
+    d["ai_desc_tags"] = _normalize_ai_desc_tags(d.get("ai_desc_tags"), max_tags=32)
     if d.get("ai_desc_caption"):
-        d["ai_desc_caption"] = str(d.get("ai_desc_caption") or "").strip()
+        d["ai_desc_caption"] = _repair_mojibake(str(d.get("ai_desc_caption") or "")).strip()
     else:
         d["ai_desc_caption"] = None
     d["favorite"] = bool(d.get("favorite", 0))
@@ -10533,6 +10578,26 @@ def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT
     if len(term_groups) >= 3:
         minimum = max(2, (len(term_groups) * 2 + 2) // 3)
         return matched >= minimum
+    return False
+
+
+def _photo_contains_any_tags(photo: Dict[str, Any], tags: list[str]) -> bool:
+    try:
+        if not tags:
+            return False
+        fields = [
+            " ".join((photo.get("ai_tags") or [])).lower(),
+            " ".join((photo.get("ai_desc_tags") or [])).lower(),
+            str(photo.get("ai_desc_caption") or "").lower(),
+            str(photo.get("people_names") or "").lower(),
+        ]
+        blob_folded = _fold_danish(" ".join(fields))
+        for t in tags:
+            tv = _fold_danish(t)
+            if tv and tv in blob_folded:
+                return True
+    except Exception:
+        return False
     return False
 
 
@@ -14467,7 +14532,20 @@ def api_photos():
     try:
         items = query_photos(view, sort, folder=folder)
         if q:
-            items = [p for p in items if matches_search(p, q, search_language=search_language)]
+            # Try AI-assisted expansion to widen matches when helpful
+            expand_tags: list[str] = []
+            if AI_QUERY_EXPAND_ENABLED:
+                try:
+                    expand_tags = _ai_expand_query_tags(q, language=search_language)
+                except Exception:
+                    expand_tags = []
+            if expand_tags:
+                items = [
+                    p for p in items
+                    if matches_search(p, q, search_language=search_language) or _photo_contains_any_tags(p, expand_tags)
+                ]
+            else:
+                items = [p for p in items if matches_search(p, q, search_language=search_language)]
         items = _filter_public_items_by_current_user_acl(items)
         return jsonify({
             "items": items,

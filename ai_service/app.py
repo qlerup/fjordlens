@@ -565,23 +565,57 @@ def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _repair_mojibake(text: str) -> str:
+    raw = str(text or "")
+    if "\u00c3" not in raw and "\u00c2" not in raw:
+        return raw
+    try:
+        fixed = raw.encode("latin1").decode("utf-8")
+        if fixed:
+            return fixed
+    except Exception:
+        pass
+    return raw
+
+
+def _clean_qwen_text(value: Any) -> str:
+    text = _repair_mojibake(str(value or "")).strip().lower()
+    text = text.strip(" \t\r\n\"'`[]{}()")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _qwen_tag_parts(value: Any) -> list[str]:
+    return [p for p in re.split(r"[,;|]|\s+[–—-]\s+", str(value or "")) if p]
+
+
+def _append_clean_tag(tags: List[str], value: Any, max_tags: int = 16) -> None:
+    tag = _clean_qwen_text(value)
+    if (
+        not tag
+        or len(tag) > 40
+        or tag in tags
+        or any(ch in tag for ch in "\n\r\t")
+        or tag in {"caption", "tags", "json", "null", "none"}
+    ):
+        return
+    tags.append(tag)
+
+
 def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[str, List[str]]:
-    caption = str(caption_value or "").strip()
+    caption = _repair_mojibake(str(caption_value or "")).strip()
     tags: List[str] = []
     if isinstance(tags_value, (list, tuple)):
         for v in tags_value:
-            t = str(v or "").strip().lower()
-            if not t or t in tags:
-                continue
-            tags.append(t)
+            for part in _qwen_tag_parts(v):
+                _append_clean_tag(tags, part)
+                if len(tags) >= 16:
+                    break
             if len(tags) >= 16:
                 break
     elif isinstance(tags_value, str):
-        for part in re.split(r"[,;|]", tags_value):
-            t = str(part or "").strip().lower()
-            if not t or t in tags:
-                continue
-            tags.append(t)
+        for part in _qwen_tag_parts(tags_value):
+            _append_clean_tag(tags, part)
             if len(tags) >= 16:
                 break
 
@@ -602,7 +636,7 @@ def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[st
             "image",
             "billede",
         }
-        for token in re.findall(r"[a-zA-Z0-9æøåÆØÅ\-]{3,}", caption.lower()):
+        for token in re.findall(r"[a-zA-Z0-9æøåÆØÅ\-]{3,}", _repair_mojibake(caption).lower()):
             if token in stop or token in tags:
                 continue
             tags.append(token)
@@ -949,6 +983,112 @@ def stop_describe(hard: bool = False):
 
         threading.Thread(target=_exit_soon, daemon=True).start()
     return {"ok": True, "hard": bool(hard)}
+
+
+class QueryIn(BaseModel):
+    text: str
+    language: Optional[str] = None  # e.g. "da" or "en"
+
+
+def _qwen_expand_query(text: str, language: Optional[str] = None) -> Dict[str, Any]:
+    """Use Qwen-VL as a text-only LLM to expand a freeform query into Danish search tags.
+
+    Returns a dict with keys: tags (List[str]), raw (str).
+    """
+    _qwen_abort_event.clear()
+    model_obj, processor_obj = _ensure_qwen_model_loaded()
+
+    lang = (str(language or "da").strip().lower() or "da")
+    if lang not in {"da", "en"}:
+        lang = "da"
+    if lang == "da":
+        sys_prompt = (
+            "Du udvider en søgetekst til billedsøgning i et familiealbum. "
+            "Returner KUN gyldig JSON med feltet 'tags' som en liste af 8-16 korte danske søgeord i lowercase. "
+            "Brug almindelige synonymer og bøjningsvarianter (fx 'gynge','gynger'), konkrete objekter, handlinger, steder og personer når relevant. "
+            "Ingen forklaringer, kun JSON. Eksempel: {\"tags\":[\"pige\",\"barn\",\"gynge\",\"gynger\",\"legeplads\"]}."
+        )
+    else:
+        sys_prompt = (
+            "Expand a freeform photo search into 8-16 short lowercase tags in English. "
+            "Return ONLY valid JSON with field 'tags'. Include synonyms, inflections, objects, actions, places, people when relevant. "
+            "Example: {\"tags\":[\"girl\",\"child\",\"swing\",\"playground\"]}."
+        )
+
+    # Build prompt using chat template when available to keep compatibility with Qwen processors
+    prompt_text = sys_prompt + "\n\nSøgetekst: " + str(text or "").strip()
+    if hasattr(processor_obj, "apply_chat_template"):
+        try:
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": str(text or "").strip()},
+            ]
+            prompt_text = processor_obj.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            # Fallback to concatenated text
+            prompt_text = sys_prompt + "\n\n" + str(text or "").strip()
+
+    inputs = processor_obj(
+        text=[prompt_text],
+        return_tensors="pt",
+    )
+    device = _qwen_input_device(model_obj)
+    for key, value in list(inputs.items()):
+        if hasattr(value, "to"):
+            try:
+                inputs[key] = value.to(device)
+            except Exception:
+                pass
+
+    with torch.no_grad():
+        output_ids = model_obj.generate(
+            **inputs,
+            max_new_tokens=min(max(96, QWEN_VL_MAX_NEW_TOKENS // 2), 192),
+            do_sample=False,
+        )
+
+    prompt_len = 0
+    try:
+        in_ids = inputs.get("input_ids")
+        if in_ids is not None and hasattr(in_ids, "shape"):
+            prompt_len = int(in_ids.shape[-1])
+    except Exception:
+        prompt_len = 0
+
+    decode_ids = output_ids
+    try:
+        if prompt_len > 0 and hasattr(output_ids, "shape") and int(output_ids.shape[-1]) > prompt_len:
+            decode_ids = output_ids[:, prompt_len:]
+    except Exception:
+        decode_ids = output_ids
+
+    raw_text = ""
+    try:
+        decoded = processor_obj.batch_decode(decode_ids, skip_special_tokens=True)
+        if decoded:
+            raw_text = str(decoded[0] or "").strip()
+    except Exception:
+        raw_text = ""
+
+    # Parse output similarly to image description, but keep only tags
+    _, tags = _parse_qwen_output_text(raw_text)
+    return {"tags": tags, "raw": raw_text}
+
+
+@app.post("/query/expand")
+def expand_query(payload: QueryIn):
+    try:
+        out = _qwen_expand_query(payload.text, payload.language)
+        return {
+            "ok": True,
+            "tags": out.get("tags") or [],
+            "raw": out.get("raw") or "",
+            "model": QWEN_VL_MODEL,
+            "device": _qwen_runtime_device,
+            "quantization": _qwen_quantization,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"expand_query_failed: {exc}")
 
 
 @app.post("/describe/image")
