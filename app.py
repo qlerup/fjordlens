@@ -14117,6 +14117,35 @@ def api_ai_describe_model():
     )
 
 
+@app.route("/api/ai/describe/rerun", methods=["POST"])
+def api_ai_describe_rerun():
+    """Clear existing Qwen/light description fields and re-run descriptions for all photos."""
+    global ai_desc_thread
+    if ai_desc_thread and ai_desc_thread.is_alive():
+        return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute("UPDATE photos SET ai_desc_tags=NULL, ai_desc_caption=NULL")
+            conn.commit()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"clear_desc_failed: {e}"}), 500
+
+    ai_desc_stop_event.clear()
+
+    def run():
+        _describe_missing_photos(stop_event=ai_desc_stop_event)
+
+    ai_desc_thread = threading.Thread(target=run, daemon=True)
+    ai_desc_thread.start()
+    log_event("ai_desc_rerun_started", model=ai_desc_model_enabled())
+    return jsonify({
+        "ok": True,
+        "started": True,
+        "running": True,
+        "model": ai_desc_model_enabled(),
+    })
+
+
 @app.route("/api/ai/search")
 def api_ai_search():
     q = (request.args.get("q") or "").strip()

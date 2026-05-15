@@ -23,6 +23,7 @@
   aiDescribeToggle: document.getElementById("aiDescribeToggle"),
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
   aiDescribeForceStopBtn: document.getElementById("aiDescribeForceStopBtn"),
+  aiDescribeRerunBtn: document.getElementById("aiDescribeRerunBtn"),
   aiDescribeModelSelect: document.getElementById("aiDescribeModelSelect"),
   aiDescribeStatus: document.getElementById("aiDescribeStatus"),
   aiDescribeRuntime: document.getElementById("aiDescribeRuntime"),
@@ -867,6 +868,10 @@ const I18N = {
     ai_desc_model_label: 'Model',
     ai_desc_model_light: 'Light (hurtig)',
     ai_desc_model_qwen: 'Qwen (bedre kvalitet)',
+    btn_rerun_ai_desc: 'Genkør (overskriv alle)',
+    ai_desc_rerun_starting: 'Genkører beskrivelser for alle (overskriver)...',
+    ai_desc_rerun_failed: 'Kunne ikke starte genkørsel',
+    ai_desc_rerun_started: 'Genkørsel startet i baggrunden',
     ai_faces_title: 'Ansigtsindeksering',
     ai_faces_desc: 'Scanner billeder for ansigter og opdaterer persondata.',
     dns_title: 'DNS',
@@ -1497,6 +1502,10 @@ const I18N = {
     ai_desc_model_label: 'Model',
     ai_desc_model_light: 'Light (fast)',
     ai_desc_model_qwen: 'Qwen (better quality)',
+    btn_rerun_ai_desc: 'Rerun (overwrite all)',
+    ai_desc_rerun_starting: 'Rerunning descriptions for all (overwrite)...',
+    ai_desc_rerun_failed: 'Failed to start rerun',
+    ai_desc_rerun_started: 'Rerun started in background',
     ai_faces_title: 'Face indexing',
     ai_faces_desc: 'Scans photos for faces and updates people data.',
     dns_title: 'DNS',
@@ -1971,6 +1980,10 @@ function updateAiDescribeToggleButton() {
     const showForce = !!state.aiDescribeRunning && normalizeAiDescribeModel(state.aiDescribeModel) === 'qwen';
     els.aiDescribeForceStopBtn.classList.toggle('hidden', !showForce);
     els.aiDescribeForceStopBtn.disabled = !showForce || !!state.aiDescribeForceStopPending;
+  }
+  if (els.aiDescribeRerunBtn) {
+    els.aiDescribeRerunBtn.textContent = tr('btn_rerun_ai_desc');
+    els.aiDescribeRerunBtn.disabled = !!state.aiDescribeRunning || !!state.aiDescribeStopping;
   }
 }
 
@@ -10780,6 +10793,25 @@ els.aiDescribeToggle && els.aiDescribeToggle.addEventListener('change', async ()
 els.aiDescribeForceStopBtn && els.aiDescribeForceStopBtn.addEventListener('click', async () => {
   await forceStopAiDescribeIngest();
 });
+
+async function rerunAiDescribe() {
+  try {
+    showStatus(tr('ai_desc_rerun_starting'), 'ok');
+    const res = await fetch('/api/ai/describe/rerun', { method: 'POST' });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok || !data || data.ok === false) { showStatus(tr('ai_desc_rerun_failed'), 'err'); return; }
+    showStatus(tr('ai_desc_rerun_started'), 'ok');
+    state.aiDescribeRunning = true;
+    state.aiDescribeStopping = false;
+    state.aiDescribeAutoEnabled = true;
+    updateAiDescribeToggleButton();
+    pollAiDescribeStatus();
+  } catch {
+    showStatus(tr('ai_desc_rerun_failed'), 'err');
+  }
+}
+
+els.aiDescribeRerunBtn && els.aiDescribeRerunBtn.addEventListener('click', rerunAiDescribe);
 
 if (els.aiDescribeModelSelect) {
   els.aiDescribeModelSelect.addEventListener('change', async () => {

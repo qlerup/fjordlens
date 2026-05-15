@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import torch
 import uvicorn
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance
 
 # Import onnxruntime right after torch so CUDA-dependent libs provided by
 # torch wheels are loaded before InsightFace initializes ONNX sessions.
@@ -143,13 +143,11 @@ QWEN_VL_PROMPT = str(
         "QWEN_VL_PROMPT",
         (
             "Du analyserer et foto til søgning i et familiealbum. "
-            "Returner kun gyldig JSON med felterne caption og tags. "
-            "caption skal være en kort dansk sætning (maks 18 ord), der beskriver hovedmotiv, handling og sted. "
-            "tags skal være 6-14 korte danske søgeord i lower-case. "
-            "Medtag personer/alder/køn når det tydeligt kan ses, handlinger både som udsagnsord og navneord, "
-            "vigtige objekter, sted og almindelige synonymer. "
-            "Eksempel: {\"caption\":\"en pige gynger på en legeplads\","
-            "\"tags\":[\"pige\",\"barn\",\"gynger\",\"gynge\",\"legeplads\"]}."
+            "Skriv ALTID på dansk (aldrig engelsk). Returner KUN gyldig JSON med felterne caption og tags. "
+            "caption: én kort sætning (maks 18 ord) der beskriver hovedmotiv, personer (når tydeligt), handling og sted/indendørs/udendørs. "
+            "tags: 8-16 korte danske søgeord i lowercase. Medtag synonymer/bøjninger (fx 'gynge','gynger'), personer (barn/pige/dreng/kvinde/mand), handlinger (fx 'vinker','sidder'), objekter (fx 'stol','gynge'), og sted (fx 'indendørs','stue','strand'). "
+            "Ingen forklaringer, ingen kodeblokke – kun JSON. "
+            "Eksempel: {\"caption\":\"en pige gynger på en legeplads\",\"tags\":[\"pige\",\"barn\",\"gynge\",\"gynger\",\"legeplads\",\"udendørs\"]}."
         ),
     )
     or ""
@@ -585,12 +583,53 @@ def _clean_qwen_text(value: Any) -> str:
     return text
 
 
+_EN_DA_TAG_MAP = {
+    # personer
+    "child": "barn",
+    "kid": "barn",
+    "girl": "pige",
+    "boy": "dreng",
+    "woman": "kvinde",
+    "man": "mand",
+    "people": "personer",
+    "person": "person",
+    "baby": "baby",
+    # handlinger
+    "wave": "vinker",
+    "waving": "vinker",
+    "sit": "sidder",
+    "sitting": "sidder",
+    "smile": "smiler",
+    "smiling": "smiler",
+    # objekter/steder
+    "chair": "stol",
+    "swing": "gynge",
+    "playground": "legeplads",
+    "stairs": "trappe",
+    "indoor": "indendørs",
+    "indoors": "indendørs",
+    "outdoor": "udendørs",
+    "outdoors": "udendørs",
+    "beach": "strand",
+    "sea": "hav",
+    "ocean": "hav",
+    "water": "vand",
+    "living room": "stue",
+    "kitchen": "køkken",
+}
+
+
+def _to_danish_tag(tag: str) -> str:
+    t = _clean_qwen_text(tag)
+    return _EN_DA_TAG_MAP.get(t, t)
+
+
 def _qwen_tag_parts(value: Any) -> list[str]:
     return [p for p in re.split(r"[,;|]|\s+[–—-]\s+", str(value or "")) if p]
 
 
 def _append_clean_tag(tags: List[str], value: Any, max_tags: int = 16) -> None:
-    tag = _clean_qwen_text(value)
+    tag = _to_danish_tag(value)
     if (
         not tag
         or len(tag) > 40
@@ -642,6 +681,24 @@ def _normalize_caption_and_tags(caption_value: Any, tags_value: Any) -> tuple[st
             tags.append(token)
             if len(tags) >= 16:
                 break
+
+    # Fallback: hvis caption er for tynd, byg en lille dansk sætning fra tags
+    try:
+        wc = len([w for w in re.findall(r"[\wæøåÆØÅ]+", caption) if w])
+    except Exception:
+        wc = 0
+    if wc < 3 and tags:
+        place = next((t for t in tags if t in {"indendørs", "udendørs", "strand", "stue", "køkken"}), None)
+        person = next((t for t in tags if t in {"barn", "pige", "dreng", "kvinde", "mand", "baby"}), None)
+        obj = next((t for t in tags if t in {"stol", "gynge", "trappe"}), None)
+        if person and obj and place:
+            caption = f"{person} på {obj} {place}"
+        elif person and place:
+            caption = f"{person} {place}"
+        elif person and obj:
+            caption = f"{person} med {obj}"
+        else:
+            caption = ", ".join(tags[:3])
 
     return caption, tags
 
@@ -783,12 +840,27 @@ def _prepare_qwen_image(img: Image.Image) -> Image.Image:
         if pixels > QWEN_VL_MAX_IMAGE_PIXELS:
             scale = min(scale, (float(QWEN_VL_MAX_IMAGE_PIXELS) / float(pixels)) ** 0.5)
 
-    if scale >= 1.0:
-        return img
+    # Resize if needed first
+    if scale < 1.0:
+        new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+        resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+        img = img.resize(new_size, resample)
 
-    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
-    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
-    return img.resize(new_size, resample)
+    # Light auto-enhance for meget mørke billeder for bedre synlighed
+    try:
+        lum = img.convert("L")
+        mean_val = float(np.asarray(lum, dtype=np.uint8).mean())
+        if mean_val < 78.0:  # mørkt billede
+            img = ImageOps.autocontrast(img, cutoff=2)
+            try:
+                img = ImageEnhance.Brightness(img).enhance(1.25)
+                img = ImageEnhance.Contrast(img).enhance(1.12)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return img
 
 
 def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
