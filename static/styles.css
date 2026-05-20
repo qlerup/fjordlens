@@ -2781,6 +2781,39 @@ body.detail-open .detail-panel {
   opacity: 1;
 }
 
+.ios-upload-prep-dialog {
+  width: min(520px, calc(100vw - 24px)) !important;
+}
+.ios-upload-prep-body p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  line-height: 1.42;
+}
+.ios-upload-prep-body .ios-upload-prep-note {
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid rgba(91,140,255,0.32);
+  border-radius: 8px;
+  background: rgba(91,140,255,0.1);
+  color: var(--text);
+}
+.ios-upload-prep-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+@media (max-width: 520px) {
+  .ios-upload-prep-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .ios-upload-prep-actions .btn {
+    width: 100%;
+  }
+}
+
 /* Download modal: use container backdrop to avoid any stacking ambiguity */
 #mapperDownloadModal {
   background: rgba(0,0,0,0.6);

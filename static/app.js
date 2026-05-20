@@ -89,6 +89,10 @@
   mapperTreeNav: document.getElementById("mapperTreeNav"),
   mapperDropZone: document.getElementById("mapperDropZone"),
   mapperUploadInput: document.getElementById("mapperUploadInput"),
+  iosUploadPrepModal: document.getElementById("iosUploadPrepModal"),
+  iosUploadPrepClose: document.getElementById("iosUploadPrepClose"),
+  iosUploadPrepCancel: document.getElementById("iosUploadPrepCancel"),
+  iosUploadPrepContinue: document.getElementById("iosUploadPrepContinue"),
   stopScanBtn: null,
   status: document.getElementById("statusBar"),
   empty: document.getElementById("emptyState"),
@@ -10386,8 +10390,50 @@ function toggleMapperHeaderMenu() {
   else openMapperHeaderMenu();
 }
 
-function openMapperUploadPicker() {
+let pendingIosUploadPicker = null;
+
+function isProbablyIosDevice() {
+  try {
+    const ua = String(navigator.userAgent || '');
+    const platform = String(navigator.platform || '');
+    return /iPad|iPhone|iPod/.test(ua) || (platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1);
+  } catch {
+    return false;
+  }
+}
+
+function shouldShowUploadPrepNotice() {
+  return isProbablyIosDevice();
+}
+
+function closeIosUploadPrepModal() {
+  pendingIosUploadPicker = null;
+  if (els.iosUploadPrepModal) els.iosUploadPrepModal.classList.add('hidden');
+}
+
+function showIosUploadPrepModal(onContinue) {
+  if (!els.iosUploadPrepModal) {
+    if (typeof onContinue === 'function') onContinue();
+    return;
+  }
+  pendingIosUploadPicker = (typeof onContinue === 'function') ? onContinue : null;
+  els.iosUploadPrepModal.classList.remove('hidden');
+  try { els.iosUploadPrepContinue && els.iosUploadPrepContinue.focus({ preventScroll: true }); } catch {}
+}
+
+function continueIosUploadPrepModal() {
+  const fn = pendingIosUploadPicker;
+  pendingIosUploadPicker = null;
+  if (els.iosUploadPrepModal) els.iosUploadPrepModal.classList.add('hidden');
+  if (typeof fn === 'function') fn();
+}
+
+function openMapperUploadPicker(skipPrepNotice = false) {
   if (!els.mapperUploadInput) return;
+  if (!skipPrepNotice && shouldShowUploadPrepNotice()) {
+    showIosUploadPrepModal(() => openMapperUploadPicker(true));
+    return;
+  }
   els.mapperUploadInput.value = '';
   try {
     if (typeof els.mapperUploadInput.showPicker === 'function') {
@@ -10544,6 +10590,22 @@ if (els.mapperEditBtn) {
 if (els.mapperHeaderMenu) {
   ['pointerdown','touchstart','click'].forEach(ev => {
     els.mapperHeaderMenu.addEventListener(ev, (e) => { e.stopPropagation(); }, { passive: true });
+  });
+}
+if (els.iosUploadPrepClose) {
+  els.iosUploadPrepClose.addEventListener('click', closeIosUploadPrepModal);
+}
+if (els.iosUploadPrepCancel) {
+  els.iosUploadPrepCancel.addEventListener('click', closeIosUploadPrepModal);
+}
+if (els.iosUploadPrepContinue) {
+  els.iosUploadPrepContinue.addEventListener('click', continueIosUploadPrepModal);
+}
+if (els.iosUploadPrepModal) {
+  els.iosUploadPrepModal.addEventListener('click', (e) => {
+    if (e.target === els.iosUploadPrepModal || (e.target && e.target.classList && e.target.classList.contains('modal-backdrop'))) {
+      closeIosUploadPrepModal();
+    }
   });
 }
 if (els.mapperHeaderEditAction) {

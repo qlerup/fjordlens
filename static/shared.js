@@ -37,6 +37,10 @@ const els = {
   viewerMenuBtn: document.getElementById('shareViewerMenuBtn'),
   viewerMenu: document.getElementById('shareViewerMenu'),
   viewerOpenOrig: document.getElementById('shareViewerOpenOrig'),
+  uploadPrepModal: document.getElementById('shareUploadPrepModal'),
+  uploadPrepClose: document.getElementById('shareUploadPrepClose'),
+  uploadPrepCancel: document.getElementById('shareUploadPrepCancel'),
+  uploadPrepContinue: document.getElementById('shareUploadPrepContinue'),
   uploadWarnModal: document.getElementById('shareUploadWarnModal'),
   uploadWarnClose: document.getElementById('shareUploadWarnClose'),
 };
@@ -67,6 +71,7 @@ const uploadProgress = {
 
 let uploadProgressHideTimer = null;
 let lastResizeIsMobile = isMobileShareView();
+let pendingShareFilePicker = null;
 
 function clearUploadProgressHideTimer() {
   if (uploadProgressHideTimer) {
@@ -356,6 +361,60 @@ function updateDeleteButton() {
     els.pathBackTop.style.display = showBack ? '' : 'none';
     els.pathBackTop.disabled = !!state.selectMode;
     els.pathBackTop.textContent = t('back');
+  }
+}
+
+function isProbablyIosDevice() {
+  try {
+    const ua = String(navigator.userAgent || '');
+    const platform = String(navigator.platform || '');
+    return /iPad|iPhone|iPod/.test(ua) || (platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1);
+  } catch {
+    return false;
+  }
+}
+
+function shouldShowUploadPrepNotice() {
+  return isProbablyIosDevice();
+}
+
+function closeUploadPrepModal() {
+  pendingShareFilePicker = null;
+  if (els.uploadPrepModal) els.uploadPrepModal.classList.add('hidden');
+}
+
+function showUploadPrepModal(onContinue) {
+  if (!els.uploadPrepModal) {
+    if (typeof onContinue === 'function') onContinue();
+    return;
+  }
+  pendingShareFilePicker = (typeof onContinue === 'function') ? onContinue : null;
+  els.uploadPrepModal.classList.remove('hidden');
+  try { els.uploadPrepContinue && els.uploadPrepContinue.focus({ preventScroll: true }); } catch {}
+}
+
+function continueUploadPrepModal() {
+  const fn = pendingShareFilePicker;
+  pendingShareFilePicker = null;
+  if (els.uploadPrepModal) els.uploadPrepModal.classList.add('hidden');
+  if (typeof fn === 'function') fn();
+}
+
+function openShareFilePicker(skipPrepNotice = false) {
+  if (!els.fileInput) return;
+  if (!skipPrepNotice && shouldShowUploadPrepNotice()) {
+    showUploadPrepModal(() => openShareFilePicker(true));
+    return;
+  }
+  els.fileInput.value = '';
+  try {
+    if (typeof els.fileInput.showPicker === 'function') {
+      els.fileInput.showPicker();
+      return;
+    }
+    els.fileInput.click();
+  } catch {
+    showStatus('Kunne ikke åbne filvælger.', 'err');
   }
 }
 
@@ -950,6 +1009,12 @@ if (els.authName) {
     }
   });
 }
+if (els.uploadWrap) {
+  els.uploadWrap.addEventListener('click', (e) => {
+    e.preventDefault();
+    openShareFilePicker();
+  });
+}
 if (els.fileInput) {
   els.fileInput.addEventListener('change', () => {
     const list = (els.fileInput && els.fileInput.files) ? els.fileInput.files : null;
@@ -1018,6 +1083,22 @@ if (els.moreDeleteBtn) {
   els.moreDeleteBtn.addEventListener('click', async () => {
     closeShareMoreMenu();
     await runDelete();
+  });
+}
+if (els.uploadPrepClose) {
+  els.uploadPrepClose.addEventListener('click', closeUploadPrepModal);
+}
+if (els.uploadPrepCancel) {
+  els.uploadPrepCancel.addEventListener('click', closeUploadPrepModal);
+}
+if (els.uploadPrepContinue) {
+  els.uploadPrepContinue.addEventListener('click', continueUploadPrepModal);
+}
+if (els.uploadPrepModal) {
+  els.uploadPrepModal.addEventListener('click', (e) => {
+    if (e.target === els.uploadPrepModal || (e.target && e.target.classList && e.target.classList.contains('modal-backdrop'))) {
+      closeUploadPrepModal();
+    }
   });
 }
 if (els.uploadWarnClose) {

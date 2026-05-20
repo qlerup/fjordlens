@@ -155,6 +155,25 @@
         <input id="mapperUploadInput" type="file" accept="image/*,video/*,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef" multiple style="display:none;" />
       </section>
 
+      <div id="iosUploadPrepModal" class="modal hidden ios-upload-prep-modal" role="dialog" aria-modal="true" aria-labelledby="iosUploadPrepTitle">
+        <div class="modal-backdrop"></div>
+        <div class="modal-dialog ios-upload-prep-dialog">
+          <div class="modal-header">
+            <h3 id="iosUploadPrepTitle">iPhone klarg&oslash;r filerne f&oslash;rst</h3>
+            <button id="iosUploadPrepClose" class="btn ghost" type="button" aria-label="Luk">&times;</button>
+          </div>
+          <div class="modal-body ios-upload-prep-body">
+            <p>N&aring;r du v&aelig;lger mange billeder og videoer fra Fotos, kan det se ud som om FjordLens er frosset efter fluebenet.</p>
+            <p>Det er iOS, der henter originaler fra Fotos/iCloud og g&oslash;r dem klar til Safari. FjordLens f&aring;r f&oslash;rst filerne bagefter, og uploaden starter automatisk.</p>
+            <p class="ios-upload-prep-note">Lad siden st&aring; &aring;ben, og undg&aring; at l&aring;se telefonen eller lukke browseren imens.</p>
+            <div class="ios-upload-prep-actions">
+              <button id="iosUploadPrepCancel" class="btn" type="button">Annuller</button>
+              <button id="iosUploadPrepContinue" class="btn primary" type="button">Forst&aring;et, v&aelig;lg filer</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <section id="statusBar" class="status hidden"></section>
       <section id="emptyState" class="empty hidden"></section>
       <section id="galleryGrid" class="gallery-grid"></section>
