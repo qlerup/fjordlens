@@ -12058,6 +12058,37 @@ if (els.aiExternalRotateTokenBtn) {
 if (els.aiExternalCopyTokenBtn) {
   els.aiExternalCopyTokenBtn.addEventListener('click', copyAiExternalToken);
 }
+if (els.aiExternalLinksBtn) {
+  els.aiExternalLinksBtn.addEventListener('click', async () => {
+    await loadAiExternalLinks({ openModal: true });
+  });
+}
+if (els.aiExternalLinksModalClose) {
+  els.aiExternalLinksModalClose.addEventListener('click', () => els.aiExternalLinksModal && els.aiExternalLinksModal.classList.add('hidden'));
+}
+if (els.aiExternalLinksModalDone) {
+  els.aiExternalLinksModalDone.addEventListener('click', () => els.aiExternalLinksModal && els.aiExternalLinksModal.classList.add('hidden'));
+}
+if (els.aiExternalLinksModal) {
+  els.aiExternalLinksModal.addEventListener('click', (e) => {
+    if (e.target === els.aiExternalLinksModal) els.aiExternalLinksModal.classList.add('hidden');
+  });
+}
+if (els.aiExternalLinksList) {
+  els.aiExternalLinksList.addEventListener('click', async (e) => {
+    const copyBtn = e.target.closest('[data-ai-external-link-copy]');
+    if (copyBtn) {
+      const id = String(copyBtn.getAttribute('data-ai-external-link-copy') || '').trim();
+      const link = (state.aiDescExternalLinks || []).find((item) => String(item.id || '') === id);
+      await copyAiExternalText(link ? link.connection_url : '', (message, kind) => showAiExternalLinksStatus(message, kind));
+      return;
+    }
+    const deleteBtn = e.target.closest('[data-ai-external-link-delete]');
+    if (deleteBtn) {
+      await deleteAiExternalLink(deleteBtn.getAttribute('data-ai-external-link-delete'));
+    }
+  });
+}
 
 // Settings tabs switching
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
