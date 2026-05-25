@@ -285,8 +285,16 @@
   aiExternalFolders: document.getElementById("aiExternalFolders"),
   aiExternalTokenInput: document.getElementById("aiExternalTokenInput"),
   aiExternalCopyTokenBtn: document.getElementById("aiExternalCopyTokenBtn"),
+  aiExternalLinksBtn: document.getElementById("aiExternalLinksBtn"),
   aiExternalRotateTokenBtn: document.getElementById("aiExternalRotateTokenBtn"),
   aiExternalModalStatus: document.getElementById("aiExternalModalStatus"),
+  aiExternalLinksModal: document.getElementById("aiExternalLinksModal"),
+  aiExternalLinksModalTitle: document.getElementById("aiExternalLinksModalTitle"),
+  aiExternalLinksModalText: document.getElementById("aiExternalLinksModalText"),
+  aiExternalLinksModalClose: document.getElementById("aiExternalLinksModalClose"),
+  aiExternalLinksModalDone: document.getElementById("aiExternalLinksModalDone"),
+  aiExternalLinksList: document.getElementById("aiExternalLinksList"),
+  aiExternalLinksStatus: document.getElementById("aiExternalLinksStatus"),
   // date edit controls
   editDateBtn: document.getElementById('editDateBtn'),
   dateEditWrap: document.getElementById('dateEditWrap'),
@@ -901,11 +909,22 @@ const I18N = {
     ai_desc_external_no_folders: 'Ingen mapper valgt',
     ai_desc_external_pending_label: 'venter',
     ai_desc_external_described_label: 'beskrevet',
-    ai_desc_external_token_copied: 'API-token kopieret',
+    ai_desc_external_token_copied: 'Forbindelseslink kopieret',
     ai_desc_external_modal_title: 'Ekstern AI behandling',
-    ai_desc_external_modal_text: 'Vælg mapperne som en ekstern PC må hente billeder fra og analysere. Brug API-token i Windows-programmet.',
-    ai_desc_external_token_label: 'API-token',
-    ai_desc_external_rotate: 'Ny token',
+    ai_desc_external_modal_text: 'Vælg mapperne som en ekstern PC må hente billeder fra og analysere. Kopiér forbindelseslinket og indsæt det i Windows-programmet.',
+    ai_desc_external_token_label: 'Forbindelseslink',
+    ai_desc_external_rotate: 'Nyt link',
+    ai_desc_external_links: 'Vis links',
+    ai_desc_external_links_title: 'Eksterne forbindelseslinks',
+    ai_desc_external_links_text: 'Her kan du kopiere eller fjerne forbindelseslinks til ekstern AI behandling.',
+    ai_desc_external_links_empty: 'Ingen forbindelseslinks endnu.',
+    ai_desc_external_links_load_failed: 'Kunne ikke hente forbindelseslinks.',
+    ai_desc_external_link_delete: 'Fjern',
+    ai_desc_external_link_delete_confirm: 'Fjern dette forbindelseslink? PC’er der bruger linket kan ikke længere connecte.',
+    ai_desc_external_link_deleted: 'Forbindelseslink fjernet.',
+    ai_desc_external_link_delete_failed: 'Kunne ikke fjerne forbindelseslink.',
+    ai_desc_external_current_link: 'Aktuelt link',
+    ai_desc_external_created_label: 'Oprettet',
     ai_desc_external_save: 'Gem ekstern behandling',
     btn_rerun_ai_desc: 'Genkør (overskriv alle)',
     ai_desc_rerun_starting: 'Genkører beskrivelser for alle (overskriver)...',
@@ -1553,11 +1572,22 @@ const I18N = {
     ai_desc_external_no_folders: 'No folders selected',
     ai_desc_external_pending_label: 'pending',
     ai_desc_external_described_label: 'described',
-    ai_desc_external_token_copied: 'API token copied',
+    ai_desc_external_token_copied: 'Connection link copied',
     ai_desc_external_modal_title: 'External AI processing',
-    ai_desc_external_modal_text: 'Choose the folders an external PC may fetch images from and analyze. Use the API token in the Windows app.',
-    ai_desc_external_token_label: 'API token',
-    ai_desc_external_rotate: 'New token',
+    ai_desc_external_modal_text: 'Choose the folders an external PC may fetch images from and analyze. Copy the connection link and paste it in the Windows app.',
+    ai_desc_external_token_label: 'Connection link',
+    ai_desc_external_rotate: 'New link',
+    ai_desc_external_links: 'Show links',
+    ai_desc_external_links_title: 'External connection links',
+    ai_desc_external_links_text: 'Copy or remove connection links for external AI processing here.',
+    ai_desc_external_links_empty: 'No connection links yet.',
+    ai_desc_external_links_load_failed: 'Could not load connection links.',
+    ai_desc_external_link_delete: 'Remove',
+    ai_desc_external_link_delete_confirm: 'Remove this connection link? PCs using the link will no longer be able to connect.',
+    ai_desc_external_link_deleted: 'Connection link removed.',
+    ai_desc_external_link_delete_failed: 'Could not remove connection link.',
+    ai_desc_external_current_link: 'Current link',
+    ai_desc_external_created_label: 'Created',
     ai_desc_external_save: 'Save external processing',
     btn_rerun_ai_desc: 'Rerun (overwrite all)',
     ai_desc_rerun_starting: 'Rerunning descriptions for all (overwrite)...',
@@ -2160,6 +2190,8 @@ let state = {
   aiDescExternalFolders: [],
   aiDescExternalAvailableFolders: [],
   aiDescExternalToken: '',
+  aiDescExternalConnectionUrl: '',
+  aiDescExternalLinks: [],
   aiDescExternalPending: 0,
   aiDescExternalDescribed: 0,
   aiDescExternalTotal: 0,
@@ -9919,11 +9951,16 @@ function applyUiLanguage() {
   if (els.aiExternalModalText) els.aiExternalModalText.textContent = tr('ai_desc_external_modal_text');
   const aiExternalTokenLabel = document.getElementById('aiExternalTokenLabel');
   if (aiExternalTokenLabel) aiExternalTokenLabel.textContent = tr('ai_desc_external_token_label');
-  if (els.aiExternalCopyTokenBtn) els.aiExternalCopyTokenBtn.textContent = (resolveUiLanguage(state.uiLanguage || 'da') === 'en') ? 'Copy' : 'Kopiér';
+  if (els.aiExternalCopyTokenBtn) els.aiExternalCopyTokenBtn.textContent = (resolveUiLanguage(state.uiLanguage || 'da') === 'en') ? 'Copy link' : 'Kopiér link';
+  if (els.aiExternalLinksBtn) els.aiExternalLinksBtn.textContent = tr('ai_desc_external_links');
   if (els.aiExternalRotateTokenBtn) els.aiExternalRotateTokenBtn.textContent = tr('ai_desc_external_rotate');
   if (els.aiExternalModalSave) els.aiExternalModalSave.textContent = tr('ai_desc_external_save');
   if (els.aiExternalModalCancel) els.aiExternalModalCancel.textContent = tr('scan_modal_cancel');
   if (els.aiExternalModalClose) els.aiExternalModalClose.textContent = tr('scan_modal_close');
+  if (els.aiExternalLinksModalTitle) els.aiExternalLinksModalTitle.textContent = tr('ai_desc_external_links_title');
+  if (els.aiExternalLinksModalText) els.aiExternalLinksModalText.textContent = tr('ai_desc_external_links_text');
+  if (els.aiExternalLinksModalClose) els.aiExternalLinksModalClose.textContent = tr('scan_modal_close');
+  if (els.aiExternalLinksModalDone) els.aiExternalLinksModalDone.textContent = (resolveUiLanguage(state.uiLanguage || 'da') === 'en') ? 'Done' : 'Færdig';
   if (els.aiDescribeForceStopBtn) els.aiDescribeForceStopBtn.textContent = tr('btn_force_stop_qwen');
   if (els.aiDescribeModelSelect) {
     const lightOpt = els.aiDescribeModelSelect.querySelector('option[value="light"]');
@@ -10943,12 +10980,37 @@ function showAiExternalModalStatus(message, kind = 'ok') {
   els.aiExternalModalStatus.classList.toggle('err', kind === 'err');
 }
 
+function buildAiExternalConnectionUrl(token = state.aiDescExternalToken) {
+  const value = String(token || '').trim();
+  if (!value) return '';
+  try {
+    const url = new URL('/api/ai/describe/external/ping', window.location.origin);
+    url.searchParams.set('token', value);
+    return url.toString();
+  } catch {
+    return `/api/ai/describe/external/ping?token=${encodeURIComponent(value)}`;
+  }
+}
+
+function aiExternalConnectionValue(data = null) {
+  const direct = data && data.connection_url ? String(data.connection_url).trim() : '';
+  const browserUrl = buildAiExternalConnectionUrl((data && data.token) || state.aiDescExternalToken);
+  return browserUrl || direct;
+}
+
+function updateAiExternalConnectionInput(data = null) {
+  const value = aiExternalConnectionValue(data);
+  state.aiDescExternalConnectionUrl = value;
+  if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = value;
+}
+
 function applyAiExternalSettings(data) {
   if (!data || data.ok === false) return;
   state.aiDescExternalEnabled = !!data.enabled;
   state.aiDescExternalFolders = Array.isArray(data.folders) ? data.folders : [];
   state.aiDescExternalAvailableFolders = Array.isArray(data.available_folders) ? data.available_folders : [];
   state.aiDescExternalToken = String(data.token || state.aiDescExternalToken || '');
+  state.aiDescExternalConnectionUrl = aiExternalConnectionValue(data);
   state.aiDescExternalPending = Number(data.pending || 0);
   state.aiDescExternalDescribed = Number(data.described || 0);
   state.aiDescExternalTotal = Number(data.total || 0);
@@ -10985,7 +11047,7 @@ async function loadAiExternalSettings({ openModal = false } = {}) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'load_failed');
     applyAiExternalSettings(data);
-    if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = String(data.token || '');
+    updateAiExternalConnectionInput(data);
     renderAiExternalFolders();
     if (openModal && els.aiExternalModal) {
       showAiExternalModalStatus('');
@@ -11014,7 +11076,7 @@ async function saveAiExternalSettings({ enabled = null, rotateToken = false, fol
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'save_failed');
     applyAiExternalSettings(data);
-    if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = String(data.token || '');
+    updateAiExternalConnectionInput(data);
     renderAiExternalFolders();
     showStatus(wantedEnabled ? tr('ai_desc_external_saved') : tr('ai_desc_external_disabled'), 'ok');
     showAiExternalModalStatus(tr('ai_desc_external_saved'), 'ok');
@@ -11031,22 +11093,102 @@ function closeAiExternalModal() {
 }
 
 async function copyAiExternalToken() {
-  const value = String((els.aiExternalTokenInput && els.aiExternalTokenInput.value) || state.aiDescExternalToken || '').trim();
+  const value = String((els.aiExternalTokenInput && els.aiExternalTokenInput.value) || state.aiDescExternalConnectionUrl || aiExternalConnectionValue() || '').trim();
   if (!value) return;
+  await copyAiExternalText(value, (message, kind) => showAiExternalModalStatus(message, kind));
+}
+
+async function copyAiExternalText(value, statusFn = null) {
+  const text = String(value || '').trim();
+  if (!text) return;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(text);
     } else {
       const ta = document.createElement('textarea');
-      ta.value = value;
+      ta.value = text;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
       ta.remove();
     }
-    showAiExternalModalStatus(tr('ai_desc_external_token_copied'), 'ok');
+    if (typeof statusFn === 'function') statusFn(tr('ai_desc_external_token_copied'), 'ok');
   } catch {
-    showAiExternalModalStatus(tr('mapper_share_copy_fail'), 'err');
+    if (typeof statusFn === 'function') statusFn(tr('mapper_share_copy_fail'), 'err');
+  }
+}
+
+function showAiExternalLinksStatus(message, kind = 'ok') {
+  if (!els.aiExternalLinksStatus) return;
+  els.aiExternalLinksStatus.textContent = message || '';
+  els.aiExternalLinksStatus.classList.toggle('hidden', !message);
+  els.aiExternalLinksStatus.classList.toggle('err', kind === 'err');
+}
+
+function renderAiExternalLinks(links) {
+  if (!els.aiExternalLinksList) return;
+  const items = Array.isArray(links) ? links : [];
+  state.aiDescExternalLinks = items;
+  if (!items.length) {
+    els.aiExternalLinksList.innerHTML = `<div class="mini-label">${escapeHtml(tr('ai_desc_external_links_empty'))}</div>`;
+    return;
+  }
+  els.aiExternalLinksList.innerHTML = items.map((link) => {
+    const id = String(link.id || '').trim();
+    const url = String(link.connection_url || '').trim();
+    const created = fmtDate(link.created_at);
+    const hint = String(link.token_hint || '').trim();
+    const current = link.current ? `<span class="pill">${escapeHtml(tr('ai_desc_external_current_link'))}</span>` : '';
+    return `
+      <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg-soft);display:grid;gap:8px;">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+          <div>
+            <strong>${escapeHtml(tr('ai_desc_external_token_label'))}</strong>
+            <div class="mini-label">${escapeHtml(tr('ai_desc_external_created_label'))}: ${escapeHtml(created)}${hint ? ` · ***${escapeHtml(hint)}` : ''}</div>
+          </div>
+          ${current}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input class="mapper-input" type="text" readonly value="${escapeHtml(url)}" style="min-width:0;width:100%;" />
+          <button class="btn small" type="button" data-ai-external-link-copy="${escapeHtml(id)}">${escapeHtml((resolveUiLanguage(state.uiLanguage || 'da') === 'en') ? 'Copy' : 'Kopiér')}</button>
+          <button class="btn small danger" type="button" data-ai-external-link-delete="${escapeHtml(id)}">${escapeHtml(tr('ai_desc_external_link_delete'))}</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function loadAiExternalLinks({ openModal = false } = {}) {
+  try {
+    const res = await fetch('/api/ai/describe/external/links');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'load_failed');
+    renderAiExternalLinks(data.links || []);
+    showAiExternalLinksStatus('');
+    if (openModal && els.aiExternalLinksModal) els.aiExternalLinksModal.classList.remove('hidden');
+    return data;
+  } catch {
+    showAiExternalLinksStatus(tr('ai_desc_external_links_load_failed'), 'err');
+    if (openModal && els.aiExternalLinksModal) els.aiExternalLinksModal.classList.remove('hidden');
+    return null;
+  }
+}
+
+async function deleteAiExternalLink(id) {
+  const linkId = String(id || '').trim();
+  if (!linkId) return;
+  if (!window.confirm(tr('ai_desc_external_link_delete_confirm'))) return;
+  try {
+    const res = await fetch(`/api/ai/describe/external/links/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'delete_failed');
+    renderAiExternalLinks(data.links || []);
+    if (data.token || data.connection_url) {
+      applyAiExternalSettings({ ok: true, token: data.token || state.aiDescExternalToken, connection_url: data.connection_url || '' });
+      updateAiExternalConnectionInput(data);
+    }
+    showAiExternalLinksStatus(tr('ai_desc_external_link_deleted'), 'ok');
+  } catch {
+    showAiExternalLinksStatus(tr('ai_desc_external_link_delete_failed'), 'err');
   }
 }
 

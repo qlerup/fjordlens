@@ -3456,6 +3456,9 @@ def init_db() -> None:
             row2ac = conn.execute("SELECT value FROM settings WHERE key='ai_desc_external_folders'").fetchone()
             if not row2ac:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_external_folders", "[]"))
+            row2ad = conn.execute("SELECT value FROM settings WHERE key='ai_desc_external_tokens'").fetchone()
+            if not row2ad:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_external_tokens", "[]"))
             row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
             if not row2b:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
@@ -4029,35 +4032,137 @@ def ai_desc_external_enabled() -> bool:
     return _get_setting_bool("ai_desc_external_enabled", False)
 
 
-def _ai_desc_external_token() -> str:
-    return str(_get_setting("ai_desc_external_token", "") or "").strip()
-
-
 def _generate_ai_desc_external_token() -> str:
     return "fldesc_" + secrets.token_urlsafe(32)
+
+
+def _ai_desc_external_token_records() -> list[Dict[str, Any]]:
+    raw = _get_setting("ai_desc_external_tokens", "[]")
+    try:
+        parsed = json.loads(str(raw or "[]"))
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        parsed = []
+
+    out: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        token = str(item.get("token") or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        link_id = str(item.get("id") or "").strip() or hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+        out.append({
+            "id": link_id,
+            "token": token,
+            "created_at": str(item.get("created_at") or "").strip() or now_iso(),
+            "label": str(item.get("label") or "").strip(),
+        })
+
+    legacy = str(_get_setting("ai_desc_external_token", "") or "").strip()
+    if legacy and legacy not in seen:
+        out.append({
+            "id": hashlib.sha256(legacy.encode("utf-8")).hexdigest()[:16],
+            "token": legacy,
+            "created_at": now_iso(),
+            "label": "Ekstern AI behandling",
+        })
+    return out
+
+
+def _save_ai_desc_external_token_records(records: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    cleaned: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        token = str(item.get("token") or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        cleaned.append({
+            "id": str(item.get("id") or "").strip() or secrets.token_urlsafe(8),
+            "token": token,
+            "created_at": str(item.get("created_at") or "").strip() or now_iso(),
+            "label": str(item.get("label") or "").strip(),
+        })
+    _set_setting("ai_desc_external_tokens", json.dumps(cleaned, ensure_ascii=False))
+    current = str(_get_setting("ai_desc_external_token", "") or "").strip()
+    if current not in {item["token"] for item in cleaned}:
+        _set_setting("ai_desc_external_token", cleaned[-1]["token"] if cleaned else "")
+    return cleaned
+
+
+def _add_ai_desc_external_token(label: str = "") -> str:
+    token = _generate_ai_desc_external_token()
+    records = _ai_desc_external_token_records()
+    records.append({
+        "id": secrets.token_urlsafe(8),
+        "token": token,
+        "created_at": now_iso(),
+        "label": str(label or "").strip(),
+    })
+    _save_ai_desc_external_token_records(records)
+    _set_setting("ai_desc_external_token", token)
+    return token
+
+
+def _ai_desc_external_token() -> str:
+    current = str(_get_setting("ai_desc_external_token", "") or "").strip()
+    records = _ai_desc_external_token_records()
+    active = {str(item.get("token") or "").strip() for item in records}
+    if current and current in active:
+        return current
+    if records:
+        token = str(records[-1].get("token") or "").strip()
+        if token:
+            _set_setting("ai_desc_external_token", token)
+            return token
+    return current
 
 
 def _ensure_ai_desc_external_token() -> str:
     token = _ai_desc_external_token()
     if token:
+        _save_ai_desc_external_token_records(_ai_desc_external_token_records())
         return token
-    token = _generate_ai_desc_external_token()
-    _set_setting("ai_desc_external_token", token)
-    return token
+    return _add_ai_desc_external_token()
+
+
+def _ai_desc_external_public_links() -> list[Dict[str, Any]]:
+    links: list[Dict[str, Any]] = []
+    for item in _ai_desc_external_token_records():
+        token = str(item.get("token") or "").strip()
+        if not token:
+            continue
+        links.append({
+            "id": str(item.get("id") or "").strip(),
+            "created_at": str(item.get("created_at") or "").strip(),
+            "label": str(item.get("label") or "").strip(),
+            "token_hint": token[-6:],
+            "connection_url": _ai_desc_external_connection_url(token),
+            "current": hmac.compare_digest(token, _ai_desc_external_token()),
+        })
+    return links
 
 
 def _ai_desc_external_auth_ok() -> bool:
-    expected = _ai_desc_external_token()
-    if not expected:
-        return False
-
     supplied = str(request.headers.get("X-API-Token") or request.headers.get("X-FjordLens-Token") or "").strip()
     auth = str(request.headers.get("Authorization") or "").strip()
     if auth.lower().startswith("bearer "):
         supplied = auth.split(" ", 1)[1].strip()
     if not supplied:
         supplied = str(request.args.get("token") or "").strip()
-    return bool(supplied) and hmac.compare_digest(supplied, expected)
+    if not supplied:
+        return False
+    for item in _ai_desc_external_token_records():
+        expected = str(item.get("token") or "").strip()
+        if expected and hmac.compare_digest(supplied, expected):
+            return True
+    return False
 
 
 def _ai_desc_external_require_auth():
@@ -4217,6 +4322,13 @@ def _ai_desc_external_counts(conn: sqlite3.Connection, folders: list[str]) -> Di
     }
 
 
+def _ai_desc_external_connection_url(token: str) -> str:
+    token = str(token or "").strip()
+    if not token:
+        return ""
+    return f"{request.url_root.rstrip('/')}{url_for('api_ai_describe_external_ping')}?token={quote(token, safe='')}"
+
+
 def _ai_desc_external_settings_payload(conn: Optional[sqlite3.Connection] = None, include_token: bool = True) -> Dict[str, Any]:
     close_conn = False
     if conn is None:
@@ -4235,7 +4347,9 @@ def _ai_desc_external_settings_payload(conn: Optional[sqlite3.Connection] = None
             **counts,
         }
         if include_token:
-            payload["token"] = _ai_desc_external_token()
+            token = _ai_desc_external_token()
+            payload["token"] = token
+            payload["connection_url"] = _ai_desc_external_connection_url(token)
         return payload
     finally:
         if close_conn:
@@ -14406,10 +14520,14 @@ def api_ai_describe_external_settings():
     rotate_token = bool(payload.get("rotate_token"))
     folders = _normalize_ai_desc_external_folders(payload.get("folders"))
 
-    token = _generate_ai_desc_external_token() if rotate_token else _ai_desc_external_token()
+    if rotate_token:
+        token = _add_ai_desc_external_token()
+    else:
+        token = _ai_desc_external_token()
     if enabled and not token:
-        token = _generate_ai_desc_external_token()
-    if token:
+        token = _ensure_ai_desc_external_token()
+    elif token:
+        _save_ai_desc_external_token_records(_ai_desc_external_token_records())
         _set_setting("ai_desc_external_token", token)
 
     _set_ai_desc_external_folders(folders)
@@ -14421,7 +14539,42 @@ def api_ai_describe_external_settings():
     with closing(get_conn()) as conn:
         resp = _ai_desc_external_settings_payload(conn, include_token=True)
     resp["token"] = token or resp.get("token") or ""
+    resp["connection_url"] = _ai_desc_external_connection_url(resp["token"])
     return jsonify(resp)
+
+
+@app.route("/api/ai/describe/external/links")
+def api_ai_describe_external_links():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    return jsonify({"ok": True, "links": _ai_desc_external_public_links()})
+
+
+@app.route("/api/ai/describe/external/links/<link_id>", methods=["DELETE"])
+def api_ai_describe_external_link_delete(link_id: str):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    target = str(link_id or "").strip()
+    records = _ai_desc_external_token_records()
+    kept = [item for item in records if str(item.get("id") or "").strip() != target]
+    if len(kept) == len(records):
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    removed_current = str(_get_setting("ai_desc_external_token", "") or "").strip() not in {
+        str(item.get("token") or "").strip() for item in kept
+    }
+    _save_ai_desc_external_token_records(kept)
+    if removed_current:
+        _set_setting("ai_desc_external_token", str(kept[-1].get("token") or "").strip() if kept else "")
+    return jsonify({
+        "ok": True,
+        "links": _ai_desc_external_public_links(),
+        "token": _ai_desc_external_token(),
+        "connection_url": _ai_desc_external_connection_url(_ai_desc_external_token()),
+    })
 
 
 @app.route("/api/ai/describe/external/ping")

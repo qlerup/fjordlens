@@ -891,17 +891,32 @@
       <p id="aiExternalModalText" class="mini-label" style="margin:0 0 12px;line-height:1.5;">Vælg mapperne som en ekstern PC må hente billeder fra og analysere.</p>
       <div id="aiExternalFolders" class="mini-label" style="display:grid;gap:7px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:12px;"></div>
       <div class="form-row" style="margin-bottom:10px;">
-        <label id="aiExternalTokenLabel" for="aiExternalTokenInput">API-token</label>
+        <label id="aiExternalTokenLabel" for="aiExternalTokenInput">Forbindelseslink</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input id="aiExternalTokenInput" class="mapper-input" type="text" readonly style="min-width:0;width:100%;" />
-          <button id="aiExternalCopyTokenBtn" class="btn small" type="button">Kopiér</button>
+          <button id="aiExternalCopyTokenBtn" class="btn small" type="button">Kopiér link</button>
         </div>
       </div>
       <div id="aiExternalModalStatus" class="status hidden" style="margin:0 0 12px;"></div>
       <div class="actions" style="justify-content:flex-end;gap:8px;">
-        <button id="aiExternalRotateTokenBtn" class="btn" type="button">Ny token</button>
+        <button id="aiExternalLinksBtn" class="btn" type="button">Vis links</button>
+        <button id="aiExternalRotateTokenBtn" class="btn" type="button">Nyt link</button>
         <button id="aiExternalModalCancel" class="btn" type="button">Annuller</button>
         <button id="aiExternalModalSave" class="btn primary" type="button">Gem ekstern behandling</button>
+      </div>
+    </div>
+  </div>
+  <div id="aiExternalLinksModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10001;">
+    <div style="width:min(760px,94vw);max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+        <h3 id="aiExternalLinksModalTitle" style="margin:0;">Eksterne forbindelseslinks</h3>
+        <button id="aiExternalLinksModalClose" class="btn">Luk</button>
+      </div>
+      <p id="aiExternalLinksModalText" class="mini-label" style="margin:0 0 12px;line-height:1.5;">Her kan du kopiere eller fjerne forbindelseslinks til ekstern AI behandling.</p>
+      <div id="aiExternalLinksList" class="mini-label" style="display:grid;gap:10px;margin-bottom:12px;"></div>
+      <div id="aiExternalLinksStatus" class="status hidden" style="margin:0 0 12px;"></div>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="aiExternalLinksModalDone" class="btn primary" type="button">Færdig</button>
       </div>
     </div>
   </div>
