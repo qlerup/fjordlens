@@ -333,7 +333,7 @@
               <div style="border:1px solid var(--border); border-radius:10px; padding:10px;">
                 <div id="aiDescTitle" class="mini-label" style="font-weight:700; margin-bottom:6px;">AI beskrivelser</div>
                 <p id="aiDescDesc" class="hint" style="margin:0 0 8px 0;">Finder handlinger/scener (fx personer der svømmer) til bedre søgning.</p>
-                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+                <div id="aiDescribeLocalControls" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
                   <label class="ai-toggle-row" for="aiDescribeToggle">
                     <input id="aiDescribeToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="AI descriptions toggle" />
                     <span class="ai-toggle-slider" aria-hidden="true"></span>
@@ -342,7 +342,7 @@
                   <button id="aiDescribeForceStopBtn" class="btn danger small hidden" type="button">Afbryd Qwen</button>
                   <button id="aiDescribeRerunBtn" class="btn small" type="button" title="Genkør for alle og overskriv">Genkør (overskriv alle)</button>
                 </div>
-                <div class="ai-desc-model-row">
+                <div id="aiDescribeModelRow" class="ai-desc-model-row">
                   <label id="aiDescModelLabel" class="mini-label" for="aiDescribeModelSelect">Model</label>
                   <select id="aiDescribeModelSelect" class="select ai-desc-model-select" aria-label="Model for AI descriptions">
                     <option value="light">Light (hurtig)</option>
@@ -350,6 +350,15 @@
                   </select>
                 </div>
                 <div id="aiDescribeRuntime" class="mini-label">Runtime: —</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0 6px;">
+                  <label class="ai-toggle-row" for="aiDescExternalToggle">
+                    <input id="aiDescExternalToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="External AI descriptions toggle" />
+                    <span class="ai-toggle-slider" aria-hidden="true"></span>
+                    <span id="aiDescExternalToggleText" class="mini-label">Ekstern behandling</span>
+                  </label>
+                  <button id="aiDescExternalChooseBtn" class="btn small hidden" type="button">Vælg ekstern behandling</button>
+                </div>
+                <div id="aiDescExternalInfo" class="mini-label hidden">Ekstern behandling: —</div>
                 <div id="aiDescribeStatus" class="mini-label">Beskrivelser: —</div>
               </div>
 
@@ -870,6 +879,29 @@
         <button id="aiScopeModalCancel" class="btn">Annuller</button>
         <button id="aiScopeModalNew" class="btn">Kun nye uploads</button>
         <button id="aiScopeModalAll" class="btn primary">Alle eksisterende</button>
+      </div>
+    </div>
+  </div>
+  <div id="aiExternalModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:min(720px,92vw);max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+        <h3 id="aiExternalModalTitle" style="margin:0;">Ekstern AI behandling</h3>
+        <button id="aiExternalModalClose" class="btn">Luk</button>
+      </div>
+      <p id="aiExternalModalText" class="mini-label" style="margin:0 0 12px;line-height:1.5;">Vælg mapperne som en ekstern PC må hente billeder fra og analysere.</p>
+      <div id="aiExternalFolders" class="mini-label" style="display:grid;gap:7px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:12px;"></div>
+      <div class="form-row" style="margin-bottom:10px;">
+        <label id="aiExternalTokenLabel" for="aiExternalTokenInput">API-token</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="aiExternalTokenInput" class="mapper-input" type="text" readonly style="min-width:0;width:100%;" />
+          <button id="aiExternalCopyTokenBtn" class="btn small" type="button">Kopiér</button>
+        </div>
+      </div>
+      <div id="aiExternalModalStatus" class="status hidden" style="margin:0 0 12px;"></div>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="aiExternalRotateTokenBtn" class="btn" type="button">Ny token</button>
+        <button id="aiExternalModalCancel" class="btn" type="button">Annuller</button>
+        <button id="aiExternalModalSave" class="btn primary" type="button">Gem ekstern behandling</button>
       </div>
     </div>
   </div>

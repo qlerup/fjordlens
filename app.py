@@ -906,7 +906,7 @@ def _ai_desc_has_content(tags_raw: Any, caption_raw: Any = None) -> bool:
 
 
 def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: list[str], caption: Optional[str]) -> None:
-    clean_tags = _normalize_ai_desc_tags(tags)
+    clean_tags = _normalize_ai_desc_tags(tags, max_tags=96)
     clean_caption = _repair_mojibake(str(caption or "")).strip() or None
 
     prev_ai_tags: list[str] = []
@@ -914,12 +914,12 @@ def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: l
     try:
         cur = conn.execute("SELECT ai_tags, metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
         if cur:
-            prev_ai_tags = _normalize_ai_desc_tags(_json_list_or_empty(cur["ai_tags"]), max_tags=64)
+            prev_ai_tags = _normalize_ai_desc_tags(_json_list_or_empty(cur["ai_tags"]), max_tags=96)
             prev_meta = _json_object(cur["metadata_json"])
     except Exception:
         pass
 
-    merged_ai_tags = sorted({*prev_ai_tags, *clean_tags})
+    merged_ai_tags = _normalize_ai_desc_tags([*prev_ai_tags, *clean_tags], max_tags=128)
     meta = dict(prev_meta or {})
     ai_meta = dict(meta.get("ai") or {})
     ai_meta["tags"] = merged_ai_tags
@@ -953,7 +953,7 @@ def _ai_describe_image_path(path: Path) -> Optional[Dict[str, Any]]:
         if r.ok:
             js = r.json() or {}
             caption = str(js.get("caption") or "").strip()
-            tags = _normalize_ai_desc_tags(js.get("tags"))
+            tags = _normalize_ai_desc_tags(js.get("tags"), max_tags=96)
             if not caption and not tags:
                 return None
             return {
@@ -3450,6 +3450,12 @@ def init_db() -> None:
             row2aa = conn.execute("SELECT value FROM settings WHERE key='ai_desc_model'").fetchone()
             if not row2aa:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_model", AI_DESC_MODEL_ENV_DEFAULT))
+            row2ab = conn.execute("SELECT value FROM settings WHERE key='ai_desc_external_enabled'").fetchone()
+            if not row2ab:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_external_enabled", "0"))
+            row2ac = conn.execute("SELECT value FROM settings WHERE key='ai_desc_external_folders'").fetchone()
+            if not row2ac:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("ai_desc_external_folders", "[]"))
             row2b = conn.execute("SELECT value FROM settings WHERE key='faces_auto_index'").fetchone()
             if not row2b:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("faces_auto_index", "1" if FACES_ENV_AUTO_INDEX_DEFAULT else "0"))
@@ -3876,6 +3882,10 @@ def enforce_login_for_app():
         "api_frame_status_card",
         "api_frame_update_package",
         "api_frame_uploaded_update_package",
+        "api_ai_describe_external_ping",
+        "api_ai_describe_external_next",
+        "api_ai_describe_external_image",
+        "api_ai_describe_external_result",
     }
     if request.endpoint in open_endpoints:
         return None
@@ -3983,6 +3993,9 @@ def _get_setting_throttle(key: str, default: float) -> float:
     return _parse_throttle_value(_get_setting(key, str(default)), default)
 
 
+AI_DESC_EXTERNAL_CLAIM_TTL_SEC = 30 * 60
+
+
 def ai_feature_enabled() -> bool:
     return _get_setting_bool("ai_enabled", AI_ENV_ENABLED_DEFAULT)
 
@@ -4007,7 +4020,226 @@ def raw_keep_originals_enabled() -> bool:
 
 
 def ai_desc_auto_ingest_enabled() -> bool:
+    if ai_desc_external_enabled():
+        return False
     return _get_setting_bool("ai_desc_auto_ingest", AI_DESC_ENV_AUTO_INGEST_DEFAULT)
+
+
+def ai_desc_external_enabled() -> bool:
+    return _get_setting_bool("ai_desc_external_enabled", False)
+
+
+def _ai_desc_external_token() -> str:
+    return str(_get_setting("ai_desc_external_token", "") or "").strip()
+
+
+def _generate_ai_desc_external_token() -> str:
+    return "fldesc_" + secrets.token_urlsafe(32)
+
+
+def _ensure_ai_desc_external_token() -> str:
+    token = _ai_desc_external_token()
+    if token:
+        return token
+    token = _generate_ai_desc_external_token()
+    _set_setting("ai_desc_external_token", token)
+    return token
+
+
+def _ai_desc_external_auth_ok() -> bool:
+    expected = _ai_desc_external_token()
+    if not expected:
+        return False
+
+    supplied = str(request.headers.get("X-API-Token") or request.headers.get("X-FjordLens-Token") or "").strip()
+    auth = str(request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        supplied = auth.split(" ", 1)[1].strip()
+    if not supplied:
+        supplied = str(request.args.get("token") or "").strip()
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+def _ai_desc_external_require_auth():
+    if not _ai_desc_external_auth_ok():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    return None
+
+
+def _normalize_ai_desc_external_folders(value: Any) -> list[str]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = [value]
+    elif isinstance(value, (list, tuple, set)):
+        parsed = list(value)
+    else:
+        parsed = []
+
+    out: list[str] = []
+    for item in parsed:
+        try:
+            folder = _normalize_folder_acl_path(item)
+        except Exception:
+            continue
+        if folder and folder not in out:
+            out.append(folder)
+    return sorted(out, key=lambda x: x.lower())
+
+
+def _ai_desc_external_folders() -> list[str]:
+    return _normalize_ai_desc_external_folders(_get_setting("ai_desc_external_folders", "[]"))
+
+
+def _set_ai_desc_external_folders(folders: list[str]) -> list[str]:
+    cleaned = _normalize_ai_desc_external_folders(folders)
+    _set_setting("ai_desc_external_folders", json.dumps(cleaned, ensure_ascii=False))
+    return cleaned
+
+
+def _ai_desc_external_rel_allowed(rel_path: str, folders: list[str]) -> bool:
+    if not folders:
+        return False
+    rel = _normalize_rel_path_for_acl(rel_path)
+    if not rel:
+        return False
+    for folder in folders:
+        f = _normalize_folder_acl_path(folder)
+        if f and (rel == f or rel.startswith(f + "/")):
+            return True
+    return False
+
+
+def _ai_desc_external_missing_where() -> str:
+    return """
+        (
+            ai_desc_tags IS NULL
+            OR TRIM(ai_desc_tags) = ''
+            OR TRIM(ai_desc_tags) IN ('[]', 'null')
+            OR ai_desc_caption IS NULL
+            OR TRIM(ai_desc_caption) = ''
+        )
+    """
+
+
+def _parse_utc_iso_ts(raw: Any) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text).timestamp()
+    except Exception:
+        return None
+
+
+def _ai_desc_external_claim_is_fresh(meta: Dict[str, Any], now_ts: Optional[float] = None) -> bool:
+    ai_meta = meta.get("ai") if isinstance(meta.get("ai"), dict) else {}
+    claimed_at = _parse_utc_iso_ts((ai_meta or {}).get("desc_external_claimed_at"))
+    if claimed_at is None:
+        return False
+    now_value = float(now_ts if now_ts is not None else time.time())
+    return (now_value - claimed_at) < AI_DESC_EXTERNAL_CLAIM_TTL_SEC
+
+
+def _mark_ai_desc_external_claim(conn: sqlite3.Connection, row: sqlite3.Row, worker: str = "") -> None:
+    meta = _json_object(row["metadata_json"] if "metadata_json" in row.keys() else None)
+    ai_meta = dict(meta.get("ai") or {})
+    ai_meta["desc_external_claimed_at"] = now_iso()
+    if worker:
+        ai_meta["desc_external_worker"] = str(worker)[:120]
+    meta["ai"] = ai_meta
+    conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), int(row["id"])))
+
+
+def _mark_ai_desc_external_error(conn: sqlite3.Connection, photo_id: int, error: str) -> None:
+    row = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+    meta = _json_object(row["metadata_json"] if row else None)
+    ai_meta = dict(meta.get("ai") or {})
+    ai_meta["desc_external_error"] = str(error or "")[:500]
+    ai_meta["desc_external_error_at"] = now_iso()
+    meta["ai"] = ai_meta
+    conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), photo_id))
+
+
+def _mark_ai_desc_external_stored(conn: sqlite3.Connection, photo_id: int, worker: str = "") -> None:
+    row = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+    meta = _json_object(row["metadata_json"] if row else None)
+    ai_meta = dict(meta.get("ai") or {})
+    ai_meta["desc_external_source"] = "external_worker"
+    ai_meta["desc_external_completed_at"] = now_iso()
+    ai_meta.pop("desc_external_error", None)
+    ai_meta.pop("desc_external_error_at", None)
+    if worker:
+        ai_meta["desc_external_worker"] = str(worker)[:120]
+    meta["ai"] = ai_meta
+    conn.execute("UPDATE photos SET metadata_json=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), photo_id))
+
+
+def _ai_desc_external_counts(conn: sqlite3.Connection, folders: list[str]) -> Dict[str, int]:
+    rows = conn.execute("SELECT rel_path, ai_desc_tags, ai_desc_caption, metadata_json FROM photos").fetchall()
+    total = 0
+    pending = 0
+    described = 0
+    ready = 0
+    in_progress = 0
+    unavailable = 0
+    now_ts = time.time()
+    for row in rows:
+        if not _ai_desc_external_rel_allowed(row["rel_path"], folders):
+            continue
+        total += 1
+        if _ai_desc_has_content(row["ai_desc_tags"], row["ai_desc_caption"]):
+            described += 1
+        else:
+            pending += 1
+            meta = _json_object(row["metadata_json"])
+            if _ai_desc_external_claim_is_fresh(meta, now_ts):
+                in_progress += 1
+                continue
+            try:
+                src = _disk_path_from_rel_path(str(row["rel_path"] or ""))
+                if src.exists() and src.is_file():
+                    ready += 1
+                else:
+                    unavailable += 1
+            except Exception:
+                unavailable += 1
+    return {
+        "total": total,
+        "pending": pending,
+        "described": described,
+        "ready": ready,
+        "in_progress": in_progress,
+        "unavailable": unavailable,
+    }
+
+
+def _ai_desc_external_settings_payload(conn: Optional[sqlite3.Connection] = None, include_token: bool = True) -> Dict[str, Any]:
+    close_conn = False
+    if conn is None:
+        conn = get_conn()
+        close_conn = True
+    try:
+        folders = _ai_desc_external_folders()
+        available = _list_all_photo_folders(conn)
+        counts = _ai_desc_external_counts(conn, folders)
+        payload: Dict[str, Any] = {
+            "ok": True,
+            "enabled": ai_desc_external_enabled(),
+            "folders": folders,
+            "available_folders": available,
+            "token_present": bool(_ai_desc_external_token()),
+            **counts,
+        }
+        if include_token:
+            payload["token"] = _ai_desc_external_token()
+        return payload
+    finally:
+        if close_conn:
+            conn.close()
 
 
 def ai_desc_model_enabled() -> str:
@@ -9668,7 +9900,7 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
         else:
             d[key] = [] if key in {"ai_tags", "ai_desc_tags"} else None
     d["ai_tags"] = _normalize_ai_desc_tags(d.get("ai_tags"), max_tags=64)
-    d["ai_desc_tags"] = _normalize_ai_desc_tags(d.get("ai_desc_tags"), max_tags=32)
+    d["ai_desc_tags"] = _normalize_ai_desc_tags(d.get("ai_desc_tags"), max_tags=96)
     if d.get("ai_desc_caption"):
         d["ai_desc_caption"] = _repair_mojibake(str(d.get("ai_desc_caption") or "")).strip()
     else:
@@ -13850,7 +14082,7 @@ def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
         result = _ai_describe_image_path(src)
         if not result:
             return False
-        tags = _normalize_ai_desc_tags(result.get("tags"))
+        tags = _normalize_ai_desc_tags(result.get("tags"), max_tags=96)
         caption = str(result.get("caption") or "").strip() or _build_desc_caption(tags)
         with closing(get_conn()) as conn:
             _store_photo_ai_description(conn, photo_id, tags or [], caption)
@@ -14010,6 +14242,8 @@ def api_ai_status():
 @app.route("/api/ai/describe/ingest", methods=["POST"])
 def api_ai_describe_ingest():
     global ai_desc_thread
+    if ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_enabled", "external": True}), 409
     if ai_desc_thread and ai_desc_thread.is_alive():
         return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
     scope = (request.args.get("scope") or "").strip().lower()
@@ -14043,20 +14277,27 @@ def api_ai_describe_stop():
 
 @app.route("/api/ai/describe/status")
 def api_ai_describe_status():
-    rt = _ai_runtime_info()
     model = ai_desc_model_enabled()
+    external_payload = _ai_desc_external_settings_payload(include_token=False)
+    external_enabled = bool(external_payload.get("enabled"))
+    rt = (
+        {"service_ok": True, "ai_device": "external", "qwen_device": "external", "face_device": "external", "ai_device_raw": "external", "qwen_device_raw": "external", "face_device_raw": "external"}
+        if external_enabled
+        else _ai_runtime_info()
+    )
     resp: Dict[str, Any] = {
         "ok": True,
-        "running": ai_desc_running,
-        "stopping": bool(ai_desc_running and ai_desc_stop_event.is_set()),
+        "running": False if external_enabled else ai_desc_running,
+        "stopping": False if external_enabled else bool(ai_desc_running and ai_desc_stop_event.is_set()),
         "auto_ingest": ai_desc_auto_ingest_enabled(),
         "model": model,
         "model_options": ["light", "qwen"],
         "request_timeout_sec": AI_DESC_REQUEST_TIMEOUT_SEC,
+        "external": external_payload,
         **ai_desc_counts,
         "runtime": {
             "service_ok": rt["service_ok"],
-            "describe": (rt["qwen_device"] if model == "qwen" else rt["ai_device"]),
+            "describe": ("external" if external_enabled else (rt["qwen_device"] if model == "qwen" else rt["ai_device"])),
             "ai": rt["ai_device"],
             "qwen": rt["qwen_device"],
             "faces": rt["face_device"],
@@ -14073,6 +14314,8 @@ def api_ai_describe_status():
 @app.route("/api/ai/describe/model", methods=["POST"])
 def api_ai_describe_model():
     global ai_desc_thread
+    if ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_enabled", "external": True}), 409
     payload = request.get_json(silent=True) or {}
     model = _normalize_ai_desc_model(payload.get("model"))
     scope = str(payload.get("scope") or "new").strip().lower()
@@ -14121,6 +14364,8 @@ def api_ai_describe_model():
 def api_ai_describe_rerun():
     """Clear existing Qwen/light description fields and re-run descriptions for all photos."""
     global ai_desc_thread
+    if ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_enabled", "external": True}), 409
     if ai_desc_thread and ai_desc_thread.is_alive():
         return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
     try:
@@ -14144,6 +14389,184 @@ def api_ai_describe_rerun():
         "running": True,
         "model": ai_desc_model_enabled(),
     })
+
+
+@app.route("/api/ai/describe/external/settings", methods=["GET", "POST"])
+def api_ai_describe_external_settings():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            return jsonify(_ai_desc_external_settings_payload(conn, include_token=True))
+
+    payload = request.get_json(silent=True) or {}
+    enabled = bool(payload.get("enabled"))
+    rotate_token = bool(payload.get("rotate_token"))
+    folders = _normalize_ai_desc_external_folders(payload.get("folders"))
+
+    token = _generate_ai_desc_external_token() if rotate_token else _ai_desc_external_token()
+    if enabled and not token:
+        token = _generate_ai_desc_external_token()
+    if token:
+        _set_setting("ai_desc_external_token", token)
+
+    _set_ai_desc_external_folders(folders)
+    _set_setting("ai_desc_external_enabled", "1" if enabled else "0")
+    if enabled:
+        _set_setting("ai_desc_auto_ingest", "0")
+        ai_desc_stop_event.set()
+
+    with closing(get_conn()) as conn:
+        resp = _ai_desc_external_settings_payload(conn, include_token=True)
+    resp["token"] = token or resp.get("token") or ""
+    return jsonify(resp)
+
+
+@app.route("/api/ai/describe/external/ping")
+def api_ai_describe_external_ping():
+    auth = _ai_desc_external_require_auth()
+    if auth:
+        return auth
+    with closing(get_conn()) as conn:
+        payload = _ai_desc_external_settings_payload(conn, include_token=False)
+    payload["server_time"] = now_iso()
+    return jsonify(payload)
+
+
+def _next_ai_desc_external_photo(conn: sqlite3.Connection, worker: str = "") -> Optional[sqlite3.Row]:
+    folders = _ai_desc_external_folders()
+    if not folders:
+        return None
+    rows = conn.execute(
+        f"""
+        SELECT id, rel_path, filename, ai_desc_tags, ai_desc_caption, metadata_json
+        FROM photos
+        WHERE {_ai_desc_external_missing_where()}
+        ORDER BY COALESCE(captured_at, imported_at, created_fs, modified_fs, rel_path) ASC
+        LIMIT 500
+        """
+    ).fetchall()
+    now_ts = time.time()
+    for row in rows:
+        rel = str(row["rel_path"] or "")
+        if not _ai_desc_external_rel_allowed(rel, folders):
+            continue
+        src = _disk_path_from_rel_path(rel)
+        if not src.exists() or not src.is_file():
+            continue
+        meta = _json_object(row["metadata_json"])
+        if _ai_desc_external_claim_is_fresh(meta, now_ts):
+            continue
+        _mark_ai_desc_external_claim(conn, row, worker=worker)
+        conn.commit()
+        return row
+    return None
+
+
+@app.route("/api/ai/describe/external/next")
+def api_ai_describe_external_next():
+    auth = _ai_desc_external_require_auth()
+    if auth:
+        return auth
+    if not ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_disabled"}), 409
+
+    worker = str(request.args.get("worker") or request.headers.get("X-Worker-Name") or "").strip()
+    with closing(get_conn()) as conn:
+        row = _next_ai_desc_external_photo(conn, worker=worker)
+        counts = _ai_desc_external_counts(conn, _ai_desc_external_folders())
+    if not row:
+        return jsonify({"ok": True, "item": None, **counts})
+
+    image_url = url_for("api_ai_describe_external_image", photo_id=int(row["id"]))
+    return jsonify(
+        {
+            "ok": True,
+            "item": {
+                "photo_id": int(row["id"]),
+                "rel_path": row["rel_path"],
+                "filename": row["filename"],
+                "image_url": image_url,
+            },
+            **counts,
+        }
+    )
+
+
+@app.route("/api/ai/describe/external/image/<int:photo_id>")
+def api_ai_describe_external_image(photo_id: int):
+    auth = _ai_desc_external_require_auth()
+    if auth:
+        return auth
+    if not ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_disabled"}), 409
+
+    folders = _ai_desc_external_folders()
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, rel_path, filename FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    rel = str(row["rel_path"] or "")
+    if not _ai_desc_external_rel_allowed(rel, folders):
+        return jsonify({"ok": False, "error": "not_in_external_scope"}), 403
+    src = _disk_path_from_rel_path(rel)
+    if not src.exists() or not src.is_file():
+        return jsonify({"ok": False, "error": "file_missing"}), 404
+
+    try:
+        view_path = ensure_viewable_copy(src, rel)
+    except Exception:
+        view_path = src
+    download_name = Path(str(row["filename"] or view_path.name)).with_suffix(view_path.suffix or Path(str(row["filename"] or "image.jpg")).suffix).name
+    return send_file(str(view_path), as_attachment=False, download_name=download_name)
+
+
+@app.route("/api/ai/describe/external/result", methods=["POST"])
+def api_ai_describe_external_result():
+    auth = _ai_desc_external_require_auth()
+    if auth:
+        return auth
+    if not ai_desc_external_enabled():
+        return jsonify({"ok": False, "error": "external_ai_descriptions_disabled"}), 409
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        photo_id = int(payload.get("photo_id") or payload.get("id") or 0)
+    except Exception:
+        photo_id = 0
+    if photo_id <= 0:
+        return jsonify({"ok": False, "error": "invalid_photo_id"}), 400
+
+    worker = str(payload.get("worker") or request.headers.get("X-Worker-Name") or "").strip()
+    error = str(payload.get("error") or "").strip()
+    caption = str(payload.get("caption") or "").strip()
+    tags = _normalize_ai_desc_tags(payload.get("tags"), max_tags=96)
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, rel_path FROM photos WHERE id=?", (photo_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        if not _ai_desc_external_rel_allowed(str(row["rel_path"] or ""), _ai_desc_external_folders()):
+            return jsonify({"ok": False, "error": "not_in_external_scope"}), 403
+
+        if error and not (caption or tags):
+            _mark_ai_desc_external_error(conn, photo_id, error)
+            conn.commit()
+            log_event("ai_desc_external_fail", rel_path=row["rel_path"], error=error[:240], worker=worker)
+            counts = _ai_desc_external_counts(conn, _ai_desc_external_folders())
+            return jsonify({"ok": True, "stored": False, "error_recorded": True, **counts})
+
+        if not caption and not tags:
+            return jsonify({"ok": False, "error": "empty_description"}), 400
+
+        _store_photo_ai_description(conn, photo_id, tags or [], caption or _build_desc_caption(tags))
+        _mark_ai_desc_external_stored(conn, photo_id, worker=worker)
+        conn.commit()
+        log_event("ai_desc_external_ok", rel_path=row["rel_path"], worker=worker)
+        counts = _ai_desc_external_counts(conn, _ai_desc_external_folders())
+    return jsonify({"ok": True, "stored": True, "photo_id": photo_id, **counts})
 
 
 @app.route("/api/ai/search")

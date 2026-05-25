@@ -24,6 +24,12 @@
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
   aiDescribeForceStopBtn: document.getElementById("aiDescribeForceStopBtn"),
   aiDescribeRerunBtn: document.getElementById("aiDescribeRerunBtn"),
+  aiDescribeLocalControls: document.getElementById("aiDescribeLocalControls"),
+  aiDescribeModelRow: document.getElementById("aiDescribeModelRow"),
+  aiDescExternalToggle: document.getElementById("aiDescExternalToggle"),
+  aiDescExternalToggleText: document.getElementById("aiDescExternalToggleText"),
+  aiDescExternalChooseBtn: document.getElementById("aiDescExternalChooseBtn"),
+  aiDescExternalInfo: document.getElementById("aiDescExternalInfo"),
   hardwareUnloadQwenBtn: document.getElementById('hardwareUnloadQwenBtn'),
   hardwareStatus: document.getElementById('hardwareStatus'),
   aiDescribeModelSelect: document.getElementById("aiDescribeModelSelect"),
@@ -270,6 +276,17 @@
   aiScopeModalCancel: document.getElementById("aiScopeModalCancel"),
   aiScopeModalNew: document.getElementById("aiScopeModalNew"),
   aiScopeModalAll: document.getElementById("aiScopeModalAll"),
+  aiExternalModal: document.getElementById("aiExternalModal"),
+  aiExternalModalTitle: document.getElementById("aiExternalModalTitle"),
+  aiExternalModalText: document.getElementById("aiExternalModalText"),
+  aiExternalModalClose: document.getElementById("aiExternalModalClose"),
+  aiExternalModalCancel: document.getElementById("aiExternalModalCancel"),
+  aiExternalModalSave: document.getElementById("aiExternalModalSave"),
+  aiExternalFolders: document.getElementById("aiExternalFolders"),
+  aiExternalTokenInput: document.getElementById("aiExternalTokenInput"),
+  aiExternalCopyTokenBtn: document.getElementById("aiExternalCopyTokenBtn"),
+  aiExternalRotateTokenBtn: document.getElementById("aiExternalRotateTokenBtn"),
+  aiExternalModalStatus: document.getElementById("aiExternalModalStatus"),
   // date edit controls
   editDateBtn: document.getElementById('editDateBtn'),
   dateEditWrap: document.getElementById('dateEditWrap'),
@@ -874,6 +891,22 @@ const I18N = {
     ai_desc_model_label: 'Model',
     ai_desc_model_light: 'Light (hurtig)',
     ai_desc_model_qwen: 'Qwen (bedre kvalitet)',
+    ai_desc_external_toggle: 'Ekstern behandling',
+    ai_desc_external_choose: 'Vælg ekstern behandling',
+    ai_desc_external_enabled: 'Ekstern behandling aktiv',
+    ai_desc_external_disabled: 'Ekstern behandling slået fra',
+    ai_desc_external_saved: 'Ekstern behandling gemt',
+    ai_desc_external_save_failed: 'Kunne ikke gemme ekstern behandling',
+    ai_desc_external_load_failed: 'Kunne ikke hente ekstern behandling',
+    ai_desc_external_no_folders: 'Ingen mapper valgt',
+    ai_desc_external_pending_label: 'venter',
+    ai_desc_external_described_label: 'beskrevet',
+    ai_desc_external_token_copied: 'API-token kopieret',
+    ai_desc_external_modal_title: 'Ekstern AI behandling',
+    ai_desc_external_modal_text: 'Vælg mapperne som en ekstern PC må hente billeder fra og analysere. Brug API-token i Windows-programmet.',
+    ai_desc_external_token_label: 'API-token',
+    ai_desc_external_rotate: 'Ny token',
+    ai_desc_external_save: 'Gem ekstern behandling',
     btn_rerun_ai_desc: 'Genkør (overskriv alle)',
     ai_desc_rerun_starting: 'Genkører beskrivelser for alle (overskriver)...',
     ai_desc_rerun_failed: 'Kunne ikke starte genkørsel',
@@ -1510,6 +1543,22 @@ const I18N = {
     ai_desc_model_label: 'Model',
     ai_desc_model_light: 'Light (fast)',
     ai_desc_model_qwen: 'Qwen (better quality)',
+    ai_desc_external_toggle: 'External processing',
+    ai_desc_external_choose: 'Choose external processing',
+    ai_desc_external_enabled: 'External processing active',
+    ai_desc_external_disabled: 'External processing disabled',
+    ai_desc_external_saved: 'External processing saved',
+    ai_desc_external_save_failed: 'Could not save external processing',
+    ai_desc_external_load_failed: 'Could not load external processing',
+    ai_desc_external_no_folders: 'No folders selected',
+    ai_desc_external_pending_label: 'pending',
+    ai_desc_external_described_label: 'described',
+    ai_desc_external_token_copied: 'API token copied',
+    ai_desc_external_modal_title: 'External AI processing',
+    ai_desc_external_modal_text: 'Choose the folders an external PC may fetch images from and analyze. Use the API token in the Windows app.',
+    ai_desc_external_token_label: 'API token',
+    ai_desc_external_rotate: 'New token',
+    ai_desc_external_save: 'Save external processing',
     btn_rerun_ai_desc: 'Rerun (overwrite all)',
     ai_desc_rerun_starting: 'Rerunning descriptions for all (overwrite)...',
     ai_desc_rerun_failed: 'Failed to start rerun',
@@ -1980,20 +2029,46 @@ function updateAiToggleButton() {
 }
 
 function updateAiDescribeToggleButton() {
+  const externalEnabled = !!state.aiDescExternalEnabled;
+  if (els.aiDescribeLocalControls) els.aiDescribeLocalControls.classList.toggle('hidden', externalEnabled);
+  if (els.aiDescribeModelRow) els.aiDescribeModelRow.classList.toggle('hidden', externalEnabled);
+  if (els.aiDescExternalToggle) els.aiDescExternalToggle.checked = externalEnabled;
+  if (els.aiDescExternalToggleText) els.aiDescExternalToggleText.textContent = tr('ai_desc_external_toggle');
+  if (els.aiDescExternalChooseBtn) {
+    els.aiDescExternalChooseBtn.classList.toggle('hidden', !externalEnabled);
+    els.aiDescExternalChooseBtn.textContent = tr('ai_desc_external_choose');
+  }
+  if (els.aiDescExternalInfo) {
+    els.aiDescExternalInfo.classList.toggle('hidden', !externalEnabled);
+    if (externalEnabled) {
+      const folders = Array.isArray(state.aiDescExternalFolders) ? state.aiDescExternalFolders.length : 0;
+      const pending = Number(state.aiDescExternalPending || 0);
+      const described = Number(state.aiDescExternalDescribed || 0);
+      const total = Number(state.aiDescExternalTotal || 0);
+      const folderText = folders ? `${folders} mapper` : tr('ai_desc_external_no_folders');
+      els.aiDescExternalInfo.textContent = `${tr('ai_desc_external_enabled')} · ${folderText} · ${tr('ai_desc_external_pending_label')} ${pending} · ${tr('ai_desc_external_described_label')} ${described}/${total}`;
+    }
+  }
   if (!els.aiDescribeToggle) return;
+  if (externalEnabled) {
+    els.aiDescribeToggle.checked = false;
+    els.aiDescribeToggle.disabled = true;
+  } else {
+    els.aiDescribeToggle.disabled = false;
+  }
   const enabled = !!state.aiDescribeAutoEnabled || !!state.aiDescribeRunning;
-  els.aiDescribeToggle.checked = enabled;
+  if (!externalEnabled) els.aiDescribeToggle.checked = enabled;
   if (els.aiDescribeToggleText) {
     els.aiDescribeToggleText.textContent = enabled ? tr('btn_stop_ai_desc') : tr('btn_start_ai_desc');
   }
   if (els.aiDescribeForceStopBtn) {
-    const showForce = !!state.aiDescribeRunning && normalizeAiDescribeModel(state.aiDescribeModel) === 'qwen';
+    const showForce = !externalEnabled && !!state.aiDescribeRunning && normalizeAiDescribeModel(state.aiDescribeModel) === 'qwen';
     els.aiDescribeForceStopBtn.classList.toggle('hidden', !showForce);
     els.aiDescribeForceStopBtn.disabled = !showForce || !!state.aiDescribeForceStopPending;
   }
   if (els.aiDescribeRerunBtn) {
     els.aiDescribeRerunBtn.textContent = tr('btn_rerun_ai_desc');
-    els.aiDescribeRerunBtn.disabled = !!state.aiDescribeRunning || !!state.aiDescribeStopping;
+    els.aiDescribeRerunBtn.disabled = externalEnabled || !!state.aiDescribeRunning || !!state.aiDescribeStopping;
   }
 }
 
@@ -2009,6 +2084,7 @@ function updateFacesToggleButton() {
 function formatRuntimeDevice(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw || raw === 'unknown') return tr('status_runtime_unknown');
+  if (raw === 'external') return tr('ai_desc_external_toggle');
   if (raw === 'gpu' || raw === 'cuda' || raw.startsWith('cuda')) return tr('status_runtime_gpu');
   if (raw === 'cpu') return tr('status_runtime_cpu');
   return raw.toUpperCase();
@@ -2080,6 +2156,13 @@ let state = {
   aiDescribeRuntime: 'unknown',
   aiDescribeModel: 'light',
   aiDescribePendingModel: null,
+  aiDescExternalEnabled: false,
+  aiDescExternalFolders: [],
+  aiDescExternalAvailableFolders: [],
+  aiDescExternalToken: '',
+  aiDescExternalPending: 0,
+  aiDescExternalDescribed: 0,
+  aiDescExternalTotal: 0,
   facesRunning: false,
   facesAutoEnabled: false,
   facesRuntime: 'unknown',
@@ -9830,6 +9913,17 @@ function applyUiLanguage() {
   if (els.aiDescTitle) els.aiDescTitle.textContent = tr('ai_desc_title');
   if (els.aiDescDesc) els.aiDescDesc.textContent = tr('ai_desc_desc');
   if (els.aiDescModelLabel) els.aiDescModelLabel.textContent = tr('ai_desc_model_label');
+  if (els.aiDescExternalToggleText) els.aiDescExternalToggleText.textContent = tr('ai_desc_external_toggle');
+  if (els.aiDescExternalChooseBtn) els.aiDescExternalChooseBtn.textContent = tr('ai_desc_external_choose');
+  if (els.aiExternalModalTitle) els.aiExternalModalTitle.textContent = tr('ai_desc_external_modal_title');
+  if (els.aiExternalModalText) els.aiExternalModalText.textContent = tr('ai_desc_external_modal_text');
+  const aiExternalTokenLabel = document.getElementById('aiExternalTokenLabel');
+  if (aiExternalTokenLabel) aiExternalTokenLabel.textContent = tr('ai_desc_external_token_label');
+  if (els.aiExternalCopyTokenBtn) els.aiExternalCopyTokenBtn.textContent = (resolveUiLanguage(state.uiLanguage || 'da') === 'en') ? 'Copy' : 'Kopiér';
+  if (els.aiExternalRotateTokenBtn) els.aiExternalRotateTokenBtn.textContent = tr('ai_desc_external_rotate');
+  if (els.aiExternalModalSave) els.aiExternalModalSave.textContent = tr('ai_desc_external_save');
+  if (els.aiExternalModalCancel) els.aiExternalModalCancel.textContent = tr('scan_modal_cancel');
+  if (els.aiExternalModalClose) els.aiExternalModalClose.textContent = tr('scan_modal_close');
   if (els.aiDescribeForceStopBtn) els.aiDescribeForceStopBtn.textContent = tr('btn_force_stop_qwen');
   if (els.aiDescribeModelSelect) {
     const lightOpt = els.aiDescribeModelSelect.querySelector('option[value="light"]');
@@ -10842,6 +10936,120 @@ async function forceStopAiDescribeIngest() {
   }
 }
 
+function showAiExternalModalStatus(message, kind = 'ok') {
+  if (!els.aiExternalModalStatus) return;
+  els.aiExternalModalStatus.textContent = message || '';
+  els.aiExternalModalStatus.classList.toggle('hidden', !message);
+  els.aiExternalModalStatus.classList.toggle('err', kind === 'err');
+}
+
+function applyAiExternalSettings(data) {
+  if (!data || data.ok === false) return;
+  state.aiDescExternalEnabled = !!data.enabled;
+  state.aiDescExternalFolders = Array.isArray(data.folders) ? data.folders : [];
+  state.aiDescExternalAvailableFolders = Array.isArray(data.available_folders) ? data.available_folders : [];
+  state.aiDescExternalToken = String(data.token || state.aiDescExternalToken || '');
+  state.aiDescExternalPending = Number(data.pending || 0);
+  state.aiDescExternalDescribed = Number(data.described || 0);
+  state.aiDescExternalTotal = Number(data.total || 0);
+  updateAiDescribeToggleButton();
+}
+
+function renderAiExternalFolders() {
+  if (!els.aiExternalFolders) return;
+  const folders = Array.isArray(state.aiDescExternalAvailableFolders) ? state.aiDescExternalAvailableFolders : [];
+  const selected = new Set(Array.isArray(state.aiDescExternalFolders) ? state.aiDescExternalFolders : []);
+  if (!folders.length) {
+    els.aiExternalFolders.innerHTML = `<div>${escapeHtml(tr('ai_desc_external_no_folders'))}</div>`;
+    return;
+  }
+  els.aiExternalFolders.innerHTML = folders.map((folder) => {
+    const checked = selected.has(folder) ? ' checked' : '';
+    return `<label class="ai-toggle-row" style="align-items:flex-start;">
+      <input type="checkbox" data-ai-external-folder="${escapeHtml(folder)}"${checked} />
+      <span class="mini-label">${escapeHtml(folder)}</span>
+    </label>`;
+  }).join('');
+}
+
+function collectAiExternalFoldersFromModal() {
+  if (!els.aiExternalFolders) return [];
+  return Array.from(els.aiExternalFolders.querySelectorAll('input[data-ai-external-folder]:checked'))
+    .map((input) => String(input.getAttribute('data-ai-external-folder') || '').trim())
+    .filter(Boolean);
+}
+
+async function loadAiExternalSettings({ openModal = false } = {}) {
+  try {
+    const res = await fetch('/api/ai/describe/external/settings');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'load_failed');
+    applyAiExternalSettings(data);
+    if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = String(data.token || '');
+    renderAiExternalFolders();
+    if (openModal && els.aiExternalModal) {
+      showAiExternalModalStatus('');
+      els.aiExternalModal.classList.remove('hidden');
+    }
+    return data;
+  } catch {
+    showStatus(tr('ai_desc_external_load_failed'), 'err');
+    return null;
+  }
+}
+
+async function saveAiExternalSettings({ enabled = null, rotateToken = false, folders = null } = {}) {
+  const wantedEnabled = (enabled === null) ? !!state.aiDescExternalEnabled : !!enabled;
+  const wantedFolders = Array.isArray(folders) ? folders : (Array.isArray(state.aiDescExternalFolders) ? state.aiDescExternalFolders : []);
+  try {
+    const res = await fetch('/api/ai/describe/external/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: wantedEnabled,
+        folders: wantedFolders,
+        rotate_token: !!rotateToken,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'save_failed');
+    applyAiExternalSettings(data);
+    if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = String(data.token || '');
+    renderAiExternalFolders();
+    showStatus(wantedEnabled ? tr('ai_desc_external_saved') : tr('ai_desc_external_disabled'), 'ok');
+    showAiExternalModalStatus(tr('ai_desc_external_saved'), 'ok');
+    return data;
+  } catch {
+    showStatus(tr('ai_desc_external_save_failed'), 'err');
+    showAiExternalModalStatus(tr('ai_desc_external_save_failed'), 'err');
+    return null;
+  }
+}
+
+function closeAiExternalModal() {
+  if (els.aiExternalModal) els.aiExternalModal.classList.add('hidden');
+}
+
+async function copyAiExternalToken() {
+  const value = String((els.aiExternalTokenInput && els.aiExternalTokenInput.value) || state.aiDescExternalToken || '').trim();
+  if (!value) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    showAiExternalModalStatus(tr('ai_desc_external_token_copied'), 'ok');
+  } catch {
+    showAiExternalModalStatus(tr('mapper_share_copy_fail'), 'err');
+  }
+}
+
 els.aiIngestToggle && els.aiIngestToggle.addEventListener('change', async () => {
   if (els.aiIngestToggle.checked) {
     openAiScopeModal('ai');
@@ -10856,6 +11064,28 @@ els.aiDescribeToggle && els.aiDescribeToggle.addEventListener('change', async ()
     return;
   }
   await stopAiDescribeIngest();
+});
+
+els.aiDescExternalToggle && els.aiDescExternalToggle.addEventListener('change', async () => {
+  const enabled = !!els.aiDescExternalToggle.checked;
+  if (enabled) {
+    await loadAiExternalSettings();
+    const data = await saveAiExternalSettings({ enabled: true });
+    if (!data) {
+      state.aiDescExternalEnabled = false;
+      updateAiDescribeToggleButton();
+      return;
+    }
+    if (!state.aiDescExternalFolders.length) {
+      await loadAiExternalSettings({ openModal: true });
+    }
+  } else {
+    await saveAiExternalSettings({ enabled: false });
+  }
+});
+
+els.aiDescExternalChooseBtn && els.aiDescExternalChooseBtn.addEventListener('click', async () => {
+  await loadAiExternalSettings({ openModal: true });
 });
 
 els.aiDescribeForceStopBtn && els.aiDescribeForceStopBtn.addEventListener('click', async () => {
@@ -11071,6 +11301,7 @@ async function pollAiDescribeStatus() {
     if (!state.aiDescribeStopping) state.aiDescribeForceStopPending = false;
     state.aiDescribeAutoEnabled = !!(s && s.ok && s.auto_ingest);
     state.aiDescribeModel = normalizeAiDescribeModel(s && s.model);
+    if (s && s.external) applyAiExternalSettings(s.external);
     state.aiDescribeRuntime = String((s && s.runtime && (s.runtime.describe || s.runtime.ai)) || state.aiRuntime || 'unknown');
     updateAiDescribeModelSelect();
     updateAiDescribeToggleButton();
@@ -11084,8 +11315,15 @@ async function pollAiDescribeStatus() {
         const described = Number(source && source.described) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        const modelLabel = (state.aiDescribeModel === 'qwen') ? tr('ai_desc_model_qwen') : tr('ai_desc_model_light');
-        els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_model_label')} ${modelLabel} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
+        if (state.aiDescExternalEnabled) {
+          const pending = Number(state.aiDescExternalPending || 0);
+          const extTotal = Number(state.aiDescExternalTotal || total || 0);
+          const extDone = Number(state.aiDescExternalDescribed || described || 0);
+          els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${tr('ai_desc_external_enabled')} · ${tr('ai_desc_external_pending_label')} ${pending} · ${tr('status_described_label')} ${extDone}/${extTotal}`;
+        } else {
+          const modelLabel = (state.aiDescribeModel === 'qwen') ? tr('ai_desc_model_qwen') : tr('ai_desc_model_light');
+          els.aiDescribeStatus.textContent = `${tr('status_ai_desc_prefix')}: ${run} · ${tr('status_model_label')} ${modelLabel} · ${tr('status_described_label')} ${described}/${total} · ${tr('status_errors_label')} ${failed}`;
+        }
       }
     }
   } catch {
@@ -11652,6 +11890,32 @@ if (els.aiScopeModal) {
     if (e.target === els.aiScopeModal) closeAiScopeModal();
   });
 }
+if (els.aiExternalModalClose) {
+  els.aiExternalModalClose.addEventListener('click', closeAiExternalModal);
+}
+if (els.aiExternalModalCancel) {
+  els.aiExternalModalCancel.addEventListener('click', closeAiExternalModal);
+}
+if (els.aiExternalModal) {
+  els.aiExternalModal.addEventListener('click', (e) => {
+    if (e.target === els.aiExternalModal) closeAiExternalModal();
+  });
+}
+if (els.aiExternalModalSave) {
+  els.aiExternalModalSave.addEventListener('click', async () => {
+    const folders = collectAiExternalFoldersFromModal();
+    await saveAiExternalSettings({ enabled: true, folders });
+  });
+}
+if (els.aiExternalRotateTokenBtn) {
+  els.aiExternalRotateTokenBtn.addEventListener('click', async () => {
+    const folders = collectAiExternalFoldersFromModal();
+    await saveAiExternalSettings({ enabled: !!state.aiDescExternalEnabled, folders, rotateToken: true });
+  });
+}
+if (els.aiExternalCopyTokenBtn) {
+  els.aiExternalCopyTokenBtn.addEventListener('click', copyAiExternalToken);
+}
 
 // Settings tabs switching
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
@@ -11668,6 +11932,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'users') renderUsersPanel();
     if (tab === 'ai') {
       loadAiPerformanceSettings();
+      loadAiExternalSettings();
     }
     if (tab === 'upload_workflow') {
       loadUploadWorkflowSettings();
