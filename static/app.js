@@ -11004,13 +11004,26 @@ function updateAiExternalConnectionInput(data = null) {
   if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = value;
 }
 
+function normalizeAiExternalLinkForDisplay(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const token = parsed.searchParams.get('token') || parsed.searchParams.get('api_token') || parsed.searchParams.get('fjordlens_token') || '';
+    return token ? buildAiExternalConnectionUrl(token) : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function applyAiExternalSettings(data) {
   if (!data || data.ok === false) return;
   state.aiDescExternalEnabled = !!data.enabled;
   state.aiDescExternalFolders = Array.isArray(data.folders) ? data.folders : [];
   state.aiDescExternalAvailableFolders = Array.isArray(data.available_folders) ? data.available_folders : [];
-  state.aiDescExternalToken = String(data.token || state.aiDescExternalToken || '');
+  state.aiDescExternalToken = Object.prototype.hasOwnProperty.call(data, 'token') ? String(data.token || '') : String(state.aiDescExternalToken || '');
   state.aiDescExternalConnectionUrl = aiExternalConnectionValue(data);
+  if (Array.isArray(data.links)) state.aiDescExternalLinks = data.links;
   state.aiDescExternalPending = Number(data.pending || 0);
   state.aiDescExternalDescribed = Number(data.described || 0);
   state.aiDescExternalTotal = Number(data.total || 0);
@@ -11135,7 +11148,7 @@ function renderAiExternalLinks(links) {
   }
   els.aiExternalLinksList.innerHTML = items.map((link) => {
     const id = String(link.id || '').trim();
-    const url = String(link.connection_url || '').trim();
+    const url = normalizeAiExternalLinkForDisplay(link.connection_url);
     const created = fmtDate(link.created_at);
     const hint = String(link.token_hint || '').trim();
     const current = link.current ? `<span class="pill">${escapeHtml(tr('ai_desc_external_current_link'))}</span>` : '';
@@ -11183,8 +11196,13 @@ async function deleteAiExternalLink(id) {
     if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || 'delete_failed');
     renderAiExternalLinks(data.links || []);
     if (data.token || data.connection_url) {
-      applyAiExternalSettings({ ok: true, token: data.token || state.aiDescExternalToken, connection_url: data.connection_url || '' });
+      state.aiDescExternalToken = String(data.token || '');
+      state.aiDescExternalConnectionUrl = String(data.connection_url || '');
       updateAiExternalConnectionInput(data);
+    } else if (Object.prototype.hasOwnProperty.call(data, 'token')) {
+      state.aiDescExternalToken = '';
+      state.aiDescExternalConnectionUrl = '';
+      if (els.aiExternalTokenInput) els.aiExternalTokenInput.value = '';
     }
     showAiExternalLinksStatus(tr('ai_desc_external_link_deleted'), 'ok');
   } catch {
@@ -12080,7 +12098,7 @@ if (els.aiExternalLinksList) {
     if (copyBtn) {
       const id = String(copyBtn.getAttribute('data-ai-external-link-copy') || '').trim();
       const link = (state.aiDescExternalLinks || []).find((item) => String(item.id || '') === id);
-      await copyAiExternalText(link ? link.connection_url : '', (message, kind) => showAiExternalLinksStatus(message, kind));
+      await copyAiExternalText(link ? normalizeAiExternalLinkForDisplay(link.connection_url) : '', (message, kind) => showAiExternalLinksStatus(message, kind));
       return;
     }
     const deleteBtn = e.target.closest('[data-ai-external-link-delete]');
