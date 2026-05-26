@@ -848,14 +848,70 @@ def _ai_tag_parts(value: Any) -> list[str]:
     return [p for p in re.split(r"[,;|]|\s+[–—-]\s+", str(value or "")) if p]
 
 
+_AI_DESC_TAG_TRANSLATIONS: Dict[str, str] = {
+    "activity": "aktivitet",
+    "baby": "baby",
+    "boy": "dreng",
+    "child": "barn",
+    "children": "børn",
+    "family album": "familiealbum",
+    "girl": "pige",
+    "happy": "glad",
+    "image": "billede",
+    "january": "januar",
+    "kid": "barn",
+    "lady": "dame",
+    "little": "lille",
+    "man": "mand",
+    "people": "personer",
+    "person": "person",
+    "photo": "foto",
+    "picture": "foto",
+    "sitting": "sidder",
+    "small": "lille",
+    "smile": "smiler",
+    "smiling": "smiler",
+    "woman": "kvinde",
+}
+
+_AI_DESC_TAG_STOPWORDS: set[str] = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "at være",
+    "det",
+    "der",
+    "en",
+    "er",
+    "et",
+    "for",
+    "i",
+    "jeg",
+    "med",
+    "of",
+    "og",
+    "on",
+    "på",
+    "som",
+    "the",
+    "til",
+    "to",
+    "være",
+    "with",
+}
+
+
 def _clean_ai_tag(value: Any) -> str:
     tag = _repair_mojibake(str(value or "")).strip().lower()
     tag = tag.strip(" \t\r\n\"'`[]{}()")
     tag = re.sub(r"\s+", " ", tag)
+    tag = _AI_DESC_TAG_TRANSLATIONS.get(tag, tag)
     if (
         not tag
         or len(tag) > 40
         or any(ch in tag for ch in "\n\r\t")
+        or tag in _AI_DESC_TAG_STOPWORDS
         or tag in {"caption", "tags", "json", "null", "none"}
     ):
         return ""
@@ -885,6 +941,60 @@ def _normalize_ai_desc_tags(value: Any, max_tags: int = 16) -> list[str]:
     return out
 
 
+def _extract_ai_desc_json_object(value: Any) -> Optional[Dict[str, Any]]:
+    raw = str(value or "").strip()
+    if not raw or "{" not in raw or "}" not in raw:
+        return None
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(raw[start : end + 1])
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _caption_tags_from_ai_desc_payload(payload: Dict[str, Any]) -> tuple[str, list[str]]:
+    caption = ""
+    for key in ("caption", "kort_beskrivelse", "description", "beskrivelse"):
+        text = _repair_mojibake(str(payload.get(key) or "")).strip()
+        if text:
+            caption = text
+            break
+    if not caption:
+        parts = [
+            _repair_mojibake(str(payload.get("kort_beskrivelse") or "")).strip(),
+            _repair_mojibake(str(payload.get("hvad_sker_der") or "")).strip(),
+        ]
+        caption = " ".join(part for part in parts if part and part != "-").strip()
+
+    tag_values: list[Any] = []
+    for key in ("tags", "samlede_soegeord", "søgeord", "soegeord", "keywords"):
+        value = payload.get(key)
+        if value:
+            tag_values.append(value)
+
+    people = payload.get("mennesker")
+    if isinstance(people, dict):
+        for key in ("pige_dreng_vurdering", "koen_og_alder", "soegeord_personer"):
+            value = people.get(key)
+            if value:
+                tag_values.append(value)
+        persons = people.get("personer")
+        if isinstance(persons, list):
+            for person in persons:
+                if not isinstance(person, dict):
+                    continue
+                for key in ("rolle_i_billedet", "alderstrin", "visuel_koensvurdering", "soegeord"):
+                    value = person.get(key)
+                    if value:
+                        tag_values.append(value)
+
+    return caption, _normalize_ai_desc_tags(tag_values, max_tags=96)
+
+
 def _json_list_or_empty(raw: Any) -> list[Any]:
     if isinstance(raw, list):
         return raw
@@ -906,8 +1016,17 @@ def _ai_desc_has_content(tags_raw: Any, caption_raw: Any = None) -> bool:
 
 
 def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: list[str], caption: Optional[str]) -> None:
-    clean_tags = _normalize_ai_desc_tags(tags, max_tags=96)
-    clean_caption = _repair_mojibake(str(caption or "")).strip() or None
+    tag_source: list[Any] = list(tags or [])
+    clean_caption_text = _repair_mojibake(str(caption or "")).strip()
+    embedded_payload = _extract_ai_desc_json_object(clean_caption_text)
+    if embedded_payload:
+        embedded_caption, embedded_tags = _caption_tags_from_ai_desc_payload(embedded_payload)
+        if embedded_caption:
+            clean_caption_text = embedded_caption
+        tag_source.extend(embedded_tags)
+
+    clean_tags = _normalize_ai_desc_tags(tag_source, max_tags=96)
+    clean_caption = clean_caption_text or None
 
     prev_ai_tags: list[str] = []
     prev_meta: Dict[str, Any] = {}
@@ -14215,27 +14334,36 @@ def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
     return _describe_one_photo_light(photo_id, rel_path)
 
 
-def _describe_missing_photos(stop_event=None) -> Dict[str, Any]:
+def _describe_missing_photos(stop_event=None, include_existing: bool = False) -> Dict[str, Any]:
     global ai_desc_running, ai_desc_counts, last_ai_desc_result
     ai_desc_running = True
     ai_desc_counts = {"described": 0, "failed": 0, "total": 0}
-    log_event("ai_desc_start")
+    log_event("ai_desc_start", include_existing=bool(include_existing))
     stopped = False
     try:
         with closing(get_conn()) as conn:
-            rows = conn.execute(
-                """
-                SELECT id, rel_path
-                FROM photos
-                WHERE (
-                    ai_desc_tags IS NULL
-                    OR TRIM(ai_desc_tags) = ''
-                    OR TRIM(ai_desc_tags) IN ('[]', 'null')
-                    OR ai_desc_caption IS NULL
-                    OR TRIM(ai_desc_caption) = ''
-                )
-                """
-            ).fetchall()
+            if include_existing:
+                rows = conn.execute(
+                    """
+                    SELECT id, rel_path
+                    FROM photos
+                    ORDER BY COALESCE(captured_at, imported_at, created_fs, modified_fs, rel_path) ASC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, rel_path
+                    FROM photos
+                    WHERE (
+                        ai_desc_tags IS NULL
+                        OR TRIM(ai_desc_tags) = ''
+                        OR TRIM(ai_desc_tags) IN ('[]', 'null')
+                        OR ai_desc_caption IS NULL
+                        OR TRIM(ai_desc_caption) = ''
+                    )
+                    """
+                ).fetchall()
         for row in rows:
             if stop_event and stop_event.is_set():
                 stopped = True
@@ -14304,6 +14432,74 @@ def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
             log_event("ai_desc_fail", rel_path=rel_path, source="upload")
     except Exception as e:
         log_event("ai_desc_fail", rel_path=rel_path, source="upload", error=str(e))
+
+
+def _clear_all_ai_tags_and_descriptions(conn: sqlite3.Connection) -> tuple[int, int]:
+    rows = conn.execute("SELECT id, ai_tags, ai_desc_tags, ai_desc_caption, metadata_json FROM photos").fetchall()
+    cleared = 0
+    ai_clear_keys = {
+        "tags",
+        "desc_tags",
+        "desc_caption",
+        "desc_external_claimed_at",
+        "desc_external_worker",
+        "desc_external_error",
+        "desc_external_error_at",
+        "desc_external_source",
+        "desc_external_completed_at",
+    }
+    root_clear_keys = {"ai_tags", "ai_desc_tags", "ai_desc_caption"}
+
+    def has_raw_content(value: Any) -> bool:
+        text = str(value or "").strip()
+        return bool(text and text.lower() not in {"[]", "null"})
+
+    for row in rows:
+        raw_meta = row["metadata_json"]
+        meta = _json_object(raw_meta)
+        meta_changed = False
+        had_content = bool(
+            has_raw_content(row["ai_tags"])
+            or has_raw_content(row["ai_desc_tags"])
+            or str(row["ai_desc_caption"] or "").strip()
+        )
+
+        ai_meta = meta.get("ai") if isinstance(meta.get("ai"), dict) else None
+        if ai_meta:
+            cleaned_ai = dict(ai_meta)
+            for key in ai_clear_keys:
+                if key in cleaned_ai:
+                    cleaned_ai.pop(key, None)
+                    meta_changed = True
+                    had_content = True
+            if meta_changed:
+                if cleaned_ai:
+                    meta["ai"] = cleaned_ai
+                else:
+                    meta.pop("ai", None)
+
+        for key in root_clear_keys:
+            if key in meta:
+                meta.pop(key, None)
+                meta_changed = True
+                had_content = True
+
+        if not had_content and not meta_changed:
+            continue
+
+        conn.execute(
+            "UPDATE photos SET ai_tags=?, ai_desc_tags=?, ai_desc_caption=?, metadata_json=? WHERE id=?",
+            (
+                json.dumps([], ensure_ascii=False),
+                json.dumps([], ensure_ascii=False),
+                None,
+                json.dumps(meta, ensure_ascii=False, default=str) if meta_changed else raw_meta,
+                int(row["id"]),
+            ),
+        )
+        cleared += 1
+
+    return cleared, len(rows)
 
 
 @app.route("/api/ai/ingest", methods=["POST"])
@@ -14445,17 +14641,11 @@ def api_ai_describe_model():
     if scope == "all" and auto_enabled:
         if running_now:
             return jsonify({"ok": False, "error": "AI description ingest already running", "running": True, "model": model}), 409
-        try:
-            with closing(get_conn()) as conn:
-                conn.execute("UPDATE photos SET ai_desc_tags=NULL, ai_desc_caption=NULL")
-                conn.commit()
-        except Exception as e:
-            return jsonify({"ok": False, "error": f"clear_desc_failed: {e}", "model": model}), 500
 
         ai_desc_stop_event.clear()
 
         def run():
-            _describe_missing_photos(stop_event=ai_desc_stop_event)
+            _describe_missing_photos(stop_event=ai_desc_stop_event, include_existing=True)
 
         ai_desc_thread = threading.Thread(target=run, daemon=True)
         ai_desc_thread.start()
@@ -14476,23 +14666,17 @@ def api_ai_describe_model():
 
 @app.route("/api/ai/describe/rerun", methods=["POST"])
 def api_ai_describe_rerun():
-    """Clear existing Qwen/light description fields and re-run descriptions for all photos."""
+    """Re-run descriptions for all photos, replacing each item only after a new result succeeds."""
     global ai_desc_thread
     if ai_desc_external_enabled():
         return jsonify({"ok": False, "error": "external_ai_descriptions_enabled", "external": True}), 409
     if ai_desc_thread and ai_desc_thread.is_alive():
         return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
-    try:
-        with closing(get_conn()) as conn:
-            conn.execute("UPDATE photos SET ai_desc_tags=NULL, ai_desc_caption=NULL")
-            conn.commit()
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"clear_desc_failed: {e}"}), 500
 
     ai_desc_stop_event.clear()
 
     def run():
-        _describe_missing_photos(stop_event=ai_desc_stop_event)
+        _describe_missing_photos(stop_event=ai_desc_stop_event, include_existing=True)
 
     ai_desc_thread = threading.Thread(target=run, daemon=True)
     ai_desc_thread.start()
@@ -14503,6 +14687,28 @@ def api_ai_describe_rerun():
         "running": True,
         "model": ai_desc_model_enabled(),
     })
+
+
+@app.route("/api/ai/describe/clear", methods=["POST"])
+def api_ai_describe_clear():
+    global ai_desc_counts, last_ai_desc_result
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    running_now = bool(ai_desc_running or (ai_desc_thread and ai_desc_thread.is_alive()))
+    if running_now:
+        return jsonify({"ok": False, "error": "AI description ingest already running"}), 409
+    try:
+        with closing(get_conn()) as conn:
+            cleared, total = _clear_all_ai_tags_and_descriptions(conn)
+            conn.commit()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"clear_ai_desc_failed: {e}"}), 500
+
+    ai_desc_counts = {"described": 0, "failed": 0, "total": 0}
+    last_ai_desc_result = {"ok": True, "cleared": cleared, "total": total}
+    log_event("ai_desc_clear", cleared=cleared, total=total)
+    return jsonify({"ok": True, "cleared": cleared, "total": total})
 
 
 @app.route("/api/ai/describe/external/settings", methods=["GET", "POST"])

@@ -24,6 +24,7 @@
   aiDescribeToggleText: document.getElementById("aiDescribeToggleText"),
   aiDescribeForceStopBtn: document.getElementById("aiDescribeForceStopBtn"),
   aiDescribeRerunBtn: document.getElementById("aiDescribeRerunBtn"),
+  aiDescribeClearBtn: document.getElementById("aiDescribeClearBtn"),
   aiDescribeLocalControls: document.getElementById("aiDescribeLocalControls"),
   aiDescribeModelRow: document.getElementById("aiDescribeModelRow"),
   aiDescExternalToggle: document.getElementById("aiDescExternalToggle"),
@@ -926,10 +927,15 @@ const I18N = {
     ai_desc_external_current_link: 'Aktuelt link',
     ai_desc_external_created_label: 'Oprettet',
     ai_desc_external_save: 'Gem ekstern behandling',
-    btn_rerun_ai_desc: 'Genkør (overskriv alle)',
-    ai_desc_rerun_starting: 'Genkører beskrivelser for alle (overskriver)...',
+    btn_rerun_ai_desc: 'Genkør alle',
+    ai_desc_rerun_starting: 'Genkører beskrivelser for alle...',
     ai_desc_rerun_failed: 'Kunne ikke starte genkørsel',
     ai_desc_rerun_started: 'Genkørsel startet i baggrunden',
+    btn_clear_ai_desc: 'Slet AI tags og beskrivelser',
+    ai_desc_clear_confirm: 'Slet alle AI tags og AI beskrivelser fra alle billeder og videoer? Dette kan ikke fortrydes.',
+    ai_desc_clear_starting: 'Sletter AI tags og beskrivelser...',
+    ai_desc_clear_failed: 'Kunne ikke slette AI tags og beskrivelser.',
+    ai_desc_clear_done: 'AI tags og beskrivelser slettet for {count} filer.',
     hw_unload_qwen_ok: 'Qwen er aflæst fra GPU (VRAM frigivet).',
     hw_unload_qwen_err: 'Kunne ikke aflæse Qwen fra GPU.',
     ai_faces_title: 'Ansigtsindeksering',
@@ -1589,10 +1595,15 @@ const I18N = {
     ai_desc_external_current_link: 'Current link',
     ai_desc_external_created_label: 'Created',
     ai_desc_external_save: 'Save external processing',
-    btn_rerun_ai_desc: 'Rerun (overwrite all)',
-    ai_desc_rerun_starting: 'Rerunning descriptions for all (overwrite)...',
+    btn_rerun_ai_desc: 'Rerun all',
+    ai_desc_rerun_starting: 'Rerunning descriptions for all...',
     ai_desc_rerun_failed: 'Failed to start rerun',
     ai_desc_rerun_started: 'Rerun started in background',
+    btn_clear_ai_desc: 'Delete AI tags and descriptions',
+    ai_desc_clear_confirm: 'Delete all AI tags and AI descriptions from all photos and videos? This cannot be undone.',
+    ai_desc_clear_starting: 'Deleting AI tags and descriptions...',
+    ai_desc_clear_failed: 'Could not delete AI tags and descriptions.',
+    ai_desc_clear_done: 'AI tags and descriptions deleted for {count} files.',
     hw_unload_qwen_ok: 'Qwen unloaded from GPU (VRAM freed).',
     hw_unload_qwen_err: 'Failed to unload Qwen from GPU.',
     ai_faces_title: 'Face indexing',
@@ -2099,6 +2110,10 @@ function updateAiDescribeToggleButton() {
   if (els.aiDescribeRerunBtn) {
     els.aiDescribeRerunBtn.textContent = tr('btn_rerun_ai_desc');
     els.aiDescribeRerunBtn.disabled = externalEnabled || !!state.aiDescribeRunning || !!state.aiDescribeStopping;
+  }
+  if (els.aiDescribeClearBtn) {
+    els.aiDescribeClearBtn.textContent = tr('btn_clear_ai_desc');
+    els.aiDescribeClearBtn.disabled = !!state.aiDescribeRunning || !!state.aiDescribeStopping;
   }
 }
 
@@ -9947,6 +9962,7 @@ function applyUiLanguage() {
   if (els.aiDescModelLabel) els.aiDescModelLabel.textContent = tr('ai_desc_model_label');
   if (els.aiDescExternalToggleText) els.aiDescExternalToggleText.textContent = tr('ai_desc_external_toggle');
   if (els.aiDescExternalChooseBtn) els.aiDescExternalChooseBtn.textContent = tr('ai_desc_external_choose');
+  if (els.aiDescribeClearBtn) els.aiDescribeClearBtn.textContent = tr('btn_clear_ai_desc');
   if (els.aiExternalModalTitle) els.aiExternalModalTitle.textContent = tr('ai_desc_external_modal_title');
   if (els.aiExternalModalText) els.aiExternalModalText.textContent = tr('ai_desc_external_modal_text');
   const aiExternalTokenLabel = document.getElementById('aiExternalTokenLabel');
@@ -11270,6 +11286,43 @@ async function rerunAiDescribe() {
 }
 
 els.aiDescribeRerunBtn && els.aiDescribeRerunBtn.addEventListener('click', rerunAiDescribe);
+
+async function clearAiDescriptions() {
+  if (!window.confirm(tr('ai_desc_clear_confirm'))) return;
+  const btn = els.aiDescribeClearBtn;
+  const original = btn ? btn.textContent : tr('btn_clear_ai_desc');
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+    }
+    showStatus(tr('ai_desc_clear_starting'), 'ok');
+    const res = await fetch('/api/ai/describe/clear', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) {
+      showStatus((data && data.error) || tr('ai_desc_clear_failed'), 'err');
+      return;
+    }
+    const count = Number(data.cleared || 0);
+    showStatus(tr('ai_desc_clear_done').replace('{count}', String(count)), 'ok');
+    state.aiDescribeRunning = false;
+    state.aiDescribeStopping = false;
+    state.aiDescribeForceStopPending = false;
+    updateAiDescribeToggleButton();
+    pollAiDescribeStatus();
+    loadPhotos();
+  } catch {
+    showStatus(tr('ai_desc_clear_failed'), 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = original || tr('btn_clear_ai_desc');
+    }
+  }
+}
+
+els.aiDescribeClearBtn && els.aiDescribeClearBtn.addEventListener('click', clearAiDescriptions);
 
 async function unloadQwenGpu() {
   try {

@@ -340,7 +340,7 @@
                     <span id="aiDescribeToggleText" class="mini-label">Start beskrivelser</span>
                   </label>
                   <button id="aiDescribeForceStopBtn" class="btn danger small hidden" type="button">Afbryd Qwen</button>
-                  <button id="aiDescribeRerunBtn" class="btn small" type="button" title="Genkør for alle og overskriv">Genkør (overskriv alle)</button>
+                  <button id="aiDescribeRerunBtn" class="btn small" type="button" title="Genkør for alle uden først at slette eksisterende">Genkør alle</button>
                 </div>
                 <div id="aiDescribeModelRow" class="ai-desc-model-row">
                   <label id="aiDescModelLabel" class="mini-label" for="aiDescribeModelSelect">Model</label>
@@ -359,6 +359,9 @@
                   <button id="aiDescExternalChooseBtn" class="btn small hidden" type="button">Vælg ekstern behandling</button>
                 </div>
                 <div id="aiDescExternalInfo" class="mini-label hidden">Ekstern behandling: —</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0 6px;">
+                  <button id="aiDescribeClearBtn" class="btn danger small" type="button">Slet AI tags og beskrivelser</button>
+                </div>
                 <div id="aiDescribeStatus" class="mini-label">Beskrivelser: —</div>
               </div>
 

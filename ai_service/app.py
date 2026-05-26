@@ -633,6 +633,16 @@ _EN_DA_TAG_MAP = {
     "people": "personer",
     "person": "person",
     "baby": "baby",
+    "little": "lille",
+    "small": "lille",
+    "happy": "glad",
+    "activity": "aktivitet",
+    "family album": "familiealbum",
+    "photo": "foto",
+    "picture": "foto",
+    "image": "billede",
+    "january": "januar",
+    "lady": "dame",
     # handlinger
     "wave": "vinker",
     "waving": "vinker",
@@ -658,6 +668,34 @@ _EN_DA_TAG_MAP = {
 }
 
 
+_QWEN_TAG_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "at være",
+    "det",
+    "der",
+    "en",
+    "er",
+    "et",
+    "for",
+    "i",
+    "jeg",
+    "med",
+    "of",
+    "og",
+    "on",
+    "på",
+    "som",
+    "the",
+    "til",
+    "to",
+    "være",
+    "with",
+}
+
+
 def _to_danish_tag(tag: str) -> str:
     t = _clean_qwen_text(tag)
     return _EN_DA_TAG_MAP.get(t, t)
@@ -674,6 +712,7 @@ def _append_clean_tag(tags: List[str], value: Any, max_tags: int = 16) -> None:
         or len(tag) > 40
         or tag in tags
         or any(ch in tag for ch in "\n\r\t")
+        or tag in _QWEN_TAG_STOPWORDS
         or tag in {"caption", "tags", "json", "null", "none"}
     ):
         return
