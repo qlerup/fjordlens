@@ -1029,16 +1029,21 @@ def _store_photo_ai_description(conn: sqlite3.Connection, photo_id: int, tags: l
     clean_caption = clean_caption_text or None
 
     prev_ai_tags: list[str] = []
+    prev_desc_tags: list[str] = []
     prev_meta: Dict[str, Any] = {}
     try:
         cur = conn.execute("SELECT ai_tags, metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
         if cur:
             prev_ai_tags = _normalize_ai_desc_tags(_json_list_or_empty(cur["ai_tags"]), max_tags=96)
             prev_meta = _json_object(cur["metadata_json"])
+            prev_ai_meta = prev_meta.get("ai") if isinstance(prev_meta.get("ai"), dict) else {}
+            prev_desc_tags = _normalize_ai_desc_tags(prev_ai_meta.get("desc_tags"), max_tags=96)
     except Exception:
         pass
 
-    merged_ai_tags = _normalize_ai_desc_tags([*prev_ai_tags, *clean_tags], max_tags=128)
+    prev_desc_keys = {_fold_danish(tag) for tag in prev_desc_tags}
+    base_ai_tags = [tag for tag in prev_ai_tags if _fold_danish(tag) not in prev_desc_keys]
+    merged_ai_tags = _normalize_ai_desc_tags([*base_ai_tags, *clean_tags], max_tags=128)
     meta = dict(prev_meta or {})
     ai_meta = dict(meta.get("ai") or {})
     ai_meta["tags"] = merged_ai_tags
