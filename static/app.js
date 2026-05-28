@@ -698,6 +698,7 @@ const I18N = {
     logout_link: 'Log ud',
     search_placeholder: 'Søg på dansk: strand, bil, skov, kamera, dato, filnavn...',
     tab_maint: 'Vedligeholdelse',
+    tab_update: 'Opdatering',
     tab_ai: 'AI',
     tab_upload_workflow: 'Upload workflow',
     tab_dns: 'DNS',
@@ -1391,6 +1392,7 @@ const I18N = {
     logout_link: 'Log out',
     search_placeholder: 'Search in English: beach, car, forest, camera, date, filename...',
     tab_maint: 'Maintenance',
+    tab_update: 'Update',
     tab_ai: 'AI',
     tab_upload_workflow: 'Upload workflow',
     tab_dns: 'DNS',
@@ -10186,6 +10188,7 @@ function applyUiLanguage() {
 
   const tabText = {
     maint: tr('tab_maint'),
+    update: tr('tab_update'),
     ai: tr('tab_ai'),
     upload_workflow: tr('tab_upload_workflow'),
     dns: tr('tab_dns'),
@@ -12440,7 +12443,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     });
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
-    if (tab === 'maint') {
+    if (tab === 'update') {
       loadAppUpdateStatus({ silent: true }).catch(() => {});
     }
     if (tab === 'ai') {

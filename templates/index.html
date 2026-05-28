@@ -220,6 +220,9 @@
         </div>
         <nav class="tabs">
           <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
+          {% if user_role == "admin" %}
+          <button class="tab-btn" data-tab="update">Opdatering</button>
+          {% endif %}
           <button class="tab-btn" data-tab="ai">AI</button>
           <button class="tab-btn" data-tab="upload_workflow">Upload workflow</button>
           <button class="tab-btn" data-tab="hardware">Hardware</button>
@@ -234,6 +237,9 @@
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg faneblad">
             <option value="maint" selected>Vedligeholdelse</option>
+            {% if user_role == "admin" %}
+            <option value="update">Opdatering</option>
+            {% endif %}
             <option value="ai">AI</option>
             <option value="upload_workflow">Upload workflow</option>
             <option value="hardware">Hardware</option>
@@ -261,7 +267,11 @@
               <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
             </div>
           </div>
-          {% if user_role == "admin" %}
+        </div>
+
+        {% if user_role == "admin" %}
+        <!-- FjordLens update -->
+        <div class="tab-panel hidden" data-tabpanel="update">
           <div class="sidebar-card app-update-card" style="margin-bottom:12px;">
             <div id="appUpdateTitle" class="sidebar-card-title">FjordLens update</div>
             <div class="app-update-grid" aria-live="polite">
@@ -294,8 +304,8 @@
             <div id="appUpdateStatus" class="status hidden" style="margin-top:10px;"></div>
             <pre id="appUpdateLog" class="app-update-log hidden"></pre>
           </div>
-          {% endif %}
         </div>
+        {% endif %}
 
         <!-- Hardware -->
         <div class="tab-panel hidden" data-tabpanel="hardware">
@@ -1016,10 +1026,12 @@
         hideTab('dns');
         hideTab('shared');
         hideTab('upload_workflow');
+        hideTab('update');
       } else if(ROLE === 'manager'){
         hideTab('users');
         hideTab('dns');
         hideTab('shared');
+        hideTab('update');
       }
       // Ensure one visible tab is active
       const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');
