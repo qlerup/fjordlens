@@ -2103,6 +2103,43 @@ def _pop_uploaded_rels(uploaded_by: str) -> list[str]:
     return out
 
 
+def _recover_uploaded_rels_missing_postprocess(uploaded_by: str, limit: int = 5000) -> list[str]:
+    user = _sanitize_share_visitor_name(str(uploaded_by or "").strip())
+    if not user:
+        return []
+    cap = max(1, min(20000, int(limit or 5000)))
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT rel_path
+                FROM photos
+                WHERE COALESCE(uploaded_by, '') = ?
+                  AND rel_path LIKE 'uploads/%'
+                  AND (thumb_name IS NULL OR TRIM(thumb_name) = '')
+                ORDER BY COALESCE(imported_at, last_scanned_at, modified_fs, created_fs) ASC
+                LIMIT ?
+                """,
+                (user, cap),
+            ).fetchall()
+        rels: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            rel = str(row["rel_path"] or "").strip()
+            if not rel or rel in seen:
+                continue
+            try:
+                if not _disk_path_from_rel_path(rel).exists():
+                    continue
+            except Exception:
+                continue
+            seen.add(rel)
+            rels.append(rel)
+        return rels
+    except Exception:
+        return []
+
+
 def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
@@ -18162,12 +18199,17 @@ def api_upload_postprocess():
         return jsonify({"ok": True, "started": False, "running": True, "pending": pending_count, "workflow_mode": running_mode or workflow_mode, "process_status": (running_state.get("process_status") if isinstance(running_state, dict) else None)})
 
     if not rels:
+        rels = _recover_uploaded_rels_missing_postprocess(uploaded_by)
+
+    if not rels:
         state = _get_upload_postprocess_state(uploaded_by)
         if state:
             with UPLOAD_PENDING_LOCK:
                 pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
-            return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "workflow_mode": state.get("workflow_mode") or workflow_mode, "process_status": state.get("process_status"), "result": state.get("result"), "error": state.get("error")})
-        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
+            recoverable_count = 0 if bool(state.get("running")) else len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
+            return jsonify({"ok": True, "started": False, "running": bool(state.get("running")), "pending": pending_count, "recoverable_pending": recoverable_count, "workflow_mode": state.get("workflow_mode") or workflow_mode, "process_status": state.get("process_status"), "result": state.get("result"), "error": state.get("error")})
+        recoverable_count = len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
+        return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "recoverable_pending": recoverable_count, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
@@ -18183,13 +18225,17 @@ def api_upload_postprocess_status():
     state = _get_upload_postprocess_state(uploaded_by)
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+    recoverable_count = 0
+    if not state or not bool(state.get("running")):
+        recoverable_count = len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
     if not state:
-        return jsonify({"ok": True, "running": False, "pending": pending_count, "workflow_mode": workflow_mode, "process_status": None, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
+        return jsonify({"ok": True, "running": False, "pending": pending_count, "recoverable_pending": recoverable_count, "workflow_mode": workflow_mode, "process_status": None, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
     return jsonify(
         {
             "ok": True,
             "running": bool(state.get("running")),
             "pending": pending_count,
+            "recoverable_pending": recoverable_count,
             "workflow_mode": state.get("workflow_mode") or workflow_mode,
             "started_at": state.get("started_at"),
             "finished_at": state.get("finished_at"),
@@ -18216,9 +18262,34 @@ def api_logs_clear():
 
 
 # --- Authentication routes ---
+def _safe_auth_next_url(value: Optional[str] = None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return url_for("index")
+    parsed = urlparse(raw)
+    if parsed.scheme or parsed.netloc or raw.startswith("//"):
+        return url_for("index")
+    if not raw.startswith("/"):
+        return url_for("index")
+    return raw
+
+
+def _no_store_response(resp):
+    try:
+        resp.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        resp.headers["Vary"] = "Cookie"
+    except Exception:
+        pass
+    return resp
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     ensure_runtime_bootstrap()
+    if current_user.is_authenticated:
+        return redirect(_safe_auth_next_url(request.args.get("next")))
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -18246,8 +18317,7 @@ def login():
                     _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "trusted_device")
                     user = _row_to_user(row)
                     login_user(user)
-                    next_url = request.args.get("next") or url_for("index")
-                    return redirect(next_url)
+                    return redirect(_safe_auth_next_url(request.args.get("next")))
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
                 _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_required")
@@ -18255,12 +18325,11 @@ def login():
             _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "password_ok")
             user = _row_to_user(row)
             login_user(user)
-            next_url = request.args.get("next") or url_for("index")
-            return redirect(next_url)
+            return redirect(_safe_auth_next_url(request.args.get("next")))
         _log_login_attempt(username, None, None, False, "login_failed", "invalid_credentials")
-        return render_template("login.html", error=_ui_text("login_invalid_credentials"))
+        return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
     created = True if (request.args.get("created") in ("1", "true", "True")) else False
-    return render_template("login.html", created=created)
+    return _no_store_response(make_response(render_template("login.html", created=created)))
 
 
 @app.route("/logout")
@@ -18273,6 +18342,8 @@ def logout():
 @app.route("/login/2fa", methods=["GET", "POST"])
 def verify_2fa():
     from flask import session
+    if current_user.is_authenticated:
+        return redirect(_safe_auth_next_url(request.args.get("next")))
     uid = session.get("2fa_user_id")
     if not uid:
         return redirect(url_for("login"))
@@ -18286,7 +18357,7 @@ def verify_2fa():
         if totp.verify(code, valid_window=1):
             _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), True, "login_2fa", "2fa_ok")
             user = _row_to_user(row)
-            resp = redirect(request.args.get("next") or url_for("index"))
+            resp = redirect(_safe_auth_next_url(request.args.get("next")))
             login_user(user)
             # mark that initial setup is completed
             with closing(get_conn()) as conn:
@@ -18301,9 +18372,9 @@ def verify_2fa():
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
             return resp
         _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), False, "login_2fa", "invalid_code")
-        return render_template("2fa_verify.html", error=_ui_text("invalid_code"))
+        return _no_store_response(make_response(render_template("2fa_verify.html", error=_ui_text("invalid_code"))))
     # GET
-    return render_template("2fa_verify.html")
+    return _no_store_response(make_response(render_template("2fa_verify.html")))
 
 
 @app.route("/account/2fa", methods=["GET", "POST"])

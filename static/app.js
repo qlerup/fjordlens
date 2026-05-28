@@ -538,6 +538,25 @@ function renderUploadTopProcessStatus(processStatus) {
   return true;
 }
 
+function summarizeUploadProcessStatus(processStatus) {
+  if (!processStatus || typeof processStatus !== 'object') return '';
+  const order = ['thumbnails', 'faces', 'embeddings', 'descriptions', 'metadata'];
+  let fallback = '';
+  for (const key of order) {
+    const src = processStatus[key];
+    if (!src || typeof src !== 'object' || src.enabled === false) continue;
+    const total = Math.max(0, Number(src.total || 0));
+    const processed = Math.max(0, Number(src.processed || 0));
+    const running = !!src.running;
+    const inFlight = Math.max(0, Number(src.in_flight || 0));
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
+    const label = `${_uploadProcessLabel(key)} · ${processed}/${total} · ${pct}%${inFlight ? ` · kører: ${inFlight}` : ''}`;
+    if (running) return label;
+    if (!fallback && total > 0 && processed < total) fallback = label;
+  }
+  return fallback;
+}
+
 function showDownloadTopStatusMessage(label, pct = null) {
   ensureDownloadTopStatusRefs();
   if (!els.downloadTopStatus) return;
@@ -6923,6 +6942,10 @@ function renderUploadMonitor() {
   const stageTxt = uploadUiState.currentTotal > 0
     ? `${uploadUiState.currentLoaded}/${uploadUiState.currentTotal}`
     : 'venter…';
+  const processStatusSummary = isPostprocess ? summarizeUploadProcessStatus(uploadUiState.processStatus) : '';
+  const postprocessLabel = isPostprocess
+    ? (processStatusSummary || `${String(uploadUiState.currentPhaseLabel || 'Efterbehandler')} · ${stageTxt} · ${stagePct}%`)
+    : '';
   if (isUploadRunning() && !isPostprocess) {
     updateUploadTransferEstimate(processedVisualBytes);
   }
@@ -7005,11 +7028,16 @@ function renderUploadMonitor() {
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
   if (els.uploadMonitorSummary) {
     const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : '';
-    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${etaTxt ? ` · ${etaTxt}` : ''}${failedTxt}`;
+    els.uploadMonitorSummary.textContent = isPostprocess
+      ? `${postprocessLabel}${failedTxt}`
+      : `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${etaTxt ? ` · ${etaTxt}` : ''}${failedTxt}`;
   }
   if (els.uploadMonitorCurrent) {
     if (isPostprocess) {
-      els.uploadMonitorCurrent.textContent = 'Upload fuldført';
+      const currentName = String(uploadUiState.currentFileName || '').trim();
+      els.uploadMonitorCurrent.textContent = currentName
+        ? `${String(uploadUiState.currentPhaseLabel || 'Efterbehandler')}: ${currentName}`
+        : 'Efterbehandling i gang';
     } else if (uploadUiState.currentFileName) {
       const filePct = uploadUiState.currentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
@@ -7024,7 +7052,8 @@ function renderUploadMonitor() {
   }
 
   // Auto-hide monitor:
-  // - If raw transfer is done (even if postprocess continues), hide quickly
+  // - Hide the upload monitor after raw transfer is done; postprocess keeps
+  //   showing progress in the top status area.
   // - Else fallback to old behavior (hide 10s after everything done)
   try {
     const transferDone = !isUploadRunning() && uploadUiState.totalFiles > 0;
@@ -7197,7 +7226,7 @@ async function runUploadPostprocess(onProgress = null) {
     };
   }
 
-  const deadline = Date.now() + (30 * 60 * 1000);
+  const deadline = Date.now() + (24 * 60 * 60 * 1000);
   while (Date.now() < deadline) {
     const statusRes = await fetch('/api/upload/postprocess/status');
     let statusData = {};
@@ -7251,7 +7280,7 @@ async function resumeUploadPostprocessAfterRefresh() {
     if (!status) return;
 
     // If a refresh happened before postprocess started, kick it off automatically.
-    if (!status.running && Number(status.pending || 0) > 0) {
+    if (!status.running && (Number(status.pending || 0) > 0 || Number(status.recoverable_pending || 0) > 0)) {
       try {
         const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
         let startData = {};

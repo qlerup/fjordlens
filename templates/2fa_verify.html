@@ -33,6 +33,32 @@
         }
       });
       input.focus();
+      const homeUrl={{ url_for('index')|tojson }};
+      const apiMeUrl={{ url_for('api_me')|tojson }};
+      function safeLocalTarget(raw){
+        try{
+          const value=String(raw||'').trim();
+          if(!value) return homeUrl;
+          const url=new URL(value, window.location.origin);
+          if(url.origin!==window.location.origin) return homeUrl;
+          if(url.pathname==='/login' || url.pathname==='/logout' || url.pathname==='/login/2fa') return homeUrl;
+          return `${url.pathname}${url.search}${url.hash}`;
+        }catch(_){
+          return homeUrl;
+        }
+      }
+      async function leaveAuthIfSessionIsAlive(){
+        try{
+          const res=await fetch(apiMeUrl,{credentials:'same-origin',cache:'no-store',headers:{'Accept':'application/json'}});
+          if(!res.ok) return;
+          const data=await res.json().catch(()=>null);
+          if(data && data.ok){
+            const params=new URLSearchParams(window.location.search);
+            window.location.replace(safeLocalTarget(params.get('next')||homeUrl));
+          }
+        }catch(_){}
+      }
+      window.addEventListener('pageshow', leaveAuthIfSessionIsAlive);
     })();
   </script>
 {% endblock %}
