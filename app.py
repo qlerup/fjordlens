@@ -4997,7 +4997,12 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     for r in rows:
         try:
             pub = row_to_public(r)
-            url = pub.get("thumb_url")
+            url = (
+                pub.get("thumb_url")
+                or pub.get("view_url")
+                or pub.get("original_url")
+                or pub.get("download_url")
+            )
         except Exception:
             url = None
         if not url or url in seen:
