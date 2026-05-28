@@ -8607,6 +8607,9 @@ function scheduleAppUpdatePageReload() {
 function shouldKeepAppUpdatePolling(data = null) {
   if (data && data.running) return true;
   if (appUpdateReconnectActive()) return true;
+  if (data && data.service_reachable === false) return true;
+  const git = (data && data.git && typeof data.git === 'object') ? data.git : null;
+  if (git && git.available === false) return true;
   return false;
 }
 
