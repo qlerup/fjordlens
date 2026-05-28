@@ -27,12 +27,16 @@
   appUpdateIntervalInput: document.getElementById("appUpdateIntervalInput"),
   appUpdateSettingsSaveBtn: document.getElementById("appUpdateSettingsSaveBtn"),
   appUpdateAutoMeta: document.getElementById("appUpdateAutoMeta"),
-  appUpdateCleanupToggle: document.getElementById("appUpdateCleanupToggle"),
-  appUpdateCleanupText: document.getElementById("appUpdateCleanupText"),
   appUpdateCheckBtn: document.getElementById("appUpdateCheckBtn"),
   appUpdateStartBtn: document.getElementById("appUpdateStartBtn"),
   appUpdateStatus: document.getElementById("appUpdateStatus"),
   appUpdateLog: document.getElementById("appUpdateLog"),
+  appUpdateChoiceModal: document.getElementById("appUpdateChoiceModal"),
+  appUpdateChoiceTitle: document.getElementById("appUpdateChoiceTitle"),
+  appUpdateChoiceText: document.getElementById("appUpdateChoiceText"),
+  appUpdateChoiceClose: document.getElementById("appUpdateChoiceClose"),
+  appUpdateChoiceCleanupBtn: document.getElementById("appUpdateChoiceCleanupBtn"),
+  appUpdateChoiceFastBtn: document.getElementById("appUpdateChoiceFastBtn"),
   aiIngestToggle: document.getElementById("aiIngestToggle"),
   aiIngestToggleText: document.getElementById("aiIngestToggleText"),
   aiPanelTitle: document.getElementById("aiPanelTitle"),
@@ -927,7 +931,6 @@ const I18N = {
     app_update_next_check: 'Næste tjek: {time}',
     app_update_last_check: 'Sidst tjekket: {time}',
     app_update_auto_off: 'Automatisk tjek er slået fra.',
-    app_update_cleanup: 'Docker oprydning',
     app_update_check: 'Tjek',
     app_update_start: 'Opdater',
     app_update_checking: 'Tjekker for update...',
@@ -939,8 +942,11 @@ const I18N = {
     app_update_success: 'Update færdig.',
     app_update_failed: 'Update fejlede.',
     app_update_dirty: 'Repoet har lokale tracked ændringer.',
-    app_update_confirm_cleanup: 'Starte FjordLens update med Docker oprydning?',
-    app_update_confirm_no_cleanup: 'Starte FjordLens update uden Docker oprydning?',
+    app_update_choice_title: 'Vælg update-type',
+    app_update_choice_text: 'Ryd plads først, eller kør en hurtig update uden Docker oprydning.',
+    app_update_choice_cleanup: 'Ryd plads og opdater',
+    app_update_choice_fast: 'Hurtig opdatering',
+    app_update_choice_close: 'Luk',
     app_update_status_idle: 'Klar',
     app_update_status_checking: 'Tjekker',
     app_update_status_running: 'Kører',
@@ -1629,7 +1635,6 @@ const I18N = {
     app_update_next_check: 'Next check: {time}',
     app_update_last_check: 'Last checked: {time}',
     app_update_auto_off: 'Automatic check is off.',
-    app_update_cleanup: 'Docker cleanup',
     app_update_check: 'Check',
     app_update_start: 'Update',
     app_update_checking: 'Checking for update...',
@@ -1641,8 +1646,11 @@ const I18N = {
     app_update_success: 'Update finished.',
     app_update_failed: 'Update failed.',
     app_update_dirty: 'Repository has local tracked changes.',
-    app_update_confirm_cleanup: 'Start FjordLens update with Docker cleanup?',
-    app_update_confirm_no_cleanup: 'Start FjordLens update without Docker cleanup?',
+    app_update_choice_title: 'Choose update type',
+    app_update_choice_text: 'Free up space first, or run a quick update without Docker cleanup.',
+    app_update_choice_cleanup: 'Free space and update',
+    app_update_choice_fast: 'Quick update',
+    app_update_choice_close: 'Close',
     app_update_status_idle: 'Ready',
     app_update_status_checking: 'Checking',
     app_update_status_running: 'Running',
@@ -2327,6 +2335,7 @@ const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
 const APP_UPDATE_STATUS_POLL_MS = 2500;
 let appUpdateStatusPollTimer = null;
+let appUpdateChoiceResolver = null;
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
 const PHOTOFRAME_PREVIEW_UI_STATE_KEY = 'fjordlens.photoframePreviewHiddenById.v1';
@@ -8670,11 +8679,31 @@ async function checkAppUpdate() {
   }
 }
 
+function closeAppUpdateChoiceModal(choice = null) {
+  if (els.appUpdateChoiceModal) els.appUpdateChoiceModal.classList.add('hidden');
+  if (appUpdateChoiceResolver) {
+    const resolve = appUpdateChoiceResolver;
+    appUpdateChoiceResolver = null;
+    resolve(choice);
+  }
+}
+
+function openAppUpdateChoiceModal() {
+  if (!els.appUpdateChoiceModal) return Promise.resolve(true);
+  if (appUpdateChoiceResolver) closeAppUpdateChoiceModal(null);
+  els.appUpdateChoiceModal.classList.remove('hidden');
+  setTimeout(() => {
+    try { (els.appUpdateChoiceCleanupBtn || els.appUpdateChoiceFastBtn || els.appUpdateChoiceClose).focus(); } catch {}
+  }, 0);
+  return new Promise((resolve) => {
+    appUpdateChoiceResolver = resolve;
+  });
+}
+
 async function startAppUpdate() {
   if (!els.appUpdateTitle) return;
-  const cleanup = !!(els.appUpdateCleanupToggle && els.appUpdateCleanupToggle.checked);
-  const confirmText = cleanup ? tr('app_update_confirm_cleanup') : tr('app_update_confirm_no_cleanup');
-  if (!window.confirm(confirmText)) return;
+  const cleanup = await openAppUpdateChoiceModal();
+  if (cleanup === null) return;
   const btn = els.appUpdateStartBtn;
   const original = btn ? btn.textContent : tr('app_update_start');
   showAppUpdateStatus(tr('app_update_starting'), 'ok');
@@ -10306,9 +10335,13 @@ function applyUiLanguage() {
   if (els.appUpdateAutoCheckText) els.appUpdateAutoCheckText.textContent = tr('app_update_auto_check');
   if (els.appUpdateIntervalLabel) els.appUpdateIntervalLabel.textContent = tr('app_update_interval');
   if (els.appUpdateSettingsSaveBtn && !els.appUpdateSettingsSaveBtn.classList.contains('loading')) els.appUpdateSettingsSaveBtn.textContent = tr('app_update_save_settings');
-  if (els.appUpdateCleanupText) els.appUpdateCleanupText.textContent = tr('app_update_cleanup');
   if (els.appUpdateCheckBtn && !els.appUpdateCheckBtn.classList.contains('loading')) els.appUpdateCheckBtn.textContent = tr('app_update_check');
   if (els.appUpdateStartBtn && !els.appUpdateStartBtn.classList.contains('loading')) els.appUpdateStartBtn.textContent = tr('app_update_start');
+  if (els.appUpdateChoiceTitle) els.appUpdateChoiceTitle.textContent = tr('app_update_choice_title');
+  if (els.appUpdateChoiceText) els.appUpdateChoiceText.textContent = tr('app_update_choice_text');
+  if (els.appUpdateChoiceClose) els.appUpdateChoiceClose.setAttribute('aria-label', tr('app_update_choice_close'));
+  if (els.appUpdateChoiceCleanupBtn) els.appUpdateChoiceCleanupBtn.textContent = tr('app_update_choice_cleanup');
+  if (els.appUpdateChoiceFastBtn) els.appUpdateChoiceFastBtn.textContent = tr('app_update_choice_fast');
   if (els.aiPanelTitle) els.aiPanelTitle.textContent = tr('ai_panel_title');
     // HEIC tab labels stay Danish/English defaults already in markup
   if (els.aiEmbedTitle) els.aiEmbedTitle.textContent = tr('ai_embed_title');
@@ -12587,6 +12620,33 @@ if (els.appUpdateCheckBtn) {
 if (els.appUpdateStartBtn) {
   els.appUpdateStartBtn.addEventListener('click', async () => {
     await startAppUpdate();
+  });
+}
+if (els.appUpdateChoiceCleanupBtn) {
+  els.appUpdateChoiceCleanupBtn.addEventListener('click', () => {
+    closeAppUpdateChoiceModal(true);
+  });
+}
+if (els.appUpdateChoiceFastBtn) {
+  els.appUpdateChoiceFastBtn.addEventListener('click', () => {
+    closeAppUpdateChoiceModal(false);
+  });
+}
+if (els.appUpdateChoiceClose) {
+  els.appUpdateChoiceClose.addEventListener('click', () => {
+    closeAppUpdateChoiceModal(null);
+  });
+}
+if (els.appUpdateChoiceModal) {
+  els.appUpdateChoiceModal.addEventListener('click', (e) => {
+    if (e.target === els.appUpdateChoiceModal || (e.target && e.target.classList && e.target.classList.contains('modal-backdrop'))) {
+      closeAppUpdateChoiceModal(null);
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.appUpdateChoiceModal.classList.contains('hidden')) {
+      closeAppUpdateChoiceModal(null);
+    }
   });
 }
 if (els.appUpdateAutoCheckToggle) {

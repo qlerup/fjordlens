@@ -306,16 +306,27 @@
               <span id="appUpdateAutoMeta" class="mini-label"></span>
             </div>
             <div class="actions app-update-actions">
-              <label class="ai-toggle-row" for="appUpdateCleanupToggle">
-                <input id="appUpdateCleanupToggle" class="ai-toggle-input" type="checkbox" role="switch" checked />
-                <span class="ai-toggle-slider" aria-hidden="true"></span>
-                <span id="appUpdateCleanupText" class="mini-label">Docker oprydning</span>
-              </label>
               <button id="appUpdateCheckBtn" class="btn" type="button">Tjek</button>
               <button id="appUpdateStartBtn" class="btn primary" type="button">Opdater</button>
             </div>
             <div id="appUpdateStatus" class="status hidden" style="margin-top:10px;"></div>
             <pre id="appUpdateLog" class="app-update-log hidden"></pre>
+          </div>
+          <div id="appUpdateChoiceModal" class="modal hidden app-update-choice-modal" role="dialog" aria-modal="true" aria-labelledby="appUpdateChoiceTitle">
+            <div class="modal-backdrop"></div>
+            <div class="modal-dialog app-update-choice-dialog">
+              <div class="modal-header">
+                <h3 id="appUpdateChoiceTitle">V&aelig;lg update-type</h3>
+                <button id="appUpdateChoiceClose" class="btn ghost" type="button" aria-label="Luk">&times;</button>
+              </div>
+              <div class="modal-body">
+                <p id="appUpdateChoiceText" class="app-update-choice-text">Ryd plads f&oslash;rst, eller k&oslash;r en hurtig update uden Docker oprydning.</p>
+                <div class="app-update-choice-actions">
+                  <button id="appUpdateChoiceCleanupBtn" class="btn primary" type="button">Ryd plads og opdater</button>
+                  <button id="appUpdateChoiceFastBtn" class="btn" type="button">Hurtig opdatering</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         {% endif %}

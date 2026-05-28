@@ -188,6 +188,16 @@ report_mount() {
 require_runtime_tools() {
   need_cmd docker
   need_cmd findmnt
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: Docker daemon is not reachable from inside this LXC."
+    echo "       FjordLens and the in-app updater both require local Docker access."
+    exit 1
+  fi
+  if [ ! -S /var/run/docker.sock ]; then
+    echo "ERROR: /var/run/docker.sock was not found."
+    echo "       The in-app updater mounts this socket so it can rebuild/restart FjordLens."
+    exit 1
+  fi
   docker compose version >/dev/null 2>&1 || {
     echo "ERROR: docker compose plugin not available."
     exit 1
@@ -216,6 +226,9 @@ load_env_with_defaults() {
   : "${ENABLE_SCAN_FEATURES:=0}"
   : "${PHOTOFRAME_TEXT_ONLY:=0}"
   : "${PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES:=314572800}"
+  : "${FJORDLENS_AUTO_UPDATE_CHECK:=1}"
+  : "${FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES:=30}"
+  : "${FJORDLENS_UPDATER_TIMEOUT_SEC:=20}"
   : "${EXPECT_DATA_FSTYPES:=ext4,xfs,btrfs,overlay}"
   : "${EXPECT_UPLOADS_FSTYPES:=}"
   : "${EXPECT_THUMBS_FSTYPES:=ext4,xfs,btrfs,overlay}"
@@ -242,6 +255,9 @@ ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}
 ENABLE_SCAN_FEATURES=${ENABLE_SCAN_FEATURES}
 PHOTOFRAME_TEXT_ONLY=${PHOTOFRAME_TEXT_ONLY}
 PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES=${PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES}
+FJORDLENS_AUTO_UPDATE_CHECK=${FJORDLENS_AUTO_UPDATE_CHECK}
+FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES=${FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES}
+FJORDLENS_UPDATER_TIMEOUT_SEC=${FJORDLENS_UPDATER_TIMEOUT_SEC}
 EXPECT_DATA_FSTYPES=${EXPECT_DATA_FSTYPES}
 EXPECT_UPLOADS_FSTYPES=${EXPECT_UPLOADS_FSTYPES}
 EXPECT_THUMBS_FSTYPES=${EXPECT_THUMBS_FSTYPES}
@@ -456,7 +472,7 @@ run_preflight_and_start() {
 
 step_1_basic() {
   echo
-  echo "Step 1/6: Basic app settings"
+  echo "Step 1/7: Basic app settings"
   APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
   TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
   LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
@@ -478,7 +494,7 @@ step_1_basic() {
 
 step_2_mounts() {
   echo
-  echo "Step 2/6: Proxmox LXC mount strategy"
+  echo "Step 2/7: Proxmox LXC mount strategy"
   echo "  This LXC version does NOT edit /etc/fstab and does NOT mount NFS itself."
   echo "  Expected model: Proxmox host mounts Synology/NFS and bind-mounts paths into the LXC."
   echo "  Example LXC mount points:"
@@ -497,14 +513,14 @@ step_2_mounts() {
 
 step_3_storage() {
   echo
-  echo "Step 3/6: Storage paths (inside the LXC)"
+  echo "Step 3/7: Storage paths (inside the LXC)"
   DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/opt/fjordlens-data/appdata" "Stores database, cache, temp files, and internal app data.")"
   THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/opt/fjordlens-data/thumbs" "Root directory where thumbnails are stored. Local storage is recommended.")"
 }
 
 step_4_library() {
   echo
-  echo "Step 4/6: Optional library source"
+  echo "Step 4/7: Optional library source"
   if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
     ENABLE_LIBRARY_SOURCE="1"
     PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/mnt/fjordlens-nfs/photos" "Path inside this LXC pointing to a Proxmox bind mount with your library photos.")"
@@ -519,7 +535,7 @@ step_4_library() {
 
 step_5_features() {
   echo
-  echo "Step 5/6: Feature toggles"
+  echo "Step 5/7: Feature toggles"
   if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$(is_truthy "$ENABLE_SCAN_FEATURES" && echo y || echo n)"; then
     ENABLE_SCAN_FEATURES="1"
   else
@@ -527,9 +543,33 @@ step_5_features() {
   fi
 }
 
-step_6_sqlite() {
+step_6_updater() {
   echo
-  echo "Step 6/6: SQLite + mount checks"
+  echo "Step 6/7: In-app updater"
+  echo "  FjordLens includes an admin-only updater tab."
+  echo "  It checks GitHub for new commits and can run the same update flow as scripts/update.sh."
+  echo "  The updater container uses /var/run/docker.sock to rebuild/restart the FjordLens services."
+  if ask_yes_no "Enable automatic background update checks?" "$(is_truthy "$FJORDLENS_AUTO_UPDATE_CHECK" && echo y || echo n)"; then
+    FJORDLENS_AUTO_UPDATE_CHECK="1"
+    FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES="$(ask_input "Auto-check interval in minutes" "$FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES" "30" "How often the updater checks origin/main for new commits. Minimum is 5 minutes.")"
+    case "$FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES" in
+      *[!0-9]*|"") FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES="30" ;;
+    esac
+    if [ "$FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES" -lt 5 ]; then
+      FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES="5"
+    fi
+  else
+    FJORDLENS_AUTO_UPDATE_CHECK="0"
+  fi
+  FJORDLENS_UPDATER_TIMEOUT_SEC="$(ask_input "Updater API timeout seconds" "$FJORDLENS_UPDATER_TIMEOUT_SEC" "20" "Only affects UI calls to the updater service. The update job itself keeps running in the background.")"
+  case "$FJORDLENS_UPDATER_TIMEOUT_SEC" in
+    *[!0-9]*|"") FJORDLENS_UPDATER_TIMEOUT_SEC="20" ;;
+  esac
+}
+
+step_7_sqlite() {
+  echo
+  echo "Step 7/7: SQLite + mount checks"
   sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto or DELETE (network storage)" "Choose auto for automatic selection. On some network-backed paths, DELETE can be more stable.")"
   sqlite_choice_lc="$(printf "%s" "$sqlite_choice" | tr '[:upper:]' '[:lower:]')"
   if [ "$sqlite_choice_lc" = "auto" ] || [ -z "$sqlite_choice_lc" ]; then
@@ -564,6 +604,10 @@ print_summary() {
     echo "  PHOTO_DIR=${PHOTO_DIR}"
   fi
   echo "  ENABLE_SCAN_FEATURES=${ENABLE_SCAN_FEATURES}"
+  echo "  FJORDLENS_AUTO_UPDATE_CHECK=${FJORDLENS_AUTO_UPDATE_CHECK}"
+  if is_truthy "$FJORDLENS_AUTO_UPDATE_CHECK"; then
+    echo "  FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES=${FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES}"
+  fi
   echo "  LXC_MOUNTS_MANAGED_BY_PROXMOX=${LXC_MOUNTS_MANAGED_BY_PROXMOX}"
   if [ -n "$SQLITE_JOURNAL_MODE" ]; then
     echo "  SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}"
@@ -603,18 +647,20 @@ edit_menu() {
     echo "  3) Storage paths"
     echo "  4) Library source (PHOTO_DIR)"
     echo "  5) Feature toggles"
-    echo "  6) SQLite + fs-type checks"
-    echo "  7) Done editing (back to summary)"
-    choice="$(ask_input "Choose section number" "7" "1-7" "Type the number for what you want to edit.")"
+    echo "  6) In-app updater"
+    echo "  7) SQLite + fs-type checks"
+    echo "  8) Done editing (back to summary)"
+    choice="$(ask_input "Choose section number" "8" "1-8" "Type the number for what you want to edit.")"
     case "$choice" in
       1) step_1_basic ;;
       2) step_2_mounts ;;
       3) step_3_storage ;;
       4) step_4_library ;;
       5) step_5_features ;;
-      6) step_6_sqlite ;;
-      7|"") break ;;
-      *) echo "Invalid choice. Please select 1-7." ;;
+      6) step_6_updater ;;
+      7) step_7_sqlite ;;
+      8|"") break ;;
+      *) echo "Invalid choice. Please select 1-8." ;;
     esac
   done
 }
@@ -648,6 +694,7 @@ echo "    This variant assumes network mounts are handled by Proxmox host bind m
 echo "    It does NOT edit /etc/fstab or mount NFS inside the LXC."
 echo "    Tip : press Enter to use the default at each prompt."
 echo "    LXC mode expects your Proxmox host to bind-mount the Synology/NFS share into this container, typically at /mnt/fjordlens-nfs."
+echo "    The in-app updater is configured here too. It needs Docker access inside this LXC."
 echo "    Input examples:"
 echo "      - APP_PORT: 9080 or 9090"
 echo "      - DATA_DIR: /opt/fjordlens-data/appdata"
@@ -665,7 +712,8 @@ step_2_mounts
 step_3_storage
 step_4_library
 step_5_features
-step_6_sqlite
+step_6_updater
+step_7_sqlite
 
 while :; do
   save_env

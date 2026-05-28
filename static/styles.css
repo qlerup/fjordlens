@@ -2870,12 +2870,28 @@ body.detail-open .detail-panel {
   flex-wrap: wrap;
   margin-top: 14px;
 }
+.app-update-choice-dialog {
+  width: min(520px, calc(100vw - 24px)) !important;
+}
+.app-update-choice-text {
+  margin: 0 0 14px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.app-update-choice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 @media (max-width: 520px) {
-  .ios-upload-prep-actions {
+  .ios-upload-prep-actions,
+  .app-update-choice-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
-  .ios-upload-prep-actions .btn {
+  .ios-upload-prep-actions .btn,
+  .app-update-choice-actions .btn {
     width: 100%;
   }
 }

@@ -157,6 +157,8 @@ sh scripts/fresh_setup_lxc.sh
 - restarts Docker runtime when runtime config changes
 - runs CUDA + PyTorch GPU smoke tests before `docker compose up`
 - prints exact Proxmox host `pct`/`/etc/pve/lxc/<CTID>.conf` hints if passthrough is still incomplete
+- configures in-app updater defaults, including automatic background update checks
+- verifies Docker and `/var/run/docker.sock` availability for the updater container
 
 ### Proxmox Host -> LXC Bind-Mount (Manual quick commands)
 
@@ -256,10 +258,10 @@ Admins can also update from the web UI:
 
 - Open `Indstillinger` -> `Opdatering`
 - Click `Tjek` to fetch the latest `origin/<branch>` revision
-- Choose whether Docker cleanup should run
 - Click `Opdater`
+- Choose `Ryd plads og opdater` or `Hurtig opdatering`
 
-The in-app updater runs the same update flow as `scripts/update.sh`. When Docker cleanup is enabled in the UI, it runs the script with `--cleanup`; when disabled, it runs with `--no-cleanup`.
+The in-app updater runs the same update flow as `scripts/update.sh`. `Ryd plads og opdater` runs the script with `--cleanup`; `Hurtig opdatering` runs it with `--no-cleanup`.
 
 Note: the in-app updater uses an internal `fjordlens-updater` container with access to the Docker socket so it can rebuild/restart the FjordLens services. Keep the update UI admin-only.
 
