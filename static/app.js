@@ -21,6 +21,12 @@
   appUpdateCurrent: document.getElementById("appUpdateCurrent"),
   appUpdateRemote: document.getElementById("appUpdateRemote"),
   appUpdateState: document.getElementById("appUpdateState"),
+  appUpdateAutoCheckToggle: document.getElementById("appUpdateAutoCheckToggle"),
+  appUpdateAutoCheckText: document.getElementById("appUpdateAutoCheckText"),
+  appUpdateIntervalLabel: document.getElementById("appUpdateIntervalLabel"),
+  appUpdateIntervalInput: document.getElementById("appUpdateIntervalInput"),
+  appUpdateSettingsSaveBtn: document.getElementById("appUpdateSettingsSaveBtn"),
+  appUpdateAutoMeta: document.getElementById("appUpdateAutoMeta"),
   appUpdateCleanupToggle: document.getElementById("appUpdateCleanupToggle"),
   appUpdateCleanupText: document.getElementById("appUpdateCleanupText"),
   appUpdateCheckBtn: document.getElementById("appUpdateCheckBtn"),
@@ -913,6 +919,14 @@ const I18N = {
     app_update_current: 'Installeret',
     app_update_remote: 'Nyeste',
     app_update_state: 'Status',
+    app_update_auto_check: 'Automatisk tjek',
+    app_update_interval: 'Interval (minutter)',
+    app_update_save_settings: 'Gem',
+    app_update_settings_saved: 'Update-indstillinger gemt.',
+    app_update_settings_failed: 'Kunne ikke gemme update-indstillinger.',
+    app_update_next_check: 'Næste tjek: {time}',
+    app_update_last_check: 'Sidst tjekket: {time}',
+    app_update_auto_off: 'Automatisk tjek er slået fra.',
     app_update_cleanup: 'Docker oprydning',
     app_update_check: 'Tjek',
     app_update_start: 'Opdater',
@@ -1607,6 +1621,14 @@ const I18N = {
     app_update_current: 'Installed',
     app_update_remote: 'Latest',
     app_update_state: 'Status',
+    app_update_auto_check: 'Automatic check',
+    app_update_interval: 'Interval (minutes)',
+    app_update_save_settings: 'Save',
+    app_update_settings_saved: 'Update settings saved.',
+    app_update_settings_failed: 'Could not save update settings.',
+    app_update_next_check: 'Next check: {time}',
+    app_update_last_check: 'Last checked: {time}',
+    app_update_auto_off: 'Automatic check is off.',
     app_update_cleanup: 'Docker cleanup',
     app_update_check: 'Check',
     app_update_start: 'Update',
@@ -8501,6 +8523,30 @@ function appUpdateShortRev(value) {
   return raw.length > 12 ? raw.slice(0, 12) : raw;
 }
 
+function applyAppUpdateSettingsUi(item = {}) {
+  if (!els.appUpdateAutoCheckToggle && !els.appUpdateIntervalInput) return;
+  const enabled = item.auto_check_enabled !== false;
+  const interval = Math.max(5, Math.min(1440, Number(item.auto_check_interval_minutes || 30) || 30));
+  if (els.appUpdateAutoCheckToggle) els.appUpdateAutoCheckToggle.checked = enabled;
+  if (els.appUpdateIntervalInput && document.activeElement !== els.appUpdateIntervalInput) {
+    els.appUpdateIntervalInput.value = String(interval);
+  }
+  if (els.appUpdateIntervalInput) els.appUpdateIntervalInput.disabled = !enabled;
+  if (els.appUpdateAutoMeta) {
+    const next = String(item.next_auto_check_at || '').trim();
+    const last = String(item.last_check_at || '').trim();
+    if (!enabled) {
+      els.appUpdateAutoMeta.textContent = tr('app_update_auto_off');
+    } else if (next) {
+      els.appUpdateAutoMeta.textContent = tr('app_update_next_check').replace('{time}', fmtDate(next));
+    } else if (last) {
+      els.appUpdateAutoMeta.textContent = tr('app_update_last_check').replace('{time}', fmtDate(last));
+    } else {
+      els.appUpdateAutoMeta.textContent = '';
+    }
+  }
+}
+
 function renderAppUpdate(data = null) {
   if (!els.appUpdateTitle) return;
   const item = data || state.appUpdate || {};
@@ -8517,6 +8563,7 @@ function renderAppUpdate(data = null) {
   if (els.appUpdateCurrent) els.appUpdateCurrent.textContent = current;
   if (els.appUpdateRemote) els.appUpdateRemote.textContent = remote;
   if (els.appUpdateState) els.appUpdateState.textContent = appUpdateStatusLabel(item.status || (running ? 'running' : 'idle'));
+  applyAppUpdateSettingsUi(item);
 
   const logLines = Array.isArray(item.log) ? item.log : [];
   if (els.appUpdateLog) {
@@ -8655,6 +8702,43 @@ async function startAppUpdate() {
       btn.disabled = false;
     }
     renderAppUpdate(state.appUpdate || {});
+  }
+}
+
+async function saveAppUpdateSettings() {
+  if (!els.appUpdateTitle) return;
+  const btn = els.appUpdateSettingsSaveBtn;
+  const original = btn ? btn.textContent : tr('app_update_save_settings');
+  const enabled = !!(els.appUpdateAutoCheckToggle && els.appUpdateAutoCheckToggle.checked);
+  const interval = Number(els.appUpdateIntervalInput ? els.appUpdateIntervalInput.value : 30);
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+    }
+    const res = await fetch('/api/app-update/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auto_check_enabled: enabled,
+        auto_check_interval_minutes: Number.isFinite(interval) ? interval : 30,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || data.ok === false) {
+      showAppUpdateStatus((data && data.error) || tr('app_update_settings_failed'), 'err');
+      return;
+    }
+    renderAppUpdate({ ...(state.appUpdate || {}), ...data });
+    showAppUpdateStatus(tr('app_update_settings_saved'), 'ok');
+  } catch {
+    showAppUpdateStatus(tr('app_update_settings_failed'), 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = original || tr('app_update_save_settings');
+    }
   }
 }
 
@@ -10219,6 +10303,9 @@ function applyUiLanguage() {
   if (els.appUpdateCurrentLabel) els.appUpdateCurrentLabel.textContent = tr('app_update_current');
   if (els.appUpdateRemoteLabel) els.appUpdateRemoteLabel.textContent = tr('app_update_remote');
   if (els.appUpdateStateLabel) els.appUpdateStateLabel.textContent = tr('app_update_state');
+  if (els.appUpdateAutoCheckText) els.appUpdateAutoCheckText.textContent = tr('app_update_auto_check');
+  if (els.appUpdateIntervalLabel) els.appUpdateIntervalLabel.textContent = tr('app_update_interval');
+  if (els.appUpdateSettingsSaveBtn && !els.appUpdateSettingsSaveBtn.classList.contains('loading')) els.appUpdateSettingsSaveBtn.textContent = tr('app_update_save_settings');
   if (els.appUpdateCleanupText) els.appUpdateCleanupText.textContent = tr('app_update_cleanup');
   if (els.appUpdateCheckBtn && !els.appUpdateCheckBtn.classList.contains('loading')) els.appUpdateCheckBtn.textContent = tr('app_update_check');
   if (els.appUpdateStartBtn && !els.appUpdateStartBtn.classList.contains('loading')) els.appUpdateStartBtn.textContent = tr('app_update_start');
@@ -12500,6 +12587,16 @@ if (els.appUpdateCheckBtn) {
 if (els.appUpdateStartBtn) {
   els.appUpdateStartBtn.addEventListener('click', async () => {
     await startAppUpdate();
+  });
+}
+if (els.appUpdateAutoCheckToggle) {
+  els.appUpdateAutoCheckToggle.addEventListener('change', () => {
+    applyAppUpdateSettingsUi({ ...(state.appUpdate || {}), auto_check_enabled: !!els.appUpdateAutoCheckToggle.checked });
+  });
+}
+if (els.appUpdateSettingsSaveBtn) {
+  els.appUpdateSettingsSaveBtn.addEventListener('click', async () => {
+    await saveAppUpdateSettings();
   });
 }
 if (els.aiPerfPresetLow) {

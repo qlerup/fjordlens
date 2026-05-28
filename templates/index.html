@@ -292,6 +292,19 @@
                 <strong id="appUpdateState">-</strong>
               </div>
             </div>
+            <div class="app-update-settings">
+              <label class="ai-toggle-row" for="appUpdateAutoCheckToggle">
+                <input id="appUpdateAutoCheckToggle" class="ai-toggle-input" type="checkbox" role="switch" checked />
+                <span class="ai-toggle-slider" aria-hidden="true"></span>
+                <span id="appUpdateAutoCheckText" class="mini-label">Automatisk tjek</span>
+              </label>
+              <label class="app-update-interval" for="appUpdateIntervalInput">
+                <span id="appUpdateIntervalLabel" class="mini-label">Interval (minutter)</span>
+                <input id="appUpdateIntervalInput" class="input-number small" type="number" min="5" max="1440" step="5" value="30" />
+              </label>
+              <button id="appUpdateSettingsSaveBtn" class="btn" type="button">Gem</button>
+              <span id="appUpdateAutoMeta" class="mini-label"></span>
+            </div>
             <div class="actions app-update-actions">
               <label class="ai-toggle-row" for="appUpdateCleanupToggle">
                 <input id="appUpdateCleanupToggle" class="ai-toggle-input" type="checkbox" role="switch" checked />

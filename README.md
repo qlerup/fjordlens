@@ -254,7 +254,7 @@ If Cloudflare challenge pages are returned, frames cannot parse feed JSON.
 
 Admins can also update from the web UI:
 
-- Open `Indstillinger` -> `Vedligeholdelse`
+- Open `Indstillinger` -> `Opdatering`
 - Click `Tjek` to fetch the latest `origin/<branch>` revision
 - Choose whether Docker cleanup should run
 - Click `Opdater`
@@ -262,6 +262,8 @@ Admins can also update from the web UI:
 The in-app updater runs the same update flow as `scripts/update.sh`. When Docker cleanup is enabled in the UI, it runs the script with `--cleanup`; when disabled, it runs with `--no-cleanup`.
 
 Note: the in-app updater uses an internal `fjordlens-updater` container with access to the Docker socket so it can rebuild/restart the FjordLens services. Keep the update UI admin-only.
+
+The updater can automatically check for new commits in the background. The default is enabled every 30 minutes, and admins can change or disable it under `Indstillinger` -> `Opdatering`.
 
 ```bash
 cd fjordlens

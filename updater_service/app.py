@@ -18,6 +18,11 @@ SERVICE_NAME = str(os.environ.get("SERVICE_NAME", "fjordlens") or "fjordlens").s
 DEFAULT_BRANCH = str(os.environ.get("REPO_BRANCH", "") or "").strip()
 DEFAULT_COMPOSE_SERVICES = str(os.environ.get("COMPOSE_SERVICES", "fjordlens fjordlens-ai") or "").strip()
 PORT = int(os.environ.get("PORT", "8090") or 8090)
+DEFAULT_AUTO_CHECK_ENABLED = str(os.environ.get("FJORDLENS_AUTO_UPDATE_CHECK", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
+try:
+    DEFAULT_AUTO_CHECK_INTERVAL_MINUTES = int(os.environ.get("FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES", "30") or 30)
+except Exception:
+    DEFAULT_AUTO_CHECK_INTERVAL_MINUTES = 30
 
 STATE_PATH = STATE_DIR / "update_state.json"
 LOG_PATH = STATE_DIR / "update.log"
@@ -31,6 +36,45 @@ def now_iso() -> str:
 
 def ensure_state_dir() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def clamp_auto_check_interval(value: Any) -> int:
+    try:
+        minutes = int(float(value))
+    except Exception:
+        minutes = DEFAULT_AUTO_CHECK_INTERVAL_MINUTES
+    return max(5, min(1440, minutes))
+
+
+def default_state() -> Dict[str, Any]:
+    interval = clamp_auto_check_interval(DEFAULT_AUTO_CHECK_INTERVAL_MINUTES)
+    return {
+        "running": False,
+        "status": "idle",
+        "started_at": "",
+        "finished_at": "",
+        "returncode": None,
+        "job_id": "",
+        "auto_check_enabled": bool(DEFAULT_AUTO_CHECK_ENABLED),
+        "auto_check_interval_minutes": interval,
+        "last_check_at": "",
+        "last_check_source": "",
+        "last_auto_check_at": "",
+        "next_auto_check_at": "",
+        "next_auto_check_epoch": 0,
+    }
+
+
+def normalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    merged = default_state()
+    merged.update(state or {})
+    merged["auto_check_enabled"] = bool(merged.get("auto_check_enabled"))
+    merged["auto_check_interval_minutes"] = clamp_auto_check_interval(merged.get("auto_check_interval_minutes"))
+    try:
+        merged["next_auto_check_epoch"] = float(merged.get("next_auto_check_epoch") or 0)
+    except Exception:
+        merged["next_auto_check_epoch"] = 0
+    return merged
 
 
 def read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,17 +95,7 @@ def write_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def read_state() -> Dict[str, Any]:
-    state = read_json(
-        STATE_PATH,
-        {
-            "running": False,
-            "status": "idle",
-            "started_at": "",
-            "finished_at": "",
-            "returncode": None,
-            "job_id": "",
-        },
-    )
+    state = normalize_state(read_json(STATE_PATH, default_state()))
     with LOCK:
         running = bool(RUNNING_PROCESS and RUNNING_PROCESS.poll() is None)
     if running:
@@ -72,10 +106,36 @@ def read_state() -> Dict[str, Any]:
     return state
 
 
+def set_next_auto_check(state: Dict[str, Any], from_epoch: Optional[float] = None) -> Dict[str, Any]:
+    base = float(from_epoch or time.time())
+    interval_sec = clamp_auto_check_interval(state.get("auto_check_interval_minutes")) * 60
+    next_epoch = base + interval_sec
+    state["next_auto_check_epoch"] = next_epoch
+    state["next_auto_check_at"] = datetime.fromtimestamp(next_epoch, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return state
+
+
 def update_state(patch: Dict[str, Any]) -> Dict[str, Any]:
     with LOCK:
         state = read_state()
         state.update(patch)
+        state = normalize_state(state)
+        write_json(STATE_PATH, state)
+        return state
+
+
+def update_auto_check_settings(enabled: Optional[bool] = None, interval_minutes: Any = None) -> Dict[str, Any]:
+    with LOCK:
+        state = read_state()
+        if enabled is not None:
+            state["auto_check_enabled"] = bool(enabled)
+        if interval_minutes is not None:
+            state["auto_check_interval_minutes"] = clamp_auto_check_interval(interval_minutes)
+        if state.get("auto_check_enabled"):
+            set_next_auto_check(state)
+        else:
+            state["next_auto_check_epoch"] = 0
+            state["next_auto_check_at"] = ""
         write_json(STATE_PATH, state)
         return state
 
@@ -279,6 +339,57 @@ def start_update(cleanup: bool) -> tuple[Dict[str, Any], int]:
     return {"ok": True, **state}, 202
 
 
+def run_check(fetch: bool, source: str) -> Dict[str, Any]:
+    info = git_info(fetch=fetch)
+    patch: Dict[str, Any] = {
+        "git": info,
+        "last_check_at": now_iso(),
+        "last_check_source": source,
+    }
+    if source == "auto":
+        patch["last_auto_check_at"] = patch["last_check_at"]
+    state = update_state(patch)
+    if state.get("auto_check_enabled"):
+        state = update_state(set_next_auto_check(state))
+    return {"ok": bool(info.get("ok")), **state}
+
+
+def auto_check_loop() -> None:
+    while True:
+        try:
+            time.sleep(15)
+            state = read_state()
+            if not state.get("auto_check_enabled"):
+                continue
+            with LOCK:
+                running = bool(RUNNING_PROCESS and RUNNING_PROCESS.poll() is None)
+            if running:
+                continue
+            next_epoch = float(state.get("next_auto_check_epoch") or 0)
+            if next_epoch <= 0:
+                update_state(set_next_auto_check(state, from_epoch=time.time()))
+                continue
+            if time.time() < next_epoch:
+                continue
+            append_log(f"[{now_iso()}] Auto-checking for FjordLens updates")
+            result = run_check(fetch=True, source="auto")
+            git = result.get("git") if isinstance(result, dict) else {}
+            if isinstance(git, dict) and git.get("update_available"):
+                append_log(f"[{now_iso()}] Update available: {git.get('current_short')} -> {git.get('remote_short')}")
+            elif isinstance(git, dict) and git.get("fetch_error"):
+                append_log(f"[{now_iso()}] Auto-check failed: {git.get('fetch_error')}")
+            else:
+                append_log(f"[{now_iso()}] Auto-check complete: no update available")
+        except Exception as exc:
+            try:
+                append_log(f"[{now_iso()}] Auto-check error: {exc}")
+                state = read_state()
+                if state.get("auto_check_enabled"):
+                    update_state(set_next_auto_check(state, from_epoch=time.time()))
+            except Exception:
+                pass
+
+
 def parse_json_body(handler: BaseHTTPRequestHandler) -> Dict[str, Any]:
     try:
         length = int(handler.headers.get("Content-Length", "0") or 0)
@@ -321,22 +432,51 @@ class Handler(BaseHTTPRequestHandler):
             state["log"] = tail_log()
             self.send_json(state)
             return
+        if path == "/settings":
+            state = read_state()
+            self.send_json(
+                {
+                    "ok": True,
+                    "auto_check_enabled": bool(state.get("auto_check_enabled")),
+                    "auto_check_interval_minutes": clamp_auto_check_interval(state.get("auto_check_interval_minutes")),
+                    "last_check_at": state.get("last_check_at") or "",
+                    "last_check_source": state.get("last_check_source") or "",
+                    "last_auto_check_at": state.get("last_auto_check_at") or "",
+                    "next_auto_check_at": state.get("next_auto_check_at") or "",
+                }
+            )
+            return
         self.send_json({"ok": False, "error": "Not found"}, 404)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         body = parse_json_body(self)
         if path == "/check":
-            info = git_info(fetch=True)
-            state = read_state()
-            state["git"] = info
+            state = run_check(fetch=True, source="manual")
             state["log"] = tail_log()
-            self.send_json({"ok": bool(info.get("ok")), **state})
+            self.send_json(state)
             return
         if path == "/start":
             cleanup = bool(body.get("cleanup", True))
             payload, status = start_update(cleanup=cleanup)
             self.send_json(payload, status)
+            return
+        if path == "/settings":
+            enabled_raw = body.get("auto_check_enabled")
+            enabled = bool(enabled_raw) if "auto_check_enabled" in body else None
+            interval = body.get("auto_check_interval_minutes") if "auto_check_interval_minutes" in body else None
+            state = update_auto_check_settings(enabled=enabled, interval_minutes=interval)
+            self.send_json(
+                {
+                    "ok": True,
+                    "auto_check_enabled": bool(state.get("auto_check_enabled")),
+                    "auto_check_interval_minutes": clamp_auto_check_interval(state.get("auto_check_interval_minutes")),
+                    "last_check_at": state.get("last_check_at") or "",
+                    "last_check_source": state.get("last_check_source") or "",
+                    "last_auto_check_at": state.get("last_auto_check_at") or "",
+                    "next_auto_check_at": state.get("next_auto_check_at") or "",
+                }
+            )
             return
         self.send_json({"ok": False, "error": "Not found"}, 404)
 
@@ -344,8 +484,11 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     ensure_state_dir()
     ensure_git_safe_dir()
-    if not STATE_PATH.exists():
-        write_json(STATE_PATH, {"running": False, "status": "idle", "started_at": "", "finished_at": ""})
+    state = read_state()
+    if state.get("auto_check_enabled") and not state.get("next_auto_check_epoch"):
+        set_next_auto_check(state, from_epoch=time.time())
+    write_json(STATE_PATH, normalize_state(state))
+    threading.Thread(target=auto_check_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"FjordLens updater listening on :{PORT}", flush=True)
     server.serve_forever()

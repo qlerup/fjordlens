@@ -12326,6 +12326,22 @@ def api_app_update_start():
     return _app_update_proxy("/start", method="POST", payload={"cleanup": cleanup}, timeout=10)
 
 
+@app.route("/api/app-update/settings", methods=["GET", "POST"])
+@login_required
+def api_app_update_settings():
+    fb = _require_admin_for_app_update()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    if request.method == "GET":
+        return _app_update_proxy("/settings", method="GET", timeout=5)
+    body = request.get_json(silent=True) or {}
+    payload = {
+        "auto_check_enabled": bool(body.get("auto_check_enabled")),
+        "auto_check_interval_minutes": body.get("auto_check_interval_minutes"),
+    }
+    return _app_update_proxy("/settings", method="POST", payload=payload, timeout=10)
+
+
 @app.route("/api/photoframes/status", methods=["GET"])
 @login_required
 def api_photoframes_status():
