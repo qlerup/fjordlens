@@ -1490,10 +1490,16 @@ def index_faces_for_photo(rel_path: str) -> int:
                 except Exception:
                     pid, created, score = (None, False, -1.0)
                 try:
+                    frame_sec_val = None
+                    try:
+                        if fc.get("frame_sec") is not None:
+                            frame_sec_val = max(0.0, float(fc.get("frame_sec")))
+                    except Exception:
+                        frame_sec_val = None
                     conn.execute(
                         """
-                        INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?)
+                        INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             photo_id,
@@ -1501,6 +1507,7 @@ def index_faces_for_photo(rel_path: str) -> int:
                             bx, by, bw, bh,
                             json.dumps(emb, ensure_ascii=False),
                             float(fc.get("confidence") or 1.0),
+                            frame_sec_val,
                             now_iso(),
                         ),
                     )
@@ -3247,6 +3254,7 @@ def init_db() -> None:
                 bbox_h INTEGER,
                 embedding_json TEXT,
                 confidence REAL,
+                frame_sec REAL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(photo_id) REFERENCES photos(id),
                 FOREIGN KEY(person_id) REFERENCES people(id)
@@ -3360,6 +3368,14 @@ def init_db() -> None:
             cols2 = [r[1] for r in conn.execute("PRAGMA table_info(people)").fetchall()]  # type: ignore[index]
             if "centroid_json" not in cols2:
                 conn.execute("ALTER TABLE people ADD COLUMN centroid_json TEXT")
+                conn.commit()
+        except Exception:
+            pass
+        # Add faces.frame_sec if missing (video face thumbnails need the source frame timestamp)
+        try:
+            face_cols = [r[1] for r in conn.execute("PRAGMA table_info(faces)").fetchall()]  # type: ignore[index]
+            if "frame_sec" not in face_cols:
+                conn.execute("ALTER TABLE faces ADD COLUMN frame_sec REAL")
                 conn.commit()
         except Exception:
             pass
@@ -10649,7 +10665,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -10709,6 +10725,68 @@ def _build_face_thumb(face_id: int) -> bool:
                 return True
             except Exception:
                 return False
+
+        def _save_full_thumb(img: Image.Image) -> bool:
+            try:
+                im = img.convert("RGB")
+                try:
+                    im = ImageOps.exif_transpose(im)
+                except Exception:
+                    pass
+                im.thumbnail((300, 300))
+                im.save(out_path, format="JPEG", quality=90, optimize=True)
+                return True
+            except Exception:
+                return False
+
+        if Path(src_rel).suffix.lower() in VIDEO_EXTS:
+            frame_sec: Optional[float] = None
+            try:
+                if r["frame_sec"] is not None:
+                    frame_sec = max(0.0, float(r["frame_sec"]))
+            except Exception:
+                frame_sec = None
+
+            if frame_sec is not None:
+                frame_bytes = _extract_video_frame_bytes(src_path, src_rel, frame_sec)
+                if frame_bytes:
+                    try:
+                        with Image.open(io.BytesIO(frame_bytes)) as im_src:
+                            if _crop_and_save(
+                                im_src,
+                                int(r["bbox_x"] or 0),
+                                int(r["bbox_y"] or 0),
+                                int(r["bbox_w"] or 1),
+                                int(r["bbox_h"] or 1),
+                            ):
+                                return True
+                    except Exception:
+                        pass
+
+            # Existing video face rows from before frame_sec was stored cannot be
+            # cropped reliably. Use the normal video thumbnail so person cards
+            # still show the actual media instead of the generic placeholder.
+            thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(r["thumb_name"] or ""))
+            if thumb_name:
+                thumb_path = THUMB_DIR / thumb_name
+                if thumb_path.exists():
+                    try:
+                        with Image.open(thumb_path) as im_thumb:
+                            if _save_full_thumb(im_thumb):
+                                return True
+                    except Exception:
+                        pass
+
+            fallback_sec = frame_sec if frame_sec is not None else max(0.0, VIDEO_FACE_SAMPLE_START_SEC)
+            frame_bytes = _extract_video_frame_bytes(src_path, src_rel, fallback_sec)
+            if frame_bytes:
+                try:
+                    with Image.open(io.BytesIO(frame_bytes)) as im_src:
+                        if _save_full_thumb(im_src):
+                            return True
+                except Exception:
+                    pass
+            return False
 
         # First attempt: crop from original/viewable source.
         try:
