@@ -950,11 +950,13 @@ const I18N = {
     app_update_choice_fast: 'Hurtig opdatering',
     app_update_choice_close: 'Luk',
     app_update_status_idle: 'Klar',
+    app_update_status_available: 'Update klar',
     app_update_status_checking: 'Tjekker',
     app_update_status_running: 'Kører',
     app_update_status_success: 'Færdig',
     app_update_status_failed: 'Fejlet',
     app_update_status_unknown: 'Ukendt',
+    app_update_tab_badge: 'Ny',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI-embeddings',
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
@@ -1656,11 +1658,13 @@ const I18N = {
     app_update_choice_fast: 'Quick update',
     app_update_choice_close: 'Close',
     app_update_status_idle: 'Ready',
+    app_update_status_available: 'Update ready',
     app_update_status_checking: 'Checking',
     app_update_status_running: 'Running',
     app_update_status_success: 'Done',
     app_update_status_failed: 'Failed',
     app_update_status_unknown: 'Unknown',
+    app_update_tab_badge: 'New',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI embeddings',
     ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
@@ -8559,6 +8563,7 @@ function showAppUpdateStatus(message, kind = 'ok') {
 function appUpdateStatusLabel(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'idle') return tr('app_update_status_idle');
+  if (raw === 'available') return tr('app_update_status_available');
   if (raw === 'checking') return tr('app_update_status_checking');
   if (raw === 'running') return tr('app_update_status_running');
   if (raw === 'success') return tr('app_update_status_success');
@@ -8570,6 +8575,30 @@ function appUpdateShortRev(value) {
   const raw = String(value || '').trim();
   if (!raw) return '-';
   return raw.length > 12 ? raw.slice(0, 12) : raw;
+}
+
+function renderAppUpdateTabBadge(item = null) {
+  const updateState = (item && typeof item === 'object') ? item : (state.appUpdate || {});
+  const git = (updateState && updateState.git && typeof updateState.git === 'object') ? updateState.git : {};
+  const serviceReachable = updateState.service_reachable !== false;
+  const hasGit = !!(git && Object.keys(git).length);
+  const available = serviceReachable && hasGit && git.available !== false;
+  const autoEnabled = updateState.auto_check_enabled !== false;
+  const hasUpdate = !!(available && git.update_available);
+  const showBadge = autoEnabled && hasUpdate;
+
+  const tabBtn = document.querySelector('#settingsPanel .tab-btn[data-tab="update"]');
+  if (tabBtn) {
+    tabBtn.classList.toggle('has-update-badge', showBadge);
+    if (showBadge) tabBtn.setAttribute('data-update-badge', tr('app_update_tab_badge'));
+    else tabBtn.removeAttribute('data-update-badge');
+  }
+
+  const updateOpt = document.querySelector('#settingsTabSelect option[value="update"]');
+  if (updateOpt) {
+    const base = tr('tab_update');
+    updateOpt.textContent = showBadge ? `${base} • ${tr('app_update_tab_badge')}` : base;
+  }
 }
 
 function applyAppUpdateSettingsUi(item = {}) {
@@ -8724,14 +8753,19 @@ function renderAppUpdate(data = null) {
   const serviceReachable = item.service_reachable !== false;
   const hasGit = !!(git && Object.keys(git).length);
   const available = serviceReachable && hasGit && git.available !== false;
+  const hasUpdateAvailable = available && !!git.update_available;
   const current = appUpdateShortRev(git.current_short || git.current_rev);
   const remote = appUpdateShortRev(git.remote_short || git.remote_rev);
+  const statusForLabel = (!running && hasUpdateAvailable)
+    ? 'available'
+    : (item.status || (running ? 'running' : 'idle'));
 
   if (els.appUpdateBranch) els.appUpdateBranch.textContent = String(git.branch || '-');
   if (els.appUpdateCurrent) els.appUpdateCurrent.textContent = current;
   if (els.appUpdateRemote) els.appUpdateRemote.textContent = remote;
-  if (els.appUpdateState) els.appUpdateState.textContent = appUpdateStatusLabel(item.status || (running ? 'running' : 'idle'));
+  if (els.appUpdateState) els.appUpdateState.textContent = appUpdateStatusLabel(statusForLabel);
   applyAppUpdateSettingsUi(item);
+  renderAppUpdateTabBadge(item);
 
   const logLines = Array.isArray(item.log) ? item.log : [];
   renderAppUpdateLog(logLines);
@@ -8743,7 +8777,13 @@ function renderAppUpdate(data = null) {
     els.appUpdateStartBtn.disabled = running || reconnecting || !available || !!git.dirty || !!git.fetch_error || els.appUpdateStartBtn.classList.contains('loading');
   }
 
-  if (statusRaw === 'success') {
+  if (hasUpdateAvailable && !running) {
+    clearAppUpdateReconnect();
+    showAppUpdateStatus(
+      tr('app_update_available').replace('{current}', current).replace('{remote}', remote),
+      'ok'
+    );
+  } else if (statusRaw === 'success') {
     if (shouldReloadOnSuccess) {
       scheduleAppUpdatePageReload();
     } else {
@@ -8767,11 +8807,6 @@ function renderAppUpdate(data = null) {
     showAppUpdateStatus(tr('app_update_dirty'), 'err');
   } else if (running) {
     showAppUpdateStatus(tr('app_update_running'), 'ok');
-  } else if (git.update_available) {
-    showAppUpdateStatus(
-      tr('app_update_available').replace('{current}', current).replace('{remote}', remote),
-      'ok'
-    );
   } else if (git.current_rev && git.remote_rev) {
     showAppUpdateStatus(tr('app_update_latest'), 'ok');
   }
@@ -10501,6 +10536,7 @@ function applyUiLanguage() {
     const opt = document.querySelector(`#settingsTabSelect option[value="${tab}"]`);
     if (opt) opt.textContent = text;
   });
+  renderAppUpdateTabBadge(state.appUpdate || {});
 
   const settingsHeaderTitle = document.querySelector('#settingsPanel .settings-header h1');
   const settingsHeaderSub = document.querySelector('#settingsPanel .settings-header p');
@@ -12837,7 +12873,9 @@ if (els.appUpdateChoiceModal) {
 }
 if (els.appUpdateAutoCheckToggle) {
   els.appUpdateAutoCheckToggle.addEventListener('change', () => {
-    applyAppUpdateSettingsUi({ ...(state.appUpdate || {}), auto_check_enabled: !!els.appUpdateAutoCheckToggle.checked });
+    const nextState = { ...(state.appUpdate || {}), auto_check_enabled: !!els.appUpdateAutoCheckToggle.checked };
+    applyAppUpdateSettingsUi(nextState);
+    renderAppUpdateTabBadge(nextState);
   });
 }
 if (els.appUpdateSettingsSaveBtn) {
