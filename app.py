@@ -448,6 +448,7 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
         raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, exiftool={exiftool_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
+UPLOAD_ALLOWED_EXTENSIONS_SETTING = "upload_allowed_extensions"
 PHOTOFRAME_VIDEO_PREPARE_ENABLED = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 try:
     PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE = int(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_MAX_PER_SCOPE", "80") or 80)
@@ -3156,8 +3157,8 @@ def _commit_uploaded_file(
     if not name:
         return (False, "", "Invalid filename")
     ext = Path(name).suffix.lower()
-    if ext not in SUPPORTED_EXTS:
-        return (False, "", f"Unsupported: {name}")
+    if not _is_upload_extension_allowed(ext):
+        return (False, "", _blocked_upload_file_error(name, ext))
 
     target = target_dir / name
     stem = Path(name).stem
@@ -3715,6 +3716,9 @@ def init_db() -> None:
             row7 = conn.execute("SELECT value FROM settings WHERE key='upload_workflow_mode'").fetchone()
             if not row7:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_workflow_mode", UPLOAD_WORKFLOW_MODE_DEFAULT))
+            row8 = conn.execute("SELECT value FROM settings WHERE key=?", (UPLOAD_ALLOWED_EXTENSIONS_SETTING,)).fetchone()
+            if not row8:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", (UPLOAD_ALLOWED_EXTENSIONS_SETTING, json.dumps(sorted(SUPPORTED_EXTS))))
             conn.commit()
         except Exception:
             pass
@@ -4096,6 +4100,7 @@ def enforce_login_for_app():
         "verify_2fa",
         "setup",
         "api_health",
+        "api_auth_session",
         "shared_folder_view",
         "api_share_info",
         "api_share_photos",
@@ -4628,6 +4633,98 @@ def _upload_workflow_settings_payload() -> Dict[str, Any]:
         "thumbnails_use_gpu": bool(UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU),
         "options": [UPLOAD_WORKFLOW_MODE_GENTLE, UPLOAD_WORKFLOW_MODE_AGGRESSIVE],
     }
+
+
+def _default_upload_allowed_extensions() -> list[str]:
+    return sorted({str(ext or "").strip().lower() for ext in SUPPORTED_EXTS if str(ext or "").strip()})
+
+
+def _normalize_upload_extension(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = raw.split("?", 1)[0].split("#", 1)[0].replace("\\", "/").strip()
+    if "/" in raw:
+        raw = raw.rsplit("/", 1)[-1]
+    if raw.startswith("."):
+        ext = raw
+    else:
+        suffix = Path(raw).suffix.lower()
+        ext = suffix if suffix else f".{raw}"
+    return ext if re.fullmatch(r"\.[a-z0-9]{1,16}", ext or "") else ""
+
+
+def _parse_upload_extension_values(value: Any) -> list[Any]:
+    if isinstance(value, str):
+        return [part for part in re.split(r"[\s,;]+", value) if part]
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return []
+
+
+def _normalize_upload_extension_list(value: Any) -> tuple[list[str], list[str], list[str]]:
+    supported = set(_default_upload_allowed_extensions())
+    allowed: list[str] = []
+    seen: set[str] = set()
+    invalid: list[str] = []
+    unsupported: list[str] = []
+    for item in _parse_upload_extension_values(value):
+        raw = str(item or "").strip()
+        ext = _normalize_upload_extension(raw)
+        if not ext:
+            if raw:
+                invalid.append(raw)
+            continue
+        if ext not in supported:
+            unsupported.append(ext)
+            continue
+        if ext not in seen:
+            seen.add(ext)
+            allowed.append(ext)
+    return (sorted(allowed), sorted(set(invalid)), sorted(set(unsupported)))
+
+
+def upload_allowed_extensions() -> set[str]:
+    defaults = set(_default_upload_allowed_extensions())
+    raw = _get_setting(UPLOAD_ALLOWED_EXTENSIONS_SETTING, "")
+    if raw is None or str(raw).strip() == "":
+        return defaults
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        parsed = raw
+    allowed, _, _ = _normalize_upload_extension_list(parsed)
+    return set(allowed) if allowed else defaults
+
+
+def _upload_file_types_settings_payload() -> Dict[str, Any]:
+    supported = _default_upload_allowed_extensions()
+    allowed = sorted(upload_allowed_extensions())
+    allowed_set = set(allowed)
+    blocked = [ext for ext in supported if ext not in allowed_set]
+    return {
+        "ok": True,
+        "allowed_extensions": allowed,
+        "blocked_extensions": blocked,
+        "default_extensions": supported,
+        "supported_extensions": supported,
+        "upload_accept": ",".join(allowed),
+    }
+
+
+def _is_upload_extension_allowed(ext: Any, allowed_exts: Optional[set[str]] = None) -> bool:
+    clean = _normalize_upload_extension(ext)
+    if not clean:
+        return False
+    allowed = allowed_exts if allowed_exts is not None else upload_allowed_extensions()
+    return clean in allowed
+
+
+def _blocked_upload_file_error(filename: str, ext: Any = None) -> str:
+    clean = _normalize_upload_extension(ext if ext is not None else filename)
+    label = clean or "uden filtype"
+    name = str(filename or "").strip() or "fil"
+    return f"Blokeret filtype ({label}): {name}"
 
 
 def library_source_enabled() -> bool:
@@ -12177,6 +12274,7 @@ def api_share_info(token: str):
     if not share_name:
         share_name = folder_label
     visitor_name = _share_get_visitor_name(share)
+    upload_types = _upload_file_types_settings_payload()
     return jsonify(
         {
             "ok": True,
@@ -12192,6 +12290,9 @@ def api_share_info(token: str):
             "visitor_name": visitor_name,
             "password_enabled": _share_is_password_protected(share),
             "expires_at": share["expires_at"],
+            "upload_allowed_extensions": upload_types["allowed_extensions"],
+            "upload_blocked_extensions": upload_types["blocked_extensions"],
+            "upload_accept": upload_types["upload_accept"],
         }
     )
 
@@ -12328,14 +12429,19 @@ def api_share_upload(token: str):
     # Use the same commit + postprocess flow as user uploads
     rel_prefix = "uploads/originals/"
     uploaded_by = uploader_label
+    allowed_upload_exts = upload_allowed_extensions()
     for f in files:
         try:
             name = secure_filename(f.filename or "")
             if not name:
                 continue
             ext = Path(name).suffix.lower()
-            if ext not in SUPPORTED_EXTS:
-                errors.append(f"Unsupported: {name}")
+            if not _is_upload_extension_allowed(ext, allowed_upload_exts):
+                errors.append(_blocked_upload_file_error(name, ext))
+                try:
+                    log_event("share_upload_skip_blocked_file_type", filename=name, ext=ext)
+                except Exception:
+                    pass
                 continue
 
             # Write to a temporary file first to reuse _commit_uploaded_file semantics
@@ -12369,7 +12475,7 @@ def api_share_upload(token: str):
         except Exception:
             pass
 
-    return jsonify({"ok": True, "saved": saved, "errors": errors})
+    return jsonify({"ok": bool(saved) or not errors, "saved": saved, "errors": errors})
 
 
 # --- Share-link TUS endpoints (no login; token-based auth) ---
@@ -12419,6 +12525,17 @@ def api_share_tus_create(token: str):
     filename = str(meta.get("filename") or "").strip()
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, _tus_headers()
+    filename_ext = Path(secure_filename(filename) or filename).suffix.lower()
+    if not _is_upload_extension_allowed(filename_ext):
+        try:
+            log_event("share_upload_skip_blocked_file_type", filename=filename, ext=filename_ext)
+        except Exception:
+            pass
+        return jsonify({
+            "ok": False,
+            "error": _blocked_upload_file_error(filename, filename_ext),
+            "blocked_extension": filename_ext,
+        }), 415, _tus_headers()
 
     # Determine target dir from share's primary folder
     with closing(get_conn()) as conn:
@@ -17812,6 +17929,30 @@ def api_settings_upload_workflow():
     return jsonify(_upload_workflow_settings_payload())
 
 
+@app.route("/api/settings/upload-file-types", methods=["GET", "POST"])
+def api_settings_upload_file_types():
+    if request.method == "POST":
+        fb = _forbid_user_role_for_maintenance()
+        if fb:
+            return jsonify(fb[0]), fb[1]
+        body = request.get_json(silent=True) or {}
+        if bool(body.get("reset")):
+            allowed = _default_upload_allowed_extensions()
+        else:
+            raw_values = body.get("allowed_extensions", body.get("extensions", None))
+            if raw_values is None:
+                return jsonify({"ok": False, "error": "Manglende filtype-liste"}), 400
+            allowed, invalid, unsupported = _normalize_upload_extension_list(raw_values)
+            if invalid:
+                return jsonify({"ok": False, "error": "Ugyldige filtyper: " + ", ".join(invalid[:12])}), 400
+            if unsupported:
+                return jsonify({"ok": False, "error": "Ikke understøttet som billed/video-type: " + ", ".join(unsupported[:12])}), 400
+            if not allowed:
+                return jsonify({"ok": False, "error": "Whitelist må ikke være tom"}), 400
+        _set_setting(UPLOAD_ALLOWED_EXTENSIONS_SETTING, json.dumps(sorted(allowed)))
+    return jsonify(_upload_file_types_settings_payload())
+
+
 # --- Upload endpoint (drag & drop) ---
 @app.route("/api/upload/tus", methods=["OPTIONS"])
 @app.route("/api/upload/tus/<upload_id>", methods=["OPTIONS"])
@@ -17849,6 +17990,17 @@ def api_upload_tus_create():
     filename = str(meta.get("filename") or "").strip()
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, _tus_headers()
+    filename_ext = Path(secure_filename(filename) or filename).suffix.lower()
+    if not _is_upload_extension_allowed(filename_ext):
+        try:
+            log_event("upload_skip_blocked_file_type", filename=filename, ext=filename_ext)
+        except Exception:
+            pass
+        return jsonify({
+            "ok": False,
+            "error": _blocked_upload_file_error(filename, filename_ext),
+            "blocked_extension": filename_ext,
+        }), 415, _tus_headers()
 
     destination = get_upload_destination()
     destination_override = str(meta.get("destination") or "").strip().lower()
@@ -18104,15 +18256,16 @@ def api_upload():
                     client_meta[n] = lm
     except Exception:
         client_meta = {}
+    allowed_upload_exts = upload_allowed_extensions()
     for f in files:
         try:
             name = secure_filename(f.filename or "")
             if not name:
                 continue
             ext = Path(name).suffix.lower()
-            if ext not in SUPPORTED_EXTS:
-                errors.append(f"Unsupported: {name}")
-                try: log_event("upload_skip_unsupported", filename=name, ext=ext)
+            if not _is_upload_extension_allowed(ext, allowed_upload_exts):
+                errors.append(_blocked_upload_file_error(name, ext))
+                try: log_event("upload_skip_blocked_file_type", filename=name, ext=ext)
                 except Exception: pass
                 continue
             # Ensure unique filename
@@ -18179,7 +18332,7 @@ def api_upload():
         log_event("upload_done", saved=len(saved), errors=len(errors))
     except Exception:
         pass
-    return jsonify({"ok": True, "saved": saved, "errors": errors})
+    return jsonify({"ok": bool(saved) or not errors, "saved": saved, "errors": errors})
 
 
 @app.route("/api/upload/postprocess", methods=["POST"])
@@ -18289,7 +18442,7 @@ def _no_store_response(resp):
 def login():
     ensure_runtime_bootstrap()
     if current_user.is_authenticated:
-        return redirect(_safe_auth_next_url(request.args.get("next")))
+        return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -18311,21 +18464,21 @@ def login():
                     _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_setup_required")
                     user = _row_to_user(row)
                     login_user(user)
-                    return redirect(url_for("setup_2fa"))
+                    return _no_store_response(redirect(url_for("setup_2fa")))
                 # Otherwise require 2FA unless trusted cookie is valid
                 if _trust_cookie_valid_for(int(row["id"])):
                     _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "trusted_device")
                     user = _row_to_user(row)
                     login_user(user)
-                    return redirect(_safe_auth_next_url(request.args.get("next")))
+                    return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
                 _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_required")
-                return redirect(url_for("verify_2fa", next=request.args.get("next")))
+                return _no_store_response(redirect(url_for("verify_2fa", next=request.args.get("next"))))
             _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "password_ok")
             user = _row_to_user(row)
             login_user(user)
-            return redirect(_safe_auth_next_url(request.args.get("next")))
+            return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
         _log_login_attempt(username, None, None, False, "login_failed", "invalid_credentials")
         return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
     created = True if (request.args.get("created") in ("1", "true", "True")) else False
@@ -18336,23 +18489,31 @@ def login():
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for("login"))
+    return _no_store_response(redirect(url_for("login")))
+
+
+@app.route("/api/auth/session", methods=["GET"])
+def api_auth_session():
+    return _no_store_response(jsonify({
+        "ok": True,
+        "authenticated": bool(current_user.is_authenticated),
+    }))
 
 
 @app.route("/login/2fa", methods=["GET", "POST"])
 def verify_2fa():
     from flask import session
     if current_user.is_authenticated:
-        return redirect(_safe_auth_next_url(request.args.get("next")))
+        return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
     uid = session.get("2fa_user_id")
     if not uid:
-        return redirect(url_for("login"))
+        return _no_store_response(redirect(url_for("login")))
     if request.method == "POST":
         code = (request.form.get("code") or "").strip()
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, username, is_admin, role, totp_secret, totp_remember_days FROM users WHERE id= ?", (uid,)).fetchone()
         if not row or not row["totp_secret"]:
-            return redirect(url_for("login"))
+            return _no_store_response(redirect(url_for("login")))
         totp = pyotp.TOTP(row["totp_secret"]) 
         if totp.verify(code, valid_window=1):
             _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), True, "login_2fa", "2fa_ok")
@@ -18370,7 +18531,7 @@ def verify_2fa():
                 token, max_age = _make_trust_cookie(int(row["id"]), pref_days)
                 if token:
                     resp.set_cookie("fl_trust", token, max_age=max_age, httponly=True, samesite="Lax", path="/")
-            return resp
+            return _no_store_response(resp)
         _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), False, "login_2fa", "invalid_code")
         return _no_store_response(make_response(render_template("2fa_verify.html", error=_ui_text("invalid_code"))))
     # GET

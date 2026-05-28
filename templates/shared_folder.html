@@ -18,7 +18,7 @@
         <button id="uploadWrap" class="btn" type="button" style="display:none;">
           <span id="uploadLabel">V&aelig;lg filer</span>
         </button>
-        <input id="shareFileInput" type="file" accept="image/*,video/*,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef" multiple style="display:none;" />
+        <input id="shareFileInput" type="file" accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef,.mp4,.m4v,.mov,.avi,.mkv,.webm,.3gp" multiple style="display:none;" />
         <button id="deleteBtn" class="btn danger" style="display:none;" disabled>Slet valgte</button>
         <button id="shareMoreBtn" class="btn" type="button" style="display:none;" title="Flere" aria-label="Flere">&#8942;</button>
         <div id="shareMoreMenu" class="mapper-header-menu" aria-label="Share menu">
@@ -31,6 +31,11 @@
     </header>
 
     <section id="shareStatus" class="status hidden"></section>
+
+    <section id="shareBlockedTypes" class="sidebar-card share-blocked-types hidden" aria-live="polite">
+      <div class="sidebar-card-title">Blokerede filtyper</div>
+      <div id="shareBlockedTypesList" class="mini-label"></div>
+    </section>
 
     <section id="shareUploadStatus" class="share-upload-status hidden" aria-live="polite">
       <div class="share-upload-head">

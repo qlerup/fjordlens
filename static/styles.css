@@ -408,9 +408,64 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 .app-update-log .app-log-err { color: #f87171; font-weight: 700; }
 .app-update-log .app-log-build { color: #06b6d4; font-weight: 700; }
 .app-update-log .app-log-accent { color: #93c5fd; }
+.file-type-add-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 280px) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.file-type-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 32px;
+  margin: 8px 0 10px;
+}
+.file-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(93, 142, 255, 0.12);
+  color: var(--text);
+  padding: 4px 8px 4px 10px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1;
+}
+.file-type-chip.muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+}
+.file-type-chip button {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+}
+.file-type-chip button:hover {
+  background: rgba(255, 107, 107, 0.24);
+  color: #fecaca;
+}
+.share-blocked-types {
+  margin: 12px 0;
+}
 @media (max-width: 760px) {
   .app-update-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .file-type-add-row {
+    grid-template-columns: 1fr;
   }
 }
 .sidebar-footer {

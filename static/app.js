@@ -87,6 +87,17 @@
   uploadWorkflowExtraInfo: document.getElementById("uploadWorkflowExtraInfo"),
   uploadWorkflowSaveBtn: document.getElementById("uploadWorkflowSaveBtn"),
   uploadWorkflowStatus: document.getElementById("uploadWorkflowStatus"),
+  fileTypesTitle: document.getElementById("fileTypesTitle"),
+  fileTypesDesc: document.getElementById("fileTypesDesc"),
+  fileTypeInput: document.getElementById("fileTypeInput"),
+  fileTypeAddBtn: document.getElementById("fileTypeAddBtn"),
+  fileTypeResetBtn: document.getElementById("fileTypeResetBtn"),
+  fileTypeSaveBtn: document.getElementById("fileTypeSaveBtn"),
+  fileTypeAllowedList: document.getElementById("fileTypeAllowedList"),
+  fileTypeBlockedTitle: document.getElementById("fileTypeBlockedTitle"),
+  fileTypeBlockedDesc: document.getElementById("fileTypeBlockedDesc"),
+  fileTypeBlockedList: document.getElementById("fileTypeBlockedList"),
+  fileTypeStatus: document.getElementById("fileTypeStatus"),
   heicConvertToggle: document.getElementById("heicConvertToggle"),
   heicKeepToggle: document.getElementById("heicKeepToggle"),
   heicStatus: document.getElementById("heicStatus"),
@@ -730,6 +741,9 @@ const I18N = {
     tab_update: 'Opdatering',
     tab_ai: 'AI',
     tab_upload_workflow: 'Upload workflow',
+    tab_file_types: 'Filtyper',
+    tab_hardware: 'Hardware',
+    tab_heic: 'Konvertering',
     tab_dns: 'DNS',
     tab_shared: 'Delte',
     tab_logs: 'Logs',
@@ -750,6 +764,22 @@ const I18N = {
     upload_workflow_load_failed: 'Kunne ikke hente upload workflow.',
     upload_workflow_save_failed: 'Kunne ikke gemme upload workflow.',
     upload_workflow_running: 'Parallel behandling…',
+    file_types_title: 'Upload filtyper',
+    file_types_desc: 'Whitelist de billed- og videofiltyper, FjordLens må modtage.',
+    file_types_add: 'Tilføj',
+    file_types_reset: 'Nulstil',
+    file_types_save: 'Gem filtyper',
+    file_types_saved: 'Filtyper gemt.',
+    file_types_load_failed: 'Kunne ikke hente filtyper.',
+    file_types_save_failed: 'Kunne ikke gemme filtyper.',
+    file_types_invalid: 'Skriv en filtype som .png.',
+    file_types_unsupported: '{ext} er ikke en understøttet billed- eller videotype.',
+    file_types_duplicate: '{ext} er allerede på listen.',
+    file_types_allowed_empty: 'Ingen filtyper er tilladt.',
+    file_types_blocked_title: 'Blokerede filtyper',
+    file_types_blocked_desc: 'Understøttede medietyper, der ikke er på whitelist.',
+    file_types_blocked_empty: 'Ingen understøttede filtyper er blokeret.',
+    upload_blocked_file_types: 'Blokeret filtype: {types}. Kun billeder og videoer uploades.',
     upload_proc_metadata: 'Metadata',
     upload_proc_thumbnails: 'Thumbnails',
     upload_proc_faces: 'Ansigter',
@@ -1440,6 +1470,9 @@ const I18N = {
     tab_update: 'Update',
     tab_ai: 'AI',
     tab_upload_workflow: 'Upload workflow',
+    tab_file_types: 'File types',
+    tab_hardware: 'Hardware',
+    tab_heic: 'Conversion',
     tab_dns: 'DNS',
     tab_shared: 'Shared',
     tab_logs: 'Logs',
@@ -1460,6 +1493,22 @@ const I18N = {
     upload_workflow_load_failed: 'Could not load upload workflow.',
     upload_workflow_save_failed: 'Could not save upload workflow.',
     upload_workflow_running: 'Parallel processing…',
+    file_types_title: 'Upload file types',
+    file_types_desc: 'Whitelist the image and video file types FjordLens may receive.',
+    file_types_add: 'Add',
+    file_types_reset: 'Reset',
+    file_types_save: 'Save file types',
+    file_types_saved: 'File types saved.',
+    file_types_load_failed: 'Could not load file types.',
+    file_types_save_failed: 'Could not save file types.',
+    file_types_invalid: 'Enter a file type like .png.',
+    file_types_unsupported: '{ext} is not a supported image or video type.',
+    file_types_duplicate: '{ext} is already on the list.',
+    file_types_allowed_empty: 'No file types are allowed.',
+    file_types_blocked_title: 'Blocked file types',
+    file_types_blocked_desc: 'Supported media types that are not on the whitelist.',
+    file_types_blocked_empty: 'No supported file types are blocked.',
+    upload_blocked_file_types: 'Blocked file type: {types}. Only photos and videos are uploaded.',
     upload_proc_metadata: 'Metadata',
     upload_proc_thumbnails: 'Thumbnails',
     upload_proc_faces: 'Faces',
@@ -2137,7 +2186,7 @@ const I18N = {
 };
 
 const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'photoframe', 'personer', 'settings']);
-const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'dns', 'shared', 'logs', 'users', 'profile', 'other']);
+const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'shared', 'logs', 'users', 'profile', 'other']);
 
 function _normalizeSettingsTab(tab) {
   const raw = String(tab || '').trim().toLowerCase();
@@ -2323,7 +2372,7 @@ let state = {
   // Paging for large folders (timeline and mapper views)
   photosPageOffset: 0,
   photosPageLimit: 300,
-  mapperPageRows: 10,
+  mapperPageRows: 5,
   photosHasMore: false,
   photosLoading: false,
   currentUser: {
@@ -2373,6 +2422,9 @@ let state = {
   uploadWorkflowMode: 'gentle',
   uploadWorkflowBatchSize: 10,
   uploadWorkflowThumbnailsUseGpu: false,
+  uploadFileTypes: null,
+  uploadFileTypesLoaded: false,
+  uploadFileTypesLoading: null,
   appUpdate: null,
   appUpdateReconnectUntil: 0,
 };
@@ -5043,10 +5095,10 @@ function estimateMapperPageLimit() {
     const tileWidth = parseFloat(rootStyle.getPropertyValue('--folder-tile')) || 230;
     const gap = gridStyle ? (parseFloat(gridStyle.columnGap || gridStyle.gap) || 12) : 12;
     const cols = Math.max(1, Math.floor((gridWidth + gap) / (tileWidth + gap)));
-    const rows = Math.max(1, Number(state.mapperPageRows || 10));
-    return Math.max(cols * rows, 20);
+    const rows = Math.max(1, Number(state.mapperPageRows || 5));
+    return Math.max(cols * rows, cols);
   } catch {
-    return 80;
+    return 30;
   }
 }
 
@@ -7146,10 +7198,11 @@ function uploadSingleFile(file, options = {}, onProgress = null) {
     xhr.onload = () => {
       let payload = {};
       try { payload = JSON.parse(xhr.responseText || '{}'); } catch {}
-      const ok = xhr.status >= 200 && xhr.status < 300 && payload && payload.ok !== false;
       const saved = Array.isArray(payload.saved) ? payload.saved.length : 0;
       const errors = Array.isArray(payload.errors) ? payload.errors : [];
-      const errorMsg = (payload && payload.error) || (errors[0] && (errors[0].error || errors[0].name)) || '';
+      const ok = xhr.status >= 200 && xhr.status < 300 && payload && payload.ok !== false && !(saved <= 0 && errors.length > 0);
+      const firstError = errors[0];
+      const errorMsg = (payload && payload.error) || (typeof firstError === 'string' ? firstError : (firstError && (firstError.error || firstError.name))) || '';
       resolve({ ok, saved, errorMsg });
     };
     xhr.onerror = () => resolve({ ok: false, saved: 0, errorMsg: 'Netværksfejl' });
@@ -7445,8 +7498,15 @@ async function uploadSingleFileTusWithAutoResume(file, options = {}, onProgress 
 async function uploadFiles(fileList, options = {}) {
   ensureUploadOverlayRefs();
   ensureUploadMonitorRefs();
-  const files = Array.from(fileList || []).filter(f => !!f && f.name);
-  if (!files.length) return { ok: false, queued: 0 };
+  const selectedFiles = Array.from(fileList || []).filter(f => !!f && f.name);
+  if (!selectedFiles.length) return { ok: false, queued: 0 };
+  await ensureUploadFileTypeSettingsLoaded();
+  const split = filterUploadFilesByAllowed(selectedFiles);
+  const files = split.allowed;
+  if (!files.length) {
+    if (split.blocked.length) showBlockedUploadFiles(split.blocked);
+    return { ok: false, queued: 0 };
+  }
   const destination = (options && options.destination) ? String(options.destination) : '';
   const subdir = (options && Object.prototype.hasOwnProperty.call(options, 'subdir')) ? String(options.subdir || '') : null;
   const totalSize = files.reduce((s,f)=>s+ (f.size||0), 0);
@@ -7480,6 +7540,7 @@ async function uploadFiles(fileList, options = {}) {
     }
     if (els.uploadProgressBar) els.uploadProgressBar.style.width = '100%';
   }
+  if (split.blocked.length) showBlockedUploadFiles(split.blocked);
 
   uploadUiState.totalFiles += files.length;
   uploadUiState.totalBytes += totalSize;
@@ -8743,6 +8804,235 @@ async function saveUploadWorkflowSettings() {
       saveBtn.textContent = original || tr('upload_workflow_save');
     }
   }
+}
+
+function normalizeUploadFileExtension(value) {
+  let raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  raw = raw.split('?', 1)[0].split('#', 1)[0].replace(/\\/g, '/').trim();
+  if (raw.includes('/')) raw = raw.split('/').pop() || '';
+  let ext = raw.startsWith('.') ? raw : '';
+  if (!ext) {
+    const dot = raw.lastIndexOf('.');
+    ext = dot >= 0 ? raw.slice(dot) : `.${raw}`;
+  }
+  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : '';
+}
+
+function _summarizeFileExtensions(files) {
+  const counts = new Map();
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const ext = normalizeUploadFileExtension(file && file.name ? file.name : '') || 'uden filtype';
+    counts.set(ext, (counts.get(ext) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    .map(([ext, count]) => count > 1 ? `${ext} (${count})` : ext)
+    .join(', ');
+}
+
+function showFileTypeStatus(message, kind = 'ok') {
+  if (!els.fileTypeStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.fileTypeStatus.classList.add('hidden');
+    els.fileTypeStatus.textContent = '';
+    els.fileTypeStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.fileTypeStatus.textContent = msg;
+  els.fileTypeStatus.classList.remove('hidden');
+  els.fileTypeStatus.classList.toggle('ok', kind === 'ok');
+  els.fileTypeStatus.classList.toggle('err', kind !== 'ok');
+}
+
+function updateUploadAcceptFromFileTypes() {
+  const data = state.uploadFileTypes || {};
+  const accept = String(data.upload_accept || '').trim();
+  if (els.mapperUploadInput && accept) els.mapperUploadInput.accept = accept;
+}
+
+function renderUploadFileTypeSettings() {
+  const data = state.uploadFileTypes || {};
+  const allowed = Array.isArray(data.allowed_extensions) ? data.allowed_extensions.slice().sort() : [];
+  const blocked = Array.isArray(data.blocked_extensions) ? data.blocked_extensions.slice().sort() : [];
+  if (els.fileTypeAllowedList) {
+    if (!allowed.length) {
+      els.fileTypeAllowedList.innerHTML = `<div class="mini-label">${escapeHtml(tr('file_types_allowed_empty'))}</div>`;
+    } else {
+      els.fileTypeAllowedList.innerHTML = allowed.map((ext) => (
+        `<span class="file-type-chip">` +
+        `<span>${escapeHtml(ext)}</span>` +
+        `<button type="button" data-file-type-remove="${escapeHtml(ext)}" aria-label="Fjern ${escapeHtml(ext)}">&times;</button>` +
+        `</span>`
+      )).join('');
+    }
+  }
+  if (els.fileTypeBlockedList) {
+    if (!blocked.length) {
+      els.fileTypeBlockedList.innerHTML = `<div class="mini-label">${escapeHtml(tr('file_types_blocked_empty'))}</div>`;
+    } else {
+      els.fileTypeBlockedList.innerHTML = blocked.map((ext) => (
+        `<span class="file-type-chip muted">${escapeHtml(ext)}</span>`
+      )).join('');
+    }
+  }
+  updateUploadAcceptFromFileTypes();
+}
+
+function _applyUploadFileTypesData(data) {
+  if (!data || typeof data !== 'object') return;
+  const allowed = Array.isArray(data.allowed_extensions) ? data.allowed_extensions.map(normalizeUploadFileExtension).filter(Boolean) : [];
+  const supported = Array.isArray(data.supported_extensions) ? data.supported_extensions.map(normalizeUploadFileExtension).filter(Boolean) : [];
+  const defaults = Array.isArray(data.default_extensions) ? data.default_extensions.map(normalizeUploadFileExtension).filter(Boolean) : supported.slice();
+  const allowedSet = new Set(allowed);
+  const blocked = Array.isArray(data.blocked_extensions)
+    ? data.blocked_extensions.map(normalizeUploadFileExtension).filter(Boolean)
+    : supported.filter((ext) => !allowedSet.has(ext));
+  state.uploadFileTypes = {
+    allowed_extensions: Array.from(new Set(allowed)).sort(),
+    supported_extensions: Array.from(new Set(supported)).sort(),
+    default_extensions: Array.from(new Set(defaults)).sort(),
+    blocked_extensions: Array.from(new Set(blocked)).sort(),
+    upload_accept: String(data.upload_accept || allowed.join(',')).trim(),
+  };
+  state.uploadFileTypesLoaded = true;
+  renderUploadFileTypeSettings();
+}
+
+async function loadUploadFileTypeSettings(options = {}) {
+  const silent = !!(options && options.silent);
+  if (!silent) showFileTypeStatus('');
+  try {
+    const res = await fetch('/api/settings/upload-file-types');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      if (!silent) showFileTypeStatus((data && data.error) || tr('file_types_load_failed'), 'err');
+      return false;
+    }
+    _applyUploadFileTypesData(data);
+    return true;
+  } catch {
+    if (!silent) showFileTypeStatus(tr('file_types_load_failed'), 'err');
+    return false;
+  }
+}
+
+async function ensureUploadFileTypeSettingsLoaded() {
+  if (state.uploadFileTypesLoaded && state.uploadFileTypes) return true;
+  if (state.uploadFileTypesLoading) return state.uploadFileTypesLoading;
+  state.uploadFileTypesLoading = loadUploadFileTypeSettings({ silent: true }).finally(() => {
+    state.uploadFileTypesLoading = null;
+  });
+  return state.uploadFileTypesLoading;
+}
+
+function updateUploadFileTypeBlockedFromAllowed() {
+  const data = state.uploadFileTypes || {};
+  const supported = Array.isArray(data.supported_extensions) ? data.supported_extensions : [];
+  const allowedSet = new Set(Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []);
+  data.blocked_extensions = supported.filter((ext) => !allowedSet.has(ext)).sort();
+  data.upload_accept = (Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []).join(',');
+}
+
+function addUploadFileTypeFromInput() {
+  if (!els.fileTypeInput) return;
+  const ext = normalizeUploadFileExtension(els.fileTypeInput.value);
+  if (!ext) {
+    showFileTypeStatus(tr('file_types_invalid'), 'err');
+    return;
+  }
+  const data = state.uploadFileTypes || {};
+  const supported = new Set(Array.isArray(data.supported_extensions) ? data.supported_extensions : []);
+  if (supported.size && !supported.has(ext)) {
+    showFileTypeStatus(tr('file_types_unsupported').replace('{ext}', ext), 'err');
+    return;
+  }
+  const allowed = new Set(Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []);
+  if (allowed.has(ext)) {
+    showFileTypeStatus(tr('file_types_duplicate').replace('{ext}', ext), 'err');
+    return;
+  }
+  allowed.add(ext);
+  state.uploadFileTypes = {
+    ...data,
+    allowed_extensions: Array.from(allowed).sort(),
+  };
+  updateUploadFileTypeBlockedFromAllowed();
+  els.fileTypeInput.value = '';
+  showFileTypeStatus('');
+  renderUploadFileTypeSettings();
+}
+
+async function saveUploadFileTypeSettings() {
+  const data = state.uploadFileTypes || {};
+  const allowed = Array.isArray(data.allowed_extensions) ? data.allowed_extensions.slice().sort() : [];
+  const saveBtn = els.fileTypeSaveBtn;
+  const original = saveBtn ? saveBtn.textContent : tr('file_types_save');
+  if (!allowed.length) {
+    showFileTypeStatus(tr('file_types_allowed_empty'), 'err');
+    return;
+  }
+  showFileTypeStatus('');
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.classList.add('loading');
+    }
+    const res = await fetch('/api/settings/upload-file-types', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allowed_extensions: allowed }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || !payload || !payload.ok) {
+      showFileTypeStatus((payload && payload.error) || tr('file_types_save_failed'), 'err');
+      return;
+    }
+    _applyUploadFileTypesData(payload);
+    showFileTypeStatus(tr('file_types_saved'), 'ok');
+  } catch {
+    showFileTypeStatus(tr('file_types_save_failed'), 'err');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('loading');
+      saveBtn.textContent = original || tr('file_types_save');
+    }
+  }
+}
+
+function filterUploadFilesByAllowed(files) {
+  const data = state.uploadFileTypes || {};
+  const allowed = new Set(Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []);
+  if (!allowed.size) return { allowed: files, blocked: [] };
+  const pass = [];
+  const blocked = [];
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const ext = normalizeUploadFileExtension(file && file.name ? file.name : '');
+    if (ext && allowed.has(ext)) pass.push(file);
+    else blocked.push(file);
+  });
+  return { allowed: pass, blocked };
+}
+
+function showBlockedUploadFiles(blockedFiles) {
+  const summary = _summarizeFileExtensions(blockedFiles);
+  if (!summary) return;
+  showStatus(tr('upload_blocked_file_types').replace('{types}', summary), 'err');
+  try {
+    ensureUploadMonitorRefs();
+    if (els.uploadMonitor) {
+      showUploadMonitor();
+      const list = Array.isArray(blockedFiles) ? blockedFiles.slice(0, 8) : [];
+      list.forEach((file, idx) => {
+        addUploadMonitorItem(file && file.name ? file.name : 'fil', false, 'Blokeret filtype', `blocked-${Date.now()}-${idx}`, 0);
+      });
+      if (els.uploadMonitorSummary) els.uploadMonitorSummary.textContent = `Blokeret: ${blockedFiles.length} fil(er)`;
+      if (els.uploadMonitorCurrent) els.uploadMonitorCurrent.textContent = tr('upload_blocked_file_types').replace('{types}', summary);
+      scheduleUploadMonitorAutoHide(10000);
+    }
+  } catch {}
 }
 
 function showAppUpdateStatus(message, kind = 'ok') {
@@ -10757,6 +11047,9 @@ function applyUiLanguage() {
     update: tr('tab_update'),
     ai: tr('tab_ai'),
     upload_workflow: tr('tab_upload_workflow'),
+    file_types: tr('tab_file_types'),
+    hardware: tr('tab_hardware'),
+    heic: tr('tab_heic'),
     dns: tr('tab_dns'),
     shared: tr('tab_shared'),
     logs: tr('tab_logs'),
@@ -10845,6 +11138,15 @@ function applyUiLanguage() {
       .replace('{thumb_runtime}', runtimeText)
       .replace('{batch_size}', String(state.uploadWorkflowBatchSize || 10));
   }
+  if (els.fileTypesTitle) els.fileTypesTitle.textContent = tr('file_types_title');
+  if (els.fileTypesDesc) els.fileTypesDesc.textContent = tr('file_types_desc');
+  if (els.fileTypeInput) els.fileTypeInput.placeholder = '.png';
+  if (els.fileTypeAddBtn) els.fileTypeAddBtn.textContent = tr('file_types_add');
+  if (els.fileTypeResetBtn) els.fileTypeResetBtn.textContent = tr('file_types_reset');
+  if (els.fileTypeSaveBtn && !els.fileTypeSaveBtn.classList.contains('loading')) els.fileTypeSaveBtn.textContent = tr('file_types_save');
+  if (els.fileTypeBlockedTitle) els.fileTypeBlockedTitle.textContent = tr('file_types_blocked_title');
+  if (els.fileTypeBlockedDesc) els.fileTypeBlockedDesc.textContent = tr('file_types_blocked_desc');
+  if (state.uploadFileTypes) renderUploadFileTypeSettings();
   updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
   updateRuntimeIndicator(els.aiDescribeRuntime, state.aiDescribeRuntime);
   updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
@@ -13030,6 +13332,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'upload_workflow') {
       loadUploadWorkflowSettings();
     }
+    if (tab === 'file_types') {
+      loadUploadFileTypeSettings();
+    }
     if (tab === 'dns') {
       loadDnsSettings();
     }
@@ -13068,6 +13373,46 @@ if (els.aiPerfSaveBtn) {
 if (els.uploadWorkflowSaveBtn) {
   els.uploadWorkflowSaveBtn.addEventListener('click', async () => {
     await saveUploadWorkflowSettings();
+  });
+}
+if (els.fileTypeAddBtn) {
+  els.fileTypeAddBtn.addEventListener('click', addUploadFileTypeFromInput);
+}
+if (els.fileTypeInput) {
+  els.fileTypeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addUploadFileTypeFromInput();
+    }
+  });
+}
+if (els.fileTypeResetBtn) {
+  els.fileTypeResetBtn.addEventListener('click', () => {
+    const data = state.uploadFileTypes || {};
+    const defaults = Array.isArray(data.default_extensions) ? data.default_extensions.slice().sort() : [];
+    if (!defaults.length) return;
+    state.uploadFileTypes = { ...data, allowed_extensions: defaults };
+    updateUploadFileTypeBlockedFromAllowed();
+    showFileTypeStatus('');
+    renderUploadFileTypeSettings();
+  });
+}
+if (els.fileTypeSaveBtn) {
+  els.fileTypeSaveBtn.addEventListener('click', async () => {
+    await saveUploadFileTypeSettings();
+  });
+}
+if (els.fileTypeAllowedList) {
+  els.fileTypeAllowedList.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('[data-file-type-remove]') : null;
+    if (!btn) return;
+    const ext = normalizeUploadFileExtension(btn.getAttribute('data-file-type-remove'));
+    if (!ext || !state.uploadFileTypes) return;
+    const allowed = (state.uploadFileTypes.allowed_extensions || []).filter((item) => item !== ext);
+    state.uploadFileTypes = { ...state.uploadFileTypes, allowed_extensions: allowed };
+    updateUploadFileTypeBlockedFromAllowed();
+    showFileTypeStatus('');
+    renderUploadFileTypeSettings();
   });
 }
 if (els.appUpdateCheckBtn) {
@@ -14036,6 +14381,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
     // Fallback: do not start logs if uncertain about role
     state.logsRunning = false;
   }
+  loadUploadFileTypeSettings({ silent: true }).catch(() => {});
   // Load HEIC and RAW settings into toggles
   try {
     fetch('/api/settings/heic').then(r=>r.json()).then(d=>{
@@ -15205,7 +15551,7 @@ function classifySeverity(eventName) {
   // Errors: hard failures
   if (ev === 'error' || ev.endsWith('_error') || ev.endsWith('_fail') || ev === 'ai_http_error') return 'err';
   // Warnings: skipped or not critical changes
-  if (ev === 'skip_unchanged' || ev === 'no_new' || ev === 'upload_skip_unsupported' || ev === 'missing' || ev.endsWith('_check')) return 'warn';
+  if (ev === 'skip_unchanged' || ev === 'no_new' || ev === 'upload_skip_unsupported' || ev === 'upload_skip_blocked_file_type' || ev === 'share_upload_skip_blocked_file_type' || ev === 'missing' || ev.endsWith('_check')) return 'warn';
   // Success/info: the rest of positive events
   if (ev.endsWith('_done') || ev.endsWith('_saved') || ev.endsWith('_ok') || ev === 'indexed' || ev === 'faces_detect' || ev === 'faces_index_done' || ev === 'face_saved' || ev === 'upload_indexed' || ev === 'rethumb_ok') return 'ok';
   return 'info';

@@ -2,6 +2,8 @@ const els = {
   title: document.getElementById('shareTitle'),
   meta: document.getElementById('shareMeta'),
   status: document.getElementById('shareStatus'),
+  blockedTypes: document.getElementById('shareBlockedTypes'),
+  blockedTypesList: document.getElementById('shareBlockedTypesList'),
   shareUploadStatus: document.getElementById('shareUploadStatus'),
   shareUploadLabel: document.getElementById('shareUploadLabel'),
   shareUploadPct: document.getElementById('shareUploadPct'),
@@ -56,6 +58,7 @@ const state = {
   currentPath: '', // relative to share root (e.g. "sub/child")
   visible: [],    // items filtered to currentPath
   viewerIndex: -1,
+  uploadAllowedExtensions: [],
 };
 
 const uploadProgress = {
@@ -209,6 +212,11 @@ function t(key) {
     no_files: 'Ingen filer valgt',
     upload_done: 'Upload fuldf\u00f8rt',
     upload_failed: 'Upload fejlede',
+    blocked_file_types: 'Blokerede filtyper',
+    blocked_file_types_none: 'Ingen blokerede filtyper',
+    blocked_file_types_status: 'Blokeret filtype: {types}. Kun billeder og videoer uploades.',
+    blocked_file_types_selected: 'Valgt og blokeret: {types}',
+    blocked_file_types_configured: 'Blokeret fra whitelist: {types}',
     delete_done: 'Sletning fuldf\u00f8rt',
     delete_failed: 'Sletning fejlede',
     password_failed: 'Forkert adgangskode',
@@ -237,6 +245,11 @@ function t(key) {
     no_files: 'No files selected',
     upload_done: 'Upload completed',
     upload_failed: 'Upload failed',
+    blocked_file_types: 'Blocked file types',
+    blocked_file_types_none: 'No blocked file types',
+    blocked_file_types_status: 'Blocked file type: {types}. Only photos and videos are uploaded.',
+    blocked_file_types_selected: 'Selected and blocked: {types}',
+    blocked_file_types_configured: 'Blocked from whitelist: {types}',
     delete_done: 'Delete completed',
     delete_failed: 'Delete failed',
     password_failed: 'Wrong password',
@@ -258,6 +271,73 @@ function showStatus(text, type = 'ok') {
 function hideStatus() {
   if (!els.status) return;
   els.status.classList.add('hidden');
+}
+
+function normalizeUploadFileExtension(value) {
+  let raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  raw = raw.split('?', 1)[0].split('#', 1)[0].replace(/\\/g, '/').trim();
+  if (raw.includes('/')) raw = raw.split('/').pop() || '';
+  let ext = raw.startsWith('.') ? raw : '';
+  if (!ext) {
+    const dot = raw.lastIndexOf('.');
+    ext = dot >= 0 ? raw.slice(dot) : `.${raw}`;
+  }
+  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : '';
+}
+
+function summarizeFileExtensions(files) {
+  const counts = new Map();
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const ext = normalizeUploadFileExtension(file && file.name ? file.name : '') || 'uden filtype';
+    counts.set(ext, (counts.get(ext) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    .map(([ext, count]) => count > 1 ? `${ext} (${count})` : ext)
+    .join(', ');
+}
+
+function applyShareUploadFileTypes(data = {}) {
+  const allowed = Array.isArray(data.upload_allowed_extensions)
+    ? data.upload_allowed_extensions.map(normalizeUploadFileExtension).filter(Boolean)
+    : [];
+  state.uploadAllowedExtensions = Array.from(new Set(allowed)).sort();
+  const accept = String(data.upload_accept || state.uploadAllowedExtensions.join(',')).trim();
+  if (els.fileInput && accept) els.fileInput.accept = accept;
+}
+
+function splitShareFilesByAllowed(files) {
+  const allowed = new Set(Array.isArray(state.uploadAllowedExtensions) ? state.uploadAllowedExtensions : []);
+  if (!allowed.size) return { allowed: files, blocked: [] };
+  const pass = [];
+  const blocked = [];
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    const ext = normalizeUploadFileExtension(file && file.name ? file.name : '');
+    if (ext && allowed.has(ext)) pass.push(file);
+    else blocked.push(file);
+  });
+  return { allowed: pass, blocked };
+}
+
+function renderShareBlockedTypes(blockedFiles = null) {
+  if (!els.blockedTypes || !els.blockedTypesList) return;
+  const selectedSummary = Array.isArray(blockedFiles) && blockedFiles.length ? summarizeFileExtensions(blockedFiles) : '';
+  const configured = state.info && Array.isArray(state.info.upload_blocked_extensions)
+    ? state.info.upload_blocked_extensions.map(normalizeUploadFileExtension).filter(Boolean).sort()
+    : [];
+  if (selectedSummary) {
+    els.blockedTypesList.textContent = t('blocked_file_types_selected').replace('{types}', selectedSummary);
+    els.blockedTypes.classList.remove('hidden');
+    return;
+  }
+  if (configured.length) {
+    els.blockedTypesList.textContent = t('blocked_file_types_configured').replace('{types}', configured.join(', '));
+    els.blockedTypes.classList.remove('hidden');
+    return;
+  }
+  els.blockedTypesList.textContent = t('blocked_file_types_none');
+  els.blockedTypes.classList.add('hidden');
 }
 
 function canDeleteFromShare() {
@@ -787,6 +867,8 @@ async function loadInfo() {
     return false;
   }
   state.info = data;
+  applyShareUploadFileTypes(data);
+  renderShareBlockedTypes();
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
     const perms = data.can_delete ? 'view+upload+delete' : (data.can_upload ? 'view+upload' : 'view');
@@ -867,7 +949,21 @@ async function runUpload(preselectedFiles = null) {
       showStatus((data && data.error) || 'Upload ikke tilladt', 'err');
       return;
     }
+    state.info = data;
+    applyShareUploadFileTypes(data);
+    renderShareBlockedTypes();
   } catch {}
+  const split = splitShareFilesByAllowed(files);
+  if (split.blocked.length) {
+    const summary = summarizeFileExtensions(split.blocked);
+    renderShareBlockedTypes(split.blocked);
+    showStatus(t('blocked_file_types_status').replace('{types}', summary), 'err');
+  }
+  const uploadFiles = split.allowed;
+  if (!uploadFiles.length) {
+    if (els.fileInput) els.fileInput.value = '';
+    return;
+  }
 
   function hasTusClient(){ return !!(window.tus && typeof window.tus.Upload === 'function'); }
   async function uploadTus(file){
@@ -913,9 +1009,9 @@ async function runUpload(preselectedFiles = null) {
   let saved=0, failed=0;
   if (!hasTusClient()) { showStatus('TUS klient mangler. Genindl\u00e6s siden.', 'err'); return; }
   showUploadWarningModal();
-  startShareUploadProgress(files);
+  startShareUploadProgress(uploadFiles);
   try {
-    for (const f of files){
+    for (const f of uploadFiles){
       markShareUploadCurrentFile(f);
       const r = await uploadTus(f);
       const ok = !!(r && r.ok);

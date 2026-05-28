@@ -152,7 +152,7 @@
           <button id="mapperDeleteBtn" class="btn danger hidden" disabled>Slet valgte</button>
         </div>
         <div id="mapperDropZone" class="mapper-dropzone">Slip filer eller mapper her for at uploade direkte til valgt mappe</div>
-        <input id="mapperUploadInput" type="file" accept="image/*,video/*,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef" multiple style="display:none;" />
+        <input id="mapperUploadInput" type="file" accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef,.mp4,.m4v,.mov,.avi,.mkv,.webm,.3gp" multiple style="display:none;" />
       </section>
 
       <div id="iosUploadPrepModal" class="modal hidden ios-upload-prep-modal" role="dialog" aria-modal="true" aria-labelledby="iosUploadPrepTitle">
@@ -225,6 +225,7 @@
           {% endif %}
           <button class="tab-btn" data-tab="ai">AI</button>
           <button class="tab-btn" data-tab="upload_workflow">Upload workflow</button>
+          <button class="tab-btn" data-tab="file_types">Filtyper</button>
           <button class="tab-btn" data-tab="hardware">Hardware</button>
           <button class="tab-btn" data-tab="dns">DNS</button>
           <button class="tab-btn" data-tab="heic">Konvertering</button>
@@ -242,6 +243,7 @@
             {% endif %}
             <option value="ai">AI</option>
             <option value="upload_workflow">Upload workflow</option>
+            <option value="file_types">Filtyper</option>
             <option value="hardware">Hardware</option>
             <option value="dns">DNS</option>
             <option value="heic">Konvertering</option>
@@ -502,6 +504,33 @@
               </div>
               <div id="uploadWorkflowStatus" class="status hidden" style="margin:0;"></div>
             </div>
+          </div>
+        </div>
+
+        <!-- Upload filtyper -->
+        <div class="tab-panel hidden" data-tabpanel="file_types">
+          <div class="sidebar-card file-types-card" style="margin-bottom:12px;">
+            <div id="fileTypesTitle" class="sidebar-card-title">Upload filtyper</div>
+            <p id="fileTypesDesc" class="hint" style="margin:0 0 10px 0;">
+              Whitelist de billed- og videofiltyper, FjordLens m&aring; modtage.
+            </p>
+            <div class="file-type-add-row">
+              <input id="fileTypeInput" class="mapper-input" type="text" placeholder=".png" autocomplete="off" />
+              <button id="fileTypeAddBtn" class="btn" type="button">Tilf&oslash;j</button>
+              <button id="fileTypeResetBtn" class="btn" type="button">Nulstil</button>
+            </div>
+            <div id="fileTypeAllowedList" class="file-type-chip-list" aria-live="polite"></div>
+            <div class="actions" style="justify-content:flex-end;gap:8px;">
+              <button id="fileTypeSaveBtn" class="btn primary" type="button">Gem filtyper</button>
+            </div>
+            <div id="fileTypeStatus" class="status hidden" style="margin:0;"></div>
+          </div>
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div id="fileTypeBlockedTitle" class="sidebar-card-title">Blokerede filtyper</div>
+            <p id="fileTypeBlockedDesc" class="hint" style="margin:0 0 10px 0;">
+              Underst&oslash;ttede medietyper, der ikke er p&aring; whitelist.
+            </p>
+            <div id="fileTypeBlockedList" class="file-type-chip-list file-type-chip-list-muted" aria-live="polite"></div>
           </div>
         </div>
 
@@ -1050,6 +1079,7 @@
         hideTab('dns');
         hideTab('shared');
         hideTab('upload_workflow');
+        hideTab('file_types');
         hideTab('update');
       } else if(ROLE === 'manager'){
         hideTab('users');

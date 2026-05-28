@@ -1,5 +1,16 @@
 {% extends "base.html" %}
 {% block title %}2FA Login · FjordLens{% endblock %}
+{% block head %}
+<meta http-equiv="Cache-Control" content="no-store">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<style>
+  html.auth-session-checking body { visibility: hidden; }
+</style>
+<script>
+  document.documentElement.classList.add('auth-session-checking');
+</script>
+{% endblock %}
 {% block body %}
   {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
@@ -25,6 +36,7 @@
       const input = document.getElementById('code');
       const form = document.getElementById('verifyForm');
       if (!input || !form) return;
+      form.addEventListener('submit',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} });
       input.addEventListener('input', () => {
         const v = (input.value || '').replace(/\D/g, '').slice(0,6);
         if (v !== input.value) input.value = v;
@@ -34,7 +46,12 @@
       });
       input.focus();
       const homeUrl={{ url_for('index')|tojson }};
-      const apiMeUrl={{ url_for('api_me')|tojson }};
+      const sessionUrl={{ url_for('api_auth_session')|tojson }};
+      let navigatingAway=false;
+      let checkInFlight=false;
+      function revealAuth(){
+        try{ document.documentElement.classList.remove('auth-session-checking'); }catch(_){}
+      }
       function safeLocalTarget(raw){
         try{
           const value=String(raw||'').trim();
@@ -48,17 +65,32 @@
         }
       }
       async function leaveAuthIfSessionIsAlive(){
+        if(navigatingAway || checkInFlight) return;
+        checkInFlight=true;
+        try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){}
         try{
-          const res=await fetch(apiMeUrl,{credentials:'same-origin',cache:'no-store',headers:{'Accept':'application/json'}});
-          if(!res.ok) return;
+          const res=await fetch(sessionUrl,{credentials:'same-origin',cache:'no-store',headers:{'Accept':'application/json'}});
+          if(!res.ok){ revealAuth(); return; }
           const data=await res.json().catch(()=>null);
-          if(data && data.ok){
+          if(data && data.ok && data.authenticated){
+            navigatingAway=true;
             const params=new URLSearchParams(window.location.search);
             window.location.replace(safeLocalTarget(params.get('next')||homeUrl));
+            return;
           }
-        }catch(_){}
+        }catch(_){
+        }finally{
+          checkInFlight=false;
+          if(!navigatingAway) revealAuth();
+        }
       }
       window.addEventListener('pageshow', leaveAuthIfSessionIsAlive);
+      window.addEventListener('pagehide',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} });
+      window.addEventListener('focus', leaveAuthIfSessionIsAlive);
+      document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') leaveAuthIfSessionIsAlive(); });
+      setTimeout(leaveAuthIfSessionIsAlive,0);
+      setTimeout(leaveAuthIfSessionIsAlive,150);
+      setTimeout(revealAuth,1200);
     })();
   </script>
 {% endblock %}

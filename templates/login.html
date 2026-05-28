@@ -1,9 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Login · FjordLens{% endblock %}
+{% block head %}
+<meta http-equiv="Cache-Control" content="no-store">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<style>
+  html.auth-session-checking body { visibility: hidden; }
+</style>
+<script>
+  document.documentElement.classList.add('auth-session-checking');
+</script>
+{% endblock %}
 {% block body %}
   {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
-    <form class="login-card small" method="post">
+    <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}">
       <div class="login-title">
         <span>{{ 'Sign in to FjordLens' if en else 'Log ind på FjordLens' }}</span>
       </div>
@@ -32,9 +43,16 @@
 (function(){
   const pw=document.getElementById('password');
   const btn=document.getElementById('loginReveal');
+  const form=document.getElementById('loginForm');
   if(btn){ btn.addEventListener('click',()=>{ if(!pw) return; pw.type = (pw.type==='password')?'text':'password'; pw.focus({preventScroll:true}); }); }
+  if(form){ form.addEventListener('submit',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} }); }
   const homeUrl={{ url_for('index')|tojson }};
-  const apiMeUrl={{ url_for('api_me')|tojson }};
+  const sessionUrl={{ url_for('api_auth_session')|tojson }};
+  let navigatingAway=false;
+  let checkInFlight=false;
+  function revealLogin(){
+    try{ document.documentElement.classList.remove('auth-session-checking'); }catch(_){}
+  }
   function safeLocalTarget(raw){
     try{
       const value=String(raw||'').trim();
@@ -48,17 +66,32 @@
     }
   }
   async function leaveLoginIfSessionIsAlive(){
+    if(navigatingAway || checkInFlight) return;
+    checkInFlight=true;
+    try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){}
     try{
-      const res=await fetch(apiMeUrl,{credentials:'same-origin',cache:'no-store',headers:{'Accept':'application/json'}});
-      if(!res.ok) return;
+      const res=await fetch(sessionUrl,{credentials:'same-origin',cache:'no-store',headers:{'Accept':'application/json'}});
+      if(!res.ok){ revealLogin(); return; }
       const data=await res.json().catch(()=>null);
-      if(data && data.ok){
+      if(data && data.ok && data.authenticated){
+        navigatingAway=true;
         const params=new URLSearchParams(window.location.search);
         window.location.replace(safeLocalTarget(params.get('next')||homeUrl));
+        return;
       }
-    }catch(_){}
+    }catch(_){
+    }finally{
+      checkInFlight=false;
+      if(!navigatingAway) revealLogin();
+    }
   }
   window.addEventListener('pageshow', leaveLoginIfSessionIsAlive);
+  window.addEventListener('pagehide',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} });
+  window.addEventListener('focus', leaveLoginIfSessionIsAlive);
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') leaveLoginIfSessionIsAlive(); });
+  setTimeout(leaveLoginIfSessionIsAlive,0);
+  setTimeout(leaveLoginIfSessionIsAlive,150);
+  setTimeout(revealLogin,1200);
 })();
 </script>
 {% endblock %}
