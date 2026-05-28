@@ -259,12 +259,13 @@
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Vedligeholdelse</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              {# Kun fuld biblioteks-scan er bag feature-flagget #}
               {% if scan_enabled %}
               <button id="scanBtn" class="btn primary">Scan bibliotek</button>
+              {% endif %}
               <button id="rescanBtn" class="btn">Rescan metadata</button>
               <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
               <button id="fixThumbsBtn" class="btn">Ret manglende thumbnails</button>
-              {% endif %}
               <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
               <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
             </div>
