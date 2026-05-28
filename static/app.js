@@ -6586,6 +6586,10 @@ const uploadUiState = {
   workflowMode: 'gentle',
   processStatus: null,
   collapsed: false,
+  transferStartedAt: 0,
+  transferLastSampleAt: 0,
+  transferLastSampleBytes: 0,
+  transferRateBps: 0,
 };
 
 let uploadOverlayHideTimer = null;
@@ -6804,7 +6808,54 @@ function resetUploadUiState() {
   uploadUiState.currentTotal = 0;
   uploadUiState.workflowMode = 'gentle';
   uploadUiState.processStatus = null;
+  uploadUiState.transferStartedAt = 0;
+  uploadUiState.transferLastSampleAt = 0;
+  uploadUiState.transferLastSampleBytes = 0;
+  uploadUiState.transferRateBps = 0;
   uploadMonitorItemsByKey.clear();
+}
+
+function formatUploadEta(seconds) {
+  const total = Math.max(0, Math.ceil(Number(seconds || 0)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function updateUploadTransferEstimate(uploadedBytes) {
+  const now = Date.now();
+  const uploaded = Math.max(0, Number(uploadedBytes || 0));
+  if (!uploadUiState.transferStartedAt) {
+    uploadUiState.transferStartedAt = now;
+    uploadUiState.transferLastSampleAt = now;
+    uploadUiState.transferLastSampleBytes = uploaded;
+    uploadUiState.transferRateBps = 0;
+    return;
+  }
+  const lastAt = Number(uploadUiState.transferLastSampleAt || 0);
+  const lastBytes = Number(uploadUiState.transferLastSampleBytes || 0);
+  const elapsedMs = Math.max(0, now - lastAt);
+  const deltaBytes = uploaded - lastBytes;
+  if (elapsedMs < 650 || deltaBytes <= 0) return;
+  const instantRate = deltaBytes / (elapsedMs / 1000);
+  const currentRate = Number(uploadUiState.transferRateBps || 0);
+  uploadUiState.transferRateBps = currentRate > 0
+    ? ((currentRate * 0.72) + (instantRate * 0.28))
+    : instantRate;
+  uploadUiState.transferLastSampleAt = now;
+  uploadUiState.transferLastSampleBytes = uploaded;
+}
+
+function uploadEtaLabel(uploadedBytes) {
+  if (!isUploadRunning() || uploadStopRequested) return '';
+  const total = Math.max(0, Number(uploadUiState.totalBytes || 0));
+  const uploaded = Math.max(0, Number(uploadedBytes || 0));
+  const remaining = Math.max(0, total - uploaded);
+  if (!total || !remaining) return '';
+  const rate = Math.max(0, Number(uploadUiState.transferRateBps || 0));
+  if (rate < 1024) return 'tid tilbage: beregner...';
+  return `tid tilbage: ${formatUploadEta(remaining / rate)}`;
 }
 
 function setUploadStopButtonState() {
@@ -6872,6 +6923,10 @@ function renderUploadMonitor() {
   const stageTxt = uploadUiState.currentTotal > 0
     ? `${uploadUiState.currentLoaded}/${uploadUiState.currentTotal}`
     : 'venter…';
+  if (isUploadRunning() && !isPostprocess) {
+    updateUploadTransferEstimate(processedVisualBytes);
+  }
+  const etaTxt = !isPostprocess ? uploadEtaLabel(processedVisualBytes) : '';
 
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
@@ -6885,7 +6940,7 @@ function renderUploadMonitor() {
         const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
         const topLabel = isPostprocess
           ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
-          : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%`;
+          : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%${etaTxt ? ` · ${etaTxt.replace('tid tilbage: ', '')}` : ''}`;
         els.uploadTopStatus.classList.remove('hidden');
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
@@ -6950,7 +7005,7 @@ function renderUploadMonitor() {
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
   if (els.uploadMonitorSummary) {
     const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : '';
-    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
+    els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${etaTxt ? ` · ${etaTxt}` : ''}${failedTxt}`;
   }
   if (els.uploadMonitorCurrent) {
     if (isPostprocess) {
