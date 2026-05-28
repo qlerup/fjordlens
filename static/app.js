@@ -2301,6 +2301,11 @@ let state = {
   mapperRenameTargetPath: "",
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
+  // Paging for large folders (timeline view)
+  photosPageOffset: 0,
+  photosPageLimit: 300,
+  photosHasMore: false,
+  photosLoading: false,
   currentUser: {
     id: APP_PROFILE.id || null,
     username: APP_PROFILE.username || '',
@@ -5177,6 +5182,26 @@ function renderGrid() {
       els.grid.appendChild(wrap);
       grp.arr.forEach(it => appendCardTo(it, wrap));
     }
+    // Lazy load: show a Load More button if server indicates more
+    try {
+      const moreBtnId = 'timelineLoadMoreBtn';
+      const old = document.getElementById(moreBtnId);
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      if (state.photosHasMore) {
+        const btn = document.createElement('button');
+        btn.id = moreBtnId;
+        btn.className = 'btn';
+        btn.style.margin = '16px auto';
+        btn.style.display = 'block';
+        btn.textContent = 'Indlæs flere…';
+        btn.addEventListener('click', async () => {
+          if (state.photosLoading) return;
+          btn.disabled = true; btn.classList.add('loading');
+          try { await loadPhotos(true); } finally { btn.disabled = false; btn.classList.remove('loading'); }
+        });
+        els.grid.appendChild(btn);
+      }
+    } catch {}
     if (!state.items.some(i => i.id === state.selectedId)) {
       state.selectedId = null; setDetail(null);
     }
@@ -5206,11 +5231,6 @@ function renderGrid() {
   const items = state.items.slice();
   if (state.view === "mapper") {
     const current = String(state.mapperPath || "");
-    const groupMap = new Map();
-    const directItems = [];
-    const includeFolder = (folderPath) => {
-      if (!groupMap.has(folderPath)) groupMap.set(folderPath, []);
-    };
     const immediateChild = (folderPath, parentPath) => {
       const f = String(folderPath || '');
       const p = String(parentPath || '');
@@ -5225,39 +5245,22 @@ function renderGrid() {
       return seg ? `${p}/${seg}` : null;
     };
 
-    for (const it of items) {
-      const rel = String(it.rel_path || '');
-      let folder = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '';
-      if (folder === 'uploads') folder = '';
-      else if (folder.startsWith('uploads/')) folder = folder.slice('uploads/'.length);
-      // Do not surface internal framework roots; show user subfolder instead
-      if (folder.startsWith('converted/')) folder = folder.slice('converted/'.length);
-      if (folder.startsWith('originals/')) folder = folder.slice('originals/'.length);
-      if (folder === current) {
-        directItems.push(it);
-      }
-      const child = immediateChild(folder, current);
-      if (!child) continue;
-      includeFolder(child);
-      groupMap.get(child).push(it);
-    }
-
+    // Build child folder list purely from the folder index (fast) — do not scan items
+    const childSet = new Set();
     for (const f of (state.mapperFolders || [])) {
       const child = immediateChild(String(f || ''), current);
-      if (child) includeFolder(child);
+      if (child) childSet.add(child);
     }
-
-    const sorted = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'da-DK'));
-    if (!sorted.length && !directItems.length) {
+    const sorted = Array.from(childSet.values()).sort((a, b) => a.localeCompare(b, 'da-DK'));
+    if (!sorted.length) {
       hideEmpty();
       renderStats();
       setDetail(null);
       return;
     }
     for (const folderPath of sorted) {
-      const arr = groupMap.get(folderPath) || [];
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
-      appendFolderCard(folderPath, arr, {
+      appendFolderCard(folderPath, [], {
         title,
         onOpen: async () => {
           state.mapperPath = folderPath;
@@ -5267,7 +5270,6 @@ function renderGrid() {
         },
       });
     }
-    directItems.forEach((it) => appendCard(it));
   } else {
     items.forEach(item => appendCard(item));
   }
@@ -5519,8 +5521,10 @@ function appendFolderCard(folder, arr, opts = {}) {
   const title = opts.title || folder;
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
-  const countLabel = `${arr.length} ${arr.length === 1 ? 'element' : 'elementer'}`;
-  const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span><span class="folder-count">${escapeHtml(countLabel)}</span></div>`;
+  const hasExplicitCount = (opts && Object.prototype.hasOwnProperty.call(opts, 'count'));
+  const countVal = hasExplicitCount ? Number(opts.count || 0) : (Array.isArray(arr) ? arr.length : 0);
+  const countLabel = countVal > 0 ? `${countVal} ${countVal === 1 ? 'element' : 'elementer'}` : '';
+  const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span>${countLabel ? `<span class="folder-count">${escapeHtml(countLabel)}</span>` : ''}</div>`;
   const thumbHtml = (useUrls && useUrls.length)
     ? `<div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${cells}</div>${selBadge}${overlay}</div>`
     : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
@@ -5529,7 +5533,7 @@ function appendFolderCard(folder, arr, opts = {}) {
     <div class="card-body">
       <h4 class="card-title">${title}</h4>
       <div class="card-meta">
-        <span>${arr.length} elementer</span>
+        ${countVal > 0 ? `<span>${countVal} ${countVal === 1 ? 'element' : 'elementer'}</span>` : ''}
         <span>Mapper</span>
       </div>
       </div>`;
@@ -5602,11 +5606,12 @@ function appendFolderCard(folder, arr, opts = {}) {
         } catch {}
       };
       // Determine desired preview count based on available unique URLs
+      // If we didn't compute uniqUrls (arr empty), accept saved previews as-is
       const desiredCount = (uniqUrls.length === 1) ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
       const desiredVariant = (desiredCount === 1 ? 'v1' : (desiredCount === 2 ? 'v2' : 'v4'));
       if (Array.isArray(saved) && saved.length) {
-        // Keep only previews that still exist in this folder/subtree, then enforce desired count.
-        const normalizedSaved = saved.filter((u) => uniqUrls.includes(u)).slice(0, desiredCount);
+        // When uniqUrls is empty (we skipped client-side scan), trust server-saved picks
+        const normalizedSaved = uniqUrls.length ? saved.filter((u) => uniqUrls.includes(u)).slice(0, desiredCount) : (saved.slice(0, Math.min(saved.length, 4)));
         if (normalizedSaved.length < desiredCount) {
           const fresh = uniqUrls.slice(0, desiredCount);
           if (fresh.length) {
@@ -5618,7 +5623,7 @@ function appendFolderCard(folder, arr, opts = {}) {
           // Only update if different from what we rendered
           const same = Array.isArray(useUrls) && useUrls.length === normalizedSaved.length && useUrls.every((u,i)=>u===normalizedSaved[i]);
           if (!same) updateGrid(normalizedSaved, savedVariant);
-          const changed = normalizedSaved.length !== saved.length || normalizedSaved.some((u, i) => u !== saved[i]);
+          const changed = uniqUrls.length > 0 && (normalizedSaved.length !== saved.length || normalizedSaved.some((u, i) => u !== saved[i]));
           if (changed) await persistPreviews(normalizedSaved);
         }
       } else if (useUrls && useUrls.length) {
@@ -6376,7 +6381,7 @@ async function loadPhotoframeStatus() {
   }
 }
 
-async function loadPhotos() {
+async function loadPhotos(append = false) {
   if (state.view === 'photoframe') {
     state.items = [];
     const labels = navLabels();
@@ -6387,6 +6392,22 @@ async function loadPhotos() {
     return;
   }
 
+  // Mapper view: render folders only; skip heavy item fetch
+  if (state.view === 'mapper') {
+    state.items = [];
+    const labels = navLabels();
+    const [title, subtitle] = labels[state.view] || ["Mapper", ""];
+    if (els.viewTitle) els.viewTitle.textContent = title;
+    if (els.viewSubtitle) els.viewSubtitle.textContent = subtitle;
+    renderGrid();
+    return;
+  }
+
+  // Timeline and other views: support pagination
+  if (!append) {
+    state.photosPageOffset = 0;
+    state.photosHasMore = false;
+  }
   const qs = new URLSearchParams({
     q: state.q,
     view: state.view,
@@ -6394,7 +6415,13 @@ async function loadPhotos() {
     folder: state.folder || "",
     search_lang: state.searchLanguage || 'da',
   });
+  // Use paging for timeline
+  if (state.view === 'timeline') {
+    qs.set('offset', String(state.photosPageOffset || 0));
+    qs.set('limit', String(state.photosPageLimit || 300));
+  }
 
+  state.photosLoading = true;
   const res = await fetch(`/api/photos?${qs.toString()}`);
   let data;
   try {
@@ -6407,14 +6434,22 @@ async function loadPhotos() {
     const text = await res.text().catch(()=> '');
     console.warn('photos non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
     showStatus('Kunne ikke hente billeder (server svarede ikke med JSON).', 'err');
-    state.items = [];
+    if (!append) state.items = []; // keep existing on append failure
   } else {
-    state.items = data.items || [];
+    const incoming = Array.isArray(data.items) ? data.items : [];
+    if (append) state.items = (state.items || []).concat(incoming);
+    else state.items = incoming;
+    state.photosHasMore = !!data.has_more;
+    if (state.view === 'timeline') {
+      const used = incoming.length;
+      state.photosPageOffset = (state.photosPageOffset || 0) + used;
+    }
     if (data && data.error) {
       const errMsg = String(data.error || '').trim();
       if (errMsg) showStatus(`Kunne ikke hente billeder: ${errMsg}`, 'err');
     }
   }
+  state.photosLoading = false;
 
   const labels = navLabels();
   const [title, subtitle] = labels[state.view] || ["FjordLens", ""];

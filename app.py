@@ -4976,6 +4976,9 @@ def _mapper_folder_from_rel(rel_path: str) -> str:
 def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     # Build accepted prefixes under uploads
     f = str(folder_key or "").strip()
+    # Avoid scanning the entire library for root previews; show placeholder instead
+    if f == "":
+        return []
     prefixes = [
         f"uploads/{f}",
         f"uploads/originals/{f}" if f else "uploads/originals",
@@ -4983,8 +4986,9 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     ]
     where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
     with closing(get_conn()) as conn:
+        # Limit scan size for performance; we'll prefer newest items and stop after we pick enough
         rows = conn.execute(
-            f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC",
+            f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
             prefixes,
         ).fetchall()
     own: list[str] = []
@@ -11432,7 +11436,7 @@ def _photo_contains_any_tags(photo: Dict[str, Any], tags: list[str]) -> bool:
     return False
 
 
-def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dict[str, Any]]:
+def query_photos(view: str, sort: str, folder: Optional[str] = None, offset: int | None = None, limit: int | None = None) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
         "date_asc": "COALESCE(captured_at, modified_fs, created_fs) ASC",
@@ -11518,6 +11522,10 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None) -> list[Dic
         {where_sql}
         ORDER BY {order_by}
     """
+    if isinstance(limit, int) and limit > 0:
+        sql += f"\n    LIMIT {int(limit)}"
+        if isinstance(offset, int) and offset > 0:
+            sql += f" OFFSET {int(offset)}"
 
     with closing(get_conn()) as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -15929,12 +15937,27 @@ def api_photos():
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
     folder = request.args.get("folder")
+    try:
+        offset = int(str(request.args.get("offset") or "0"))
+    except Exception:
+        offset = 0
+    try:
+        limit = int(str(request.args.get("limit") or "0"))
+    except Exception:
+        limit = 0
+    # Sanitize
+    offset = max(0, offset)
+    # Default to no limit unless client requests it; cap to avoid abuse
+    if limit <= 0:
+        limit = None
+    else:
+        limit = max(1, min(2000, limit))
     requested_lang = request.args.get("search_lang")
     _, user_lang = _current_user_pref_languages()
     search_language = _normalize_language(requested_lang, user_lang)
 
     try:
-        items = query_photos(view, sort, folder=folder)
+        items = query_photos(view, sort, folder=folder, offset=offset, limit=limit)
         if q:
             # Try AI-assisted expansion to widen matches when helpful
             expand_tags: list[str] = []
@@ -15951,6 +15974,9 @@ def api_photos():
             else:
                 items = [p for p in items if matches_search(p, q, search_language=search_language)]
         items = _filter_public_items_by_current_user_acl(items)
+        # Provide pagination hints. When limited, we cannot know total cheaply without extra COUNT.
+        has_more = bool(limit) and (len(items) >= int(limit or 0))
+        next_offset = (offset or 0) + len(items)
         return jsonify({
             "items": items,
             "count": len(items),
@@ -15958,6 +15984,10 @@ def api_photos():
             "view": view,
             "sort": sort,
             "folder": folder,
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+            "next_offset": next_offset,
             "search_lang": search_language,
         })
     except Exception as e:
