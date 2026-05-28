@@ -9593,39 +9593,38 @@ function mapperClearSelection() {
   renderMapperContext(state.mapperPath || '');
 }
 
-// --- Drag & drop: collect files with relative paths (supports folders) ---
-async function _readDirectoryEntriesRecursive(entry, basePath) {
-  const out = [];
+// --- Drag & drop: collect files and directories with relative paths (supports empty folders) ---
+async function _readDirectoryEntriesRecursive(entry, basePath, out) {
   const prefix = basePath ? `${basePath}/` : '';
   if (entry.isFile) {
     const file = await new Promise((resolve, reject) => {
       try { entry.file(resolve, reject); } catch (e) { reject(e); }
     });
-    out.push({ file, relPath: `${prefix}${file.name}` });
+    out.files.push({ file, relPath: `${prefix}${file.name}` });
   } else if (entry.isDirectory) {
+    // Record the directory itself so we can recreate empty folders too
+    const thisDir = `${prefix}${entry.name}`;
+    if (thisDir) out.dirs.add(thisDir);
     const reader = entry.createReader();
     const readAll = async () => {
       const batch = await new Promise((resolve, reject) => {
         try { reader.readEntries(resolve, reject); } catch (e) { reject(e); }
       });
       if (!batch || !batch.length) return [];
-      const nested = [];
+      // Recursively walk children
       for (const child of batch) {
-        const childItems = await _readDirectoryEntriesRecursive(child, `${prefix}${entry.name}`);
-        for (const it of childItems) nested.push(it);
+        await _readDirectoryEntriesRecursive(child, thisDir, out);
       }
-      const more = await readAll();
-      return nested.concat(more);
+      // Continue until no more entries
+      await readAll();
     };
-    const all = await readAll();
-    // Empty folders yield no files; creation happens implicitly when first file in a subdir is uploaded
-    return all;
+    await readAll();
   }
-  return out;
 }
 
 async function collectDroppedFilesWithPaths(dataTransfer) {
-  const result = [];
+  const filesOut = [];
+  const dirsOut = new Set();
   try {
     const items = (dataTransfer && dataTransfer.items) ? Array.from(dataTransfer.items) : [];
     const entries = [];
@@ -9639,19 +9638,30 @@ async function collectDroppedFilesWithPaths(dataTransfer) {
     }
     if (entries.length) {
       for (const entry of entries) {
-        const parts = await _readDirectoryEntriesRecursive(entry, '');
-        for (const p of parts) result.push(p);
+        const acc = { files: [], dirs: new Set() };
+        await _readDirectoryEntriesRecursive(entry, '', acc);
+        for (const f of acc.files) filesOut.push(f);
+        for (const d of acc.dirs) dirsOut.add(d);
       }
-      if (result.length) return result;
+      return { files: filesOut, dirs: Array.from(dirsOut) };
     }
   } catch {}
   // Fallback: use File.webkitRelativePath if present or just the filename
   const files = (dataTransfer && dataTransfer.files) ? Array.from(dataTransfer.files) : [];
   for (const f of files) {
     const rel = String(f.webkitRelativePath || f.relativePath || f.name || '').trim() || f.name;
-    result.push({ file: f, relPath: rel });
+    filesOut.push({ file: f, relPath: rel });
+    // We can infer parent dirs from rel path (but cannot discover empty dirs in fallback)
+    const parts = rel.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (parts.length > 1) {
+      let cur = '';
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        cur = cur ? `${cur}/${parts[i]}` : parts[i];
+        dirsOut.add(cur);
+      }
+    }
   }
-  return result;
+  return { files: filesOut, dirs: Array.from(dirsOut) };
 }
 
 function _groupByRelDir(fileItems, rootToStrip = '') {
@@ -9671,19 +9681,31 @@ function _groupByRelDir(fileItems, rootToStrip = '') {
 }
 
 async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
-  const items = await collectDroppedFilesWithPaths(dataTransfer);
-  if (!items || !items.length) return;
-  // If all items share the same top-level folder (dragged parent), strip it
+  const payload = await collectDroppedFilesWithPaths(dataTransfer);
+  if (!payload) return;
+  const items = Array.isArray(payload.files) ? payload.files : [];
+  const dirList = Array.isArray(payload.dirs) ? payload.dirs.slice() : [];
+  if (!items.length && !dirList.length) return;
+  // If all file items share the same top-level folder (dragged parent), strip it
   let commonRoot = '';
   try {
-    const first = String(items[0].relPath || '').replace(/\\/g, '/');
-    const seg = first.split('/').filter(Boolean)[0] || '';
-    if (seg && items.every(it => String(it.relPath || '').replace(/\\/g, '/').startsWith(seg + '/'))) {
-      commonRoot = seg;
+    if (items.length) {
+      const first = String(items[0].relPath || '').replace(/\\/g, '/');
+      const seg = first.split('/').filter(Boolean)[0] || '';
+      if (seg && items.every(it => String(it.relPath || '').replace(/\\/g, '/').startsWith(seg + '/'))) {
+        commonRoot = seg;
+      }
+    } else if (dirList.length) {
+      const first = String(dirList[0] || '').replace(/\\/g, '/');
+      const seg = first.split('/').filter(Boolean)[0] || '';
+      if (seg && dirList.every(d => String(d || '').replace(/\\/g, '/').startsWith(seg + '/'))) {
+        commonRoot = seg;
+      }
     }
   } catch {}
+
   const groups = _groupByRelDir(items, commonRoot);
-  // 1) Create all folders upfront for nicer UX
+  // 1) Create all folders upfront for nicer UX (including empty ones)
   try {
     const makeOne = async (parent, name) => {
       const res = await fetch('/api/settings/upload-folder', {
@@ -9703,7 +9725,13 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
       created.add(rootTarget);
       effectiveBase = rootTarget;
     }
-    const allDirs = Array.from(groups.keys()).filter(Boolean)
+    // Collect all dirs from file groups and explicit dirList
+    const fileDirs = Array.from(groups.keys()).filter(Boolean);
+    const allDirs = fileDirs.concat(dirList)
+      .map(d => String(d || '').replace(/\\/g, '/'))
+      .filter(Boolean)
+      .map(d => (commonRoot && d.startsWith(commonRoot + '/') ? d.slice(commonRoot.length + 1) : d))
+      .filter(Boolean)
       .sort((a,b)=>a.split('/').length - b.split('/').length);
     for (const dir of allDirs) {
       let parent = effectiveBase;
@@ -9718,6 +9746,10 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
       }
     }
   } catch {}
+
+  // If there are no files to upload, we are done after creating the directories
+  if (!items.length) return;
+
   // If everything is root files (single group with dir==''), fall back to a single batch
   if (groups.size === 1 && groups.has('')) {
     const base = String(baseSubdir || '').trim();
