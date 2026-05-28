@@ -31,6 +31,7 @@ This repository contains two parts:
 
 - AI embedding ingest with start/stop/status
 - AI description ingest with start/stop/status
+- External AI description queue for offloaded processing workers
 - AI search and "similar photos" tools
 - Face indexing jobs with progress tracking
 - People training, rename, hide, unknown-face matching
@@ -240,6 +241,25 @@ Notes:
 - FjordLens needs a recent frame heartbeat with local IP
 - If `:5001` is temporarily unavailable, FjordLens now attempts wake/retry behavior automatically
 - If your reverse proxy or Cloudflare is used, allow frame API paths (see below)
+
+## External AI Worker (Windows)
+
+FjordLens can offload AI image description jobs to an external Windows client.
+
+Worker files are included in:
+
+- `external_worker/windows/ai_billedbeskriver.py`
+- `external_worker/windows/ai_billedbeskriver_gui.pyw`
+- `external_worker/windows/Start AI Billedbeskriver.vbs`
+
+Quick flow:
+
+1. In FjordLens, open `Indstillinger` -> `AI` and enable external AI descriptions.
+2. Copy the generated connection link.
+3. On Windows, open `external_worker/windows/README.md` and run the setup steps.
+4. Start the GUI, paste the link, and click `Kor ekstern ko`.
+
+The worker uses your local Ollama runtime and posts caption/tags back to FjordLens over the tokenized external API endpoints.
 
 ## Reverse Proxy / Cloudflare Notes
 
