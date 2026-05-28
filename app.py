@@ -463,7 +463,7 @@ except Exception:
     PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = 1800
 PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC))
 THUMB_SIZE = (600, 600)
-FACE_THUMB_VERSION = 4
+FACE_THUMB_VERSION = 5
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -1234,21 +1234,51 @@ def _video_face_sample_timestamps(path: Path, rel_path: str) -> tuple[Optional[f
 
 def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Optional[bytes]:
     """Extract one JPEG frame from video at a timestamp."""
+    target_sec = max(0.0, float(at_sec or 0.0))
+    last_error: Optional[str] = None
     try:
         with tempfile.TemporaryDirectory() as td:
             out_path = Path(td) / "face_frame.jpg"
-            cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-ss", f"{at_sec:.3f}", "-i", str(path),
-                "-frames:v", "1",
-                "-q:v", "3",
-                str(out_path),
+            commands = [
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", f"{target_sec:.3f}", "-i", str(path),
+                    "-frames:v", "1",
+                    "-q:v", "3",
+                    str(out_path),
+                ],
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(path),
+                    "-ss", f"{target_sec:.3f}",
+                    "-frames:v", "1",
+                    "-q:v", "3",
+                    str(out_path),
+                ],
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(path),
+                    "-frames:v", "1",
+                    "-q:v", "3",
+                    str(out_path),
+                ],
             ]
-            subprocess.run(cmd, check=True)
-            if out_path.exists():
-                return out_path.read_bytes()
+
+            for cmd in commands:
+                try:
+                    if out_path.exists():
+                        out_path.unlink(missing_ok=True)
+                    subprocess.run(cmd, check=True, timeout=25)
+                    if out_path.exists() and out_path.stat().st_size > 0:
+                        return out_path.read_bytes()
+                except Exception as e:
+                    last_error = str(e)
+                    continue
     except Exception as e:
-        log_event("faces_video_frame_fail", rel_path=rel_path, at_sec=round(at_sec, 2), error=str(e))
+        last_error = str(e)
+
+    if last_error:
+        log_event("faces_video_frame_fail", rel_path=rel_path, at_sec=round(target_sec, 2), error=last_error)
     return None
 
 
@@ -10233,6 +10263,18 @@ def api_people_list():
     include_hidden = request.args.get("include_hidden") in {"1", "true", "True"}
     with closing(get_conn()) as conn:
         acl_prefixes = _current_user_acl_prefixes(conn)
+        def _person_count(item: Dict[str, Any]) -> int:
+            try:
+                return max(0, int((item or {}).get("count") or 0))
+            except Exception:
+                return 0
+
+        def _is_unknown_bucket(item: Dict[str, Any]) -> bool:
+            if str((item or {}).get("id") or "").strip().lower() == "unknown":
+                return True
+            nm = str((item or {}).get("name") or "").strip().lower()
+            return nm.startswith("ukendt") or nm.startswith("unknown")
+
         where = "" if include_hidden else "WHERE COALESCE(p.hidden,0)=0"
         rows = conn.execute(
             f"""
@@ -10414,8 +10456,15 @@ def api_people_list():
                     _enqueue_face_thumb_generation(int(frow["id"]))
                 except Exception:
                     pass
-            # Place aggregated unknowns at the end so named people come first
             people.append({"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
+
+        people.sort(
+            key=lambda item: (
+                1 if _is_unknown_bucket(item) else 0,
+                -_person_count(item),
+                str((item or {}).get("name") or "").casefold(),
+            )
+        )
     return jsonify({"ok": True, "items": people})
 
 
@@ -10750,6 +10799,14 @@ def _build_face_thumb(face_id: int) -> bool:
             bbox_h = int(r["bbox_h"] or 1)
             bbox_is_usable = bbox_w > 2 and bbox_h > 2
 
+            frame_cache: Dict[float, Optional[bytes]] = {}
+
+            def _frame_bytes_for(sec: float) -> Optional[bytes]:
+                s = round(max(0.0, float(sec or 0.0)), 3)
+                if s not in frame_cache:
+                    frame_cache[s] = _extract_video_frame_bytes(src_path, src_rel, s)
+                return frame_cache[s]
+
             frame_sec: Optional[float] = None
             try:
                 if r["frame_sec"] is not None:
@@ -10757,21 +10814,27 @@ def _build_face_thumb(face_id: int) -> bool:
             except Exception:
                 frame_sec = None
 
-            if frame_sec is not None and bbox_is_usable:
-                frame_bytes = _extract_video_frame_bytes(src_path, src_rel, frame_sec)
-                if frame_bytes:
+            base_sec = frame_sec if frame_sec is not None else max(0.0, VIDEO_FACE_SAMPLE_START_SEC)
+            sec_candidates: list[float] = []
+            _seen_secs: set[float] = set()
+            for sec_raw in [base_sec, base_sec - 0.25, base_sec + 0.25, base_sec + 0.90]:
+                sec_val = round(max(0.0, float(sec_raw or 0.0)), 3)
+                if sec_val in _seen_secs:
+                    continue
+                _seen_secs.add(sec_val)
+                sec_candidates.append(sec_val)
+
+            if bbox_is_usable:
+                for sec in sec_candidates:
+                    frame_bytes = _frame_bytes_for(sec)
+                    if not frame_bytes:
+                        continue
                     try:
                         with Image.open(io.BytesIO(frame_bytes)) as im_src:
-                            if _crop_and_save(
-                                im_src,
-                                bbox_x,
-                                bbox_y,
-                                bbox_w,
-                                bbox_h,
-                            ):
+                            if _crop_and_save(im_src, bbox_x, bbox_y, bbox_w, bbox_h):
                                 return True
                     except Exception:
-                        pass
+                        continue
 
             # For legacy rows without frame_sec, try cropping from the cached
             # video thumbnail by scaling bbox from source dimensions.
@@ -10796,22 +10859,67 @@ def _build_face_thumb(face_id: int) -> bool:
                                     scaled_h = max(1, int(round(bbox_h * sy)))
                                     if _crop_and_save(im_thumb, scaled_x, scaled_y, scaled_w, scaled_h):
                                         return True
+                    except Exception:
+                        pass
+
+            # If stored video bbox does not map cleanly, try detecting face directly
+            # in sampled frame(s) and crop from that detection.
+            for sec in sec_candidates[:2]:
+                frame_bytes = _frame_bytes_for(sec)
+                if not frame_bytes:
+                    continue
+                faces_here = _ai_detect_faces_bytes(frame_bytes, filename=f"{Path(src_rel).stem}_thumb_{sec:.2f}.jpg") or []
+                if not faces_here:
+                    continue
+
+                best_face = None
+                best_conf = -1.0
+                for fc in faces_here:
+                    if not isinstance(fc, dict):
+                        continue
+                    conf = float(fc.get("confidence") or 0.0)
+                    if conf > best_conf:
+                        best_conf = conf
+                        best_face = fc
+
+                if not isinstance(best_face, dict):
+                    continue
+
+                bbox_fc = best_face.get("bbox") or [0, 0, 0, 0]
+                try:
+                    x1, y1, x2, y2 = [int(round(float(v))) for v in bbox_fc[:4]]
+                    bw_fc = max(1, x2 - x1)
+                    bh_fc = max(1, y2 - y1)
+                except Exception:
+                    continue
+
+                try:
+                    with Image.open(io.BytesIO(frame_bytes)) as im_src:
+                        if _crop_and_save(im_src, x1, y1, bw_fc, bh_fc):
+                            return True
+                except Exception:
+                    continue
+
+            if thumb_name:
+                thumb_path = THUMB_DIR / thumb_name
+                if thumb_path.exists():
+                    try:
+                        with Image.open(thumb_path) as im_thumb:
                             if _save_full_thumb(im_thumb):
                                 return True
                     except Exception:
                         pass
 
-            fallback_sec = frame_sec if frame_sec is not None else max(0.0, VIDEO_FACE_SAMPLE_START_SEC)
-            frame_bytes = _extract_video_frame_bytes(src_path, src_rel, fallback_sec)
-            if frame_bytes:
+            for sec in sec_candidates:
+                frame_bytes = _frame_bytes_for(sec)
+                if not frame_bytes:
+                    continue
                 try:
                     with Image.open(io.BytesIO(frame_bytes)) as im_src:
-                        if bbox_is_usable and _crop_and_save(im_src, bbox_x, bbox_y, bbox_w, bbox_h):
-                            return True
                         if _save_full_thumb(im_src):
                             return True
                 except Exception:
-                    pass
+                    continue
             return False
 
         # First attempt: crop from original/viewable source.

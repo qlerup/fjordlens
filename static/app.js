@@ -2110,6 +2110,13 @@ const I18N = {
 };
 
 const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'photoframe', 'personer', 'settings']);
+const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'dns', 'shared', 'logs', 'users', 'profile', 'other']);
+
+function _normalizeSettingsTab(tab) {
+  const raw = String(tab || '').trim().toLowerCase();
+  if (!raw) return '';
+  return SETTINGS_TAB_KEYS.has(raw) ? raw : '';
+}
 
 function resolveUiLanguage(lang) {
   return UI_LANGUAGES.has(lang) ? lang : 'da';
@@ -2278,6 +2285,7 @@ let state = {
   showHiddenPeople: false,
   mapperPath: "",
   mapperFolders: [],
+  settingsTab: '',
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
   mapperSelectedPhotoIds: new Set(),
@@ -2547,9 +2555,20 @@ function _readRouteStateFromUrl() {
     const viewRaw = String(url.searchParams.get('view') || '').trim().toLowerCase();
     const view = APP_VIEW_KEYS.has(viewRaw) ? viewRaw : null;
     const mapperPath = _normalizeMapperPath(url.searchParams.get('mappe') || url.searchParams.get('folder') || '');
-    return { view, mapperPath };
+    const settingsTab = _normalizeSettingsTab(url.searchParams.get('tab') || url.searchParams.get('settings_tab') || '');
+    return { view, mapperPath, settingsTab };
   } catch {
-    return { view: null, mapperPath: '' };
+    return { view: null, mapperPath: '', settingsTab: '' };
+  }
+}
+
+function _activeSettingsTabFromUi() {
+  try {
+    const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');
+    const tab = activeBtn ? activeBtn.getAttribute('data-tab') : '';
+    return _normalizeSettingsTab(tab);
+  } catch {
+    return '';
   }
 }
 
@@ -2567,10 +2586,22 @@ function _syncRouteStateToUrl() {
       url.searchParams.delete('mappe');
       url.searchParams.delete('folder');
     }
+    if (state.view === 'settings') {
+      const activeSettingsTab = _activeSettingsTabFromUi() || _normalizeSettingsTab(state.settingsTab);
+      if (activeSettingsTab) {
+        state.settingsTab = activeSettingsTab;
+        url.searchParams.set('tab', activeSettingsTab);
+      } else {
+        url.searchParams.delete('tab');
+      }
+    } else {
+      url.searchParams.delete('tab');
+      url.searchParams.delete('settings_tab');
+    }
     const next = `${url.pathname}${url.search}${url.hash}`;
     const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (next !== cur) {
-      window.history.replaceState({ view: state.view, mappe: state.mapperPath || '' }, '', next);
+      window.history.replaceState({ view: state.view, mappe: state.mapperPath || '', tab: state.settingsTab || '' }, '', next);
     }
   } catch {}
 }
@@ -10382,6 +10413,13 @@ async function setView(view, opts = {}) {
   if (nextView === "settings") {
     // show logs panel, do not load photos
     renderGrid();
+    const activeTab = _activeSettingsTabFromUi();
+    const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'maint';
+    if (desiredTab && desiredTab !== activeTab) {
+      activateSettingsTab(desiredTab);
+    }
+    state.settingsTab = _activeSettingsTabFromUi() || desiredTab;
+    if (syncUrl) _syncRouteStateToUrl();
     loadAppUpdateStatus({ silent: true }).catch(() => {});
   } else if (nextView === 'photoframe') {
     state.items = [];
@@ -10660,7 +10698,9 @@ function applyUiLanguage() {
 }
 
 function activateSettingsTab(tab) {
-  const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${tab}"]`);
+  const safeTab = _normalizeSettingsTab(tab);
+  if (!safeTab) return;
+  const btn = document.querySelector(`#settingsPanel .tab-btn[data-tab="${safeTab}"]`);
   if (btn) btn.click();
 }
 
@@ -12698,6 +12738,7 @@ if (els.aiExternalLinksList) {
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
+    state.settingsTab = _normalizeSettingsTab(tab) || 'maint';
     // activate button
     document.querySelectorAll('#settingsPanel .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
@@ -12725,6 +12766,7 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     }
     // Sync mobile selector when clicking desktop tabs
     try { const sel = document.getElementById('settingsTabSelect'); if (sel) sel.value = tab; } catch {}
+    if (state.view === 'settings') _syncRouteStateToUrl();
   });
 });
 
@@ -13670,6 +13712,8 @@ if (_initialRoute.view) {
 if (state.view === 'mapper') {
   state.mapperPath = _initialRoute.mapperPath || '';
   state.folder = state.mapperPath || null;
+} else if (state.view === 'settings') {
+  state.settingsTab = _normalizeSettingsTab(_initialRoute.settingsTab) || '';
 }
 
 applyUiLanguage();
