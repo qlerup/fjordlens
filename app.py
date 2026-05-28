@@ -476,7 +476,7 @@ except Exception:
     PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = 1800
 PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC))
 THUMB_SIZE = (600, 600)
-FACE_THUMB_VERSION = 5
+FACE_THUMB_VERSION = 6
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -10731,7 +10731,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name, p.width AS src_w, p.height AS src_h FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.embedding_json, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name, p.width AS src_w, p.height AS src_h FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -10812,13 +10812,85 @@ def _build_face_thumb(face_id: int) -> bool:
             bbox_h = int(r["bbox_h"] or 1)
             bbox_is_usable = bbox_w > 2 and bbox_h > 2
 
+            target_emb: list[float] = []
+            try:
+                raw_emb = json.loads(r["embedding_json"]) if r["embedding_json"] else []
+                if isinstance(raw_emb, list) and raw_emb:
+                    target_emb = [float(x or 0.0) for x in raw_emb]
+            except Exception:
+                target_emb = []
+
             frame_cache: Dict[float, Optional[bytes]] = {}
+            detect_cache: Dict[float, list[Dict[str, Any]]] = {}
 
             def _frame_bytes_for(sec: float) -> Optional[bytes]:
                 s = round(max(0.0, float(sec or 0.0)), 3)
                 if s not in frame_cache:
                     frame_cache[s] = _extract_video_frame_bytes(src_path, src_rel, s)
                 return frame_cache[s]
+
+            def _detected_faces_for(sec: float) -> list[Dict[str, Any]]:
+                s = round(max(0.0, float(sec or 0.0)), 3)
+                if s in detect_cache:
+                    return detect_cache[s]
+                frame_bytes = _frame_bytes_for(s)
+                if not frame_bytes:
+                    detect_cache[s] = []
+                    return []
+                faces_raw = _ai_detect_faces_bytes(frame_bytes, filename=f"{Path(src_rel).stem}_thumb_{s:.2f}.jpg") or []
+                faces_norm: list[Dict[str, Any]] = []
+                for fc in faces_raw:
+                    if isinstance(fc, dict):
+                        faces_norm.append(fc)
+                detect_cache[s] = faces_norm
+                return faces_norm
+
+            def _pick_best_detected_bbox(faces_here: list[Dict[str, Any]]) -> Optional[tuple[int, int, int, int]]:
+                best_bbox: Optional[tuple[int, int, int, int]] = None
+                best_score = -10_000.0
+                best_sim = -10_000.0
+                for fc in faces_here:
+                    bbox_fc = fc.get("bbox") or [0, 0, 0, 0]
+                    try:
+                        x1, y1, x2, y2 = [int(round(float(v))) for v in bbox_fc[:4]]
+                        bw_fc = max(1, x2 - x1)
+                        bh_fc = max(1, y2 - y1)
+                    except Exception:
+                        continue
+
+                    conf = float(fc.get("confidence") or 0.0)
+                    sim = -10_000.0
+                    if target_emb:
+                        emb_fc = fc.get("embedding") or []
+                        if isinstance(emb_fc, list) and emb_fc:
+                            try:
+                                sim = _cosine(target_emb, [float(x or 0.0) for x in emb_fc])
+                            except Exception:
+                                sim = -10_000.0
+
+                    score = conf * 0.2
+                    if target_emb:
+                        if sim > -5_000.0:
+                            score += (sim * 2.0)
+                        else:
+                            score -= 0.25
+                    else:
+                        score += conf
+
+                    if score > best_score:
+                        best_score = score
+                        best_sim = sim
+                        best_bbox = (x1, y1, bw_fc, bh_fc)
+
+                if not best_bbox:
+                    return None
+
+                # If we have target embedding and multiple candidates, require
+                # at least a weak similarity before trusting detector match.
+                if target_emb and len(faces_here) > 1 and best_sim < 0.18:
+                    return None
+
+                return best_bbox
 
             frame_sec: Optional[float] = None
             try:
@@ -10836,6 +10908,25 @@ def _build_face_thumb(face_id: int) -> bool:
                     continue
                 _seen_secs.add(sec_val)
                 sec_candidates.append(sec_val)
+
+            # Prefer detector-assisted crop in sampled frames and match by
+            # embedding, so we hit the same person even if stored bbox is stale
+            # or was generated in another frame scale.
+            for sec in sec_candidates:
+                frame_bytes = _frame_bytes_for(sec)
+                if not frame_bytes:
+                    continue
+                faces_here = _detected_faces_for(sec)
+                bbox_match = _pick_best_detected_bbox(faces_here)
+                if not bbox_match:
+                    continue
+                try:
+                    x_fc, y_fc, bw_fc, bh_fc = bbox_match
+                    with Image.open(io.BytesIO(frame_bytes)) as im_src:
+                        if _crop_and_save(im_src, x_fc, y_fc, bw_fc, bh_fc):
+                            return True
+                except Exception:
+                    continue
 
             if bbox_is_usable:
                 for sec in sec_candidates:
@@ -10874,44 +10965,6 @@ def _build_face_thumb(face_id: int) -> bool:
                                         return True
                     except Exception:
                         pass
-
-            # If stored video bbox does not map cleanly, try detecting face directly
-            # in sampled frame(s) and crop from that detection.
-            for sec in sec_candidates[:2]:
-                frame_bytes = _frame_bytes_for(sec)
-                if not frame_bytes:
-                    continue
-                faces_here = _ai_detect_faces_bytes(frame_bytes, filename=f"{Path(src_rel).stem}_thumb_{sec:.2f}.jpg") or []
-                if not faces_here:
-                    continue
-
-                best_face = None
-                best_conf = -1.0
-                for fc in faces_here:
-                    if not isinstance(fc, dict):
-                        continue
-                    conf = float(fc.get("confidence") or 0.0)
-                    if conf > best_conf:
-                        best_conf = conf
-                        best_face = fc
-
-                if not isinstance(best_face, dict):
-                    continue
-
-                bbox_fc = best_face.get("bbox") or [0, 0, 0, 0]
-                try:
-                    x1, y1, x2, y2 = [int(round(float(v))) for v in bbox_fc[:4]]
-                    bw_fc = max(1, x2 - x1)
-                    bh_fc = max(1, y2 - y1)
-                except Exception:
-                    continue
-
-                try:
-                    with Image.open(io.BytesIO(frame_bytes)) as im_src:
-                        if _crop_and_save(im_src, x1, y1, bw_fc, bh_fc):
-                            return True
-                except Exception:
-                    continue
 
             if thumb_name:
                 thumb_path = THUMB_DIR / thumb_name
