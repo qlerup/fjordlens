@@ -463,7 +463,7 @@ except Exception:
     PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = 1800
 PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC))
 THUMB_SIZE = (600, 600)
-FACE_THUMB_VERSION = 3
+FACE_THUMB_VERSION = 4
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -10261,6 +10261,7 @@ def api_people_list():
                     LEFT JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=?
                     ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
+                            CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                     AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -10303,6 +10304,7 @@ def api_people_list():
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
                     ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
+                            CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                     AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -10343,6 +10345,7 @@ def api_people_list():
                 LEFT JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL
                 ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
+                        CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                 AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -10384,6 +10387,7 @@ def api_people_list():
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
                 ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
+                        CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                 AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -10665,7 +10669,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name, p.width AS src_w, p.height AS src_h FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -10740,6 +10744,12 @@ def _build_face_thumb(face_id: int) -> bool:
                 return False
 
         if Path(src_rel).suffix.lower() in VIDEO_EXTS:
+            bbox_x = int(r["bbox_x"] or 0)
+            bbox_y = int(r["bbox_y"] or 0)
+            bbox_w = int(r["bbox_w"] or 1)
+            bbox_h = int(r["bbox_h"] or 1)
+            bbox_is_usable = bbox_w > 2 and bbox_h > 2
+
             frame_sec: Optional[float] = None
             try:
                 if r["frame_sec"] is not None:
@@ -10747,31 +10757,45 @@ def _build_face_thumb(face_id: int) -> bool:
             except Exception:
                 frame_sec = None
 
-            if frame_sec is not None:
+            if frame_sec is not None and bbox_is_usable:
                 frame_bytes = _extract_video_frame_bytes(src_path, src_rel, frame_sec)
                 if frame_bytes:
                     try:
                         with Image.open(io.BytesIO(frame_bytes)) as im_src:
                             if _crop_and_save(
                                 im_src,
-                                int(r["bbox_x"] or 0),
-                                int(r["bbox_y"] or 0),
-                                int(r["bbox_w"] or 1),
-                                int(r["bbox_h"] or 1),
+                                bbox_x,
+                                bbox_y,
+                                bbox_w,
+                                bbox_h,
                             ):
                                 return True
                     except Exception:
                         pass
 
-            # Existing video face rows from before frame_sec was stored cannot be
-            # cropped reliably. Use the normal video thumbnail so person cards
-            # still show the actual media instead of the generic placeholder.
+            # For legacy rows without frame_sec, try cropping from the cached
+            # video thumbnail by scaling bbox from source dimensions.
             thumb_name = re.sub(r"[^a-zA-Z0-9._-]", "", str(r["thumb_name"] or ""))
             if thumb_name:
                 thumb_path = THUMB_DIR / thumb_name
                 if thumb_path.exists():
                     try:
                         with Image.open(thumb_path) as im_thumb:
+                            if bbox_is_usable:
+                                try:
+                                    src_w = int(r["src_w"] or 0)
+                                    src_h = int(r["src_h"] or 0)
+                                except Exception:
+                                    src_w, src_h = 0, 0
+                                if src_w > 0 and src_h > 0:
+                                    sx = float(im_thumb.width) / float(src_w)
+                                    sy = float(im_thumb.height) / float(src_h)
+                                    scaled_x = int(round(bbox_x * sx))
+                                    scaled_y = int(round(bbox_y * sy))
+                                    scaled_w = max(1, int(round(bbox_w * sx)))
+                                    scaled_h = max(1, int(round(bbox_h * sy)))
+                                    if _crop_and_save(im_thumb, scaled_x, scaled_y, scaled_w, scaled_h):
+                                        return True
                             if _save_full_thumb(im_thumb):
                                 return True
                     except Exception:
@@ -10782,6 +10806,8 @@ def _build_face_thumb(face_id: int) -> bool:
             if frame_bytes:
                 try:
                     with Image.open(io.BytesIO(frame_bytes)) as im_src:
+                        if bbox_is_usable and _crop_and_save(im_src, bbox_x, bbox_y, bbox_w, bbox_h):
+                            return True
                         if _save_full_thumb(im_src):
                             return True
                 except Exception:
