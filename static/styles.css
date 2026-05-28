@@ -379,13 +379,35 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   margin: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
+  background: #0d1016;
+  color: #dbe4f8;
   padding: 10px;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.76rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.35;
 }
+.app-update-log .app-log-line {
+  display: block;
+  min-height: 1.35em;
+  white-space: pre-wrap;
+}
+.app-update-log .app-log-line-info,
+.app-update-log .app-log-line-build,
+.app-update-log .app-log-line-ok { color: #dbe4f8; }
+.app-update-log .app-log-line-warn { color: #fde68a; }
+.app-update-log .app-log-line-err { color: #fecaca; }
+.app-update-log .app-log-service { color: #a3e635; font-weight: 700; }
+.app-update-log .app-log-pipe { color: #facc15; }
+.app-update-log .app-log-info-token { color: #38bdf8; font-weight: 700; }
+.app-update-log .app-log-ip { color: #e879f9; }
+.app-update-log .app-log-url { color: #c4b5fd; text-decoration: underline; text-underline-offset: 2px; }
+.app-update-log .app-log-ok { color: #34d399; font-weight: 700; }
+.app-update-log .app-log-warn { color: #fbbf24; font-weight: 700; }
+.app-update-log .app-log-err { color: #f87171; font-weight: 700; }
+.app-update-log .app-log-build { color: #06b6d4; font-weight: 700; }
+.app-update-log .app-log-accent { color: #93c5fd; }
 @media (max-width: 760px) {
   .app-update-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

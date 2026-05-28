@@ -939,6 +939,8 @@ const I18N = {
     app_update_available: 'Update klar: {current} → {remote}',
     app_update_latest: 'Allerede nyeste version.',
     app_update_running: 'Update kører...',
+    app_update_reconnecting: 'Update kører. FjordLens genstarter og forbinder igen automatisk...',
+    app_update_reloading: 'Update færdig. Genindlæser siden...',
     app_update_success: 'Update færdig.',
     app_update_failed: 'Update fejlede.',
     app_update_dirty: 'Repoet har lokale tracked ændringer.',
@@ -1643,6 +1645,8 @@ const I18N = {
     app_update_available: 'Update ready: {current} → {remote}',
     app_update_latest: 'Already on the latest version.',
     app_update_running: 'Update is running...',
+    app_update_reconnecting: 'Update is running. FjordLens is restarting and will reconnect automatically...',
+    app_update_reloading: 'Update finished. Reloading the page...',
     app_update_success: 'Update finished.',
     app_update_failed: 'Update failed.',
     app_update_dirty: 'Repository has local tracked changes.',
@@ -2329,13 +2333,18 @@ let state = {
   uploadWorkflowBatchSize: 10,
   uploadWorkflowThumbnailsUseGpu: false,
   appUpdate: null,
+  appUpdateReconnectUntil: 0,
 };
 
 const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
 const APP_UPDATE_STATUS_POLL_MS = 2500;
+const APP_UPDATE_RECONNECT_MAX_MS = 20 * 60 * 1000;
+const APP_UPDATE_RELOAD_DELAY_MS = 1800;
+const APP_UPDATE_RECONNECT_KEY = 'fjordlens.appUpdate.reconnect.v1';
 let appUpdateStatusPollTimer = null;
 let appUpdateChoiceResolver = null;
+let appUpdateReloadTimer = null;
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
 const PHOTOFRAME_PREVIEW_UI_STATE_KEY = 'fjordlens.photoframePreviewHiddenById.v1';
@@ -8556,12 +8565,122 @@ function applyAppUpdateSettingsUi(item = {}) {
   }
 }
 
+function markAppUpdateReconnect() {
+  const until = Date.now() + APP_UPDATE_RECONNECT_MAX_MS;
+  state.appUpdateReconnectUntil = until;
+  try {
+    localStorage.setItem(APP_UPDATE_RECONNECT_KEY, JSON.stringify({ until }));
+  } catch {}
+}
+
+function clearAppUpdateReconnect() {
+  state.appUpdateReconnectUntil = 0;
+  try { localStorage.removeItem(APP_UPDATE_RECONNECT_KEY); } catch {}
+}
+
+function appUpdateReconnectActive() {
+  const nowMs = Date.now();
+  let until = Number(state.appUpdateReconnectUntil || 0);
+  if (!until) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(APP_UPDATE_RECONNECT_KEY) || '{}') || {};
+      until = Number(raw.until || 0);
+      if (until) state.appUpdateReconnectUntil = until;
+    } catch {
+      until = 0;
+    }
+  }
+  if (until > nowMs) return true;
+  if (until) clearAppUpdateReconnect();
+  return false;
+}
+
+function scheduleAppUpdatePageReload() {
+  if (appUpdateReloadTimer) return;
+  showAppUpdateStatus(tr('app_update_reloading'), 'ok');
+  clearAppUpdateReconnect();
+  appUpdateReloadTimer = setTimeout(() => {
+    try { window.location.reload(); } catch {}
+  }, APP_UPDATE_RELOAD_DELAY_MS);
+}
+
+function shouldKeepAppUpdatePolling(data = null) {
+  if (data && data.running) return true;
+  if (appUpdateReconnectActive()) return true;
+  return false;
+}
+
+function appUpdateLogLineLevel(line) {
+  const s = String(line || '').toLowerCase();
+  if (/\b(traceback|exception|error|failed|fatal)\b/.test(s) || s.includes('returncode=1')) return 'err';
+  if (/\b(warn|warning|skipping|springer|unavailable)\b/.test(s) || s.includes('ikke tilg')) return 'warn';
+  if (/\b(success|finished|done|healthy|started|built|klar)\b/.test(s) || /\b20\d\b/.test(s)) return 'ok';
+  if (/^\s*(=>|-->|->|\[\+\]|cached|\$|==>)/i.test(s)) return 'build';
+  return 'info';
+}
+
+function highlightAppUpdateLogText(rawLine) {
+  let raw = String(rawLine || '');
+  let prefix = '';
+  const serviceMatch = raw.match(/^(\s*)([a-z0-9_.-]+)(\s+\|)(.*)$/i);
+  if (serviceMatch) {
+    prefix =
+      escapeHtml(serviceMatch[1]) +
+      `<span class="app-log-service">${escapeHtml(serviceMatch[2])}</span>` +
+      `<span class="app-log-pipe">${escapeHtml(serviceMatch[3])}</span>`;
+    raw = serviceMatch[4];
+  }
+
+  const tokenRe = /(https?:\/\/[^\s"]+)|(\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b)|(\b[1-5]\d\d\b)|(\b(?:INFO|WARN|WARNING|ERROR|Traceback|Exception|FINISHED|DONE|OK|Built|Started|Healthy|success|failed|FAILED|CACHED)\b:?|==>|=>|-->|->|\[\+\]|\$)/g;
+  let html = '';
+  let last = 0;
+  let m;
+  while ((m = tokenRe.exec(raw)) !== null) {
+    html += escapeHtml(raw.slice(last, m.index));
+    const token = m[0];
+    let cls = 'app-log-accent';
+    if (m[1]) cls = 'app-log-url';
+    else if (m[2]) cls = 'app-log-ip';
+    else if (m[3]) {
+      const code = Number(token);
+      cls = code >= 500 ? 'app-log-err' : (code >= 400 ? 'app-log-warn' : (code >= 300 ? 'app-log-warn' : 'app-log-ok'));
+    } else if (/\b(error|traceback|exception|failed)\b/i.test(token)) cls = 'app-log-err';
+    else if (/\b(warn|warning)\b/i.test(token)) cls = 'app-log-warn';
+    else if (/\b(info)\b/i.test(token)) cls = 'app-log-info-token';
+    else if (/\b(ok|finished|done|built|started|healthy|success|cached)\b/i.test(token)) cls = 'app-log-ok';
+    else if (/^(==>|=>|-->|->|\[\+\]|\$)$/.test(token)) cls = 'app-log-build';
+    html += `<span class="${cls}">${escapeHtml(token)}</span>`;
+    last = tokenRe.lastIndex;
+  }
+  html += escapeHtml(raw.slice(last));
+  return prefix + html;
+}
+
+function renderAppUpdateLog(logLines) {
+  if (!els.appUpdateLog) return;
+  const lines = Array.isArray(logLines) ? logLines : [];
+  const hasText = lines.some((line) => String(line || '').trim());
+  els.appUpdateLog.classList.toggle('hidden', !hasText);
+  if (!hasText) {
+    els.appUpdateLog.textContent = '';
+    return;
+  }
+  els.appUpdateLog.innerHTML = lines.map((line) => {
+    const level = appUpdateLogLineLevel(line);
+    const body = highlightAppUpdateLogText(line) || '&nbsp;';
+    return `<span class="app-log-line app-log-line-${level}">${body}</span>`;
+  }).join('');
+  try { els.appUpdateLog.scrollTop = els.appUpdateLog.scrollHeight; } catch {}
+}
+
 function renderAppUpdate(data = null) {
   if (!els.appUpdateTitle) return;
   const item = data || state.appUpdate || {};
   state.appUpdate = item;
   const git = (item && item.git && typeof item.git === 'object') ? item.git : {};
   const running = !!item.running || String(item.status || '').toLowerCase() === 'running';
+  const statusRaw = String(item.status || '').toLowerCase();
+  const reconnecting = appUpdateReconnectActive();
   const serviceReachable = item.service_reachable !== false;
   const hasGit = !!(git && Object.keys(git).length);
   const available = serviceReachable && hasGit && git.available !== false;
@@ -8575,23 +8694,25 @@ function renderAppUpdate(data = null) {
   applyAppUpdateSettingsUi(item);
 
   const logLines = Array.isArray(item.log) ? item.log : [];
-  if (els.appUpdateLog) {
-    const text = logLines.join('\n').trim();
-    els.appUpdateLog.textContent = text;
-    els.appUpdateLog.classList.toggle('hidden', !text);
-    if (text) {
-      try { els.appUpdateLog.scrollTop = els.appUpdateLog.scrollHeight; } catch {}
-    }
-  }
+  renderAppUpdateLog(logLines);
 
   if (els.appUpdateCheckBtn) {
-    els.appUpdateCheckBtn.disabled = running || els.appUpdateCheckBtn.classList.contains('loading');
+    els.appUpdateCheckBtn.disabled = running || reconnecting || els.appUpdateCheckBtn.classList.contains('loading');
   }
   if (els.appUpdateStartBtn) {
-    els.appUpdateStartBtn.disabled = running || !available || !!git.dirty || !!git.fetch_error || els.appUpdateStartBtn.classList.contains('loading');
+    els.appUpdateStartBtn.disabled = running || reconnecting || !available || !!git.dirty || !!git.fetch_error || els.appUpdateStartBtn.classList.contains('loading');
   }
 
-  if (item.error) {
+  if (statusRaw === 'success') {
+    scheduleAppUpdatePageReload();
+  } else if (statusRaw === 'failed') {
+    clearAppUpdateReconnect();
+    showAppUpdateStatus(tr('app_update_failed'), 'err');
+  } else if (reconnecting && serviceReachable && available && !running) {
+    scheduleAppUpdatePageReload();
+  } else if (reconnecting && (!serviceReachable || !available || running)) {
+    showAppUpdateStatus(tr('app_update_reconnecting'), 'ok');
+  } else if (item.error) {
     showAppUpdateStatus(String(item.error), 'err');
   } else if (!serviceReachable || !available) {
     showAppUpdateStatus(tr('app_update_unavailable'), 'err');
@@ -8601,10 +8722,6 @@ function renderAppUpdate(data = null) {
     showAppUpdateStatus(tr('app_update_dirty'), 'err');
   } else if (running) {
     showAppUpdateStatus(tr('app_update_running'), 'ok');
-  } else if (String(item.status || '').toLowerCase() === 'success') {
-    showAppUpdateStatus(tr('app_update_success'), 'ok');
-  } else if (String(item.status || '').toLowerCase() === 'failed') {
-    showAppUpdateStatus(tr('app_update_failed'), 'err');
   } else if (git.update_available) {
     showAppUpdateStatus(
       tr('app_update_available').replace('{current}', current).replace('{remote}', remote),
@@ -8629,7 +8746,7 @@ function startAppUpdateStatusPolling() {
     if (state.view !== 'settings') return;
     try {
       const data = await loadAppUpdateStatus({ silent: true });
-      if (!data || !data.running) stopAppUpdateStatusPolling();
+      if (!shouldKeepAppUpdatePolling(data)) stopAppUpdateStatusPolling();
     } catch {}
   }, APP_UPDATE_STATUS_POLL_MS);
 }
@@ -8640,15 +8757,22 @@ async function loadAppUpdateStatus(opts = {}) {
     const res = await fetch('/api/app-update/status', { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     renderAppUpdate(data || {});
-    if (data && data.running) startAppUpdateStatusPolling();
+    if (shouldKeepAppUpdatePolling(data || {})) startAppUpdateStatusPolling();
     return data;
   } catch (e) {
+    const reconnecting = appUpdateReconnectActive();
+    const prev = (state.appUpdate && typeof state.appUpdate === 'object') ? state.appUpdate : {};
     const data = {
       ok: false,
       service_reachable: false,
-      error: opts.silent ? '' : tr('app_update_unavailable'),
+      running: reconnecting,
+      status: reconnecting ? 'running' : 'idle',
+      git: (prev.git && typeof prev.git === 'object') ? prev.git : {},
+      log: Array.isArray(prev.log) ? prev.log : [],
+      error: reconnecting ? '' : (opts.silent ? '' : tr('app_update_unavailable')),
     };
     renderAppUpdate(data);
+    if (reconnecting && !appUpdateStatusPollTimer) startAppUpdateStatusPolling();
     return data;
   }
 }
@@ -8704,6 +8828,7 @@ async function startAppUpdate() {
   if (!els.appUpdateTitle) return;
   const cleanup = await openAppUpdateChoiceModal();
   if (cleanup === null) return;
+  markAppUpdateReconnect();
   const btn = els.appUpdateStartBtn;
   const original = btn ? btn.textContent : tr('app_update_start');
   showAppUpdateStatus(tr('app_update_starting'), 'ok');
@@ -8720,10 +8845,15 @@ async function startAppUpdate() {
     });
     const data = await res.json().catch(() => ({}));
     renderAppUpdate(data || {});
-    if (!res.ok || !data || data.ok === false) return;
+    if (!res.ok || !data || data.ok === false) {
+      clearAppUpdateReconnect();
+      renderAppUpdate(data || {});
+      return;
+    }
     startAppUpdateStatusPolling();
   } catch {
-    renderAppUpdate({ ok: false, service_reachable: false, error: tr('app_update_unavailable') });
+    renderAppUpdate({ ok: false, service_reachable: false, running: true, status: 'running', error: '' });
+    startAppUpdateStatusPolling();
   } finally {
     if (btn) {
       btn.classList.remove('loading');
