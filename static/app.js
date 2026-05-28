@@ -8678,12 +8678,18 @@ function renderAppUpdateLog(logLines) {
 
 function renderAppUpdate(data = null) {
   if (!els.appUpdateTitle) return;
+  const previousItem = (state.appUpdate && typeof state.appUpdate === 'object') ? state.appUpdate : {};
+  const previousStatusRaw = String(previousItem.status || '').toLowerCase();
+  const previousRunning = !!previousItem.running || previousStatusRaw === 'running';
+
   const item = data || state.appUpdate || {};
   state.appUpdate = item;
   const git = (item && item.git && typeof item.git === 'object') ? item.git : {};
   const running = !!item.running || String(item.status || '').toLowerCase() === 'running';
   const statusRaw = String(item.status || '').toLowerCase();
   const reconnecting = appUpdateReconnectActive();
+  const justFinishedFromRunning = statusRaw === 'success' && previousRunning && !running;
+  const shouldReloadOnSuccess = statusRaw === 'success' && (reconnecting || justFinishedFromRunning);
   const serviceReachable = item.service_reachable !== false;
   const hasGit = !!(git && Object.keys(git).length);
   const available = serviceReachable && hasGit && git.available !== false;
@@ -8707,7 +8713,12 @@ function renderAppUpdate(data = null) {
   }
 
   if (statusRaw === 'success') {
-    scheduleAppUpdatePageReload();
+    if (shouldReloadOnSuccess) {
+      scheduleAppUpdatePageReload();
+    } else {
+      clearAppUpdateReconnect();
+      showAppUpdateStatus(tr('app_update_success'), 'ok');
+    }
   } else if (statusRaw === 'failed') {
     clearAppUpdateReconnect();
     showAppUpdateStatus(tr('app_update_failed'), 'err');
