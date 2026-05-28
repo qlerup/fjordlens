@@ -191,6 +191,19 @@ try:
 except Exception:
     APP_UPDATE_SERVICE_TIMEOUT_SEC = 20.0
 APP_UPDATE_SERVICE_TIMEOUT_SEC = max(2.0, min(120.0, APP_UPDATE_SERVICE_TIMEOUT_SEC))
+APP_UPDATE_STATE_DIR = DATA_DIR / "updater"
+APP_UPDATE_STATE_PATH = APP_UPDATE_STATE_DIR / "update_state.json"
+APP_UPDATE_STATE_LOCK = threading.RLock()
+APP_UPDATE_AUTO_CHECK_DEFAULT_ENABLED = (
+    str(os.environ.get("FJORDLENS_AUTO_UPDATE_CHECK", "1") or "1").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+try:
+    APP_UPDATE_AUTO_CHECK_DEFAULT_INTERVAL_MINUTES = int(
+        os.environ.get("FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES", "30") or 30
+    )
+except Exception:
+    APP_UPDATE_AUTO_CHECK_DEFAULT_INTERVAL_MINUTES = 30
 PHOTOFRAME_WIFI_COUNTRY_CHOICES = (
     ("DK", "Danmark"),
     ("SE", "Sverige"),
@@ -12467,6 +12480,109 @@ def _require_admin_for_app_update() -> Optional[Tuple[dict, int]]:
     return None
 
 
+def _app_update_clamp_interval_minutes(value: Any) -> int:
+    try:
+        minutes = int(float(value))
+    except Exception:
+        minutes = APP_UPDATE_AUTO_CHECK_DEFAULT_INTERVAL_MINUTES
+    return max(5, min(1440, minutes))
+
+
+def _app_update_default_state() -> Dict[str, Any]:
+    interval = _app_update_clamp_interval_minutes(APP_UPDATE_AUTO_CHECK_DEFAULT_INTERVAL_MINUTES)
+    return {
+        "running": False,
+        "status": "idle",
+        "started_at": "",
+        "finished_at": "",
+        "returncode": None,
+        "job_id": "",
+        "auto_check_enabled": bool(APP_UPDATE_AUTO_CHECK_DEFAULT_ENABLED),
+        "auto_check_interval_minutes": interval,
+        "last_check_at": "",
+        "last_check_source": "",
+        "last_auto_check_at": "",
+        "next_auto_check_at": "",
+        "next_auto_check_epoch": 0,
+    }
+
+
+def _app_update_set_next_auto_check(state: Dict[str, Any], from_epoch: Optional[float] = None) -> Dict[str, Any]:
+    base = float(from_epoch or time.time())
+    interval_sec = _app_update_clamp_interval_minutes(state.get("auto_check_interval_minutes")) * 60
+    next_epoch = base + interval_sec
+    state["next_auto_check_epoch"] = next_epoch
+    state["next_auto_check_at"] = datetime.utcfromtimestamp(next_epoch).replace(microsecond=0).isoformat() + "Z"
+    return state
+
+
+def _app_update_normalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    merged = _app_update_default_state()
+    merged.update(state or {})
+    merged["auto_check_enabled"] = bool(merged.get("auto_check_enabled"))
+    merged["auto_check_interval_minutes"] = _app_update_clamp_interval_minutes(merged.get("auto_check_interval_minutes"))
+    try:
+        merged["next_auto_check_epoch"] = float(merged.get("next_auto_check_epoch") or 0)
+    except Exception:
+        merged["next_auto_check_epoch"] = 0
+    if merged.get("auto_check_enabled"):
+        if float(merged.get("next_auto_check_epoch") or 0) <= 0:
+            _app_update_set_next_auto_check(merged)
+    else:
+        merged["next_auto_check_epoch"] = 0
+        merged["next_auto_check_at"] = ""
+    return merged
+
+
+def _app_update_read_state_local() -> Dict[str, Any]:
+    with APP_UPDATE_STATE_LOCK:
+        try:
+            if APP_UPDATE_STATE_PATH.exists():
+                raw = json.loads(APP_UPDATE_STATE_PATH.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    return _app_update_normalize_state(raw)
+        except Exception:
+            pass
+    return _app_update_normalize_state({})
+
+
+def _app_update_write_state_local(state: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _app_update_normalize_state(state)
+    with APP_UPDATE_STATE_LOCK:
+        APP_UPDATE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = APP_UPDATE_STATE_PATH.with_suffix(APP_UPDATE_STATE_PATH.suffix + ".tmp")
+        tmp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(APP_UPDATE_STATE_PATH)
+    return normalized
+
+
+def _app_update_settings_payload_from_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    s = _app_update_normalize_state(state)
+    return {
+        "ok": True,
+        "auto_check_enabled": bool(s.get("auto_check_enabled")),
+        "auto_check_interval_minutes": _app_update_clamp_interval_minutes(s.get("auto_check_interval_minutes")),
+        "last_check_at": str(s.get("last_check_at") or ""),
+        "last_check_source": str(s.get("last_check_source") or ""),
+        "last_auto_check_at": str(s.get("last_auto_check_at") or ""),
+        "next_auto_check_at": str(s.get("next_auto_check_at") or ""),
+    }
+
+
+def _app_update_is_legacy_not_found(proxy_response: Any, proxy_status: Any) -> bool:
+    try:
+        if int(proxy_status) != 404:
+            return False
+    except Exception:
+        return False
+    try:
+        data = proxy_response.get_json(silent=True) if proxy_response is not None else {}
+    except Exception:
+        data = {}
+    err = str((data or {}).get("error") or "").strip().lower()
+    return err == "not found"
+
+
 def _app_update_proxy(path: str, method: str = "GET", payload: Optional[dict] = None, timeout: Optional[float] = None):
     if not APP_UPDATE_SERVICE_URL:
         return jsonify(
@@ -12545,13 +12661,29 @@ def api_app_update_settings():
     if fb:
         return jsonify(fb[0]), fb[1]
     if request.method == "GET":
-        return _app_update_proxy("/settings", method="GET", timeout=5)
+        proxy_response, proxy_status = _app_update_proxy("/settings", method="GET", timeout=5)
+        if not _app_update_is_legacy_not_found(proxy_response, proxy_status):
+            return proxy_response, proxy_status
+        return jsonify(_app_update_settings_payload_from_state(_app_update_read_state_local())), 200
     body = request.get_json(silent=True) or {}
     payload = {
         "auto_check_enabled": bool(body.get("auto_check_enabled")),
         "auto_check_interval_minutes": body.get("auto_check_interval_minutes"),
     }
-    return _app_update_proxy("/settings", method="POST", payload=payload, timeout=10)
+    proxy_response, proxy_status = _app_update_proxy("/settings", method="POST", payload=payload, timeout=10)
+    if not _app_update_is_legacy_not_found(proxy_response, proxy_status):
+        return proxy_response, proxy_status
+
+    state = _app_update_read_state_local()
+    state["auto_check_enabled"] = bool(payload.get("auto_check_enabled"))
+    state["auto_check_interval_minutes"] = payload.get("auto_check_interval_minutes")
+    if state.get("auto_check_enabled"):
+        _app_update_set_next_auto_check(state)
+    else:
+        state["next_auto_check_epoch"] = 0
+        state["next_auto_check_at"] = ""
+    saved_state = _app_update_write_state_local(state)
+    return jsonify(_app_update_settings_payload_from_state(saved_state)), 200
 
 
 @app.route("/api/photoframes/status", methods=["GET"])
