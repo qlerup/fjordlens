@@ -9728,9 +9728,13 @@ async function uploadDroppedDataTransfer(dataTransfer, baseSubdir) {
     // Collect all dirs from file groups and explicit dirList
     const fileDirs = Array.from(groups.keys()).filter(Boolean);
     const allDirs = fileDirs.concat(dirList)
-      .map(d => String(d || '').replace(/\\/g, '/'))
-      .filter(Boolean)
-      .map(d => (commonRoot && d.startsWith(commonRoot + '/') ? d.slice(commonRoot.length + 1) : d))
+      .map((d) => {
+        const s = String(d || '').replace(/\\/g, '/');
+        if (!commonRoot) return s;
+        if (s === commonRoot) return '';
+        if (s.startsWith(commonRoot + '/')) return s.slice(commonRoot.length + 1);
+        return s;
+      })
       .filter(Boolean)
       .sort((a,b)=>a.split('/').length - b.split('/').length);
     for (const dir of allDirs) {
