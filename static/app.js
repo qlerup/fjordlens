@@ -664,12 +664,13 @@ const SCAN_FEATURES_ENABLED = (typeof window.APP_SCAN_ENABLED === 'boolean') ? w
 const UI_LANGUAGES = new Set(['da', 'en']);
 
 function applyScanFeatureVisibility() {
-  if (SCAN_FEATURES_ENABLED) return;
   try {
-    [els.scanBtn, els.rescanBtn, els.rethumbBtn, els.fixThumbsBtn].forEach((el) => {
-      if (el) el.style.display = 'none';
-    });
-    if (els.scanModal) els.scanModal.classList.add('hidden');
+    // 'Scan bibliotek' er den eneste der skal skjules for alle, når scan-funktionen er slået fra
+    if (!SCAN_FEATURES_ENABLED) {
+      if (els.scanBtn) els.scanBtn.style.display = 'none';
+      if (els.scanModal) els.scanModal.classList.add('hidden');
+    }
+    // De andre vedligeholdelsesknapper (rescan/rethumb/fix) forbliver synlige
   } catch {}
 }
 applyScanFeatureVisibility();
@@ -10713,7 +10714,6 @@ async function scanLibrary() {
 
 // Rescan metadata
 async function pollRescanStatus() {
-  if (!SCAN_FEATURES_ENABLED) return;
   try {
     const res = await fetch("/api/rescan/status");
     const data = await res.json();
@@ -10731,10 +10731,6 @@ async function pollRescanStatus() {
 }
 
 async function rescanMetadata() {
-  if (!SCAN_FEATURES_ENABLED) {
-    showStatus('Scan-funktioner er deaktiveret.', 'err');
-    return;
-  }
   try {
     els.rescanBtn.disabled = true;
     showStatus(tr('rescan_starting'), "ok");
@@ -10771,10 +10767,6 @@ async function pollRethumbStatus() {
 }
 
 async function rethumbAll() {
-  if (!SCAN_FEATURES_ENABLED) {
-    showStatus('Scan-funktioner er deaktiveret.', 'err');
-    return;
-  }
   try {
     if (els.rethumbBtn) els.rethumbBtn.disabled = true;
     showStatus(tr('rethumb_starting'), "ok");
@@ -10836,10 +10828,6 @@ async function clearIndex() {
 
 // Fix only missing/outdated thumbnails
 async function fixMissingThumbs() {
-  if (!SCAN_FEATURES_ENABLED) {
-    showStatus('Scan-funktioner er deaktiveret.', 'err');
-    return;
-  }
   try {
     if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = true;
     showStatus(tr('rethumb_starting'), 'ok');

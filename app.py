@@ -14774,8 +14774,6 @@ def api_scan_status():
 
 @app.route("/api/rescan", methods=["POST"])
 def api_rescan():
-    if not ENABLE_SCAN_FEATURES:
-        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -14796,8 +14794,6 @@ def api_rescan():
 
 @app.route("/api/rescan/status")
 def api_rescan_status():
-    if not ENABLE_SCAN_FEATURES:
-        return jsonify({"ok": True, "running": False, "disabled": True})
     running = bool(rescan_thread and rescan_thread.is_alive())
     resp: Dict[str, Any] = {"ok": True, "running": running}
     if not running and last_rescan_result is not None:
@@ -14839,8 +14835,6 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
 
 @app.route("/api/rethumb", methods=["POST"])
 def api_rethumb():
-    if not ENABLE_SCAN_FEATURES:
-        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
@@ -14861,8 +14855,6 @@ def api_rethumb():
 
 @app.route("/api/rethumb/status")
 def api_rethumb_status():
-    if not ENABLE_SCAN_FEATURES:
-        return jsonify({"ok": True, "running": False, "disabled": True})
     running = bool(rethumb_thread and rethumb_thread.is_alive())
     resp: Dict[str, Any] = {"ok": True, "running": running}
     if not running and last_rethumb_result is not None:
@@ -14927,8 +14919,6 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
 
 @app.route("/api/rethumb/missing", methods=["POST"])
 def api_rethumb_missing():
-    if not ENABLE_SCAN_FEATURES:
-        return jsonify(_scan_disabled_error()), 403
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
