@@ -261,6 +261,40 @@
               <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
             </div>
           </div>
+          {% if user_role == "admin" %}
+          <div class="sidebar-card app-update-card" style="margin-bottom:12px;">
+            <div id="appUpdateTitle" class="sidebar-card-title">FjordLens update</div>
+            <div class="app-update-grid" aria-live="polite">
+              <div>
+                <span id="appUpdateBranchLabel">Branch</span>
+                <strong id="appUpdateBranch">-</strong>
+              </div>
+              <div>
+                <span id="appUpdateCurrentLabel">Installeret</span>
+                <strong id="appUpdateCurrent">-</strong>
+              </div>
+              <div>
+                <span id="appUpdateRemoteLabel">Nyeste</span>
+                <strong id="appUpdateRemote">-</strong>
+              </div>
+              <div>
+                <span id="appUpdateStateLabel">Status</span>
+                <strong id="appUpdateState">-</strong>
+              </div>
+            </div>
+            <div class="actions app-update-actions">
+              <label class="ai-toggle-row" for="appUpdateCleanupToggle">
+                <input id="appUpdateCleanupToggle" class="ai-toggle-input" type="checkbox" role="switch" checked />
+                <span class="ai-toggle-slider" aria-hidden="true"></span>
+                <span id="appUpdateCleanupText" class="mini-label">Docker oprydning</span>
+              </label>
+              <button id="appUpdateCheckBtn" class="btn" type="button">Tjek</button>
+              <button id="appUpdateStartBtn" class="btn primary" type="button">Opdater</button>
+            </div>
+            <div id="appUpdateStatus" class="status hidden" style="margin-top:10px;"></div>
+            <pre id="appUpdateLog" class="app-update-log hidden"></pre>
+          </div>
+          {% endif %}
         </div>
 
         <!-- Hardware -->

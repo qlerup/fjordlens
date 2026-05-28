@@ -12,6 +12,21 @@
   fixThumbsBtn: document.getElementById("fixThumbsBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
   factoryResetBtn: document.getElementById("factoryResetBtn"),
+  appUpdateTitle: document.getElementById("appUpdateTitle"),
+  appUpdateBranchLabel: document.getElementById("appUpdateBranchLabel"),
+  appUpdateCurrentLabel: document.getElementById("appUpdateCurrentLabel"),
+  appUpdateRemoteLabel: document.getElementById("appUpdateRemoteLabel"),
+  appUpdateStateLabel: document.getElementById("appUpdateStateLabel"),
+  appUpdateBranch: document.getElementById("appUpdateBranch"),
+  appUpdateCurrent: document.getElementById("appUpdateCurrent"),
+  appUpdateRemote: document.getElementById("appUpdateRemote"),
+  appUpdateState: document.getElementById("appUpdateState"),
+  appUpdateCleanupToggle: document.getElementById("appUpdateCleanupToggle"),
+  appUpdateCleanupText: document.getElementById("appUpdateCleanupText"),
+  appUpdateCheckBtn: document.getElementById("appUpdateCheckBtn"),
+  appUpdateStartBtn: document.getElementById("appUpdateStartBtn"),
+  appUpdateStatus: document.getElementById("appUpdateStatus"),
+  appUpdateLog: document.getElementById("appUpdateLog"),
   aiIngestToggle: document.getElementById("aiIngestToggle"),
   aiIngestToggleText: document.getElementById("aiIngestToggleText"),
   aiPanelTitle: document.getElementById("aiPanelTitle"),
@@ -892,6 +907,31 @@ const I18N = {
     settings_title: 'Indstillinger',
     settings_sub: 'Vedligeholdelse og logs',
     maint_title: 'Vedligeholdelse',
+    app_update_title: 'FjordLens update',
+    app_update_branch: 'Branch',
+    app_update_current: 'Installeret',
+    app_update_remote: 'Nyeste',
+    app_update_state: 'Status',
+    app_update_cleanup: 'Docker oprydning',
+    app_update_check: 'Tjek',
+    app_update_start: 'Opdater',
+    app_update_checking: 'Tjekker for update...',
+    app_update_starting: 'Starter update...',
+    app_update_unavailable: 'Updater er ikke tilgængelig.',
+    app_update_available: 'Update klar: {current} → {remote}',
+    app_update_latest: 'Allerede nyeste version.',
+    app_update_running: 'Update kører...',
+    app_update_success: 'Update færdig.',
+    app_update_failed: 'Update fejlede.',
+    app_update_dirty: 'Repoet har lokale tracked ændringer.',
+    app_update_confirm_cleanup: 'Starte FjordLens update med Docker oprydning?',
+    app_update_confirm_no_cleanup: 'Starte FjordLens update uden Docker oprydning?',
+    app_update_status_idle: 'Klar',
+    app_update_status_checking: 'Tjekker',
+    app_update_status_running: 'Kører',
+    app_update_status_success: 'Færdig',
+    app_update_status_failed: 'Fejlet',
+    app_update_status_unknown: 'Ukendt',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI-embeddings',
     ai_embed_desc: 'Starter eller stopper embedding-jobbet for billeder uden embedding.',
@@ -1560,6 +1600,31 @@ const I18N = {
     settings_title: 'Settings',
     settings_sub: 'Maintenance and logs',
     maint_title: 'Maintenance',
+    app_update_title: 'FjordLens update',
+    app_update_branch: 'Branch',
+    app_update_current: 'Installed',
+    app_update_remote: 'Latest',
+    app_update_state: 'Status',
+    app_update_cleanup: 'Docker cleanup',
+    app_update_check: 'Check',
+    app_update_start: 'Update',
+    app_update_checking: 'Checking for update...',
+    app_update_starting: 'Starting update...',
+    app_update_unavailable: 'Updater is not available.',
+    app_update_available: 'Update ready: {current} → {remote}',
+    app_update_latest: 'Already on the latest version.',
+    app_update_running: 'Update is running...',
+    app_update_success: 'Update finished.',
+    app_update_failed: 'Update failed.',
+    app_update_dirty: 'Repository has local tracked changes.',
+    app_update_confirm_cleanup: 'Start FjordLens update with Docker cleanup?',
+    app_update_confirm_no_cleanup: 'Start FjordLens update without Docker cleanup?',
+    app_update_status_idle: 'Ready',
+    app_update_status_checking: 'Checking',
+    app_update_status_running: 'Running',
+    app_update_status_success: 'Done',
+    app_update_status_failed: 'Failed',
+    app_update_status_unknown: 'Unknown',
     ai_panel_title: 'AI',
     ai_embed_title: 'AI embeddings',
     ai_embed_desc: 'Starts or stops the embeddings job for photos without embeddings.',
@@ -2231,10 +2296,13 @@ let state = {
   uploadWorkflowMode: 'gentle',
   uploadWorkflowBatchSize: 10,
   uploadWorkflowThumbnailsUseGpu: false,
+  appUpdate: null,
 };
 
 const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
+const APP_UPDATE_STATUS_POLL_MS = 2500;
+let appUpdateStatusPollTimer = null;
 
 const MAPPER_TREE_UI_STATE_KEY = 'fjordlens.mapperTreeUi.v1';
 const PHOTOFRAME_PREVIEW_UI_STATE_KEY = 'fjordlens.photoframePreviewHiddenById.v1';
@@ -8400,6 +8468,194 @@ async function saveUploadWorkflowSettings() {
   }
 }
 
+function showAppUpdateStatus(message, kind = 'ok') {
+  if (!els.appUpdateStatus) return;
+  const msg = String(message || '').trim();
+  if (!msg) {
+    els.appUpdateStatus.classList.add('hidden');
+    els.appUpdateStatus.textContent = '';
+    els.appUpdateStatus.classList.remove('ok', 'err');
+    return;
+  }
+  els.appUpdateStatus.textContent = msg;
+  els.appUpdateStatus.classList.remove('hidden');
+  els.appUpdateStatus.classList.toggle('ok', kind === 'ok');
+  els.appUpdateStatus.classList.toggle('err', kind !== 'ok');
+}
+
+function appUpdateStatusLabel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'idle') return tr('app_update_status_idle');
+  if (raw === 'checking') return tr('app_update_status_checking');
+  if (raw === 'running') return tr('app_update_status_running');
+  if (raw === 'success') return tr('app_update_status_success');
+  if (raw === 'failed') return tr('app_update_status_failed');
+  return tr('app_update_status_unknown');
+}
+
+function appUpdateShortRev(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  return raw.length > 12 ? raw.slice(0, 12) : raw;
+}
+
+function renderAppUpdate(data = null) {
+  if (!els.appUpdateTitle) return;
+  const item = data || state.appUpdate || {};
+  state.appUpdate = item;
+  const git = (item && item.git && typeof item.git === 'object') ? item.git : {};
+  const running = !!item.running || String(item.status || '').toLowerCase() === 'running';
+  const serviceReachable = item.service_reachable !== false;
+  const hasGit = !!(git && Object.keys(git).length);
+  const available = serviceReachable && hasGit && git.available !== false;
+  const current = appUpdateShortRev(git.current_short || git.current_rev);
+  const remote = appUpdateShortRev(git.remote_short || git.remote_rev);
+
+  if (els.appUpdateBranch) els.appUpdateBranch.textContent = String(git.branch || '-');
+  if (els.appUpdateCurrent) els.appUpdateCurrent.textContent = current;
+  if (els.appUpdateRemote) els.appUpdateRemote.textContent = remote;
+  if (els.appUpdateState) els.appUpdateState.textContent = appUpdateStatusLabel(item.status || (running ? 'running' : 'idle'));
+
+  const logLines = Array.isArray(item.log) ? item.log : [];
+  if (els.appUpdateLog) {
+    const text = logLines.join('\n').trim();
+    els.appUpdateLog.textContent = text;
+    els.appUpdateLog.classList.toggle('hidden', !text);
+    if (text) {
+      try { els.appUpdateLog.scrollTop = els.appUpdateLog.scrollHeight; } catch {}
+    }
+  }
+
+  if (els.appUpdateCheckBtn) {
+    els.appUpdateCheckBtn.disabled = running || els.appUpdateCheckBtn.classList.contains('loading');
+  }
+  if (els.appUpdateStartBtn) {
+    els.appUpdateStartBtn.disabled = running || !available || !!git.dirty || !!git.fetch_error || els.appUpdateStartBtn.classList.contains('loading');
+  }
+
+  if (item.error) {
+    showAppUpdateStatus(String(item.error), 'err');
+  } else if (!serviceReachable || !available) {
+    showAppUpdateStatus(tr('app_update_unavailable'), 'err');
+  } else if (git.fetch_error) {
+    showAppUpdateStatus(String(git.fetch_error), 'err');
+  } else if (git.dirty) {
+    showAppUpdateStatus(tr('app_update_dirty'), 'err');
+  } else if (running) {
+    showAppUpdateStatus(tr('app_update_running'), 'ok');
+  } else if (String(item.status || '').toLowerCase() === 'success') {
+    showAppUpdateStatus(tr('app_update_success'), 'ok');
+  } else if (String(item.status || '').toLowerCase() === 'failed') {
+    showAppUpdateStatus(tr('app_update_failed'), 'err');
+  } else if (git.update_available) {
+    showAppUpdateStatus(
+      tr('app_update_available').replace('{current}', current).replace('{remote}', remote),
+      'ok'
+    );
+  } else if (git.current_rev && git.remote_rev) {
+    showAppUpdateStatus(tr('app_update_latest'), 'ok');
+  }
+}
+
+function stopAppUpdateStatusPolling() {
+  if (appUpdateStatusPollTimer) {
+    clearInterval(appUpdateStatusPollTimer);
+    appUpdateStatusPollTimer = null;
+  }
+}
+
+function startAppUpdateStatusPolling() {
+  if (!els.appUpdateTitle) return;
+  stopAppUpdateStatusPolling();
+  appUpdateStatusPollTimer = setInterval(async () => {
+    if (state.view !== 'settings') return;
+    try {
+      const data = await loadAppUpdateStatus({ silent: true });
+      if (!data || !data.running) stopAppUpdateStatusPolling();
+    } catch {}
+  }, APP_UPDATE_STATUS_POLL_MS);
+}
+
+async function loadAppUpdateStatus(opts = {}) {
+  if (!els.appUpdateTitle) return null;
+  try {
+    const res = await fetch('/api/app-update/status', { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    renderAppUpdate(data || {});
+    if (data && data.running) startAppUpdateStatusPolling();
+    return data;
+  } catch (e) {
+    const data = {
+      ok: false,
+      service_reachable: false,
+      error: opts.silent ? '' : tr('app_update_unavailable'),
+    };
+    renderAppUpdate(data);
+    return data;
+  }
+}
+
+async function checkAppUpdate() {
+  if (!els.appUpdateTitle) return;
+  const btn = els.appUpdateCheckBtn;
+  const original = btn ? btn.textContent : tr('app_update_check');
+  showAppUpdateStatus(tr('app_update_checking'), 'ok');
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.textContent = tr('app_update_checking');
+    }
+    const res = await fetch('/api/app-update/check', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    renderAppUpdate(data || {});
+  } catch {
+    renderAppUpdate({ ok: false, service_reachable: false, error: tr('app_update_unavailable') });
+  } finally {
+    if (btn) {
+      btn.classList.remove('loading');
+      btn.textContent = original || tr('app_update_check');
+      btn.disabled = false;
+    }
+    renderAppUpdate(state.appUpdate || {});
+  }
+}
+
+async function startAppUpdate() {
+  if (!els.appUpdateTitle) return;
+  const cleanup = !!(els.appUpdateCleanupToggle && els.appUpdateCleanupToggle.checked);
+  const confirmText = cleanup ? tr('app_update_confirm_cleanup') : tr('app_update_confirm_no_cleanup');
+  if (!window.confirm(confirmText)) return;
+  const btn = els.appUpdateStartBtn;
+  const original = btn ? btn.textContent : tr('app_update_start');
+  showAppUpdateStatus(tr('app_update_starting'), 'ok');
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.textContent = tr('app_update_starting');
+    }
+    const res = await fetch('/api/app-update/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cleanup }),
+    });
+    const data = await res.json().catch(() => ({}));
+    renderAppUpdate(data || {});
+    if (!res.ok || !data || data.ok === false) return;
+    startAppUpdateStatusPolling();
+  } catch {
+    renderAppUpdate({ ok: false, service_reachable: false, error: tr('app_update_unavailable') });
+  } finally {
+    if (btn) {
+      btn.classList.remove('loading');
+      btn.textContent = original || tr('app_update_start');
+      btn.disabled = false;
+    }
+    renderAppUpdate(state.appUpdate || {});
+  }
+}
+
 async function loadMapperTools(preferred = null) {
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
@@ -9861,11 +10117,13 @@ async function setView(view, opts = {}) {
   }
   if (nextView === 'photoframe') startPhotoframeStatusPolling();
   else stopPhotoframeStatusPolling();
+  if (nextView !== 'settings') stopAppUpdateStatusPolling();
   if (syncUrl) _syncRouteStateToUrl();
 
   if (nextView === "settings") {
     // show logs panel, do not load photos
     renderGrid();
+    loadAppUpdateStatus({ silent: true }).catch(() => {});
   } else if (nextView === 'photoframe') {
     state.items = [];
     if (!Array.isArray(state.photoframeItems)) state.photoframeItems = [];
@@ -9953,6 +10211,14 @@ function applyUiLanguage() {
 
   const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
   if (maintTitle) maintTitle.textContent = tr('maint_title');
+  if (els.appUpdateTitle) els.appUpdateTitle.textContent = tr('app_update_title');
+  if (els.appUpdateBranchLabel) els.appUpdateBranchLabel.textContent = tr('app_update_branch');
+  if (els.appUpdateCurrentLabel) els.appUpdateCurrentLabel.textContent = tr('app_update_current');
+  if (els.appUpdateRemoteLabel) els.appUpdateRemoteLabel.textContent = tr('app_update_remote');
+  if (els.appUpdateStateLabel) els.appUpdateStateLabel.textContent = tr('app_update_state');
+  if (els.appUpdateCleanupText) els.appUpdateCleanupText.textContent = tr('app_update_cleanup');
+  if (els.appUpdateCheckBtn && !els.appUpdateCheckBtn.classList.contains('loading')) els.appUpdateCheckBtn.textContent = tr('app_update_check');
+  if (els.appUpdateStartBtn && !els.appUpdateStartBtn.classList.contains('loading')) els.appUpdateStartBtn.textContent = tr('app_update_start');
   if (els.aiPanelTitle) els.aiPanelTitle.textContent = tr('ai_panel_title');
     // HEIC tab labels stay Danish/English defaults already in markup
   if (els.aiEmbedTitle) els.aiEmbedTitle.textContent = tr('ai_embed_title');
@@ -12174,6 +12440,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     });
     // lazy-load embedded admin panels
     if (tab === 'users') renderUsersPanel();
+    if (tab === 'maint') {
+      loadAppUpdateStatus({ silent: true }).catch(() => {});
+    }
     if (tab === 'ai') {
       loadAiPerformanceSettings();
       loadAiExternalSettings();
@@ -12218,6 +12487,16 @@ if (els.aiPerfSaveBtn) {
 if (els.uploadWorkflowSaveBtn) {
   els.uploadWorkflowSaveBtn.addEventListener('click', async () => {
     await saveUploadWorkflowSettings();
+  });
+}
+if (els.appUpdateCheckBtn) {
+  els.appUpdateCheckBtn.addEventListener('click', async () => {
+    await checkAppUpdate();
+  });
+}
+if (els.appUpdateStartBtn) {
+  els.appUpdateStartBtn.addEventListener('click', async () => {
+    await startAppUpdate();
   });
 }
 if (els.aiPerfPresetLow) {

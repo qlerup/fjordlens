@@ -32,6 +32,7 @@ services:
       SQLITE_BUSY_TIMEOUT_MS: ${SQLITE_BUSY_TIMEOUT_MS:-10000}
       ENABLE_LIBRARY_SOURCE: ${ENABLE_LIBRARY_SOURCE:-0}
       ENABLE_SCAN_FEATURES: ${ENABLE_SCAN_FEATURES:-0}
+      FJORDLENS_UPDATER_URL: http://fjordlens-updater:8090
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s
@@ -79,6 +80,25 @@ services:
       timeout: 5s
       retries: 10
       start_period: 45s
+    restart: unless-stopped
+
+  fjordlens-updater:
+    build:
+      context: .
+      dockerfile: updater_service/Dockerfile
+    container_name: fjordlens-updater
+    working_dir: /repo
+    environment:
+      APP_DIR: /repo
+      SERVICE_NAME: fjordlens
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-fjordlens}
+      COMPOSE_SERVICES: "fjordlens fjordlens-ai"
+      FJORDLENS_UPDATER_STATE_DIR: /state
+      TZ: ${TZ:-Europe/Copenhagen}
+    volumes:
+      - .:/repo
+      - "${DATA_DIR:-/volume1/docker/fjordlens/data}/updater:/state"
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:

@@ -185,6 +185,12 @@ except Exception:
 PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES = max(5 * 1024 * 1024, min(2 * 1024 * 1024 * 1024, PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES))
 PHOTOFRAME_LATEST_VERSION_KEY = "photoframe_latest_version"
 PHOTOFRAME_LATEST_VERSION_AT_KEY = "photoframe_latest_version_at"
+APP_UPDATE_SERVICE_URL = str(os.environ.get("FJORDLENS_UPDATER_URL", "http://fjordlens-updater:8090") or "").strip().rstrip("/")
+try:
+    APP_UPDATE_SERVICE_TIMEOUT_SEC = float(os.environ.get("FJORDLENS_UPDATER_TIMEOUT_SEC", "20") or 20)
+except Exception:
+    APP_UPDATE_SERVICE_TIMEOUT_SEC = 20.0
+APP_UPDATE_SERVICE_TIMEOUT_SEC = max(2.0, min(120.0, APP_UPDATE_SERVICE_TIMEOUT_SEC))
 PHOTOFRAME_WIFI_COUNTRY_CHOICES = (
     ("DK", "Danmark"),
     ("SE", "Sverige"),
@@ -12241,6 +12247,83 @@ def api_health():
         "rawpy_available": bool(rawpy is not None),
         "ai": _ai_health(),
     })
+
+
+def _require_admin_for_app_update() -> Optional[Tuple[dict, int]]:
+    if not getattr(current_user, "is_admin", False):
+        return ({"ok": False, "error": "Forbidden"}, 403)
+    return None
+
+
+def _app_update_proxy(path: str, method: str = "GET", payload: Optional[dict] = None, timeout: Optional[float] = None):
+    if not APP_UPDATE_SERVICE_URL:
+        return jsonify(
+            {
+                "ok": False,
+                "available": False,
+                "service_reachable": False,
+                "error": "FjordLens updater-service er ikke konfigureret.",
+            }
+        ), 503
+    clean_path = "/" + str(path or "").strip("/")
+    url = f"{APP_UPDATE_SERVICE_URL}{clean_path}"
+    try:
+        resp = requests.request(
+            method.upper(),
+            url,
+            json=(payload if payload is not None else None),
+            timeout=float(timeout or APP_UPDATE_SERVICE_TIMEOUT_SEC),
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"ok": False, "error": (resp.text or "")[:500] or "Updater-service svarede ikke med JSON."}
+        if isinstance(data, dict):
+            data.setdefault("service_reachable", True)
+            data.setdefault("updater_url", APP_UPDATE_SERVICE_URL)
+        return jsonify(data), resp.status_code
+    except Exception as e:
+        return jsonify(
+            {
+                "ok": False,
+                "available": False,
+                "service_reachable": False,
+                "updater_url": APP_UPDATE_SERVICE_URL,
+                "error": "FjordLens updater-service er ikke tilgaengelig.",
+                "detail": str(e),
+            }
+        ), 503
+
+
+@app.route("/api/app-update/status", methods=["GET"])
+@login_required
+def api_app_update_status():
+    fb = _require_admin_for_app_update()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    return _app_update_proxy("/status", method="GET", timeout=5)
+
+
+@app.route("/api/app-update/check", methods=["POST"])
+@login_required
+def api_app_update_check():
+    fb = _require_admin_for_app_update()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    return _app_update_proxy("/check", method="POST", payload={}, timeout=90)
+
+
+@app.route("/api/app-update/start", methods=["POST"])
+@login_required
+def api_app_update_start():
+    fb = _require_admin_for_app_update()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    body = request.get_json(silent=True) or {}
+    cleanup = True
+    if "cleanup" in body:
+        cleanup = bool(body.get("cleanup"))
+    return _app_update_proxy("/start", method="POST", payload={"cleanup": cleanup}, timeout=10)
 
 
 @app.route("/api/photoframes/status", methods=["GET"])

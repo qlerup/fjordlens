@@ -325,6 +325,58 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   line-height: 1.35;
 }
 .sidebar-card .hint { color: #c9d4ea; }
+.app-update-card {
+  display: grid;
+  gap: 10px;
+}
+.app-update-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.app-update-grid > div {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 9px;
+}
+.app-update-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-bottom: 3px;
+}
+.app-update-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+.app-update-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.app-update-log {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.76rem;
+}
+@media (max-width: 760px) {
+  .app-update-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .sidebar-footer {
   margin-top: auto;
   display: flex;
