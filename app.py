@@ -11441,7 +11441,14 @@ def _photo_contains_any_tags(photo: Dict[str, Any], tags: list[str]) -> bool:
     return False
 
 
-def query_photos(view: str, sort: str, folder: Optional[str] = None, offset: int | None = None, limit: int | None = None) -> list[Dict[str, Any]]:
+def query_photos(
+    view: str,
+    sort: str,
+    folder: Optional[str] = None,
+    offset: int | None = None,
+    limit: int | None = None,
+    direct_only: bool = False,
+) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
         "date_asc": "COALESCE(captured_at, modified_fs, created_fs) ASC",
@@ -11471,11 +11478,11 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None, offset: int
 
     # Optional folder filter: include canonical uploads path AND
     # internal originals/converted mirrors under the same user folder.
-    if folder:
+    if folder or direct_only:
         # Browsing/filtering must accept existing on-disk names (e.g. Synology system folders)
         # while still blocking traversal input.
         try:
-            raw = _normalize_folder_acl_path(str(folder))
+            raw = _normalize_folder_acl_path(str(folder or ""))
         except Exception:
             raw = ""
         # Strip optional 'uploads/' prefix for consistent handling
@@ -11491,11 +11498,18 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None, offset: int
             f_base = f
 
         # Build all accepted rel_path prefixes for this logical folder
-        prefixes = [
-            f"uploads/{f_base}",
-            f"uploads/originals/{f_base}",
-            f"uploads/converted/{f_base}",
-        ]
+        if f_base:
+            prefixes = [
+                f"uploads/{f_base}",
+                f"uploads/originals/{f_base}",
+                f"uploads/converted/{f_base}",
+            ]
+        else:
+            prefixes = [
+                "uploads",
+                "uploads/originals",
+                "uploads/converted",
+            ]
         # Deduplicate while preserving order
         seen = set()
         uniq_prefixes = []
@@ -11505,9 +11519,18 @@ def query_photos(view: str, sort: str, folder: Optional[str] = None, offset: int
                 seen.add(pfx)
 
         if uniq_prefixes:
-            # Build OR chain: (rel_path LIKE ?||'/%' OR ...)
-            where.append("(" + " OR ".join(["rel_path LIKE ? || '/%'"] * len(uniq_prefixes)) + ")")
-            params.extend(uniq_prefixes)
+            if direct_only:
+                # Direct folder view: include only immediate files under each logical
+                # storage prefix, not deeper descendants.
+                parts = []
+                for pfx in uniq_prefixes:
+                    parts.append("(rel_path LIKE ? || '/%' AND instr(substr(rel_path, length(?) + 2), '/') = 0)")
+                    params.extend([pfx, pfx])
+                where.append("(" + " OR ".join(parts) + ")")
+            else:
+                # Build OR chain: (rel_path LIKE ?||'/%' OR ...)
+                where.append("(" + " OR ".join(["rel_path LIKE ? || '/%'"] * len(uniq_prefixes)) + ")")
+                params.extend(uniq_prefixes)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
@@ -15942,6 +15965,7 @@ def api_photos():
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
     folder = request.args.get("folder")
+    direct_only = str(request.args.get("direct") or "").strip().lower() in {"1", "true", "yes", "on"}
     try:
         offset = int(str(request.args.get("offset") or "0"))
     except Exception:
@@ -15962,7 +15986,7 @@ def api_photos():
     search_language = _normalize_language(requested_lang, user_lang)
 
     try:
-        items = query_photos(view, sort, folder=folder, offset=offset, limit=limit)
+        items = query_photos(view, sort, folder=folder, offset=offset, limit=limit, direct_only=direct_only)
         if q:
             # Try AI-assisted expansion to widen matches when helpful
             expand_tags: list[str] = []
