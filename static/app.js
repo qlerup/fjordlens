@@ -1291,8 +1291,10 @@ const I18N = {
     person_rename_save: 'Gem',
     person_rename_none: 'Ingen eksisterende navne endnu',
     person_unknown: 'Ukendt',
+    person_maybe_name: 'Måske {name}?',
     person_count_suffix: 'billede(r)',
     person_hidden_badge: 'Skjult',
+    person_btn_accept_maybe: 'Ja',
     person_btn_rename: 'Navngiv',
     person_btn_hide: 'Skjul',
     person_btn_unhide: 'Vis',
@@ -1999,8 +2001,10 @@ const I18N = {
     person_rename_save: 'Save',
     person_rename_none: 'No existing names yet',
     person_unknown: 'Unknown',
+    person_maybe_name: 'Maybe {name}?',
     person_count_suffix: 'photo(s)',
     person_hidden_badge: 'Hidden',
+    person_btn_accept_maybe: 'Yes',
     person_btn_rename: 'Rename',
     person_btn_hide: 'Hide',
     person_btn_unhide: 'Show',
@@ -4919,18 +4923,29 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const card = document.createElement('article');
       card.className = 'photo-card';
       card.setAttribute('data-person-id', String(p.id));
+      const maybeName = String(p.maybe_person_name || '').trim();
+      const hasMaybeName = !!maybeName;
+      const maybeScoreVal = Number(p.maybe_score);
+      const maybeScorePct = Number.isFinite(maybeScoreVal) ? Math.round(maybeScoreVal * 100) : null;
+      const titleText = hasMaybeName
+        ? tr('person_maybe_name').replace('{name}', maybeName)
+        : String(p.name || tr('person_unknown'));
       const faceMatch = String(p.thumb_url || '').match(/\/api\/face-thumb\/(\d+)/);
       const faceAttr = faceMatch ? ` data-face-id="${faceMatch[1]}"` : '';
       const imgHtml = p.thumb_url
         ? `<img data-src="${p.thumb_url}"${faceAttr} alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
         : `<div class="card-thumb placeholder">🙂</div>`;
+      const maybePill = hasMaybeName
+        ? `<span class="pill person-maybe-pill">${escapeHtml(maybeScorePct === null ? '~' : `~${maybeScorePct}%`)}</span>`
+        : '';
       card.innerHTML = `
         <div class="card-thumb">${imgHtml}</div>
         <div class="card-body">
-          <h4 class="card-title">${escapeHtml(p.name || tr('person_unknown'))}</h4>
+          <h4 class="card-title ${hasMaybeName ? 'person-maybe-title' : ''}">${escapeHtml(titleText)}</h4>
           <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
-          <div class="pills">${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
+          <div class="pills">${maybePill}${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
           <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
+            ${hasMaybeName && p.id !== 'unknown' ? `<button class="btn tiny primary" data-act="accept-maybe">${escapeHtml(tr('person_btn_accept_maybe'))}</button>` : ''}
             <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
             ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
           </div>
@@ -4941,6 +4956,12 @@ function appendPeopleInChunks(people, chunkSize = 48) {
         if (e.target && e.target.closest('[data-act]')) return;
         if (p.id === 'unknown') loadPersonPhotos('unknown', tr('person_unknown'));
         else loadPersonPhotos(p.id, p.name);
+      });
+      const acceptMaybeBtn = card.querySelector('[data-act="accept-maybe"]');
+      if (acceptMaybeBtn) acceptMaybeBtn.addEventListener('click', async (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        if (!hasMaybeName) return;
+        await renameOrMergePerson(p.id, maybeName);
       });
       const renBtn = card.querySelector('[data-act="rename"]');
       if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });

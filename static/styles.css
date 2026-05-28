@@ -3776,6 +3776,16 @@ body.compact-settings .settings-header { display: none !important; }
   padding: 4px 2px;
 }
 
+.person-maybe-title {
+  color: #fde68a;
+}
+
+.pill.person-maybe-pill {
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.13);
+  color: #fde68a;
+}
+
 /* Map attribution text styling: force black text for readability */
 #placesMap .maplibregl-ctrl-attribution,
 #placesMap .maplibregl-ctrl-attrib,

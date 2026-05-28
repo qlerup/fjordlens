@@ -359,6 +359,12 @@ UPLOAD_DEFAULT_SUBDIR_BY_DEST = {
 }
 FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.5"))
 FACE_MATCH_THRESHOLD_CENTROID = float(os.environ.get("FACE_MATCH_THRESHOLD_CENTROID", str(FACE_MATCH_THRESHOLD)))
+_FACE_MAYBE_THRESHOLD_DEFAULT = max(0.0, FACE_MATCH_THRESHOLD_CENTROID - 0.12)
+try:
+    FACE_MAYBE_THRESHOLD = float(os.environ.get("FACE_MAYBE_THRESHOLD", str(_FACE_MAYBE_THRESHOLD_DEFAULT)) or _FACE_MAYBE_THRESHOLD_DEFAULT)
+except Exception:
+    FACE_MAYBE_THRESHOLD = _FACE_MAYBE_THRESHOLD_DEFAULT
+FACE_MAYBE_THRESHOLD = max(0.0, min(FACE_MATCH_THRESHOLD_CENTROID, FACE_MAYBE_THRESHOLD))
 VIDEO_FACE_SAMPLE_INTERVAL_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_INTERVAL_SEC", "3.0"))
 VIDEO_FACE_SAMPLE_MAX_FRAMES = int(os.environ.get("VIDEO_FACE_SAMPLE_MAX_FRAMES", "24"))
 VIDEO_FACE_SAMPLE_START_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_START_SEC", "0.5"))
@@ -10470,6 +10476,77 @@ def api_people_list():
                 except Exception:
                     pass
             people.append({"id": "unknown", "name": "Ukendte", "count": unk_count, "thumb_url": thumb_url})
+
+        # Suggest likely existing person names for auto-unknown buckets.
+        # These remain unknown until user confirms (manual merge/rename).
+        try:
+            person_items_by_id: Dict[int, Dict[str, Any]] = {}
+            person_ids: list[int] = []
+            for item in people:
+                try:
+                    pid_i = int((item or {}).get("id"))
+                except Exception:
+                    continue
+                person_items_by_id[pid_i] = item
+                person_ids.append(pid_i)
+
+            if person_ids:
+                placeholders = ",".join("?" for _ in person_ids)
+                crows = conn.execute(
+                    f"SELECT id, centroid_json FROM people WHERE id IN ({placeholders})",
+                    person_ids,
+                ).fetchall()
+
+                centroid_by_id: Dict[int, list[float]] = {}
+                for cr in crows:
+                    try:
+                        pid_i = int(cr["id"])
+                        raw_c = json.loads(cr["centroid_json"]) if cr["centroid_json"] else None
+                        if isinstance(raw_c, list) and raw_c:
+                            centroid_by_id[pid_i] = [float(x or 0.0) for x in raw_c]
+                    except Exception:
+                        continue
+
+                known_pool: list[tuple[int, str, list[float]]] = []
+                unknown_targets: list[int] = []
+                for pid_i, item in person_items_by_id.items():
+                    cvec = centroid_by_id.get(pid_i)
+                    if not cvec:
+                        continue
+                    name_i = str((item or {}).get("name") or "")
+                    if _is_unknown_bucket(item):
+                        unknown_targets.append(pid_i)
+                    else:
+                        known_pool.append((pid_i, name_i, cvec))
+
+                if known_pool and unknown_targets and FACE_MAYBE_THRESHOLD < FACE_MATCH_THRESHOLD_CENTROID:
+                    for upid in unknown_targets:
+                        uvec = centroid_by_id.get(upid)
+                        if not uvec:
+                            continue
+                        best_pid: Optional[int] = None
+                        best_name = ""
+                        best_score = -1.0
+                        for kpid, kname, kvec in known_pool:
+                            sc = _cosine(uvec, kvec)
+                            if sc > best_score:
+                                best_score = sc
+                                best_pid = kpid
+                                best_name = kname
+
+                        if (
+                            best_pid is not None
+                            and best_name
+                            and best_score >= FACE_MAYBE_THRESHOLD
+                            and best_score < FACE_MATCH_THRESHOLD_CENTROID
+                        ):
+                            target = person_items_by_id.get(upid)
+                            if target is not None:
+                                target["maybe_person_id"] = int(best_pid)
+                                target["maybe_person_name"] = str(best_name)
+                                target["maybe_score"] = round(float(best_score), 4)
+        except Exception:
+            pass
 
         people.sort(
             key=lambda item: (
