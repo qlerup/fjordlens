@@ -217,8 +217,13 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 .logo {
   display: flex;
   align-items: center;
-  gap: 12px;
   margin-bottom: 18px;
+  padding: 4px 0 10px;
+}
+.logo-image {
+  display: block;
+  width: min(150px, 100%);
+  height: auto;
 }
 .logo-dot { display: none; }
 .logo-icon {
