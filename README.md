@@ -18,13 +18,15 @@ This repository contains two parts:
 | Metadata indexing              |                 |                     |                         |
 | Weather enrichment             |                 |                     |                         |
 | Thumbnail generation           |                 |                     |                         |
-| AI embedding/search/similarity |       X         |                     |                         |
-| AI image description           |       X         |                     |      (optional)         |
-| Face detection/indexing        |       X         |                     |                         |
+| AI embedding/search/similarity |                 |                     |                         |
+| AI image description           |       X*        |                     |      X                  |
+| Face detection/indexing        |                 |                     |                         |
 | Public share links             |                 |                     |                         |
 | Photoframe management          |                 |         X           |                         |
 | Remote photoframe update       |                 |         X           |                         |
 | External AI queue              |       X         |                     |           X             |
+
+*Ollama kræves kun hvis du bruger ekstern AI-beskriver/worker.
 
 ---
 
