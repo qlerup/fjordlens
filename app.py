@@ -311,7 +311,10 @@ AI_QUERY_EXPAND_ENABLED = (
 )
 # Static directories (for icons and assets resolved outside templates)
 STATIC_DIR = Path(__file__).parent / "static"
-ICONS_DIR = STATIC_DIR / "icons"
+LOGOS_DIR = STATIC_DIR / "logos"
+LOGOS_WEB_DIR = LOGOS_DIR / "web"
+LOGOS_ICONS_DIR = LOGOS_DIR / "icons"
+LOGOS_MAIN_DIR = LOGOS_DIR / "logos"
 TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
     LANG_DA: {
         "login_invalid_credentials": "Forkert brugernavn eller adgangskode",
@@ -448,6 +451,26 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
         raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, exiftool={exiftool_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
+try:
+    UPLOAD_FOLDER_SYNC_MAX_FILES = int(os.environ.get("UPLOAD_FOLDER_SYNC_MAX_FILES", "800") or 800)
+except Exception:
+    UPLOAD_FOLDER_SYNC_MAX_FILES = 800
+UPLOAD_FOLDER_SYNC_MAX_FILES = max(50, min(10000, UPLOAD_FOLDER_SYNC_MAX_FILES))
+try:
+    UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES = int(os.environ.get("UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES", "120") or 120)
+except Exception:
+    UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES = 120
+UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES = max(10, min(1000, UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES))
+try:
+    UPLOAD_FOLDER_SYNC_SETTLE_SEC = float(os.environ.get("UPLOAD_FOLDER_SYNC_SETTLE_SEC", "1.0") or 1.0)
+except Exception:
+    UPLOAD_FOLDER_SYNC_SETTLE_SEC = 1.0
+UPLOAD_FOLDER_SYNC_SETTLE_SEC = max(0.0, min(30.0, UPLOAD_FOLDER_SYNC_SETTLE_SEC))
+try:
+    UPLOAD_FOLDER_SYNC_TTL_SEC = float(os.environ.get("UPLOAD_FOLDER_SYNC_TTL_SEC", "2.0") or 2.0)
+except Exception:
+    UPLOAD_FOLDER_SYNC_TTL_SEC = 2.0
+UPLOAD_FOLDER_SYNC_TTL_SEC = max(0.0, min(60.0, UPLOAD_FOLDER_SYNC_TTL_SEC))
 UPLOAD_ALLOWED_EXTENSIONS_SETTING = "upload_allowed_extensions"
 PHOTOFRAME_VIDEO_PREPARE_ENABLED = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 try:
@@ -534,17 +557,6 @@ def inject_template_i18n():
     }
 
 # --- iOS/Android Home Screen icons at well-known root URLs ---
-def _resize_icon(target: int) -> bytes:
-    base = ICONS_DIR / "fjordlens_lens_fullcolor_512.png"
-    if not base.exists():
-        base = ICONS_DIR / "fjordlens_lens_fullcolor_256.png"
-    img = Image.open(str(base)).convert("RGBA")
-    # Pillow 10+: use Resampling.LANCZOS (fallback handled by import version)
-    img = img.resize((target, target), Image.Resampling.LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
 def _png_response(data: bytes):
     from flask import Response
     resp = Response(data, mimetype="image/png")
@@ -553,6 +565,49 @@ def _png_response(data: bytes):
     except Exception:
         pass
     return resp
+
+
+def _logo_icon_source_path() -> Optional[Path]:
+    for path in (
+        LOGOS_WEB_DIR / "apple-touch-icon.png",
+        LOGOS_WEB_DIR / "android-chrome-512x512.png",
+        LOGOS_WEB_DIR / "pwa-maskable-512x512.png",
+        LOGOS_ICONS_DIR / "apple-touch-icon.png",
+        LOGOS_ICONS_DIR / "pwa-maskable-512x512.png",
+        LOGOS_MAIN_DIR / "fjordlens-app-icon-master.png",
+    ):
+        if path.exists():
+            return path
+    return None
+
+
+def _serve_logo_png(path: Optional[Path], target: Optional[int] = None):
+    if not path or not path.exists():
+        return ("", 404)
+    if target:
+        img = Image.open(str(path)).convert("RGBA")
+        img = img.resize((target, target), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return _png_response(buf.getvalue())
+    resp = send_file(str(path), mimetype="image/png")
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
+
+def _serve_logo_file(path: Path, mimetype: str):
+    if not path.exists():
+        return ("", 404)
+    resp = send_file(str(path), mimetype=mimetype)
+    try:
+        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    except Exception:
+        pass
+    return resp
+
 
 @app.route("/api/qr")
 def api_qr():
@@ -603,40 +658,59 @@ def api_qr():
 @app.route("/apple-touch-icon.png")
 @app.route("/apple-touch-icon-precomposed.png")
 def apple_touch_icon():
-    # Default iOS prefers 180x180 when unspecified; provide 180
-    return _png_response(_resize_icon(180))
+    return _serve_logo_png(LOGOS_WEB_DIR / "apple-touch-icon.png")
 
 @app.route("/apple-touch-icon-180x180.png")
 def apple_touch_icon_180():
-    return _png_response(_resize_icon(180))
+    return _serve_logo_png(_logo_icon_source_path(), 180)
 
 @app.route("/apple-touch-icon-167x167.png")
 def apple_touch_icon_167():
-    return _png_response(_resize_icon(167))
+    return _serve_logo_png(_logo_icon_source_path(), 167)
 
 @app.route("/apple-touch-icon-152x152.png")
 def apple_touch_icon_152():
-    return _png_response(_resize_icon(152))
+    return _serve_logo_png(_logo_icon_source_path(), 152)
 
 @app.route("/apple-touch-icon-120x120.png")
 def apple_touch_icon_120():
-    return _png_response(_resize_icon(120))
+    return _serve_logo_png(_logo_icon_source_path(), 120)
 
 @app.route("/icon-192.png")
 def icon_192():
-    return _png_response(_resize_icon(192))
+    return _serve_logo_png(LOGOS_WEB_DIR / "android-chrome-192x192.png")
+
+
+@app.route("/favicon-32x32.png")
+def favicon_32_png():
+    return _serve_logo_png(LOGOS_WEB_DIR / "favicon-32x32.png")
+
+
+@app.route("/favicon-16x16.png")
+def favicon_16_png():
+    return _serve_logo_png(LOGOS_WEB_DIR / "favicon-16x16.png")
 
 @app.route("/favicon.ico")
 def favicon_ico():
-    try:
-        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_favicon_256.png")
-    except Exception:
-        resp = send_from_directory(str(ICONS_DIR), "fjordlens_lens_favicon_128.png")
-    try:
-        resp.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
-    except Exception:
-        pass
-    return resp
+    ico = LOGOS_WEB_DIR / "favicon.ico"
+    if ico.exists():
+        return _serve_logo_file(ico, "image/x-icon")
+    return _serve_logo_png(LOGOS_WEB_DIR / "favicon-32x32.png")
+
+
+@app.route("/site.webmanifest")
+def site_webmanifest():
+    return _serve_logo_file(LOGOS_WEB_DIR / "site.webmanifest", "application/manifest+json")
+
+
+@app.route("/manifest.webmanifest")
+def manifest_webmanifest():
+    return _serve_logo_file(LOGOS_WEB_DIR / "manifest.webmanifest", "application/manifest+json")
+
+
+@app.route("/browserconfig.xml")
+def browserconfig_xml():
+    return _serve_logo_file(LOGOS_WEB_DIR / "browserconfig.xml", "application/xml")
 
 # --- Console color support (for Windows terminals and Docker logs) ---
 ANSI_RESET = "\033[0m"
@@ -699,6 +773,9 @@ login_manager.login_view = "login"
 
 # Global scan control
 scan_stop_event = threading.Event()
+UPLOAD_FOLDER_SYNC_LOCK = threading.Lock()
+UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
+UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
 
 # Simple in-memory log buffer for UI polling
 from collections import deque
@@ -4101,6 +4178,18 @@ def enforce_login_for_app():
         "setup",
         "api_health",
         "api_auth_session",
+        "apple_touch_icon",
+        "apple_touch_icon_180",
+        "apple_touch_icon_167",
+        "apple_touch_icon_152",
+        "apple_touch_icon_120",
+        "icon_192",
+        "favicon_ico",
+        "favicon_32_png",
+        "favicon_16_png",
+        "site_webmanifest",
+        "manifest_webmanifest",
+        "browserconfig_xml",
         "shared_folder_view",
         "api_share_info",
         "api_share_photos",
@@ -5192,6 +5281,11 @@ def api_folder_previews_get():
         keys.append(nk)
     if not keys:
         return jsonify({"ok": True, "items": {}})
+    for k in keys:
+        try:
+            _sync_upload_folder_from_disk(k, recursive=False, max_files=UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES)
+        except Exception:
+            pass
     placeholders = ",".join(["?"] * len(keys))
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -9933,7 +10027,7 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
         if stop_event and stop_event.is_set():
             break
         rel_path = row["rel_path"]
-        disk_path = PHOTO_DIR / rel_path
+        disk_path = _disk_path_from_rel_path(rel_path)
         scanned += 1
         log_event("rescan_check", rel_path=rel_path)
         if not disk_path.exists():
@@ -10270,6 +10364,300 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
     }
     log_event("scan_done", scanned=scanned, updated=updated, errors=errors)
     return result
+
+
+def _normalize_upload_folder_for_disk_sync(value: Optional[str]) -> str:
+    folder = _normalize_folder_acl_path(value)
+    if folder == "uploads":
+        return ""
+    if folder.startswith("uploads/"):
+        folder = folder[len("uploads/"):]
+    if folder in {"originals", "converted"}:
+        return ""
+    if folder.startswith("originals/"):
+        folder = folder[len("originals/"):]
+    elif folder.startswith("converted/"):
+        folder = folder[len("converted/"):]
+    return folder.strip("/")
+
+
+def _safe_sync_child(base: Path, rel_folder: str) -> Optional[Path]:
+    try:
+        base_resolved = base.resolve()
+        target = (base / rel_folder).resolve() if rel_folder else base_resolved
+        target.relative_to(base_resolved)
+        return target
+    except Exception:
+        return None
+
+
+def _upload_folder_sync_roots(folder: str) -> list[tuple[Path, str, set[str]]]:
+    f = str(folder or "").strip("/")
+    roots: list[tuple[Path, str, set[str]]] = []
+
+    def add(base: Path, rel_prefix: str, excluded_top_dirs: Optional[set[str]] = None) -> None:
+        target = _safe_sync_child(base, f)
+        if target is None:
+            return
+        roots.append((target, rel_prefix.rstrip("/"), set(excluded_top_dirs or set())))
+
+    tail = f"/{f}" if f else ""
+    add(UPLOAD_DIR / "originals", f"uploads/originals{tail}")
+    add(UPLOAD_DIR / "converted", f"uploads/converted{tail}")
+    add(UPLOAD_DIR, f"uploads{tail}", {"originals", "converted"} if not f else set())
+    return roots
+
+
+def _iter_upload_sync_files(
+    root: Path,
+    rel_prefix: str,
+    *,
+    recursive: bool,
+    excluded_top_dirs: Optional[set[str]] = None,
+) -> Iterable[Tuple[Path, str]]:
+    if not root.exists() or not root.is_dir():
+        return
+    excluded = {str(x or "").strip().lower() for x in (excluded_top_dirs or set()) if str(x or "").strip()}
+    blocked_dir_names = {"@eadir", "#recycle"}
+    try:
+        iterator = root.rglob("*") if recursive else root.iterdir()
+        for p in iterator:
+            try:
+                rel_parts = p.relative_to(root).parts
+            except Exception:
+                rel_parts = p.parts
+            if rel_parts:
+                top = str(rel_parts[0] or "").strip().lower()
+                if top in excluded:
+                    continue
+            dir_parts = rel_parts[:-1] if p.is_file() else rel_parts
+            skip = False
+            for part in dir_parts:
+                part_s = str(part or "")
+                part_l = part_s.strip().lower()
+                if part_l in blocked_dir_names or part_s.startswith("."):
+                    skip = True
+                    break
+            if skip or not p.is_file():
+                continue
+            if p.suffix.lower() not in SUPPORTED_EXTS:
+                continue
+            name_upper = p.name.upper()
+            if name_upper.startswith("SYNOPHOTO_THUMB_") or name_upper.startswith("SYNOPHOTO_CACHE_"):
+                continue
+            if p.name.startswith("._"):
+                continue
+            try:
+                rel_leaf = str(p.relative_to(root)).replace("\\", "/")
+            except Exception:
+                rel_leaf = p.name
+            rel = f"{rel_prefix.rstrip('/')}/{rel_leaf}" if rel_prefix else rel_leaf
+            yield p, rel
+    except Exception:
+        return
+
+
+def _existing_photo_rows_for_rels(rel_paths: list[str]) -> dict[str, sqlite3.Row]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for rel in rel_paths:
+        key = str(rel or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            cleaned.append(key)
+    if not cleaned:
+        return {}
+    out: dict[str, sqlite3.Row] = {}
+    with closing(get_conn()) as conn:
+        for i in range(0, len(cleaned), 500):
+            chunk = cleaned[i : i + 500]
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = conn.execute(
+                f"SELECT rel_path, modified_fs, file_size, thumb_name FROM photos WHERE rel_path IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                out[str(row["rel_path"])] = row
+    return out
+
+
+def _photo_row_needs_disk_sync(row: Optional[sqlite3.Row], stat: os.stat_result) -> bool:
+    if row is None:
+        return True
+    modified_fs = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+    try:
+        same_mtime = str(row["modified_fs"] or "") == modified_fs
+        same_size = int(row["file_size"] or -1) == int(stat.st_size)
+    except Exception:
+        return True
+    if not (same_mtime and same_size):
+        return True
+    thumb_name = str(row["thumb_name"] or "").strip()
+    if not thumb_name:
+        return True
+    try:
+        return not (THUMB_DIR / thumb_name).exists()
+    except Exception:
+        return True
+
+
+def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
+    rels: list[str] = []
+    seen: set[str] = set()
+    for raw in rel_paths:
+        rel = str(raw or "").replace("\\", "/").lstrip("/").strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        rels.append(rel)
+    if not rels:
+        return False
+
+    def run() -> None:
+        try:
+            log_event("direct_upload_postprocess_start", files=len(rels))
+            result = _postprocess_uploaded_rels("", rels, workflow_mode=upload_workflow_mode())
+            try:
+                log_event(
+                    "direct_upload_postprocess_done",
+                    files=result.get("received"),
+                    indexed=result.get("indexed"),
+                    heic_converted=result.get("heic_converted"),
+                    faces_done=result.get("faces_done"),
+                    ai_done=result.get("ai_done"),
+                    ai_desc_done=result.get("ai_desc_done"),
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                log_event("error", rel_path="direct_upload_postprocess", error=str(e))
+            except Exception:
+                pass
+
+    try:
+        threading.Thread(target=run, daemon=True).start()
+        return True
+    except Exception as e:
+        try:
+            log_event("error", rel_path="direct_upload_postprocess", error=f"start: {e}")
+        except Exception:
+            pass
+        return False
+
+
+def _sync_upload_folder_from_disk(
+    folder: Optional[str],
+    *,
+    recursive: bool = False,
+    max_files: Optional[int] = None,
+    queue_postprocess: bool = False,
+) -> Dict[str, Any]:
+    try:
+        logical_folder = _normalize_upload_folder_for_disk_sync(folder)
+    except Exception:
+        return {"ok": False, "error": "invalid_folder", "folder": str(folder or "")}
+
+    cap = int(max_files or UPLOAD_FOLDER_SYNC_MAX_FILES)
+    cap = max(1, min(UPLOAD_FOLDER_SYNC_MAX_FILES, cap))
+    cache_key = f"{logical_folder}|{'r' if recursive else 'd'}|{cap}"
+    now_ts = time.time()
+    with UPLOAD_FOLDER_SYNC_LOCK:
+        if cache_key in UPLOAD_FOLDER_SYNC_RUNNING:
+            return {"ok": True, "folder": logical_folder, "skipped": "running"}
+        last_at = float(UPLOAD_FOLDER_SYNC_LAST_AT.get(cache_key, 0.0) or 0.0)
+        if UPLOAD_FOLDER_SYNC_TTL_SEC > 0 and (now_ts - last_at) < UPLOAD_FOLDER_SYNC_TTL_SEC:
+            return {"ok": True, "folder": logical_folder, "skipped": "recent"}
+        UPLOAD_FOLDER_SYNC_RUNNING.add(cache_key)
+
+    indexed_rels: list[str] = []
+    try:
+        candidates: list[tuple[Path, str]] = []
+        seen_rels: set[str] = set()
+        limited = False
+        for root, rel_prefix, excluded in _upload_folder_sync_roots(logical_folder):
+            for path, rel in _iter_upload_sync_files(root, rel_prefix, recursive=recursive, excluded_top_dirs=excluded):
+                if rel in seen_rels:
+                    continue
+                seen_rels.add(rel)
+                candidates.append((path, rel))
+                if len(candidates) >= cap:
+                    limited = True
+                    break
+            if limited:
+                break
+
+        existing = _existing_photo_rows_for_rels([rel for _, rel in candidates])
+        scanned = 0
+        indexed = 0
+        unchanged = 0
+        unsettled = 0
+        errors = 0
+        error_samples: list[str] = []
+
+        for path, rel in candidates:
+            scanned += 1
+            try:
+                stat = path.stat()
+            except Exception as e:
+                errors += 1
+                if len(error_samples) < 5:
+                    error_samples.append(f"{rel}: {e}")
+                continue
+
+            if UPLOAD_FOLDER_SYNC_SETTLE_SEC > 0 and (time.time() - float(stat.st_mtime)) < UPLOAD_FOLDER_SYNC_SETTLE_SEC:
+                unsettled += 1
+                continue
+
+            prev = existing.get(rel)
+            if not _photo_row_needs_disk_sync(prev, stat):
+                unchanged += 1
+                continue
+
+            try:
+                meta = extract_metadata(path, rel, generate_thumb=True)
+                upsert_photo(meta)
+                indexed += 1
+                indexed_rels.append(rel)
+                try:
+                    log_event("direct_upload_indexed", rel_path=rel, source="folder_sync")
+                except Exception:
+                    pass
+            except Exception as e:
+                errors += 1
+                try:
+                    log_event("error", rel_path=rel, error=f"folder_sync: {e}")
+                except Exception:
+                    pass
+                if len(error_samples) < 5:
+                    error_samples.append(f"{rel}: {e}")
+
+        if queue_postprocess and indexed_rels:
+            _start_direct_upload_postprocess(indexed_rels)
+
+        result: Dict[str, Any] = {
+            "ok": True,
+            "folder": logical_folder,
+            "recursive": bool(recursive),
+            "scanned": scanned,
+            "indexed": indexed,
+            "unchanged": unchanged,
+            "unsettled": unsettled,
+            "errors": errors,
+            "limited": limited,
+        }
+        if error_samples:
+            result["error_samples"] = error_samples
+        if indexed or errors or unsettled:
+            try:
+                log_event("upload_folder_sync_done", **result)
+            except Exception:
+                pass
+        return result
+    finally:
+        with UPLOAD_FOLDER_SYNC_LOCK:
+            UPLOAD_FOLDER_SYNC_RUNNING.discard(cache_key)
+            UPLOAD_FOLDER_SYNC_LAST_AT[cache_key] = time.time()
 
 
 def _normalize_rel_for_view_candidate(value: Any) -> str:
@@ -12312,6 +12700,11 @@ def api_share_photos(token: str):
 
     with closing(get_conn()) as conn:
         folder_paths = _share_folder_paths(conn, share)
+    for fp in folder_paths:
+        try:
+            _sync_upload_folder_from_disk(fp, recursive=True, max_files=UPLOAD_FOLDER_SYNC_MAX_FILES)
+        except Exception:
+            pass
     prefixes = _share_rel_prefixes(folder_paths)
     if not prefixes:
         return jsonify({"ok": False, "error": "Ugyldig share-mappe"}), 400
@@ -14812,7 +15205,7 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
         if stop_event and stop_event.is_set():
             break
         rel_path = row["rel_path"]
-        p = PHOTO_DIR / rel_path
+        p = _disk_path_from_rel_path(rel_path)
         if not p.exists():
             continue
         try:
@@ -16130,6 +16523,20 @@ def api_photos():
     search_language = _normalize_language(requested_lang, user_lang)
 
     try:
+        disk_sync: Optional[Dict[str, Any]] = None
+        if view == "mapper":
+            try:
+                sync_folder = _normalize_upload_folder_for_disk_sync(folder)
+                sync_rel = f"uploads/{sync_folder}" if sync_folder else "uploads"
+                if _is_rel_visible_for_current_user(sync_rel):
+                    disk_sync = _sync_upload_folder_from_disk(
+                        sync_folder,
+                        recursive=not direct_only,
+                        max_files=UPLOAD_FOLDER_SYNC_MAX_FILES,
+                        queue_postprocess=True,
+                    )
+            except Exception as sync_err:
+                disk_sync = {"ok": False, "error": str(sync_err)}
         items = query_photos(view, sort, folder=folder, offset=offset, limit=limit, direct_only=direct_only)
         if q:
             # Try AI-assisted expansion to widen matches when helpful
@@ -16162,6 +16569,7 @@ def api_photos():
             "has_more": has_more,
             "next_offset": next_offset,
             "search_lang": search_language,
+            "disk_sync": disk_sync,
         })
     except Exception as e:
         try:

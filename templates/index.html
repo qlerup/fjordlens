@@ -6,32 +6,23 @@
   <title>FjordLens</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
   <!-- App icons / PWA manifest -->
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/fjordlens.svg') }}">
-  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_32.png') }}">
-  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_64.png') }}">
-  <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_128.png') }}">
-  <link rel="icon" type="image/png" sizes="256x256" href="{{ url_for('static', filename='icons/fjordlens_lens_favicon_256.png') }}">
-  <!-- iOS Home Screen icons: generic + explicit sizes (best compatibility) -->
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/fjordlens_lens_fullcolor_512.png') }}">
-  <link rel="apple-touch-icon-precomposed" href="{{ url_for('static', filename='icons/fjordlens_lens_fullcolor_512.png') }}">
-  <!-- Also reference the well-known root path explicitly -->
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png">
-  <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167x167.png">
-  <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png">
-  <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png">
-  <link rel="manifest" href="{{ url_for('static', filename='icons/site.webmanifest') }}">
-  <!-- Android/Chromium high-res icon -->
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v=app_build) }}" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='logos/web/favicon-32x32.png', v=app_build) }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='logos/web/favicon-16x16.png', v=app_build) }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v=app_build) }}">
+  <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v=app_build) }}">
   <!-- Theme-color for browser UI: auto + JS override -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f6f8">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1115">
   <meta id="theme-color-override" name="theme-color" content="#0f1115">
   <!-- iOS/Android PWA fullscreen + title -->
+  <meta name="application-name" content="FjordLens">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FjordLens">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="msapplication-TileColor" content="#041A44">
+  <meta name="msapplication-config" content="{{ url_for('static', filename='logos/web/browserconfig.xml', v=app_build) }}">
   <!-- MapLibre (for Steder-kort med clustering) -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
   <!-- JS indlæses nu lazy via app.js når 'Steder' åbnes -->
@@ -40,7 +31,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="logo">
-        <img class="logo-icon" src="{{ url_for('static', filename='icons/fjordlens_lens_favicon_32.png') }}" alt="FjordLens" />
+        <img class="logo-icon" src="{{ url_for('static', filename='logos/web/favicon-32x32.png', v=app_build) }}" alt="FjordLens" />
         <div>
           <div class="logo-title">FjordLens</div>
           <div class="logo-sub">By Glerup</div>
