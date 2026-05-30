@@ -454,6 +454,7 @@ function showTopStatusMessage(label, pct = null) {
   }
   if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = String(label || '');
   if (els.uploadTopStatusBar) {
+    els.uploadTopStatusBar.classList.remove('indeterminate');
     const v = pct == null ? null : Math.max(0, Math.min(100, Number(pct || 0)));
     els.uploadTopStatusBar.style.width = (v == null) ? '0%' : `${v}%`;
   }
@@ -465,7 +466,10 @@ function hideTopStatusMessage() {
   els.uploadTopStatus.classList.remove('multi');
   els.uploadTopStatus.classList.add('hidden');
   if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = 'Upload: Klar';
-  if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
+  if (els.uploadTopStatusBar) {
+    els.uploadTopStatusBar.classList.remove('indeterminate');
+    els.uploadTopStatusBar.style.width = '0%';
+  }
   if (els.uploadTopProcessRow) {
     els.uploadTopProcessRow.classList.add('hidden');
     els.uploadTopProcessRow.innerHTML = '';
@@ -789,6 +793,17 @@ const I18N = {
     upload_proc_off: 'Slået fra',
     upload_proc_queue: 'i kø: {count}',
     upload_proc_running: 'kører: {count}',
+    manual_sync_prefix: 'Tilføjet bagom',
+    manual_sync_processing_prefix: 'Bagom-tilføjelser',
+    manual_sync_processing_idle: 'efterbehandler...',
+    manual_sync_done: 'Bagom-tilføjelser færdig',
+    manual_sync_indexed: 'indekseret: {count}',
+    manual_sync_processing: 'efterbehandler: {count}',
+    manual_sync_shadowed: 'skjult dublet: {count}',
+    manual_sync_waiting: 'venter på fil: {count}',
+    manual_sync_errors: 'fejl: {count}',
+    manual_sync_converted: 'konverteret: {count}',
+    manual_sync_thumbs: 'thumbs: {count}',
     view_timeline_title: 'Tidlinje',
     view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
     view_favorites_title: 'Favoritter',
@@ -1518,6 +1533,17 @@ const I18N = {
     upload_proc_off: 'Disabled',
     upload_proc_queue: 'queued: {count}',
     upload_proc_running: 'running: {count}',
+    manual_sync_prefix: 'Added behind the scenes',
+    manual_sync_processing_prefix: 'Behind-the-scenes additions',
+    manual_sync_processing_idle: 'post-processing...',
+    manual_sync_done: 'Behind-the-scenes additions done',
+    manual_sync_indexed: 'indexed: {count}',
+    manual_sync_processing: 'post-processing: {count}',
+    manual_sync_shadowed: 'hidden duplicate: {count}',
+    manual_sync_waiting: 'waiting for file: {count}',
+    manual_sync_errors: 'errors: {count}',
+    manual_sync_converted: 'converted: {count}',
+    manual_sync_thumbs: 'thumbs: {count}',
     view_timeline_title: 'Timeline',
     view_timeline_sub: 'Date grouped overview (year/month)',
     view_favorites_title: 'Favorites',
@@ -6580,6 +6606,9 @@ async function loadPhotos(append = false) {
       const errMsg = String(data.error || '').trim();
       if (errMsg) showStatus(`Kunne ikke hente billeder: ${errMsg}`, 'err');
     }
+    if (!append && state.view === 'mapper') {
+      handleManualDiskSyncStatus(data.disk_sync);
+    }
   }
   state.photosLoading = false;
 
@@ -6698,6 +6727,10 @@ let uploadImmediateRevealDone = false;
 let uploadQueuePumpRunning = false;
 let uploadBatchSeq = 0;
 let uploadSessionSavedTotal = 0;
+let manualDiskSyncTopStatusActive = false;
+let manualDiskSyncTopStatusHideTimer = null;
+let manualDiskSyncTopStatusLabel = '';
+let directUploadPostprocessPollActive = false;
 const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
 const UPLOAD_RESUME_DRAFT_KEY = 'fjordlens.upload.resumeDraft.v1';
@@ -6857,6 +6890,166 @@ async function maybeRefreshPhotosDuringPostprocess(force = false) {
   uploadLiveRefreshBusy = false;
 }
 
+function _syncCount(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function _countText(key, count) {
+  return tr(key).replace('{count}', String(_syncCount(count)));
+}
+
+function _manualDiskSyncCanOwnTopStatus() {
+  return !isUploadRunning() && !uploadQueuePumpRunning && !uploadPostprocessResumeActive;
+}
+
+function _clearManualDiskSyncTopStatusTimer() {
+  if (manualDiskSyncTopStatusHideTimer) {
+    window.clearTimeout(manualDiskSyncTopStatusHideTimer);
+    manualDiskSyncTopStatusHideTimer = null;
+  }
+}
+
+function showManualDiskSyncTopStatus(label, pct = null, options = {}) {
+  const text = String(label || '').trim();
+  if (!text || !_manualDiskSyncCanOwnTopStatus()) return;
+  _clearManualDiskSyncTopStatusTimer();
+  manualDiskSyncTopStatusActive = true;
+  manualDiskSyncTopStatusLabel = text;
+  showTopStatusMessage(text, pct);
+  if (options && options.indeterminate) setTopStatusIndeterminate(true);
+  const autoHideMs = Math.max(0, Number((options && options.autoHideMs) || 0));
+  if (autoHideMs > 0) {
+    manualDiskSyncTopStatusHideTimer = window.setTimeout(() => {
+      manualDiskSyncTopStatusHideTimer = null;
+      if (!manualDiskSyncTopStatusActive || !_manualDiskSyncCanOwnTopStatus()) return;
+      const currentLabel = els.uploadTopStatusLabel ? String(els.uploadTopStatusLabel.textContent || '') : '';
+      if (currentLabel && currentLabel !== manualDiskSyncTopStatusLabel) {
+        manualDiskSyncTopStatusActive = false;
+        return;
+      }
+      manualDiskSyncTopStatusActive = false;
+      manualDiskSyncTopStatusLabel = '';
+      hideTopStatusMessage();
+    }, autoHideMs);
+  }
+}
+
+function summarizeManualDiskSync(sync) {
+  if (!sync || typeof sync !== 'object') return '';
+  if (sync.ok === false) {
+    const err = String(sync.error || '').trim();
+    return `${tr('manual_sync_prefix')} · ${tr('manual_sync_errors').replace('{count}', err || '1')}`;
+  }
+  const indexed = _syncCount(sync.indexed);
+  const queued = _syncCount(sync.postprocess_queued);
+  const shadowed = _syncCount(sync.shadowed);
+  const unsettled = _syncCount(sync.unsettled);
+  const errors = _syncCount(sync.errors);
+  const parts = [];
+  if (indexed) parts.push(_countText('manual_sync_indexed', indexed));
+  if (queued) parts.push(_countText('manual_sync_processing', queued));
+  if (shadowed) parts.push(_countText('manual_sync_shadowed', shadowed));
+  if (unsettled) parts.push(_countText('manual_sync_waiting', unsettled));
+  if (errors) parts.push(_countText('manual_sync_errors', errors));
+  return parts.length ? `${tr('manual_sync_prefix')} · ${parts.join(' · ')}` : '';
+}
+
+function summarizeManualPostprocessDone(result) {
+  const src = (result && typeof result === 'object') ? result : {};
+  const received = _syncCount(src.received);
+  const indexed = _syncCount(src.indexed);
+  const converted = _syncCount(src.heic_converted);
+  const errors = _syncCount(src.index_errors) + _syncCount(src.faces_errors) + _syncCount(src.ai_errors) + _syncCount(src.ai_desc_errors);
+  const parts = [];
+  if (indexed || received) parts.push(_countText('manual_sync_thumbs', indexed || received));
+  if (converted) parts.push(_countText('manual_sync_converted', converted));
+  if (errors) parts.push(_countText('manual_sync_errors', errors));
+  return parts.length ? `${tr('manual_sync_done')} · ${parts.join(' · ')}` : tr('manual_sync_done');
+}
+
+function renderManualPostprocessStatus(status) {
+  const src = (status && typeof status === 'object') ? status : {};
+  const total = _syncCount(src.stage_total);
+  const done = _syncCount(src.stage_processed);
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : null;
+  const processStatus = (src.process_status && typeof src.process_status === 'object') ? src.process_status : null;
+  const workflowMode = String(src.workflow_mode || 'gentle').toLowerCase();
+  const processSummary = processStatus ? summarizeUploadProcessStatus(processStatus) : '';
+  const phase = workflowMode === 'aggressive' && processStatus
+    ? tr('tab_upload_workflow')
+    : postprocessPhaseLabel(src.phase);
+  const detail = processSummary || (total > 0
+    ? `${phase} · ${done}/${total}${pct !== null ? ` · ${pct}%` : ''}`
+    : `${phase || tr('manual_sync_processing_idle')}`);
+  showManualDiskSyncTopStatus(`${tr('manual_sync_processing_prefix')} · ${detail}`, pct, {
+    indeterminate: pct === null,
+    autoHideMs: 0,
+  });
+}
+
+async function pollDirectUploadPostprocessStatus(forceShow = false) {
+  if (directUploadPostprocessPollActive) return;
+  directUploadPostprocessPollActive = true;
+  try {
+    let sawRunning = false;
+    const deadline = Date.now() + (24 * 60 * 60 * 1000);
+    while (Date.now() < deadline) {
+      const res = await fetch('/api/upload/direct-postprocess/status');
+      let status = {};
+      try { status = await res.json(); } catch {}
+      if (!res.ok || !status || !status.ok) return;
+
+      const pending = _syncCount(status.pending);
+      if (status.running || pending > 0) {
+        sawRunning = true;
+        renderManualPostprocessStatus(status);
+        await maybeRefreshPhotosDuringPostprocess(false);
+        await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(status)));
+        continue;
+      }
+
+      if (sawRunning || forceShow) {
+        if (status.error) {
+          showManualDiskSyncTopStatus(`${tr('manual_sync_done')} · ${tr('manual_sync_errors').replace('{count}', '1')}`, 100, { autoHideMs: 7000 });
+        } else if (status.result) {
+          showManualDiskSyncTopStatus(summarizeManualPostprocessDone(status.result), 100, { autoHideMs: 6500 });
+        }
+        await maybeRefreshPhotosDuringPostprocess(true);
+      }
+      return;
+    }
+  } catch {
+    return;
+  } finally {
+    directUploadPostprocessPollActive = false;
+  }
+}
+
+function handleManualDiskSyncStatus(sync) {
+  if (state.view !== 'mapper' || !sync || typeof sync !== 'object') return;
+  const label = summarizeManualDiskSync(sync);
+  const queued = _syncCount(sync.postprocess_queued);
+  const unsettled = _syncCount(sync.unsettled);
+  const errors = _syncCount(sync.errors);
+  if (label) {
+    showManualDiskSyncTopStatus(label, queued ? null : (errors ? 100 : 100), {
+      indeterminate: queued > 0,
+      autoHideMs: queued > 0 ? 0 : 5500,
+    });
+  }
+  if (queued > 0 || sync.skipped === 'running') {
+    pollDirectUploadPostprocessStatus(queued > 0).catch(() => {});
+  }
+  if (unsettled > 0) {
+    window.setTimeout(() => {
+      if (state.view === 'mapper' && !state.photosLoading) {
+        loadPhotos().catch(() => {});
+      }
+    }, 1800);
+  }
+}
+
 function hideUploadOverlay() {
   ensureUploadOverlayRefs();
   if (!els.uploadOverlay) return;
@@ -7007,6 +7200,9 @@ function renderUploadMonitor() {
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
     if (hasTopStatus) {
+      manualDiskSyncTopStatusActive = false;
+      manualDiskSyncTopStatusLabel = '';
+      _clearManualDiskSyncTopStatusTimer();
       if (useMultiTopStatus && renderUploadTopProcessStatus(uploadUiState.processStatus)) {
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = '';
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
@@ -14413,6 +14609,8 @@ setView(state.view, { syncUrl: false }).then(async () => {
   _announceUploadResumeDraftIfNeeded();
   // Resume upload postprocess monitor/state if page was refreshed mid-run.
   resumeUploadPostprocessAfterRefresh().catch(() => {});
+  // Resume the same top status for files added directly to the upload folder.
+  pollDirectUploadPostprocessStatus(false).catch(() => {});
   // Safety: remove any stray backdrops/overlays that might block UI after reload
   try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}

@@ -776,6 +776,7 @@ scan_stop_event = threading.Event()
 UPLOAD_FOLDER_SYNC_LOCK = threading.Lock()
 UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
 UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
+DIRECT_UPLOAD_POSTPROCESS_USER = "__direct_uploads__"
 
 # Simple in-memory log buffer for UI polling
 from collections import deque
@@ -10606,23 +10607,134 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
     if not rels:
         return False
 
+    state_user = DIRECT_UPLOAD_POSTPROCESS_USER
+    if _is_upload_postprocess_running(state_user):
+        for rel in rels:
+            _queue_uploaded_rel(state_user, rel)
+        try:
+            log_event("direct_upload_postprocess_queued", files=len(rels))
+        except Exception:
+            pass
+        return True
+
+    workflow_mode = upload_workflow_mode()
+    _set_upload_postprocess_state(
+        state_user,
+        {
+            "running": True,
+            "started_at": now_iso(),
+            "finished_at": None,
+            "error": None,
+            "result": None,
+            "phase": "starting",
+            "workflow_mode": workflow_mode,
+            "process_status": None,
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": len(rels),
+        },
+    )
+
+    aggregate: Dict[str, Any] = {
+        "ok": True,
+        "workflow_mode": workflow_mode,
+        "received": 0,
+        "indexed": 0,
+        "index_errors": 0,
+        "heic_converted": 0,
+        "faces_enabled": faces_auto_index_enabled(),
+        "faces_done": 0,
+        "faces_found": 0,
+        "faces_errors": 0,
+        "ai_enabled": ai_auto_ingest_enabled(),
+        "ai_done": 0,
+        "ai_errors": 0,
+        "ai_desc_enabled": ai_desc_auto_ingest_enabled(),
+        "ai_desc_done": 0,
+        "ai_desc_errors": 0,
+        "process_status": None,
+    }
+
+    def merge_result(result: Dict[str, Any]) -> None:
+        for key in (
+            "received",
+            "indexed",
+            "index_errors",
+            "heic_converted",
+            "faces_done",
+            "faces_found",
+            "faces_errors",
+            "ai_done",
+            "ai_errors",
+            "ai_desc_done",
+            "ai_desc_errors",
+        ):
+            aggregate[key] += int(result[key] if key in result and result[key] is not None else 0)
+        aggregate["faces_enabled"] = bool(result["faces_enabled"] if "faces_enabled" in result else False)
+        aggregate["ai_enabled"] = bool(result["ai_enabled"] if "ai_enabled" in result else False)
+        aggregate["ai_desc_enabled"] = bool(result["ai_desc_enabled"] if "ai_desc_enabled" in result else False)
+        if "process_status" in result:
+            aggregate["process_status"] = result["process_status"]
+
     def run() -> None:
         try:
-            log_event("direct_upload_postprocess_start", files=len(rels))
-            result = _postprocess_uploaded_rels("", rels, workflow_mode=upload_workflow_mode())
-            try:
-                log_event(
-                    "direct_upload_postprocess_done",
-                    files=result.get("received"),
-                    indexed=result.get("indexed"),
-                    heic_converted=result.get("heic_converted"),
-                    faces_done=result.get("faces_done"),
-                    ai_done=result.get("ai_done"),
-                    ai_desc_done=result.get("ai_desc_done"),
+            batch = list(rels)
+            while batch:
+                try:
+                    log_event("direct_upload_postprocess_start", files=len(batch), workflow_mode=workflow_mode)
+                except Exception:
+                    pass
+                result = _postprocess_uploaded_rels(
+                    "",
+                    batch,
+                    progress_cb=lambda p: _set_upload_postprocess_state(
+                        state_user,
+                        dict(p, workflow_mode=workflow_mode),
+                    ),
+                    workflow_mode=workflow_mode,
                 )
-            except Exception:
-                pass
+                merge_result(result)
+                try:
+                    log_event(
+                        "direct_upload_postprocess_done",
+                        files=result.get("received"),
+                        indexed=result.get("indexed"),
+                        heic_converted=result.get("heic_converted"),
+                        faces_done=result.get("faces_done"),
+                        ai_done=result.get("ai_done"),
+                        ai_desc_done=result.get("ai_desc_done"),
+                    )
+                except Exception:
+                    pass
+                batch = _pop_uploaded_rels(state_user)
+
+            _set_upload_postprocess_state(
+                state_user,
+                {
+                    "running": False,
+                    "finished_at": now_iso(),
+                    "result": aggregate,
+                    "error": None,
+                    "phase": "done",
+                    "workflow_mode": workflow_mode,
+                    "process_status": aggregate.get("process_status"),
+                    "current_rel": None,
+                    "stage_processed": int(aggregate.get("received") or 0),
+                    "stage_total": int(aggregate.get("received") or 0),
+                },
+            )
         except Exception as e:
+            _set_upload_postprocess_state(
+                state_user,
+                {
+                    "running": False,
+                    "finished_at": now_iso(),
+                    "error": str(e),
+                    "result": aggregate,
+                    "phase": "error",
+                    "workflow_mode": workflow_mode,
+                },
+            )
             try:
                 log_event("error", rel_path="direct_upload_postprocess", error=str(e))
             except Exception:
@@ -10632,6 +10744,17 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         threading.Thread(target=run, daemon=True).start()
         return True
     except Exception as e:
+        _set_upload_postprocess_state(
+            state_user,
+            {
+                "running": False,
+                "finished_at": now_iso(),
+                "error": f"Unable to start direct postprocess worker: {e}",
+                "result": aggregate,
+                "phase": "error",
+                "workflow_mode": workflow_mode,
+            },
+        )
         try:
             log_event("error", rel_path="direct_upload_postprocess", error=f"start: {e}")
         except Exception:
@@ -18900,6 +19023,49 @@ def api_upload_postprocess_status():
             "running": bool(state.get("running")),
             "pending": pending_count,
             "recoverable_pending": recoverable_count,
+            "workflow_mode": state.get("workflow_mode") or workflow_mode,
+            "started_at": state.get("started_at"),
+            "finished_at": state.get("finished_at"),
+            "result": state.get("result"),
+            "error": state.get("error"),
+            "phase": state.get("phase"),
+            "process_status": state.get("process_status"),
+            "current_rel": state.get("current_rel"),
+            "stage_processed": int(state.get("stage_processed") or 0),
+            "stage_total": int(state.get("stage_total") or 0),
+        }
+    )
+
+
+@app.route("/api/upload/direct-postprocess/status")
+@login_required
+def api_upload_direct_postprocess_status():
+    state_user = DIRECT_UPLOAD_POSTPROCESS_USER
+    workflow_mode = upload_workflow_mode()
+    state = _get_upload_postprocess_state(state_user)
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get(state_user, []))
+    if not state:
+        return jsonify(
+            {
+                "ok": True,
+                "running": False,
+                "pending": pending_count,
+                "workflow_mode": workflow_mode,
+                "process_status": None,
+                "result": None,
+                "error": None,
+                "phase": None,
+                "current_rel": None,
+                "stage_processed": 0,
+                "stage_total": 0,
+            }
+        )
+    return jsonify(
+        {
+            "ok": True,
+            "running": bool(state.get("running")),
+            "pending": pending_count,
             "workflow_mode": state.get("workflow_mode") or workflow_mode,
             "started_at": state.get("started_at"),
             "finished_at": state.get("finished_at"),
