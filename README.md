@@ -143,6 +143,18 @@ Start later with existing `.env` (no wizard):
 sh scripts/Fresh_start_ubuntu_vm.sh --start-only
 ```
 
+### Manual transfers outside FjordLens
+
+If you copy files into the upload storage manually, outside the FjordLens UI, place them inside the `originals` folder under the configured upload folder. Create or choose the target folder first, then copy files into that folder under `originals`.
+
+Example:
+
+```text
+<UPLOADS_HOST_DIR>/originals/<your-folder>/photo.jpg
+```
+
+FjordLens will then discover the files when that folder is opened and handle indexing, thumbnails, and normal post-processing.
+
 ### Proxmox LXC guided setup
 
 For Proxmox LXC environments (where host bind mounts and GPU passthrough are configured on the Proxmox host):
