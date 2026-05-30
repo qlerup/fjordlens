@@ -1,4 +1,5 @@
-﻿# FjordLens
+﻿
+# FjordLens
 
 FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with built-in photoframe management for Raspberry Pi devices.
 
@@ -6,6 +7,26 @@ This repository contains two parts:
 
 - `fjordlens/`: the main web app and API (Flask + JS)
 - `photoframe/`: Raspberry Pi client (fullscreen viewer + local setup app)
+
+---
+
+## Feature Matrix
+
+| Feature                        | Requires Ollama | Requires Photoframe | Requires External Worker |
+|--------------------------------|:---------------:|:-------------------:|:-----------------------:|
+| Timeline/Folders/Places        |                 |                     |                         |
+| Metadata indexing              |                 |                     |                         |
+| Weather enrichment             |                 |                     |                         |
+| Thumbnail generation           |                 |                     |                         |
+| AI embedding/search/similarity |       X         |                     |                         |
+| AI image description           |       X         |                     |      (optional)         |
+| Face detection/indexing        |       X         |                     |                         |
+| Public share links             |                 |                     |                         |
+| Photoframe management          |                 |         X           |                         |
+| Remote photoframe update       |                 |         X           |                         |
+| External AI queue              |       X         |                     |           X             |
+
+---
 
 ## What You Get
 
@@ -466,4 +487,29 @@ fjordlens_synology_github_ready/
 
 ---
 
-If you want, next step can be: add screenshots/GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Settings`) to improve the GitHub front page.
+
+---
+
+## Backup & Restore
+
+### Backup
+
+- Backup your persistent data directory (`DATA_DIR`), uploads, thumbs, and optionally your `.env` file.
+- Example (from host):
+   ```bash
+   tar czf fjordlens-backup-$(date +%Y%m%d).tar.gz /path/to/data_dir /path/to/uploads /path/to/thumbs /path/to/fjordlens/.env
+   ```
+
+### Restore
+
+- Stop FjordLens containers.
+- Extract your backup to the original locations.
+- Start FjordLens again.
+
+---
+
+## Screenshots & GIFs
+
+To improve onboarding, consider adding screenshots or GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Settings`).
+
+---
