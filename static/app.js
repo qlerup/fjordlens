@@ -5578,6 +5578,26 @@ function bindFolderNameMarquee(card, fullText) {
   } catch {}
 }
 
+const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
+
+function invalidateStoredFolderPreviews(folders) {
+  const list = Array.isArray(folders) ? folders : [];
+  if (!list.length) return;
+  try {
+    const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
+    let changed = false;
+    for (const raw of list) {
+      const key = String(raw || '').trim();
+      if (!key) continue;
+      if (Object.prototype.hasOwnProperty.call(store, key)) {
+        delete store[key];
+        changed = true;
+      }
+    }
+    if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
 function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
@@ -5620,9 +5640,8 @@ function appendFolderCard(folder, arr, opts = {}) {
   const uniqUrls = collect(ownFirst).concat(collect(descLater));
 
   // Persist selection per folder in localStorage so it stays after refresh
-  const STORE_KEY = 'fl_folder_previews_v1';
-  const loadStore = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch { return {}; } };
-  const saveStore = (obj) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(obj)); } catch {} };
+  const loadStore = () => { try { return JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {}; } catch { return {}; } };
+  const saveStore = (obj) => { try { localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(obj)); } catch {} };
   const store = loadStore();
   const stored = Array.isArray(store[folder]) ? store[folder] : null;
   const intersect = (want, avail) => want.filter(u => avail.includes(u));
@@ -10153,6 +10172,7 @@ async function deleteSelectedMapperFolders() {
       return;
     }
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
+    invalidateStoredFolderPreviews([...(data.preview_folders || []), ...selected]);
     state.mapperSelectedFolders = new Set();
     setMapperEditMode(false);
     await loadMapperTools(state.mapperPath || '');
@@ -10191,6 +10211,7 @@ async function deleteSelectedMapperPhotos() {
     const res = await fetch('/api/photos/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photo_ids: selected }) });
     const data = await res.json().catch(()=>({}));
     if (!res.ok || !data || !data.ok) { showStatus((data && data.error) || tr('mapper_delete_failed'), 'err'); return; }
+    invalidateStoredFolderPreviews(data.preview_folders || (data.removed && data.removed.preview_folders) || []);
     state.mapperSelectedPhotoIds = new Set();
     setMapperEditMode(false);
     await loadPhotos();

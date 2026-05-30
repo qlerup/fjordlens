@@ -48,7 +48,7 @@ except Exception:
 
 import subprocess
 import shutil
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote, unquote, urlparse, urlunparse
 from werkzeug.utils import secure_filename
 
 APP_PORT = 8080
@@ -5221,6 +5221,17 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     seen: set[str] = set()
     for r in rows:
         try:
+            rel = str(r["rel_path"] or "")
+            if not rel:
+                continue
+            try:
+                if not _disk_path_from_rel_path(rel).exists():
+                    continue
+            except Exception:
+                continue
+            thumb_name = str(r["thumb_name"] or "").strip()
+            if thumb_name and not (THUMB_DIR / thumb_name).exists():
+                continue
             pub = row_to_public(r)
             url = (
                 pub.get("thumb_url")
@@ -5232,7 +5243,7 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
             url = None
         if not url or url in seen:
             continue
-        photo_folder = _mapper_folder_from_rel(str(r["rel_path"]))
+        photo_folder = _mapper_folder_from_rel(rel)
         if photo_folder == f:
             own.append(url)
         else:
@@ -5241,6 +5252,12 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
         seen.add(url)
     ordered = own + desc
     if not ordered:
+        try:
+            with closing(get_conn()) as conn:
+                conn.execute("DELETE FROM folder_previews WHERE folder_path=?", (f,))
+                conn.commit()
+        except Exception:
+            pass
         return []
     pick: list[str]
     if len(ordered) >= 4:
@@ -5297,9 +5314,12 @@ def api_folder_previews_get():
     items: dict[str, list[str]] = {}
     for r in rows:
         try:
-            items[str(r[0])] = json.loads(str(r[1] or "[]")) or []
+            key = str(r[0])
+            urls = json.loads(str(r[1] or "[]")) or []
+            if _folder_preview_urls_are_current(key, urls):
+                items[key] = urls
         except Exception:
-            items[str(r[0])] = []
+            pass
     # For any requested keys without saved previews, compute and store now
     for k in keys:
         if k not in items or not items[k]:
@@ -5351,6 +5371,222 @@ def api_folder_previews_set():
     return jsonify({"ok": True, "folder": folder, "previews": urls, "updated_at": now})
 
 
+def _folder_preview_thumb_name_from_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    marker = "/api/thumbs/"
+    idx = raw.find(marker)
+    if idx < 0:
+        return ""
+    tail = raw[idx + len(marker):].split("?", 1)[0].split("#", 1)[0]
+    try:
+        tail = unquote(tail)
+    except Exception:
+        pass
+    return re.sub(r"[^a-zA-Z0-9._-]", "", tail)
+
+
+def _folder_preview_rel_belongs(folder_key: str, rel_path: Any) -> bool:
+    f = str(folder_key or "").strip()
+    if not f:
+        return False
+    photo_folder = _mapper_folder_from_rel(str(rel_path or ""))
+    return photo_folder == f or photo_folder.startswith(f + "/")
+
+
+def _folder_preview_urls_are_current(folder_key: str, urls: Any) -> bool:
+    try:
+        folder = _normalize_folder_preview_key(folder_key)
+    except Exception:
+        folder = None
+    if folder is None or folder == "":
+        return False
+    clean = [str(u or "").strip() for u in (urls or []) if str(u or "").strip()]
+    if len(clean) not in {1, 2, 4}:
+        return False
+    thumb_names = [_folder_preview_thumb_name_from_url(u) for u in clean]
+    if any(not tn for tn in thumb_names):
+        return False
+    if any(not (THUMB_DIR / tn).exists() for tn in thumb_names):
+        return False
+    placeholders = ",".join(["?"] * len(set(thumb_names)))
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT rel_path, thumb_name FROM photos WHERE thumb_name IN ({placeholders})",
+            sorted(set(thumb_names)),
+        ).fetchall()
+    by_thumb: dict[str, list[str]] = {}
+    for row in rows:
+        tn = str(row["thumb_name"] or "").strip()
+        rel = str(row["rel_path"] or "").strip()
+        if tn and rel:
+            by_thumb.setdefault(tn, []).append(rel)
+    for tn in thumb_names:
+        rels = by_thumb.get(tn) or []
+        if not rels:
+            return False
+        found_current = False
+        for rel in rels:
+            if not _folder_preview_rel_belongs(folder, rel):
+                continue
+            try:
+                if not _disk_path_from_rel_path(rel).exists():
+                    continue
+            except Exception:
+                continue
+            found_current = True
+            break
+        if not found_current:
+            return False
+    return True
+
+
+def _folder_preview_ancestor_keys(folder_key: str) -> list[str]:
+    raw = str(folder_key or "").strip("/")
+    if not raw:
+        return []
+    parts = [p for p in raw.split("/") if p]
+    out: list[str] = []
+    for i in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:i])
+        nk = _normalize_folder_preview_key(candidate)
+        if nk is not None and nk not in out:
+            out.append(nk)
+    return out
+
+
+def _folder_preview_affected_keys_for_rels(rel_paths: Iterable[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for rel in rel_paths or []:
+        folder = _mapper_folder_from_rel(str(rel or ""))
+        for key in _folder_preview_ancestor_keys(folder):
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+def _refresh_folder_previews_for_folders(folder_keys: Iterable[Any]) -> list[str]:
+    refreshed: list[str] = []
+    seen: set[str] = set()
+    for raw in folder_keys or []:
+        nk = _normalize_folder_preview_key(str(raw or ""))
+        if nk is None or nk == "" or nk in seen:
+            continue
+        seen.add(nk)
+        try:
+            _compute_and_store_folder_previews(nk)
+            refreshed.append(nk)
+        except Exception:
+            continue
+    return refreshed
+
+
+def _refresh_folder_previews_for_rel_paths(rel_paths: Iterable[Any]) -> list[str]:
+    return _refresh_folder_previews_for_folders(_folder_preview_affected_keys_for_rels(rel_paths))
+
+
+def _delete_thumb_files_if_unreferenced(thumb_names: Iterable[Any]) -> int:
+    cleaned = sorted(
+        {
+            re.sub(r"[^a-zA-Z0-9._-]", "", str(tn or "").strip())
+            for tn in (thumb_names or [])
+            if str(tn or "").strip()
+        }
+    )
+    cleaned = [tn for tn in cleaned if tn]
+    if not cleaned:
+        return 0
+    placeholders = ",".join(["?"] * len(cleaned))
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT thumb_name FROM photos WHERE thumb_name IN ({placeholders})",
+            cleaned,
+        ).fetchall()
+    still_used = {str(r["thumb_name"] or "").strip() for r in rows if str(r["thumb_name"] or "").strip()}
+    removed = 0
+    for tn in cleaned:
+        if tn in still_used:
+            continue
+        try:
+            p = THUMB_DIR / tn
+            if p.exists():
+                p.unlink()
+                removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def _delete_missing_upload_photo_rows(rows: Iterable[sqlite3.Row]) -> dict:
+    rows_list = list(rows or [])
+    if not rows_list:
+        return {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
+    ids: list[int] = []
+    rels: list[str] = []
+    thumbs: list[str] = []
+    for r in rows_list:
+        try:
+            ids.append(int(r["id"]))
+            rels.append(str(r["rel_path"] or ""))
+            if r["thumb_name"]:
+                thumbs.append(str(r["thumb_name"]))
+        except Exception:
+            continue
+    if not ids:
+        return {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
+    with closing(get_conn()) as conn:
+        ph = ",".join(["?"] * len(ids))
+        faces_removed = int(conn.execute(f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph})", ids).fetchone()["c"] or 0)
+        conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph})", ids)
+        conn.execute(f"DELETE FROM photos WHERE id IN ({ph})", ids)
+        conn.commit()
+    thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
+    preview_folders = _refresh_folder_previews_for_rel_paths(rels)
+    return {
+        "photos": len(ids),
+        "faces": faces_removed,
+        "thumbs": thumbs_removed,
+        "preview_folders": preview_folders,
+    }
+
+
+def _prune_missing_upload_photos_for_folder(folder: str, *, recursive: bool = False, limit: int = 5000) -> dict:
+    logical_folder = _normalize_upload_folder_for_disk_sync(folder)
+    if not logical_folder:
+        return {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
+    prefixes = [
+        f"uploads/{logical_folder}",
+        f"uploads/originals/{logical_folder}",
+        f"uploads/converted/{logical_folder}",
+    ]
+    where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
+    cap = max(100, min(10000, int(limit or 5000)))
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT id, rel_path, thumb_name FROM photos WHERE {where} LIMIT ?",
+            [*prefixes, cap],
+        ).fetchall()
+    missing: list[sqlite3.Row] = []
+    for row in rows:
+        rel = str(row["rel_path"] or "")
+        photo_folder = _mapper_folder_from_rel(rel)
+        if recursive:
+            if not (photo_folder == logical_folder or photo_folder.startswith(logical_folder + "/")):
+                continue
+        elif photo_folder != logical_folder:
+            continue
+        try:
+            if _disk_path_from_rel_path(rel).exists():
+                continue
+        except Exception:
+            pass
+        missing.append(row)
+    return _delete_missing_upload_photo_rows(missing)
+
+
 @app.route("/api/debug/acl", methods=["GET"])
 def api_debug_acl():
     try:
@@ -5379,7 +5615,7 @@ def api_debug_acl():
 def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
     prefixes = [str(p or "").strip("/") for p in (rel_prefixes or []) if str(p or "").strip("/")]
     if not prefixes:
-        return {"photos": 0, "faces": 0, "thumbs": 0}
+        return {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -5387,14 +5623,15 @@ def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
         where_parts.append("(rel_path = ? OR rel_path LIKE ?)")
         params.extend([pref, pref + "/%"])
 
-    q = "SELECT id, thumb_name FROM photos WHERE " + " OR ".join(where_parts)
+    q = "SELECT id, rel_path, thumb_name FROM photos WHERE " + " OR ".join(where_parts)
     with closing(get_conn()) as conn:
         rows = conn.execute(q, params).fetchall()
         if not rows:
-            return {"photos": 0, "faces": 0, "thumbs": 0}
+            return {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
 
         photo_ids = [int(r["id"]) for r in rows]
         thumbs = [str(r["thumb_name"]) for r in rows if r["thumb_name"]]
+        rels = [str(r["rel_path"]) for r in rows if r["rel_path"]]
 
         ph = ",".join(["?"] * len(photo_ids))
         faces_removed = int(conn.execute(f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph})", photo_ids).fetchone()["c"] or 0)
@@ -5402,17 +5639,10 @@ def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
         conn.execute(f"DELETE FROM photos WHERE id IN ({ph})", photo_ids)
         conn.commit()
 
-    thumbs_removed = 0
-    for tn in thumbs:
-        try:
-            p = THUMB_DIR / tn
-            if p.exists():
-                p.unlink()
-                thumbs_removed += 1
-        except Exception:
-            continue
+    thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
+    preview_folders = _refresh_folder_previews_for_rel_paths(rels)
 
-    return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed}
+    return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed, "preview_folders": preview_folders}
 
 
 def _normalize_photo_rel_for_delete(rel_path: Any) -> str:
@@ -5516,7 +5746,7 @@ def _delete_photo_disk_variants(rel_path: str, metadata_json_raw: Any = None, al
 def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
     ids = sorted({int(pid) for pid in (photo_ids or []) if str(pid).isdigit()})
     if not ids:
-        return {"photos": 0, "faces": 0, "thumbs": 0, "files": 0}
+        return {"photos": 0, "faces": 0, "files": 0, "thumbs": 0, "preview_folders": []}
 
     with closing(get_conn()) as conn:
         ph = ",".join(["?"] * len(ids))
@@ -5525,7 +5755,7 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
             ids,
         ).fetchall()
         if not rows:
-            return {"photos": 0, "faces": 0, "thumbs": 0, "files": 0}
+            return {"photos": 0, "faces": 0, "files": 0, "thumbs": 0, "preview_folders": []}
 
         resolved_ids = [int(r["id"]) for r in rows]
         thumbs = [str(r["thumb_name"]) for r in rows if r["thumb_name"]]
@@ -5547,26 +5777,20 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
         conn.execute(f"DELETE FROM photos WHERE id IN ({ph2})", resolved_ids)
         conn.commit()
 
-    thumbs_removed = 0
-    for tn in thumbs:
-        try:
-            p = THUMB_DIR / tn
-            if p.exists():
-                p.unlink()
-                thumbs_removed += 1
-        except Exception:
-            continue
+    thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
 
     files_removed = 0
     deleted_keys: set[str] = set()
     for rel, metadata_json_raw in photo_file_refs:
         files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
+    preview_folders = _refresh_folder_previews_for_rel_paths([rel for rel, _ in photo_file_refs])
 
     return {
         "photos": len(resolved_ids),
         "faces": faces_removed,
         "thumbs": thumbs_removed,
         "files": files_removed,
+        "preview_folders": preview_folders,
     }
 
 
@@ -10859,6 +11083,11 @@ def _sync_upload_folder_from_disk(
         if queue_postprocess:
             _start_direct_upload_postprocess(indexed_rels + postprocess_rels)
 
+        try:
+            missing_removed = _prune_missing_upload_photos_for_folder(logical_folder, recursive=recursive)
+        except Exception:
+            missing_removed = {"photos": 0, "faces": 0, "thumbs": 0, "preview_folders": []}
+
         result: Dict[str, Any] = {
             "ok": True,
             "folder": logical_folder,
@@ -10871,10 +11100,13 @@ def _sync_upload_folder_from_disk(
             "unsettled": unsettled,
             "errors": errors,
             "limited": limited,
+            "missing_removed": int(missing_removed.get("photos") or 0),
+            "missing_thumbs_removed": int(missing_removed.get("thumbs") or 0),
+            "preview_folders": missing_removed.get("preview_folders") or [],
         }
         if error_samples:
             result["error_samples"] = error_samples
-        if indexed or errors or unsettled:
+        if indexed or errors or unsettled or int(missing_removed.get("photos") or 0):
             try:
                 log_event("upload_folder_sync_done", **result)
             except Exception:
@@ -16991,7 +17223,7 @@ def api_delete_photos():
         if not allowed:
             return jsonify({"ok": False, "error": "Ingen slette-adgang"}), 403
         removed = _delete_indexed_photos_by_ids(allowed)
-        return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed})
+        return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed, "preview_folders": removed.get("preview_folders") or []})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -17690,6 +17922,10 @@ def api_settings_upload_folder_delete():
     payload["removed_photos"] = removed.get("photos", 0)
     payload["removed_faces"] = removed.get("faces", 0)
     payload["removed_thumbs"] = removed.get("thumbs", 0)
+    payload["preview_folders"] = sorted(
+        set((removed.get("preview_folders") or []) + [k for folder in cleanup_folders for k in _folder_preview_ancestor_keys(folder)] + cleanup_folders),
+        key=lambda x: (str(x).count("/"), str(x).lower()),
+    )
     return jsonify(payload)
 
 
