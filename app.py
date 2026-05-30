@@ -5214,6 +5214,7 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
             f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
             prefixes,
         ).fetchall()
+    rows = _dedupe_upload_storage_rows(rows)
     own: list[str] = []
     desc: list[str] = []
     seen: set[str] = set()
@@ -10408,6 +10409,98 @@ def _upload_folder_sync_roots(folder: str) -> list[tuple[Path, str, set[str]]]:
     return roots
 
 
+def _upload_storage_tail(rel_path: str) -> tuple[str, str]:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("uploads/originals/"):
+        return "originals", rel[len("uploads/originals/"):]
+    if rel.startswith("uploads/converted/"):
+        return "converted", rel[len("uploads/converted/"):]
+    if rel.startswith("uploads/"):
+        return "direct", rel[len("uploads/"):]
+    return "", rel
+
+
+def _upload_display_key(rel_path: str) -> str:
+    kind, tail = _upload_storage_tail(rel_path)
+    if not kind or not tail:
+        return str(rel_path or "")
+    p = Path(tail.replace("\\", "/"))
+    parent = str(p.parent).replace("\\", "/").strip(".").strip("/")
+    stem = p.stem
+    key_tail = f"{parent}/{stem}" if parent else stem
+    return f"uploads/{key_tail}".lower()
+
+
+def _upload_display_rank(rel_path: str) -> int:
+    kind, _ = _upload_storage_tail(rel_path)
+    if kind == "converted":
+        return 0
+    if kind == "originals":
+        return 1
+    if kind == "direct":
+        return 2
+    return 3
+
+
+def _prefer_upload_rel(candidate_rel: str, current_rel: str) -> bool:
+    cand_rank = _upload_display_rank(candidate_rel)
+    cur_rank = _upload_display_rank(current_rel)
+    if cand_rank != cur_rank:
+        return cand_rank < cur_rank
+    return str(candidate_rel or "").lower() < str(current_rel or "").lower()
+
+
+def _dedupe_upload_storage_rows(rows: Iterable[sqlite3.Row]) -> list[sqlite3.Row]:
+    ordered_keys: list[str] = []
+    best_by_key: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        rel = str(row["rel_path"] or "")
+        key = _upload_display_key(rel) if rel.startswith("uploads/") else rel
+        if key not in best_by_key:
+            ordered_keys.append(key)
+            best_by_key[key] = row
+            continue
+        current = best_by_key[key]
+        if _prefer_upload_rel(rel, str(current["rel_path"] or "")):
+            best_by_key[key] = row
+    return [best_by_key[k] for k in ordered_keys if k in best_by_key]
+
+
+def _dedupe_upload_sync_candidates(candidates: Iterable[tuple[Path, str]]) -> list[tuple[Path, str]]:
+    ordered_keys: list[str] = []
+    best_by_key: dict[str, tuple[Path, str]] = {}
+    for path, rel in candidates:
+        key = _upload_display_key(rel) if rel.startswith("uploads/") else rel
+        if key not in best_by_key:
+            ordered_keys.append(key)
+            best_by_key[key] = (path, rel)
+            continue
+        _, current_rel = best_by_key[key]
+        if _prefer_upload_rel(rel, current_rel):
+            best_by_key[key] = (path, rel)
+    return [best_by_key[k] for k in ordered_keys if k in best_by_key]
+
+
+def _upload_rel_needs_postprocess_conversion(rel_path: str) -> bool:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    kind, _ = _upload_storage_tail(rel)
+    if kind == "converted":
+        return False
+    ext = Path(rel).suffix.lower()
+    if ext in {".heic", ".heif"}:
+        if not heic_convert_on_upload_enabled():
+            return False
+    elif ext not in RAW_EXTS:
+        return False
+    try:
+        converted = _find_existing_converted_for_upload_rel(rel)
+        if converted is not None and converted.exists():
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def _iter_upload_sync_files(
     root: Path,
     rel_prefix: str,
@@ -10571,6 +10664,7 @@ def _sync_upload_folder_from_disk(
         UPLOAD_FOLDER_SYNC_RUNNING.add(cache_key)
 
     indexed_rels: list[str] = []
+    postprocess_rels: list[str] = []
     try:
         candidates: list[tuple[Path, str]] = []
         seen_rels: set[str] = set()
@@ -10587,10 +10681,13 @@ def _sync_upload_folder_from_disk(
             if limited:
                 break
 
+        candidate_count = len(candidates)
+        candidates = _dedupe_upload_sync_candidates(candidates)
         existing = _existing_photo_rows_for_rels([rel for _, rel in candidates])
         scanned = 0
         indexed = 0
         unchanged = 0
+        shadowed = max(0, candidate_count - len(candidates))
         unsettled = 0
         errors = 0
         error_samples: list[str] = []
@@ -10612,6 +10709,8 @@ def _sync_upload_folder_from_disk(
             prev = existing.get(rel)
             if not _photo_row_needs_disk_sync(prev, stat):
                 unchanged += 1
+                if _upload_rel_needs_postprocess_conversion(rel):
+                    postprocess_rels.append(rel)
                 continue
 
             try:
@@ -10619,6 +10718,8 @@ def _sync_upload_folder_from_disk(
                 upsert_photo(meta)
                 indexed += 1
                 indexed_rels.append(rel)
+                if _upload_rel_needs_postprocess_conversion(rel):
+                    postprocess_rels.append(rel)
                 try:
                     log_event("direct_upload_indexed", rel_path=rel, source="folder_sync")
                 except Exception:
@@ -10632,8 +10733,8 @@ def _sync_upload_folder_from_disk(
                 if len(error_samples) < 5:
                     error_samples.append(f"{rel}: {e}")
 
-        if queue_postprocess and indexed_rels:
-            _start_direct_upload_postprocess(indexed_rels)
+        if queue_postprocess:
+            _start_direct_upload_postprocess(indexed_rels + postprocess_rels)
 
         result: Dict[str, Any] = {
             "ok": True,
@@ -10642,6 +10743,8 @@ def _sync_upload_folder_from_disk(
             "scanned": scanned,
             "indexed": indexed,
             "unchanged": unchanged,
+            "shadowed": shadowed,
+            "postprocess_queued": len(set(indexed_rels + postprocess_rels)),
             "unsettled": unsettled,
             "errors": errors,
             "limited": limited,
@@ -12072,13 +12175,22 @@ def query_photos(
         {where_sql}
         ORDER BY {order_by}
     """
+    dedupe_paged_uploads = bool(isinstance(limit, int) and limit > 0)
     if isinstance(limit, int) and limit > 0:
-        sql += f"\n    LIMIT {int(limit)}"
-        if isinstance(offset, int) and offset > 0:
+        raw_limit = int(limit)
+        if dedupe_paged_uploads:
+            raw_limit = max(raw_limit, int(offset or 0) + (int(limit) * 6))
+        sql += f"\n    LIMIT {raw_limit}"
+        if (not dedupe_paged_uploads) and isinstance(offset, int) and offset > 0:
             sql += f" OFFSET {int(offset)}"
 
     with closing(get_conn()) as conn:
         rows = conn.execute(sql, params).fetchall()
+        rows = _dedupe_upload_storage_rows(rows)
+        if dedupe_paged_uploads:
+            start = max(0, int(offset or 0))
+            end = start + int(limit)
+            rows = rows[start:end]
         return [row_to_public(r) for r in rows]
 
 
@@ -12721,6 +12833,7 @@ def api_share_photos(token: str):
             tuple(where_params),
         ).fetchall()
 
+    rows = _dedupe_upload_storage_rows(rows)
     items = [_row_to_share_public(r, token) for r in rows]
     return jsonify({"ok": True, "items": items})
 
