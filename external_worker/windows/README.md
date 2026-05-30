@@ -9,16 +9,44 @@ This folder contains the standalone Windows client for FjordLens external AI ima
 - `Start AI Billedbeskriver.vbs`: helper launcher that starts the GUI without a console window
 - `requirements.txt`: Python dependencies for this worker
 
+
 ## Prerequisites
 
-1. Windows with Python 3.10+ installed
-2. Ollama installed locally and running
-3. A vision model in Ollama (for example `qwen2.5vl:7b`)
-4. External AI descriptions enabled in FjordLens settings
+1. Windows med Python 3.10+ installeret
+2. [Ollama](https://ollama.com/download) installeret og kørende lokalt
+3. Qwen vision-model installeret i Ollama (`qwen2.5vl:7b`)
+4. Ekstern AI-beskrivelse aktiveret i FjordLens-indstillinger
+
+### Sådan installerer du Ollama og Qwen-modellen
+
+1. **Installer Ollama**
+	- Download og installer Ollama fra: [https://ollama.com/download](https://ollama.com/download)
+	- Start Ollama (genstart evt. computeren efter installation)
+
+2. **Installer Qwen-modellen**
+	- Åbn PowerShell og kør:
+	  ```powershell
+	  ollama pull qwen2.5vl:7b
+	  ```
+	- Se flere modeller her: [https://ollama.com/library](https://ollama.com/library)
+
+3. **Start Ollama** (hvis ikke allerede kørende):
+	- Kør i PowerShell:
+	  ```powershell
+	  ollama serve
+	  ```
+
+4. **Test at Ollama virker**
+	- Kør f.eks.:
+	  ```powershell
+	  ollama list
+	  ```
+	- Du bør se `qwen2.5vl:7b` på listen.
+
 
 ## Setup
 
-Open PowerShell in this folder and run:
+Åbn PowerShell i denne mappe og kør:
 
 ```powershell
 python -m venv .venv
@@ -27,31 +55,33 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Run
 
-### GUI mode
+## Brug
 
-- Double-click `Start AI Billedbeskriver.vbs`, or
-- Run `pythonw.exe .\ai_billedbeskriver_gui.pyw`
+### GUI-tilstand
 
-In the GUI:
+- Dobbeltklik på `Start AI Billedbeskriver.vbs`, eller
+- Kør `pythonw.exe .\ai_billedbeskriver_gui.pyw`
 
-1. Paste your FjordLens connection link
-2. Click `Kor ekstern ko`
-3. Keep the app open while it processes queue items
+I GUI'en:
 
-### CLI mode (single image)
+1. Indsæt dit FjordLens-forbindelseslink
+2. Klik på `Kør ekstern kø`
+3. Lad programmet være åbent, mens den behandler køen
+
+### CLI-tilstand (enkelt billede)
 
 ```powershell
-python .\ai_billedbeskriver.py "C:\path\to\image.jpg"
+python .\ai_billedbeskriver.py "C:\sti\til\billede.jpg"
 ```
 
-## Environment variables
+
+## Miljøvariabler
 
 - `OLLAMA_HOST` (default: `http://localhost:11434`)
 - `OLLAMA_VISION_MODEL` (default: `qwen2.5vl:7b`)
 
-Example:
+Eksempel:
 
 ```powershell
 $env:OLLAMA_HOST = "http://127.0.0.1:11434"
