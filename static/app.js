@@ -793,17 +793,6 @@ const I18N = {
     upload_proc_off: 'Slået fra',
     upload_proc_queue: 'i kø: {count}',
     upload_proc_running: 'kører: {count}',
-    manual_sync_prefix: 'Tilføjet bagom',
-    manual_sync_processing_prefix: 'Bagom-tilføjelser',
-    manual_sync_processing_idle: 'efterbehandler...',
-    manual_sync_done: 'Bagom-tilføjelser færdig',
-    manual_sync_indexed: 'indekseret: {count}',
-    manual_sync_processing: 'efterbehandler: {count}',
-    manual_sync_shadowed: 'skjult dublet: {count}',
-    manual_sync_waiting: 'venter på fil: {count}',
-    manual_sync_errors: 'fejl: {count}',
-    manual_sync_converted: 'konverteret: {count}',
-    manual_sync_thumbs: 'thumbs: {count}',
     view_timeline_title: 'Tidlinje',
     view_timeline_sub: 'Dato-grupperet oversigt (år/måned)',
     view_favorites_title: 'Favoritter',
@@ -1533,17 +1522,6 @@ const I18N = {
     upload_proc_off: 'Disabled',
     upload_proc_queue: 'queued: {count}',
     upload_proc_running: 'running: {count}',
-    manual_sync_prefix: 'Added behind the scenes',
-    manual_sync_processing_prefix: 'Behind-the-scenes additions',
-    manual_sync_processing_idle: 'post-processing...',
-    manual_sync_done: 'Behind-the-scenes additions done',
-    manual_sync_indexed: 'indexed: {count}',
-    manual_sync_processing: 'post-processing: {count}',
-    manual_sync_shadowed: 'hidden duplicate: {count}',
-    manual_sync_waiting: 'waiting for file: {count}',
-    manual_sync_errors: 'errors: {count}',
-    manual_sync_converted: 'converted: {count}',
-    manual_sync_thumbs: 'thumbs: {count}',
     view_timeline_title: 'Timeline',
     view_timeline_sub: 'Date grouped overview (year/month)',
     view_favorites_title: 'Favorites',
@@ -6626,7 +6604,7 @@ async function loadPhotos(append = false) {
       if (errMsg) showStatus(`Kunne ikke hente billeder: ${errMsg}`, 'err');
     }
     if (!append && state.view === 'mapper') {
-      handleManualDiskSyncStatus(data.disk_sync);
+      handleMapperDiskSyncStatus(data.disk_sync);
     }
   }
   state.photosLoading = false;
@@ -6746,10 +6724,10 @@ let uploadImmediateRevealDone = false;
 let uploadQueuePumpRunning = false;
 let uploadBatchSeq = 0;
 let uploadSessionSavedTotal = 0;
-let manualDiskSyncTopStatusActive = false;
-let manualDiskSyncTopStatusHideTimer = null;
-let manualDiskSyncTopStatusLabel = '';
 let directUploadPostprocessPollActive = false;
+let directUploadPostprocessUiActive = false;
+let mapperDiskSyncWatcherTimer = null;
+let mapperDiskSyncWatcherBusy = false;
 const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
 const UPLOAD_RESUME_DRAFT_KEY = 'fjordlens.upload.resumeDraft.v1';
@@ -6914,97 +6892,42 @@ function _syncCount(value) {
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
 
-function _countText(key, count) {
-  return tr(key).replace('{count}', String(_syncCount(count)));
-}
-
-function _manualDiskSyncCanOwnTopStatus() {
-  return !isUploadRunning() && !uploadQueuePumpRunning && !uploadPostprocessResumeActive;
-}
-
-function _clearManualDiskSyncTopStatusTimer() {
-  if (manualDiskSyncTopStatusHideTimer) {
-    window.clearTimeout(manualDiskSyncTopStatusHideTimer);
-    manualDiskSyncTopStatusHideTimer = null;
-  }
-}
-
-function showManualDiskSyncTopStatus(label, pct = null, options = {}) {
-  const text = String(label || '').trim();
-  if (!text || !_manualDiskSyncCanOwnTopStatus()) return;
-  _clearManualDiskSyncTopStatusTimer();
-  manualDiskSyncTopStatusActive = true;
-  manualDiskSyncTopStatusLabel = text;
-  showTopStatusMessage(text, pct);
-  if (options && options.indeterminate) setTopStatusIndeterminate(true);
-  const autoHideMs = Math.max(0, Number((options && options.autoHideMs) || 0));
-  if (autoHideMs > 0) {
-    manualDiskSyncTopStatusHideTimer = window.setTimeout(() => {
-      manualDiskSyncTopStatusHideTimer = null;
-      if (!manualDiskSyncTopStatusActive || !_manualDiskSyncCanOwnTopStatus()) return;
-      const currentLabel = els.uploadTopStatusLabel ? String(els.uploadTopStatusLabel.textContent || '') : '';
-      if (currentLabel && currentLabel !== manualDiskSyncTopStatusLabel) {
-        manualDiskSyncTopStatusActive = false;
-        return;
-      }
-      manualDiskSyncTopStatusActive = false;
-      manualDiskSyncTopStatusLabel = '';
-      hideTopStatusMessage();
-    }, autoHideMs);
-  }
-}
-
-function summarizeManualDiskSync(sync) {
-  if (!sync || typeof sync !== 'object') return '';
-  if (sync.ok === false) {
-    const err = String(sync.error || '').trim();
-    return `${tr('manual_sync_prefix')} · ${tr('manual_sync_errors').replace('{count}', err || '1')}`;
-  }
-  const indexed = _syncCount(sync.indexed);
-  const queued = _syncCount(sync.postprocess_queued);
-  const shadowed = _syncCount(sync.shadowed);
-  const unsettled = _syncCount(sync.unsettled);
-  const errors = _syncCount(sync.errors);
-  const parts = [];
-  if (indexed) parts.push(_countText('manual_sync_indexed', indexed));
-  if (queued) parts.push(_countText('manual_sync_processing', queued));
-  if (shadowed) parts.push(_countText('manual_sync_shadowed', shadowed));
-  if (unsettled) parts.push(_countText('manual_sync_waiting', unsettled));
-  if (errors) parts.push(_countText('manual_sync_errors', errors));
-  return parts.length ? `${tr('manual_sync_prefix')} · ${parts.join(' · ')}` : '';
-}
-
-function summarizeManualPostprocessDone(result) {
-  const src = (result && typeof result === 'object') ? result : {};
-  const received = _syncCount(src.received);
-  const indexed = _syncCount(src.indexed);
-  const converted = _syncCount(src.heic_converted);
-  const errors = _syncCount(src.index_errors) + _syncCount(src.faces_errors) + _syncCount(src.ai_errors) + _syncCount(src.ai_desc_errors);
-  const parts = [];
-  if (indexed || received) parts.push(_countText('manual_sync_thumbs', indexed || received));
-  if (converted) parts.push(_countText('manual_sync_converted', converted));
-  if (errors) parts.push(_countText('manual_sync_errors', errors));
-  return parts.length ? `${tr('manual_sync_done')} · ${parts.join(' · ')}` : tr('manual_sync_done');
-}
-
-function renderManualPostprocessStatus(status) {
+function applyDirectPostprocessStatusToUploadUi(status) {
+  if (isUploadRunning() || uploadQueuePumpRunning || uploadPostprocessResumeActive) return;
   const src = (status && typeof status === 'object') ? status : {};
   const total = _syncCount(src.stage_total);
   const done = _syncCount(src.stage_processed);
-  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : null;
-  const processStatus = (src.process_status && typeof src.process_status === 'object') ? src.process_status : null;
-  const workflowMode = String(src.workflow_mode || 'gentle').toLowerCase();
-  const processSummary = processStatus ? summarizeUploadProcessStatus(processStatus) : '';
-  const phase = workflowMode === 'aggressive' && processStatus
-    ? tr('tab_upload_workflow')
-    : postprocessPhaseLabel(src.phase);
-  const detail = processSummary || (total > 0
-    ? `${phase} · ${done}/${total}${pct !== null ? ` · ${pct}%` : ''}`
-    : `${phase || tr('manual_sync_processing_idle')}`);
-  showManualDiskSyncTopStatus(`${tr('manual_sync_processing_prefix')} · ${detail}`, pct, {
-    indeterminate: pct === null,
-    autoHideMs: 0,
-  });
+  uploadUiState.totalFiles = Math.max(Number(uploadUiState.totalFiles || 0), total || done || 0);
+  uploadUiState.processedFiles = Math.max(0, Math.min(uploadUiState.totalFiles || done || 0, done));
+  uploadUiState.totalBytes = 0;
+  uploadUiState.processedBytes = 0;
+  uploadUiState.failedFiles = 0;
+  uploadUiState.workflowMode = String(src.workflow_mode || uploadUiState.workflowMode || 'gentle').toLowerCase();
+  uploadUiState.processStatus = (src.process_status && typeof src.process_status === 'object') ? src.process_status : null;
+  const useParallel = uploadUiState.workflowMode === 'aggressive' && !!uploadUiState.processStatus;
+  uploadUiState.currentPhaseLabel = useParallel ? tr('tab_upload_workflow') : postprocessPhaseLabel(src.phase);
+  uploadUiState.currentFileName = useParallel ? tr('upload_workflow_running') : (shortRelName(src.current_rel) || 'Arbejder…');
+  uploadUiState.currentLoaded = done;
+  uploadUiState.currentTotal = total;
+  directUploadPostprocessUiActive = true;
+  renderUploadMonitor();
+}
+
+function clearDirectPostprocessUploadUi() {
+  if (!directUploadPostprocessUiActive) return;
+  directUploadPostprocessUiActive = false;
+  uploadUiState.totalFiles = 0;
+  uploadUiState.totalBytes = 0;
+  uploadUiState.processedFiles = 0;
+  uploadUiState.processedBytes = 0;
+  uploadUiState.failedFiles = 0;
+  uploadUiState.currentFileName = '';
+  uploadUiState.currentPhaseLabel = '';
+  uploadUiState.currentLoaded = 0;
+  uploadUiState.currentTotal = 0;
+  uploadUiState.workflowMode = 'gentle';
+  uploadUiState.processStatus = null;
+  renderUploadMonitor();
 }
 
 async function pollDirectUploadPostprocessStatus(forceShow = false) {
@@ -7022,18 +6945,14 @@ async function pollDirectUploadPostprocessStatus(forceShow = false) {
       const pending = _syncCount(status.pending);
       if (status.running || pending > 0) {
         sawRunning = true;
-        renderManualPostprocessStatus(status);
+        applyDirectPostprocessStatusToUploadUi(status);
         await maybeRefreshPhotosDuringPostprocess(false);
         await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(status)));
         continue;
       }
 
       if (sawRunning || forceShow) {
-        if (status.error) {
-          showManualDiskSyncTopStatus(`${tr('manual_sync_done')} · ${tr('manual_sync_errors').replace('{count}', '1')}`, 100, { autoHideMs: 7000 });
-        } else if (status.result) {
-          showManualDiskSyncTopStatus(summarizeManualPostprocessDone(status.result), 100, { autoHideMs: 6500 });
-        }
+        clearDirectPostprocessUploadUi();
         await maybeRefreshPhotosDuringPostprocess(true);
       }
       return;
@@ -7045,18 +6964,11 @@ async function pollDirectUploadPostprocessStatus(forceShow = false) {
   }
 }
 
-function handleManualDiskSyncStatus(sync) {
+function handleMapperDiskSyncStatus(sync) {
   if (state.view !== 'mapper' || !sync || typeof sync !== 'object') return;
-  const label = summarizeManualDiskSync(sync);
   const queued = _syncCount(sync.postprocess_queued);
   const unsettled = _syncCount(sync.unsettled);
-  const errors = _syncCount(sync.errors);
-  if (label) {
-    showManualDiskSyncTopStatus(label, queued ? null : (errors ? 100 : 100), {
-      indeterminate: queued > 0,
-      autoHideMs: queued > 0 ? 0 : 5500,
-    });
-  }
+  if (Array.isArray(sync.preview_folders) && sync.preview_folders.length) invalidateStoredFolderPreviews(sync.preview_folders);
   if (queued > 0 || sync.skipped === 'running') {
     pollDirectUploadPostprocessStatus(queued > 0).catch(() => {});
   }
@@ -7067,6 +6979,44 @@ function handleManualDiskSyncStatus(sync) {
       }
     }, 1800);
   }
+}
+
+async function checkMapperDiskSyncNow() {
+  if (mapperDiskSyncWatcherBusy) return;
+  if (state.view !== 'mapper') return;
+  if (state.photosLoading || isUploadRunning() || uploadQueuePumpRunning) return;
+  mapperDiskSyncWatcherBusy = true;
+  try {
+    const qs = new URLSearchParams({
+      folder: state.mapperPath || '',
+      direct: '1',
+    });
+    const res = await fetch(`/api/upload/folder-sync/status?${qs.toString()}`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) return;
+    const sync = data.disk_sync || {};
+    handleMapperDiskSyncStatus(sync);
+    const post = (data.postprocess && typeof data.postprocess === 'object') ? data.postprocess : {};
+    if (post.running || _syncCount(post.pending) > 0) {
+      pollDirectUploadPostprocessStatus(false).catch(() => {});
+    }
+    const changed = _syncCount(sync.indexed) + _syncCount(sync.missing_removed) + _syncCount(sync.missing_thumbs_removed);
+    if (changed > 0) {
+      await loadPhotos();
+      try { await loadMapperTools(state.mapperPath || ''); } catch {}
+    }
+  } catch {
+    return;
+  } finally {
+    mapperDiskSyncWatcherBusy = false;
+  }
+}
+
+function startMapperDiskSyncWatcher() {
+  if (mapperDiskSyncWatcherTimer) return;
+  mapperDiskSyncWatcherTimer = window.setInterval(() => {
+    checkMapperDiskSyncNow().catch(() => {});
+  }, 2200);
 }
 
 function hideUploadOverlay() {
@@ -7219,9 +7169,6 @@ function renderUploadMonitor() {
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
     if (hasTopStatus) {
-      manualDiskSyncTopStatusActive = false;
-      manualDiskSyncTopStatusLabel = '';
-      _clearManualDiskSyncTopStatusTimer();
       if (useMultiTopStatus && renderUploadTopProcessStatus(uploadUiState.processStatus)) {
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = '';
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
@@ -11198,6 +11145,7 @@ async function setView(view, opts = {}) {
   } else {
     if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''));
     await loadPhotos();
+    if (nextView === 'mapper') checkMapperDiskSyncNow().catch(() => {});
   }
 }
 
@@ -14632,6 +14580,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
   resumeUploadPostprocessAfterRefresh().catch(() => {});
   // Resume the same top status for files added directly to the upload folder.
   pollDirectUploadPostprocessStatus(false).catch(() => {});
+  startMapperDiskSyncWatcher();
   // Safety: remove any stray backdrops/overlays that might block UI after reload
   try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}

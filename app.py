@@ -11061,7 +11061,7 @@ def _sync_upload_folder_from_disk(
                 continue
 
             try:
-                meta = extract_metadata(path, rel, generate_thumb=True)
+                meta = extract_metadata(path, rel, generate_thumb=False)
                 upsert_photo(meta)
                 indexed += 1
                 indexed_rels.append(rel)
@@ -19312,6 +19312,46 @@ def api_upload_direct_postprocess_status():
             "current_rel": state.get("current_rel"),
             "stage_processed": int(state.get("stage_processed") or 0),
             "stage_total": int(state.get("stage_total") or 0),
+        }
+    )
+
+
+@app.route("/api/upload/folder-sync/status")
+@login_required
+def api_upload_folder_sync_status():
+    folder = request.args.get("folder")
+    direct_only = str(request.args.get("direct") or "").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        sync_folder = _normalize_upload_folder_for_disk_sync(folder)
+        sync_rel = f"uploads/{sync_folder}" if sync_folder else "uploads"
+        if not _is_rel_visible_for_current_user(sync_rel):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        disk_sync = _sync_upload_folder_from_disk(
+            sync_folder,
+            recursive=not direct_only,
+            max_files=UPLOAD_FOLDER_SYNC_MAX_FILES,
+            queue_postprocess=True,
+        )
+    except Exception as e:
+        disk_sync = {"ok": False, "error": str(e), "folder": str(folder or "")}
+
+    state_user = DIRECT_UPLOAD_POSTPROCESS_USER
+    post_state = _get_upload_postprocess_state(state_user)
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get(state_user, []))
+    return jsonify(
+        {
+            "ok": True,
+            "disk_sync": disk_sync,
+            "postprocess": {
+                "running": bool(post_state.get("running")) if post_state else False,
+                "pending": pending_count,
+                "phase": post_state.get("phase") if post_state else None,
+                "workflow_mode": post_state.get("workflow_mode") if post_state else upload_workflow_mode(),
+                "process_status": post_state.get("process_status") if post_state else None,
+                "stage_processed": int(post_state.get("stage_processed") or 0) if post_state else 0,
+                "stage_total": int(post_state.get("stage_total") or 0) if post_state else 0,
+            },
         }
     )
 
