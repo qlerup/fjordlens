@@ -26,7 +26,7 @@ This repository contains two parts:
 | Remote photoframe update       |                 |         X           |                         |
 | External AI queue              |       X         |                     |           X             |
 
-*Ollama kræves kun hvis du bruger ekstern AI-beskriver/worker.
+*Ollama is only required if you use the external AI describer/worker.
 
 ---
 
