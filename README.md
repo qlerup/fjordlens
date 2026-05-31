@@ -318,6 +318,8 @@ Admins can also update from the web UI:
 
 The in-app updater runs the same update flow as `scripts/update.sh`. `Ryd plads og opdater` runs the script with `--cleanup`; `Hurtig opdatering` runs it with `--no-cleanup`.
 
+After pulling new code, the update script also appends missing active variables from `.env.example` to `.env`. Existing `.env` values are never overwritten, and commented optional examples stay commented in `.env.example`.
+
 Note: the in-app updater uses an internal `fjordlens-updater` container with access to the Docker socket so it can rebuild/restart the FjordLens services. Keep the update UI admin-only.
 
 The updater can automatically check for new commits in the background. The default is enabled every 30 minutes, and admins can change or disable it under `Indstillinger` -> `Opdatering`.

@@ -32,6 +32,7 @@ Usage: $0 [options]
 Normal FjordLens update:
   - backs up .env and fjordlens.db when possible
   - pulls the current Git branch with --ff-only
+  - appends new active .env.example variables to .env without overwriting values
   - asks whether to run optional Docker cleanup
   - runs docker compose up -d --build
   - waits for /api/health
@@ -249,6 +250,46 @@ backup_env_file() {
 	fi
 }
 
+merge_env_example_new_keys() {
+	env_file="$APP_DIR/.env"
+	example_file="$APP_DIR/.env.example"
+	if [ ! -f "$example_file" ]; then
+		echo "==> Springer .env merge over: .env.example blev ikke fundet"
+		return 0
+	fi
+	if [ ! -f "$env_file" ]; then
+		echo "==> Springer .env merge over: .env findes ikke"
+		return 0
+	fi
+
+	tmp_file="${TMPDIR:-/tmp}/fjordlens-env-merge.$$"
+	: > "$tmp_file"
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+			""|\#*) continue ;;
+		esac
+		key="$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*=.*/\2/p')"
+		[ -n "$key" ] || continue
+		if grep -Eq "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$env_file"; then
+			continue
+		fi
+		printf '%s\n' "$line" >> "$tmp_file"
+	done < "$example_file"
+
+	if [ -s "$tmp_file" ]; then
+		count="$(wc -l < "$tmp_file" | sed 's/[[:space:]]//g')"
+		{
+			printf '\n# Added from .env.example by scripts/update.sh on %s\n' "$TS"
+			cat "$tmp_file"
+		} >> "$env_file"
+		echo "==> .env opdateret med $count nye variabler fra .env.example"
+	else
+		echo "==> .env har allerede alle aktive variabler fra .env.example"
+	fi
+	rm -f "$tmp_file"
+}
+
 backup_database_from_container() {
 	container_id="$(docker_compose ps -q "$SERVICE_NAME" 2>/dev/null || true)"
 	[ -n "$container_id" ] || return 1
@@ -401,6 +442,8 @@ if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ]; then
 else
 	echo "==> Opdateret: ${OLD_REV:-unknown} -> $NEW_REV"
 fi
+
+merge_env_example_new_keys
 
 run_optional_cleanup
 
