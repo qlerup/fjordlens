@@ -259,6 +259,26 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   background: rgba(91,140,255,0.12);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+.nav-item.has-update-badge {
+  position: relative;
+  padding-right: 52px;
+}
+.nav-item.has-update-badge::after {
+  content: attr(data-update-badge);
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.14);
+  color: #fde68a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.35;
+  pointer-events: none;
+}
 .mapper-nav-menu {
   margin: 0;
   padding: 0;
@@ -701,6 +721,24 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   text-align: center;
 }
 .nav-badge.hidden { display: none; }
+.mobile-nav-item.has-update-badge::after {
+  content: attr(data-update-badge);
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.18);
+  color: #fde68a;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
 .search-shell {
   display: flex;
   align-items: center;

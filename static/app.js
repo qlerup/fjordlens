@@ -785,7 +785,7 @@ const I18N = {
     upload_workflow_save_failed: 'Kunne ikke gemme upload workflow.',
     upload_workflow_running: 'Parallel behandling…',
     file_types_title: 'Upload filtyper',
-    file_types_desc: 'Whitelist de billed- og videofiltyper, FjordLens må modtage.',
+    file_types_desc: 'Whitelist de filendelser, FjordLens må modtage. Ukendte typer uploades som filer uden medie-behandling.',
     file_types_add: 'Tilføj',
     file_types_reset: 'Nulstil',
     file_types_save: 'Gem filtyper',
@@ -793,13 +793,13 @@ const I18N = {
     file_types_load_failed: 'Kunne ikke hente filtyper.',
     file_types_save_failed: 'Kunne ikke gemme filtyper.',
     file_types_invalid: 'Skriv en filtype som .png.',
-    file_types_unsupported: '{ext} er ikke en understøttet billed- eller videotype.',
+    file_types_unsupported: '{ext} kan tilføjes, men bliver ikke behandlet som billede eller video.',
     file_types_duplicate: '{ext} er allerede på listen.',
     file_types_allowed_empty: 'Ingen filtyper er tilladt.',
     file_types_blocked_title: 'Blokerede filtyper',
-    file_types_blocked_desc: 'Understøttede medietyper, der ikke er på whitelist.',
-    file_types_blocked_empty: 'Ingen understøttede filtyper er blokeret.',
-    upload_blocked_file_types: 'Blokeret filtype: {types}. Kun billeder og videoer uploades.',
+    file_types_blocked_desc: 'Standard mediefiltyper, der ikke er på whitelist.',
+    file_types_blocked_empty: 'Ingen standard mediefiltyper er blokeret.',
+    upload_blocked_file_types: 'Blokeret filtype: {types}. Kun whitelistede filtyper uploades.',
     upload_proc_metadata: 'Metadata',
     upload_proc_thumbnails: 'Thumbnails',
     upload_proc_faces: 'Ansigter',
@@ -1527,7 +1527,7 @@ const I18N = {
     upload_workflow_save_failed: 'Could not save upload workflow.',
     upload_workflow_running: 'Parallel processing…',
     file_types_title: 'Upload file types',
-    file_types_desc: 'Whitelist the image and video file types FjordLens may receive.',
+    file_types_desc: 'Whitelist the file extensions FjordLens may receive. Unknown types upload as files without media processing.',
     file_types_add: 'Add',
     file_types_reset: 'Reset',
     file_types_save: 'Save file types',
@@ -1535,13 +1535,13 @@ const I18N = {
     file_types_load_failed: 'Could not load file types.',
     file_types_save_failed: 'Could not save file types.',
     file_types_invalid: 'Enter a file type like .png.',
-    file_types_unsupported: '{ext} is not a supported image or video type.',
+    file_types_unsupported: '{ext} can be added, but will not be processed as an image or video.',
     file_types_duplicate: '{ext} is already on the list.',
     file_types_allowed_empty: 'No file types are allowed.',
     file_types_blocked_title: 'Blocked file types',
-    file_types_blocked_desc: 'Supported media types that are not on the whitelist.',
-    file_types_blocked_empty: 'No supported file types are blocked.',
-    upload_blocked_file_types: 'Blocked file type: {types}. Only photos and videos are uploaded.',
+    file_types_blocked_desc: 'Default media file types that are not on the whitelist.',
+    file_types_blocked_empty: 'No default media file types are blocked.',
+    upload_blocked_file_types: 'Blocked file type: {types}. Only whitelisted file types are uploaded.',
     upload_proc_metadata: 'Metadata',
     upload_proc_thumbnails: 'Thumbnails',
     upload_proc_faces: 'Faces',
@@ -9213,6 +9213,8 @@ function _applyUploadFileTypesData(data) {
   const allowed = Array.isArray(data.allowed_extensions) ? data.allowed_extensions.map(normalizeUploadFileExtension).filter(Boolean) : [];
   const supported = Array.isArray(data.supported_extensions) ? data.supported_extensions.map(normalizeUploadFileExtension).filter(Boolean) : [];
   const defaults = Array.isArray(data.default_extensions) ? data.default_extensions.map(normalizeUploadFileExtension).filter(Boolean) : supported.slice();
+  const supportedSet = new Set(supported);
+  const custom = Array.isArray(data.custom_extensions) ? data.custom_extensions.map(normalizeUploadFileExtension).filter(Boolean) : allowed.filter((ext) => !supportedSet.has(ext));
   const allowedSet = new Set(allowed);
   const blocked = Array.isArray(data.blocked_extensions)
     ? data.blocked_extensions.map(normalizeUploadFileExtension).filter(Boolean)
@@ -9221,6 +9223,7 @@ function _applyUploadFileTypesData(data) {
     allowed_extensions: Array.from(new Set(allowed)).sort(),
     supported_extensions: Array.from(new Set(supported)).sort(),
     default_extensions: Array.from(new Set(defaults)).sort(),
+    custom_extensions: Array.from(new Set(custom)).sort(),
     blocked_extensions: Array.from(new Set(blocked)).sort(),
     upload_accept: String(data.upload_accept || allowed.join(',')).trim(),
   };
@@ -9260,6 +9263,7 @@ function updateUploadFileTypeBlockedFromAllowed() {
   const supported = Array.isArray(data.supported_extensions) ? data.supported_extensions : [];
   const allowedSet = new Set(Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []);
   data.blocked_extensions = supported.filter((ext) => !allowedSet.has(ext)).sort();
+  data.custom_extensions = (Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []).filter((ext) => !supported.includes(ext)).sort();
   data.upload_accept = (Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []).join(',');
 }
 
@@ -9272,10 +9276,6 @@ function addUploadFileTypeFromInput() {
   }
   const data = state.uploadFileTypes || {};
   const supported = new Set(Array.isArray(data.supported_extensions) ? data.supported_extensions : []);
-  if (supported.size && !supported.has(ext)) {
-    showFileTypeStatus(tr('file_types_unsupported').replace('{ext}', ext), 'err');
-    return;
-  }
   const allowed = new Set(Array.isArray(data.allowed_extensions) ? data.allowed_extensions : []);
   if (allowed.has(ext)) {
     showFileTypeStatus(tr('file_types_duplicate').replace('{ext}', ext), 'err');
@@ -9288,7 +9288,7 @@ function addUploadFileTypeFromInput() {
   };
   updateUploadFileTypeBlockedFromAllowed();
   els.fileTypeInput.value = '';
-  showFileTypeStatus('');
+  showFileTypeStatus(supported.size && !supported.has(ext) ? tr('file_types_unsupported').replace('{ext}', ext) : '', 'ok');
   renderUploadFileTypeSettings();
 }
 
@@ -9417,6 +9417,18 @@ function renderAppUpdateTabBadge(item = null) {
     const base = tr('tab_update');
     updateOpt.textContent = showBadge ? `${base} • ${tr('app_update_tab_badge')}` : base;
   }
+
+  const settingsBadgeText = tr('app_update_tab_badge');
+  document.querySelectorAll('.nav-item[data-view="settings"], .mobile-nav-item[data-view="settings"]').forEach((btn) => {
+    btn.classList.toggle('has-update-badge', showBadge);
+    if (showBadge) {
+      btn.setAttribute('data-update-badge', settingsBadgeText);
+      btn.setAttribute('title', tr('app_update_status_available'));
+    } else {
+      btn.removeAttribute('data-update-badge');
+      btn.removeAttribute('title');
+    }
+  });
 }
 
 function applyAppUpdateSettingsUi(item = {}) {
@@ -14917,6 +14929,12 @@ setView(state.view, { syncUrl: false }).then(async () => {
     state.logsRunning = false;
   }
   loadUploadFileTypeSettings({ silent: true }).catch(() => {});
+  try {
+    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+    if (role !== 'user' && state.view !== 'settings') {
+      loadAppUpdateStatus({ silent: true }).catch(() => {});
+    }
+  } catch {}
   // Load conversion settings into toggles
   try {
     loadConversionSettings().catch(()=>{});

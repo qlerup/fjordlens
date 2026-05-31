@@ -5007,11 +5007,9 @@ def _parse_upload_extension_values(value: Any) -> list[Any]:
 
 
 def _normalize_upload_extension_list(value: Any) -> tuple[list[str], list[str], list[str]]:
-    supported = set(_default_upload_allowed_extensions())
     allowed: list[str] = []
     seen: set[str] = set()
     invalid: list[str] = []
-    unsupported: list[str] = []
     for item in _parse_upload_extension_values(value):
         raw = str(item or "").strip()
         ext = _normalize_upload_extension(raw)
@@ -5019,13 +5017,10 @@ def _normalize_upload_extension_list(value: Any) -> tuple[list[str], list[str], 
             if raw:
                 invalid.append(raw)
             continue
-        if ext not in supported:
-            unsupported.append(ext)
-            continue
         if ext not in seen:
             seen.add(ext)
             allowed.append(ext)
-    return (sorted(allowed), sorted(set(invalid)), sorted(set(unsupported)))
+    return (sorted(allowed), sorted(set(invalid)), [])
 
 
 def upload_allowed_extensions() -> set[str]:
@@ -5046,10 +5041,12 @@ def _upload_file_types_settings_payload() -> Dict[str, Any]:
     allowed = sorted(upload_allowed_extensions())
     allowed_set = set(allowed)
     blocked = [ext for ext in supported if ext not in allowed_set]
+    custom = [ext for ext in allowed if ext not in set(supported)]
     return {
         "ok": True,
         "allowed_extensions": allowed,
         "blocked_extensions": blocked,
+        "custom_extensions": custom,
         "default_extensions": supported,
         "supported_extensions": supported,
         "upload_accept": ",".join(allowed),
@@ -19608,11 +19605,9 @@ def api_settings_upload_file_types():
             raw_values = body.get("allowed_extensions", body.get("extensions", None))
             if raw_values is None:
                 return jsonify({"ok": False, "error": "Manglende filtype-liste"}), 400
-            allowed, invalid, unsupported = _normalize_upload_extension_list(raw_values)
+            allowed, invalid, _unsupported = _normalize_upload_extension_list(raw_values)
             if invalid:
                 return jsonify({"ok": False, "error": "Ugyldige filtyper: " + ", ".join(invalid[:12])}), 400
-            if unsupported:
-                return jsonify({"ok": False, "error": "Ikke understøttet som billed/video-type: " + ", ".join(unsupported[:12])}), 400
             if not allowed:
                 return jsonify({"ok": False, "error": "Whitelist må ikke være tom"}), 400
         _set_setting(UPLOAD_ALLOWED_EXTENSIONS_SETTING, json.dumps(sorted(allowed)))
