@@ -7101,6 +7101,22 @@ function isUploadRunning() {
   return !!uploadTransferActive;
 }
 
+function isUploadPostprocessPhase() {
+  const phaseKey = String(uploadUiState.currentPhaseLabel || '').toLowerCase();
+  return !!phaseKey && phaseKey !== 'uploader';
+}
+
+function hasRawUploadWorkQueued() {
+  const total = Math.max(0, Number(uploadUiState.totalFiles || 0));
+  const processed = Math.max(0, Number(uploadUiState.processedFiles || 0));
+  return total > 0 && processed < total;
+}
+
+function shouldShowRawUploadMonitor() {
+  if (isUploadPostprocessPhase()) return false;
+  return isUploadRunning() || uploadQueuePumpRunning || uploadQueue.length > 0 || hasRawUploadWorkQueued();
+}
+
 function resetUploadUiState() {
   uploadUiState.totalFiles = 0;
   uploadUiState.totalBytes = 0;
@@ -7218,8 +7234,8 @@ function renderUploadMonitor() {
   const overallPct = uploadUiState.totalBytes > 0
     ? Math.max(0, Math.min(100, Math.round((processedVisualBytes / uploadUiState.totalBytes) * 100)))
     : 0;
-  const phaseKey = String(uploadUiState.currentPhaseLabel || '').toLowerCase();
-  const isPostprocess = !!phaseKey && phaseKey !== 'uploader';
+  const isPostprocess = isUploadPostprocessPhase();
+  const showRawUploadMonitor = shouldShowRawUploadMonitor();
   const workflowMode = String(uploadUiState.workflowMode || 'gentle').toLowerCase();
   const useMultiTopStatus = isPostprocess && workflowMode === 'aggressive' && !!uploadUiState.processStatus;
   const stagePct = uploadUiState.currentTotal > 0
@@ -7309,7 +7325,7 @@ function renderUploadMonitor() {
   } catch {}
 
   if (!els.uploadMonitor) return;
-  if (!isUploadRunning()) {
+  if (!showRawUploadMonitor) {
     els.uploadMonitor.classList.add('hidden');
     try {
       els.uploadMonitor.style.opacity = '';
@@ -7382,7 +7398,7 @@ function renderUploadMonitor() {
 
 function showUploadMonitor() {
   ensureUploadMonitorRefs();
-  if (!isUploadRunning()) return;
+  if (!shouldShowRawUploadMonitor()) return;
   bindUploadMonitorDomEvents();
   if (els.uploadMonitor) {
     els.uploadMonitor.classList.remove('hidden');
