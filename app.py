@@ -2272,8 +2272,8 @@ def _postprocess_uploaded_rels(
             or (extl in RAW_EXTS)
         )
 
-        # Metadata may already be extracted during upload commit. Reuse it unless
-        # conversion is pending for HEIC/RAW files.
+        # Reuse existing metadata for recovered/manual rows unless conversion is
+        # pending for HEIC/RAW files.
         if not needs_conversion:
             checksum_ready = ""
             try:
@@ -3225,7 +3225,7 @@ def _commit_uploaded_file(
     original_name: str,
     last_modified_ms: Optional[int],
     uploaded_by: str,
-    autostart_postprocess: bool = True,
+    autostart_postprocess: bool = False,
 ) -> Tuple[bool, str, Optional[str]]:
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -3261,31 +3261,6 @@ def _commit_uploaded_file(
     except Exception as e:
         return (False, target.name, f"Queue fail: {target.name}: {e}")
 
-    # Extract/store metadata immediately when each upload finalizes so metadata
-    # can progress during transfer. Downstream phases are still handled later.
-    metadata_written = False
-    try:
-        meta = extract_metadata(target, rel, generate_thumb=False)
-        meta["uploaded_by"] = str(uploaded_by or "")
-        upsert_photo(meta)
-        metadata_written = True
-        try:
-            log_event(
-                "upload_indexed",
-                rel_path=rel,
-                width=meta.get("width"),
-                height=meta.get("height"),
-                has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")),
-                source="upload_commit",
-            )
-        except Exception:
-            pass
-    except Exception as e:
-        try:
-            log_event("error", rel_path=rel, error=f"upload_commit_metadata: {e}")
-        except Exception:
-            pass
-
     # Ensure postprocess runs in the container even if the browser refreshes/closes.
     if autostart_postprocess:
         try:
@@ -3296,9 +3271,8 @@ def _commit_uploaded_file(
             except Exception:
                 pass
 
-    # Make file visible in UI immediately; full metadata/thumb comes from postprocess.
-    if not metadata_written:
-        _upsert_uploaded_stub(rel, target, uploaded_by)
+    # Make file visible in UI immediately; all heavy work comes from postprocess.
+    _upsert_uploaded_stub(rel, target, uploaded_by)
     return (True, target.name, None)
 
 
@@ -13319,6 +13293,7 @@ def api_share_upload(token: str):
                 original_name=name,
                 last_modified_ms=None,
                 uploaded_by=uploaded_by,
+                autostart_postprocess=False,
             )
             if ok:
                 saved.append(saved_name)
@@ -13552,6 +13527,7 @@ def api_share_tus_file(token: str, upload_id: str):
                 original_name=filename,
                 last_modified_ms=last_modified_ms,
                 uploaded_by=uploaded_by,
+                autostart_postprocess=False,
             )
             try:
                 meta_path.unlink(missing_ok=True)
@@ -13585,6 +13561,104 @@ def api_share_tus_file_override(token: str, upload_id: str):
     if method_override == "PATCH":
         return api_share_tus_file(token, upload_id)
     return jsonify({"ok": False, "error": "Unsupported method"}), 405, _tus_headers()
+
+
+@app.route("/api/share/<token>/upload/postprocess", methods=["POST"])
+def api_share_upload_postprocess(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang krÃ¦ves",
+        }), 401
+    if int(share["can_upload"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
+
+    uploaded_by = _share_get_visitor_name(share) or "Share-bruger"
+    workflow_mode = upload_workflow_mode()
+    rels = _pop_uploaded_rels(uploaded_by)
+
+    if _is_upload_postprocess_running(uploaded_by):
+        for rel in rels:
+            _queue_uploaded_rel(uploaded_by, rel)
+        running_state = _get_upload_postprocess_state(uploaded_by)
+        with UPLOAD_PENDING_LOCK:
+            pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+        return jsonify({
+            "ok": True,
+            "started": False,
+            "running": True,
+            "pending": pending_count,
+            "workflow_mode": running_state.get("workflow_mode") if isinstance(running_state, dict) else workflow_mode,
+            "process_status": running_state.get("process_status") if isinstance(running_state, dict) else None,
+        })
+
+    if not rels:
+        rels = _recover_uploaded_rels_missing_postprocess(uploaded_by)
+
+    if not rels:
+        state = _get_upload_postprocess_state(uploaded_by)
+        return jsonify({
+            "ok": True,
+            "started": False,
+            "running": bool(state.get("running")) if isinstance(state, dict) else False,
+            "pending": 0,
+            "recoverable_pending": 0,
+            "workflow_mode": (state.get("workflow_mode") if isinstance(state, dict) else None) or workflow_mode,
+            "process_status": state.get("process_status") if isinstance(state, dict) else None,
+            "result": state.get("result") if isinstance(state, dict) else None,
+            "error": state.get("error") if isinstance(state, dict) else None,
+        })
+
+    threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+    return jsonify({"ok": True, "started": True, "running": True, "pending": pending_count, "queued": len(rels), "workflow_mode": workflow_mode})
+
+
+@app.route("/api/share/<token>/upload/postprocess/status")
+def api_share_upload_postprocess_status(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang krÃ¦ves",
+        }), 401
+    if int(share["can_upload"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
+
+    uploaded_by = _share_get_visitor_name(share) or "Share-bruger"
+    workflow_mode = upload_workflow_mode()
+    state = _get_upload_postprocess_state(uploaded_by)
+    with UPLOAD_PENDING_LOCK:
+        pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+    if not state:
+        return jsonify({"ok": True, "running": False, "pending": pending_count, "workflow_mode": workflow_mode, "process_status": None, "result": None, "error": None, "phase": None, "current_rel": None, "stage_processed": 0, "stage_total": 0})
+    return jsonify(
+        {
+            "ok": True,
+            "running": bool(state.get("running")),
+            "pending": pending_count,
+            "workflow_mode": state.get("workflow_mode") or workflow_mode,
+            "started_at": state.get("started_at"),
+            "finished_at": state.get("finished_at"),
+            "result": state.get("result"),
+            "error": state.get("error"),
+            "phase": state.get("phase"),
+            "process_status": state.get("process_status"),
+            "current_rel": state.get("current_rel"),
+            "stage_processed": int(state.get("stage_processed") or 0),
+            "stage_total": int(state.get("stage_total") or 0),
+        }
+    )
 
 
 @app.route("/api/share/<token>/delete", methods=["POST"])
@@ -19127,7 +19201,9 @@ def api_upload():
     except Exception:
         client_meta = {}
     allowed_upload_exts = upload_allowed_extensions()
+    uploaded_by = str(getattr(current_user, "username", "") or "")
     for f in files:
+        tmp_path: Optional[Path] = None
         try:
             name = secure_filename(f.filename or "")
             if not name:
@@ -19138,66 +19214,40 @@ def api_upload():
                 try: log_event("upload_skip_blocked_file_type", filename=name, ext=ext)
                 except Exception: pass
                 continue
-            # Ensure unique filename
-            target = target_dir / name
-            stem = Path(name).stem
-            suffix = Path(name).suffix
-            i = 1
-            while target.exists():
-                target = target_dir / f"{stem}_{i}{suffix}"
-                i += 1
-            f.save(str(target))
-            try: log_event("upload_saved", filename=name, path=str(target))
-            except Exception: pass
-            # If client provided lastModified, set file mtime to preserve original date
-            try:
-                lm_ms = client_meta.get(f.filename)
-                if lm_ms:
-                    ts = float(lm_ms) / 1000.0
-                    os.utime(target, (ts, ts))
-            except Exception:
-                pass
-            rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
-            rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
-            try:
-                meta = extract_metadata(target, rel)
-                meta["uploaded_by"] = str(getattr(current_user, "username", "") or "")
-                upsert_photo(meta)
-                try: log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            f.save(str(tmp_path))
+            lm_ms = client_meta.get(f.filename) or client_meta.get(name)
+            ok, saved_name, err = _commit_uploaded_file(
+                target_dir=target_dir,
+                rel_prefix=rel_prefix,
+                subdir=subdir,
+                source_path=tmp_path,
+                original_name=name,
+                last_modified_ms=lm_ms,
+                uploaded_by=uploaded_by,
+                autostart_postprocess=False,
+            )
+            if ok:
+                saved.append(saved_name)
+                try: log_event("upload_saved", filename=name, saved_name=saved_name, path=str(target_dir / saved_name))
                 except Exception: pass
-                if ai_auto_ingest_enabled():
-                    try:
-                        threading.Thread(target=_embed_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
-                        try: log_event("ai_embed_queued", rel_path=rel)
-                        except Exception: pass
-                    except Exception as e:
-                        try: log_event("error", rel_path=rel, error=f"ai_embed_queue: {e}")
-                        except Exception: pass
-                if ai_desc_auto_ingest_enabled():
-                    try:
-                        threading.Thread(target=_describe_uploaded_photo_if_needed, args=(rel,), daemon=True).start()
-                        try: log_event("ai_desc_queued", rel_path=rel)
-                        except Exception: pass
-                    except Exception as e:
-                        try: log_event("error", rel_path=rel, error=f"ai_desc_queue: {e}")
-                        except Exception: pass
-                if faces_auto_index_enabled():
-                    try:
-                        threading.Thread(target=index_faces_for_photo, args=(rel,), daemon=True).start()
-                        try: log_event("faces_queued", rel_path=rel)
-                        except Exception: pass
-                    except Exception as e:
-                        try: log_event("error", rel_path=rel, error=f"faces_queue: {e}")
-                        except Exception: pass
-            except Exception as e:
-                errors.append(f"Index fail: {target.name}: {e}")
-                try: log_event("error", filename=target.name, rel_path=rel, error=str(e))
-                except Exception: pass
-            saved.append(target.name)
+            else:
+                errors.append(err or f"Commit failed: {name}")
+                try:
+                    if tmp_path and tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
         except Exception as e:
             errors.append(str(e))
             try: log_event("error", filename=(f.filename if f else None), error=str(e))
             except Exception: pass
+            try:
+                if tmp_path and tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
     try:
         log_event("upload_done", saved=len(saved), errors=len(errors))
     except Exception:

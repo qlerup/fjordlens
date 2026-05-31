@@ -212,6 +212,7 @@ function t(key) {
     no_files: 'Ingen filer valgt',
     upload_done: 'Upload fuldf\u00f8rt',
     upload_failed: 'Upload fejlede',
+    postprocess_start_failed: 'Efterbehandling kunne ikke starte',
     blocked_file_types: 'Blokerede filtyper',
     blocked_file_types_none: 'Ingen blokerede filtyper',
     blocked_file_types_status: 'Blokeret filtype: {types}. Kun billeder og videoer uploades.',
@@ -245,6 +246,7 @@ function t(key) {
     no_files: 'No files selected',
     upload_done: 'Upload completed',
     upload_failed: 'Upload failed',
+    postprocess_start_failed: 'Post-processing could not start',
     blocked_file_types: 'Blocked file types',
     blocked_file_types_none: 'No blocked file types',
     blocked_file_types_status: 'Blocked file type: {types}. Only photos and videos are uploaded.',
@@ -259,6 +261,17 @@ function t(key) {
   };
   const lang = (document.documentElement.lang || 'da').toLowerCase().startsWith('en') ? en : da;
   return lang[key] || key;
+}
+
+async function startShareUploadPostprocess() {
+  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/upload/postprocess`, {
+    method: 'POST',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data || data.ok === false) {
+    throw new Error((data && data.error) || t('postprocess_start_failed'));
+  }
+  return data;
 }
 
 function showStatus(text, type = 'ok') {
@@ -1023,7 +1036,17 @@ async function runUpload(preselectedFiles = null) {
     closeUploadWarningModal();
     if (els.fileInput) els.fileInput.value = '';
   }
-  if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl`, 'err'); }
+  let postprocessError = '';
+  if (saved > 0) {
+    try {
+      await startShareUploadPostprocess();
+    } catch (err) {
+      postprocessError = err && err.message ? String(err.message) : t('postprocess_start_failed');
+    }
+  }
+  if (postprocessError) {
+    showStatus(`${t('upload_done')} - ${t('postprocess_start_failed')}: ${postprocessError}`, 'err');
+  } else if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl`, 'err'); }
   else { showStatus(t('upload_done'), 'ok'); }
   await loadPhotos();
 }

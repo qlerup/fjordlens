@@ -7832,6 +7832,18 @@ async function uploadFiles(fileList, options = {}) {
             break;
           }
 
+          const queueQuietUntil = Date.now() + 700;
+          while (!uploadStopRequested && !uploadQueue.length && Date.now() < queueQuietUntil) {
+            await new Promise((resolve) => window.setTimeout(resolve, 70));
+          }
+          if (uploadStopRequested) {
+            finished = true;
+            break;
+          }
+          if (uploadQueue.length) {
+            continue;
+          }
+
           if (uploadUiState.processedFiles <= 0) {
             finished = true;
             break;
