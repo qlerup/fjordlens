@@ -2012,6 +2012,16 @@ def _any_upload_transfer_active() -> bool:
         return bool(UPLOAD_TRANSFER_ACTIVE_BY_USER)
 
 
+def _any_regular_upload_postprocess_running() -> bool:
+    with UPLOAD_POSTPROCESS_LOCK:
+        for user, state in UPLOAD_POSTPROCESS_BY_USER.items():
+            if user == DIRECT_UPLOAD_POSTPROCESS_USER:
+                continue
+            if bool((state or {}).get("running")):
+                return True
+    return False
+
+
 def _pending_upload_rels_snapshot() -> set[str]:
     with UPLOAD_PENDING_LOCK:
         return {
@@ -2093,6 +2103,25 @@ def _set_upload_postprocess_state(uploaded_by: str, patch: Dict[str, Any]) -> No
         cur = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
         cur.update(patch)
         UPLOAD_POSTPROCESS_BY_USER[user] = cur
+
+
+def _mark_upload_postprocess_starting(uploaded_by: str, workflow_mode: str, rel_count: int = 0) -> None:
+    _set_upload_postprocess_state(
+        uploaded_by,
+        {
+            "running": True,
+            "started_at": now_iso(),
+            "finished_at": None,
+            "error": None,
+            "result": None,
+            "phase": "starting",
+            "workflow_mode": workflow_mode,
+            "process_status": None,
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": max(0, int(rel_count or 0)),
+        },
+    )
 
 
 def _get_upload_postprocess_state(uploaded_by: str) -> Dict[str, Any]:
@@ -11077,19 +11106,28 @@ def _sync_upload_folder_from_disk(
     except Exception:
         return {"ok": False, "error": "invalid_folder", "folder": str(folder or "")}
 
-    if _any_upload_transfer_active():
+    def skipped(reason: str) -> Dict[str, Any]:
         return {
             "ok": True,
             "folder": logical_folder,
             "recursive": bool(recursive),
-            "skipped": "uploading",
+            "skipped": reason,
             "scanned": 0,
             "indexed": 0,
+            "discovered": 0,
             "unchanged": 0,
+            "pending_uploads": 0,
+            "shadowed": 0,
             "postprocess_queued": 0,
             "unsettled": 0,
             "errors": 0,
         }
+
+    if _any_upload_transfer_active():
+        return skipped("uploading")
+
+    if _any_regular_upload_postprocess_running():
+        return skipped("upload_postprocess")
 
     cap = int(max_files or UPLOAD_FOLDER_SYNC_MAX_FILES)
     cap = max(1, min(UPLOAD_FOLDER_SYNC_MAX_FILES, cap))
@@ -13761,6 +13799,7 @@ def api_share_upload_postprocess(token: str):
             "error": state.get("error") if isinstance(state, dict) else None,
         })
 
+    _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
@@ -19453,6 +19492,7 @@ def api_upload_postprocess():
         recoverable_count = len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
         return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "recoverable_pending": recoverable_count, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
+    _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
