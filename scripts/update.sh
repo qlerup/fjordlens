@@ -24,6 +24,7 @@ SKIP_DB_BACKUP=0
 SHOW_LOGS=1
 CLEANUP_DOCKER="${CLEANUP_DOCKER:-ask}"
 COMPOSE_SERVICES="${COMPOSE_SERVICES:-}"
+FJORDLENS_UPDATE_REEXECED="${FJORDLENS_UPDATE_REEXECED:-0}"
 
 usage() {
 	cat <<EOF
@@ -428,6 +429,10 @@ if [ -z "$REPO_BRANCH" ]; then
 fi
 
 OLD_REV="$(git rev-parse HEAD 2>/dev/null || true)"
+OLD_SCRIPT_HASH=""
+if [ -f "$SCRIPT_DIR/update.sh" ]; then
+	OLD_SCRIPT_HASH="$(git hash-object "$SCRIPT_DIR/update.sh" 2>/dev/null || true)"
+fi
 
 backup_env_file
 backup_database
@@ -435,6 +440,29 @@ backup_database
 echo "==> Henter seneste kode fra origin/$REPO_BRANCH"
 git fetch origin "$REPO_BRANCH"
 git merge --ff-only "origin/$REPO_BRANCH"
+
+NEW_SCRIPT_HASH=""
+if [ -f "$SCRIPT_DIR/update.sh" ]; then
+	NEW_SCRIPT_HASH="$(git hash-object "$SCRIPT_DIR/update.sh" 2>/dev/null || true)"
+fi
+if [ "$FJORDLENS_UPDATE_REEXECED" != "1" ] && [ -n "$OLD_SCRIPT_HASH" ] && [ -n "$NEW_SCRIPT_HASH" ] && [ "$OLD_SCRIPT_HASH" != "$NEW_SCRIPT_HASH" ]; then
+	echo "==> Update-scriptet er opdateret. Genstarter updater-flow med ny script-version."
+	set -- --app-dir "$APP_DIR" --branch "$REPO_BRANCH" --skip-db-backup
+	case "$CLEANUP_DOCKER" in
+		yes|YES|true|TRUE|1) set -- "$@" --cleanup ;;
+		no|NO|false|FALSE|0) set -- "$@" --no-cleanup ;;
+	esac
+	if [ "$DO_BUILD" = "0" ]; then
+		set -- "$@" --no-build
+	fi
+	if [ "$NO_CACHE" = "1" ]; then
+		set -- "$@" --no-cache
+	fi
+	if [ "$SHOW_LOGS" = "0" ]; then
+		set -- "$@" --no-logs
+	fi
+	FJORDLENS_UPDATE_REEXECED=1 exec sh "$SCRIPT_DIR/update.sh" "$@"
+fi
 
 NEW_REV="$(git rev-parse HEAD 2>/dev/null || true)"
 if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ]; then
