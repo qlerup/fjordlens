@@ -471,6 +471,21 @@ try:
 except Exception:
     UPLOAD_FOLDER_SYNC_TTL_SEC = 2.0
 UPLOAD_FOLDER_SYNC_TTL_SEC = max(0.0, min(60.0, UPLOAD_FOLDER_SYNC_TTL_SEC))
+try:
+    DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE = int(os.environ.get("DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE", "8") or 8)
+except Exception:
+    DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE = 8
+DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE = max(1, min(100, DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE))
+try:
+    DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC = float(os.environ.get("DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC", "0.04") or 0.04)
+except Exception:
+    DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC = 0.04
+DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC = max(0.0, min(2.0, DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC))
+try:
+    DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC = float(os.environ.get("DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC", "0.25") or 0.25)
+except Exception:
+    DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC = 0.25
+DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC = max(0.0, min(10.0, DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC))
 UPLOAD_ALLOWED_EXTENSIONS_SETTING = "upload_allowed_extensions"
 PHOTOFRAME_VIDEO_PREPARE_ENABLED = str(os.environ.get("PHOTOFRAME_VIDEO_PREPARE_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 try:
@@ -789,6 +804,8 @@ UPLOAD_POSTPROCESS_LOCK = threading.Lock()
 UPLOAD_TRANSFER_ACTIVE_BY_USER: Dict[str, float] = {}
 UPLOAD_TRANSFER_LOCK = threading.Lock()
 UPLOAD_TRANSFER_TTL_SEC = 180.0
+DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS: set[str] = set()
+DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK = threading.Lock()
 PHOTOFRAME_TOKENS_LOCK = threading.RLock()
 PHOTOFRAME_VIDEO_PREPARE_QUEUE: "queue.Queue[str]" = queue.Queue()
 PHOTOFRAME_VIDEO_PREPARE_LOCK = threading.Lock()
@@ -1960,6 +1977,8 @@ def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
         return
     with UPLOAD_PENDING_LOCK:
         bucket = UPLOAD_PENDING_BY_USER.setdefault(user, [])
+        if rel in bucket:
+            return
         bucket.append(rel)
 
 
@@ -2001,6 +2020,11 @@ def _pending_upload_rels_snapshot() -> set[str]:
             for rel in (rels or [])
             if str(rel or "").strip()
         }
+
+
+def _direct_upload_active_rels_snapshot() -> set[str]:
+    with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+        return set(DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS)
 
 
 def _is_upload_postprocess_running(uploaded_by: str) -> bool:
@@ -2267,6 +2291,7 @@ def _postprocess_uploaded_rels(
     rel_paths: list[str],
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     workflow_mode: Optional[str] = None,
+    item_pause_sec: float = 0.0,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -2282,6 +2307,14 @@ def _postprocess_uploaded_rels(
     ai_enabled = ai_auto_ingest_enabled()
     ai_desc_enabled = ai_desc_auto_ingest_enabled()
     mode = _normalize_upload_workflow_mode(workflow_mode or upload_workflow_mode())
+    try:
+        pause_sec = max(0.0, min(2.0, float(item_pause_sec or 0.0)))
+    except Exception:
+        pause_sec = 0.0
+
+    def _pause_between_items() -> None:
+        if pause_sec > 0:
+            time.sleep(pause_sec)
 
     def _emit_progress(payload: Dict[str, Any]) -> None:
         if not progress_cb:
@@ -2337,6 +2370,7 @@ def _postprocess_uploaded_rels(
                     "stage_processed": i,
                     "stage_total": len(rels),
                 })
+                _pause_between_items()
                 continue
 
         orig_rel_for_convert = rel
@@ -2464,6 +2498,7 @@ def _postprocess_uploaded_rels(
                 log_event("error", rel_path=rel, error="Upload file missing before post-process")
             except Exception:
                 pass
+            _pause_between_items()
             continue
         try:
             meta = extract_metadata(disk_path, rel, generate_thumb=False)
@@ -2489,12 +2524,14 @@ def _postprocess_uploaded_rels(
                 "stage_processed": i,
                 "stage_total": len(rels),
             })
+            _pause_between_items()
         except Exception as e:
             index_errors += 1
             try:
                 log_event("error", rel_path=rel, error=f"postprocess_index: {e}")
             except Exception:
                 pass
+            _pause_between_items()
 
     thumb_errors = 0
     faces_done = 0
@@ -2804,6 +2841,7 @@ def _postprocess_uploaded_rels(
                 disk_path = _disk_path_from_rel_path(rel)
                 if not disk_path.exists():
                     thumb_errors += 1
+                    _pause_between_items()
                     continue
                 stat = disk_path.stat()
                 thumb_name: Optional[str] = None
@@ -2836,6 +2874,7 @@ def _postprocess_uploaded_rels(
                     log_event("error", rel_path=rel, error=f"postprocess_thumb: {e}")
                 except Exception:
                     pass
+            _pause_between_items()
 
         if faces_enabled:
             _emit_progress(
@@ -2877,6 +2916,7 @@ def _postprocess_uploaded_rels(
                         log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
                     except Exception:
                         pass
+                _pause_between_items()
 
         if ai_enabled:
             _emit_progress(
@@ -2913,6 +2953,7 @@ def _postprocess_uploaded_rels(
                         log_event("error", rel_path=rel, error=f"postprocess_ai: {e}")
                     except Exception:
                         pass
+                _pause_between_items()
 
         if ai_desc_enabled:
             desc_total = len(indexed_ok)
@@ -2942,6 +2983,7 @@ def _postprocess_uploaded_rels(
                         log_event("error", rel_path=rel, error=f"postprocess_ai_desc: {e}")
                     except Exception:
                         pass
+                _pause_between_items()
 
     done_payload: Dict[str, Any] = {
         "phase": "done",
@@ -10849,6 +10891,12 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         return False
 
     state_user = DIRECT_UPLOAD_POSTPROCESS_USER
+    with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+        rels = [rel for rel in rels if rel not in DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS]
+        DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.update(rels)
+    if not rels:
+        return False
+
     if _is_upload_postprocess_running(state_user):
         for rel in rels:
             _queue_uploaded_rel(state_user, rel)
@@ -10858,7 +10906,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             pass
         return True
 
-    workflow_mode = upload_workflow_mode()
+    # Manual/direct folder imports must stay low priority so the UI remains usable.
+    workflow_mode = UPLOAD_WORKFLOW_MODE_GENTLE
     _set_upload_postprocess_state(
         state_user,
         {
@@ -10921,18 +10970,21 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         try:
             batch = list(rels)
             while batch:
+                chunk = batch[:DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE]
+                batch = batch[DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE:]
                 try:
-                    log_event("direct_upload_postprocess_start", files=len(batch), workflow_mode=workflow_mode)
+                    log_event("direct_upload_postprocess_start", files=len(chunk), pending=len(batch), workflow_mode=workflow_mode)
                 except Exception:
                     pass
                 result = _postprocess_uploaded_rels(
                     "",
-                    batch,
+                    chunk,
                     progress_cb=lambda p: _set_upload_postprocess_state(
                         state_user,
                         dict(p, workflow_mode=workflow_mode),
                     ),
                     workflow_mode=workflow_mode,
+                    item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
                 )
                 merge_result(result)
                 try:
@@ -10947,7 +10999,11 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     )
                 except Exception:
                     pass
-                batch = _pop_uploaded_rels(state_user)
+                more = _pop_uploaded_rels(state_user)
+                if more:
+                    batch.extend(more)
+                if batch and DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC > 0:
+                    time.sleep(DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC)
 
             _set_upload_postprocess_state(
                 state_user,
@@ -10980,11 +11036,17 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 log_event("error", rel_path="direct_upload_postprocess", error=str(e))
             except Exception:
                 pass
+        finally:
+            with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+                DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.clear()
 
     try:
         threading.Thread(target=run, daemon=True).start()
         return True
     except Exception as e:
+        with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+            for rel in rels:
+                DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.discard(rel)
         _set_upload_postprocess_state(
             state_user,
             {
@@ -11041,7 +11103,7 @@ def _sync_upload_folder_from_disk(
             return {"ok": True, "folder": logical_folder, "skipped": "recent"}
         UPLOAD_FOLDER_SYNC_RUNNING.add(cache_key)
 
-    indexed_rels: list[str] = []
+    discovered_rels: list[str] = []
     postprocess_rels: list[str] = []
     try:
         candidates: list[tuple[Path, str]] = []
@@ -11063,6 +11125,7 @@ def _sync_upload_folder_from_disk(
         candidates = _dedupe_upload_sync_candidates(candidates)
         existing = _existing_photo_rows_for_rels([rel for _, rel in candidates])
         pending_upload_rels = _pending_upload_rels_snapshot()
+        direct_active_rels = _direct_upload_active_rels_snapshot()
         scanned = 0
         indexed = 0
         unchanged = 0
@@ -11087,7 +11150,7 @@ def _sync_upload_folder_from_disk(
                 continue
 
             prev = existing.get(rel)
-            if rel in pending_upload_rels:
+            if rel in pending_upload_rels or rel in direct_active_rels:
                 pending_uploads += 1
                 continue
             if not _photo_row_needs_disk_sync(prev, stat):
@@ -11096,28 +11159,15 @@ def _sync_upload_folder_from_disk(
                     postprocess_rels.append(rel)
                 continue
 
-            try:
-                meta = extract_metadata(path, rel, generate_thumb=False)
-                upsert_photo(meta)
-                indexed += 1
-                indexed_rels.append(rel)
-                if _upload_rel_needs_postprocess_conversion(rel):
-                    postprocess_rels.append(rel)
-                try:
-                    log_event("direct_upload_indexed", rel_path=rel, source="folder_sync")
-                except Exception:
-                    pass
-            except Exception as e:
-                errors += 1
-                try:
-                    log_event("error", rel_path=rel, error=f"folder_sync: {e}")
-                except Exception:
-                    pass
-                if len(error_samples) < 5:
-                    error_samples.append(f"{rel}: {e}")
+            discovered_rels.append(rel)
+            if _upload_rel_needs_postprocess_conversion(rel):
+                postprocess_rels.append(rel)
 
+        postprocess_queued_count = 0
         if queue_postprocess:
-            _start_direct_upload_postprocess(indexed_rels + postprocess_rels)
+            postprocess_candidates = discovered_rels + postprocess_rels
+            if _start_direct_upload_postprocess(postprocess_candidates):
+                postprocess_queued_count = len(set(postprocess_candidates))
 
         try:
             missing_removed = _prune_missing_upload_photos_for_folder(logical_folder, recursive=recursive)
@@ -11130,10 +11180,11 @@ def _sync_upload_folder_from_disk(
             "recursive": bool(recursive),
             "scanned": scanned,
             "indexed": indexed,
+            "discovered": len(discovered_rels),
             "unchanged": unchanged,
             "pending_uploads": pending_uploads,
             "shadowed": shadowed,
-            "postprocess_queued": len(set(indexed_rels + postprocess_rels)),
+            "postprocess_queued": postprocess_queued_count,
             "unsettled": unsettled,
             "errors": errors,
             "limited": limited,
@@ -11143,7 +11194,7 @@ def _sync_upload_folder_from_disk(
         }
         if error_samples:
             result["error_samples"] = error_samples
-        if indexed or errors or unsettled or pending_uploads or int(missing_removed.get("photos") or 0):
+        if indexed or discovered_rels or errors or unsettled or pending_uploads or int(missing_removed.get("photos") or 0):
             try:
                 log_event("upload_folder_sync_done", **result)
             except Exception:
