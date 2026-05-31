@@ -788,6 +788,7 @@ login_manager.login_view = "login"
 
 # Global scan control
 scan_stop_event = threading.Event()
+UPLOAD_POSTPROCESS_STOP_EVENT = threading.Event()
 UPLOAD_FOLDER_SYNC_LOCK = threading.Lock()
 UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
 UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
@@ -2054,6 +2055,7 @@ def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
     """Start per-user upload postprocess worker if it is not already running."""
     user = str(uploaded_by or "").strip() or "__unknown__"
     workflow_mode = upload_workflow_mode()
+    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
     with UPLOAD_POSTPROCESS_LOCK:
         st = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
         if bool(st.get("running")):
@@ -2327,6 +2329,7 @@ def _postprocess_uploaded_rels(
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     workflow_mode: Optional[str] = None,
     item_pause_sec: float = 0.0,
+    stop_event: Optional[threading.Event] = None,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -2347,9 +2350,17 @@ def _postprocess_uploaded_rels(
     except Exception:
         pause_sec = 0.0
 
+    def _should_stop() -> bool:
+        return bool(stop_event and stop_event.is_set())
+
     def _pause_between_items() -> None:
-        if pause_sec > 0:
-            time.sleep(pause_sec)
+        if pause_sec <= 0:
+            return
+        slept = 0.0
+        while slept < pause_sec and not _should_stop():
+            step = min(0.1, pause_sec - slept)
+            time.sleep(step)
+            slept += step
 
     def _emit_progress(payload: Dict[str, Any]) -> None:
         if not progress_cb:
@@ -2370,6 +2381,8 @@ def _postprocess_uploaded_rels(
     heic_converted_count = 0
     index_errors = 0
     for i, rel in enumerate(rels, start=1):
+        if _should_stop():
+            break
         _emit_progress({
             "phase": "metadata",
             "current_rel": rel,
@@ -2679,6 +2692,8 @@ def _postprocess_uploaded_rels(
         def _thumb_worker() -> None:
             nonlocal thumb_errors
             for rel in indexed_ok:
+                if _should_stop():
+                    break
                 err_inc = 0
                 try:
                     disk_path = _disk_path_from_rel_path(rel)
@@ -2730,6 +2745,8 @@ def _postprocess_uploaded_rels(
                 try:
                     # Ensure each batch starts work simultaneously.
                     start_event.wait(timeout=5.0)
+                    if _should_stop():
+                        return
                     fc = index_faces_for_photo(rel)
                     try:
                         if int(fc or 0) > 0:
@@ -2751,6 +2768,8 @@ def _postprocess_uploaded_rels(
                 _emit_parallel(rel)
 
             for start in range(0, len(indexed_ok), max_concurrency):
+                if _should_stop():
+                    break
                 batch = indexed_ok[start : start + max_concurrency]
                 if not batch:
                     continue
@@ -2793,6 +2812,8 @@ def _postprocess_uploaded_rels(
         def _embeddings_worker() -> None:
             nonlocal ai_done, ai_errors
             for rel in indexed_ok:
+                if _should_stop():
+                    break
                 err_inc = 0
                 try:
                     _embed_uploaded_photo_if_needed(rel)
@@ -2812,6 +2833,8 @@ def _postprocess_uploaded_rels(
         def _descriptions_worker() -> None:
             nonlocal ai_desc_done, ai_desc_errors
             for rel in indexed_ok:
+                if _should_stop():
+                    break
                 err_inc = 0
                 try:
                     _describe_uploaded_photo_if_needed(rel)
@@ -2830,7 +2853,7 @@ def _postprocess_uploaded_rels(
 
         _emit_parallel()
         workers: list[threading.Thread] = []
-        if indexed_ok:
+        if indexed_ok and not _should_stop():
             workers.append(threading.Thread(target=_thumb_worker, daemon=True))
             if faces_enabled:
                 workers.append(threading.Thread(target=_faces_worker, daemon=True))
@@ -2864,6 +2887,8 @@ def _postprocess_uploaded_rels(
             }
         )
         for i, rel in enumerate(indexed_ok, start=1):
+            if _should_stop():
+                break
             _emit_progress(
                 {
                     "phase": "thumbnails",
@@ -2921,6 +2946,8 @@ def _postprocess_uploaded_rels(
                 }
             )
             for i, rel in enumerate(indexed_ok, start=1):
+                if _should_stop():
+                    break
                 _emit_progress(
                     {
                         "phase": "faces",
@@ -2963,6 +2990,8 @@ def _postprocess_uploaded_rels(
                 }
             )
             for i, rel in enumerate(indexed_ok, start=1):
+                if _should_stop():
+                    break
                 _emit_progress(
                     {
                         "phase": "embeddings",
@@ -3001,6 +3030,8 @@ def _postprocess_uploaded_rels(
                 }
             )
             for i, rel in enumerate(indexed_ok, start=1):
+                if _should_stop():
+                    break
                 _emit_progress(
                     {
                         "phase": "descriptions",
@@ -3021,7 +3052,7 @@ def _postprocess_uploaded_rels(
                 _pause_between_items()
 
     done_payload: Dict[str, Any] = {
-        "phase": "done",
+        "phase": "stopped" if _should_stop() else "done",
         "workflow_mode": mode,
         "current_rel": None,
         "stage_processed": len(rels),
@@ -3049,6 +3080,7 @@ def _postprocess_uploaded_rels(
         "ai_desc_enabled": ai_desc_enabled,
         "ai_desc_done": ai_desc_done,
         "ai_desc_errors": ai_desc_errors,
+        "stopped": _should_stop(),
     }
     if process_status is not None:
         result["process_status"] = process_status
@@ -3098,9 +3130,11 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
     batch = list(initial_rels or [])
     try:
         while batch:
+            if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                break
             if workflow_mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE and len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE):
                 gather_deadline = time.time() + 1.2
-                while len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE) and time.time() < gather_deadline:
+                while len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE) and time.time() < gather_deadline and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
                     time.sleep(0.12)
                     more = _pop_uploaded_rels(user)
                     if not more:
@@ -3118,6 +3152,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 batch,
                 progress_cb=lambda p: _set_upload_postprocess_state(user, p),
                 workflow_mode=workflow_mode,
+                stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
             )
             aggregate["received"] += int(result["received"] if "received" in result and result["received"] is not None else 0)
             aggregate["indexed"] += int(result["indexed"] if "indexed" in result and result["indexed"] is not None else 0)
@@ -3158,7 +3193,10 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             except Exception:
                 pass
 
-            batch = _pop_uploaded_rels(user)
+            if bool(result.get("stopped")) or UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                batch = []
+            else:
+                batch = _pop_uploaded_rels(user)
 
         _set_upload_postprocess_state(
             user,
@@ -3167,7 +3205,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "finished_at": now_iso(),
                 "result": aggregate,
                 "error": None,
-                "phase": "done",
+                "phase": "stopped" if UPLOAD_POSTPROCESS_STOP_EVENT.is_set() else "done",
                 "workflow_mode": workflow_mode,
                 "process_status": aggregate.get("process_status"),
                 "current_rel": None,
@@ -10885,7 +10923,7 @@ def _existing_photo_rows_for_rels(rel_paths: list[str]) -> dict[str, sqlite3.Row
             chunk = cleaned[i : i + 500]
             placeholders = ",".join(["?"] * len(chunk))
             rows = conn.execute(
-                f"SELECT rel_path, modified_fs, file_size, thumb_name FROM photos WHERE rel_path IN ({placeholders})",
+                f"SELECT rel_path, modified_fs, file_size, thumb_name, checksum_sha256 FROM photos WHERE rel_path IN ({placeholders})",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -10906,7 +10944,11 @@ def _photo_row_needs_disk_sync(row: Optional[sqlite3.Row], stat: os.stat_result)
         return True
     thumb_name = str(row["thumb_name"] or "").strip()
     if not thumb_name:
-        return True
+        try:
+            checksum = str(row["checksum_sha256"] or "").strip()
+        except Exception:
+            checksum = ""
+        return not bool(checksum)
     try:
         return not (THUMB_DIR / thumb_name).exists()
     except Exception:
@@ -10925,6 +10967,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
     if not rels:
         return False
 
+    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
     state_user = DIRECT_UPLOAD_POSTPROCESS_USER
     with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
         rels = [rel for rel in rels if rel not in DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS]
@@ -11027,6 +11070,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         try:
             batch = list(rels)
             while batch:
+                if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                    break
                 chunk = batch[:DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE]
                 batch = batch[DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE:]
                 try:
@@ -11039,6 +11084,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     progress_cb=set_direct_progress,
                     workflow_mode=workflow_mode,
                     item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
+                    stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
                 )
                 merge_result(result)
                 processed_total += int(result.get("received") or len(chunk))
@@ -11054,7 +11100,11 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     )
                 except Exception:
                     pass
-                more = _pop_uploaded_rels(state_user)
+                if bool(result.get("stopped")) or UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                    batch = []
+                    more = []
+                else:
+                    more = _pop_uploaded_rels(state_user)
                 if more:
                     batch.extend(more)
                     known_total += len(more)
@@ -11076,7 +11126,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     "finished_at": now_iso(),
                     "result": aggregate,
                     "error": None,
-                    "phase": "done",
+                    "phase": "stopped" if UPLOAD_POSTPROCESS_STOP_EVENT.is_set() else "done",
                     "workflow_mode": workflow_mode,
                     "process_status": aggregate.get("process_status"),
                     "current_rel": None,
@@ -13836,6 +13886,7 @@ def api_share_upload_postprocess(token: str):
             "error": state.get("error") if isinstance(state, dict) else None,
         })
 
+    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
     _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
@@ -16093,6 +16144,117 @@ def api_rethumb_missing():
     rethumb_thread = threading.Thread(target=run_rethumb_missing, daemon=True)
     rethumb_thread.start()
     return jsonify({"ok": True, "started": True})
+
+
+def _thread_is_alive(thread_obj: Any) -> bool:
+    try:
+        return bool(thread_obj and thread_obj.is_alive())
+    except Exception:
+        return False
+
+
+def _drain_queue_nowait(q: "queue.Queue[Any]") -> int:
+    removed = 0
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            break
+        except Exception:
+            break
+        else:
+            removed += 1
+            try:
+                q.task_done()
+            except Exception:
+                pass
+    return removed
+
+
+@app.route("/api/processes/stop-all", methods=["POST"])
+def api_stop_all_processes():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    scan_stop_event.set()
+    UPLOAD_POSTPROCESS_STOP_EVENT.set()
+    ai_desc_stop_event.set()
+    runtime_stop = _ai_stop_description_runtime(force=True)
+
+    try:
+        _set_setting("ai_auto_ingest", "0")
+        _set_setting("ai_desc_auto_ingest", "0")
+        _set_setting("faces_auto_index", "0")
+    except Exception:
+        pass
+
+    if _faces_running.is_set():
+        _faces_running.clear()
+
+    with UPLOAD_PENDING_LOCK:
+        pending_uploads = sum(len(v or []) for v in UPLOAD_PENDING_BY_USER.values())
+        UPLOAD_PENDING_BY_USER.clear()
+    with UPLOAD_TRANSFER_LOCK:
+        active_transfers = len(UPLOAD_TRANSFER_ACTIVE_BY_USER)
+        UPLOAD_TRANSFER_ACTIVE_BY_USER.clear()
+    with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+        direct_active = len(DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS)
+        DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.clear()
+    with UPLOAD_POSTPROCESS_LOCK:
+        upload_states = 0
+        for user, state in list(UPLOAD_POSTPROCESS_BY_USER.items()):
+            cur = dict(state or {})
+            if cur.get("running") or cur.get("phase") not in {None, "", "done", "stopped", "error"}:
+                upload_states += 1
+            cur.update(
+                {
+                    "running": False,
+                    "finished_at": now_iso(),
+                    "phase": "stopped",
+                    "current_rel": None,
+                    "error": None,
+                }
+            )
+            UPLOAD_POSTPROCESS_BY_USER[user] = cur
+
+    with UPLOAD_FOLDER_SYNC_LOCK:
+        sync_running = len(UPLOAD_FOLDER_SYNC_RUNNING)
+        UPLOAD_FOLDER_SYNC_LAST_AT.clear()
+
+    with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+        photoframe_queued = len(PHOTOFRAME_VIDEO_PREPARE_QUEUED)
+        PHOTOFRAME_VIDEO_PREPARE_QUEUED.clear()
+    photoframe_queue_drained = _drain_queue_nowait(PHOTOFRAME_VIDEO_PREPARE_QUEUE)
+
+    running_snapshot = {
+        "scan": _thread_is_alive(scan_thread),
+        "rescan": _thread_is_alive(rescan_thread),
+        "rethumb": _thread_is_alive(rethumb_thread),
+        "heic_convert": _thread_is_alive(heic_convert_thread),
+        "raw_convert": _thread_is_alive(raw_convert_thread),
+        "ai": bool(ai_running),
+        "ai_desc": bool(ai_desc_running),
+        "faces": bool(_faces_running.is_set()),
+        "upload_postprocess": upload_states,
+        "upload_transfers": active_transfers,
+        "direct_upload_active": direct_active,
+        "folder_sync_running": sync_running,
+        "photoframe_video_queued": max(photoframe_queued, photoframe_queue_drained),
+    }
+    try:
+        log_event("stop_all_processes", **running_snapshot, pending_uploads=pending_uploads)
+    except Exception:
+        pass
+    return jsonify(
+        {
+            "ok": True,
+            "stopping": True,
+            "pending_uploads_cleared": pending_uploads,
+            "runtime_stop": runtime_stop,
+            "running": running_snapshot,
+        }
+    )
 
 
 # --- AI: embeddings + search ---
@@ -19529,6 +19691,7 @@ def api_upload_postprocess():
         recoverable_count = len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
         return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "recoverable_pending": recoverable_count, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
+    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
     _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
