@@ -5341,24 +5341,11 @@ function renderGrid() {
   const items = state.items.slice();
   if (state.view === "mapper") {
     const current = String(state.mapperPath || "");
-    const immediateChild = (folderPath, parentPath) => {
-      const f = String(folderPath || '');
-      const p = String(parentPath || '');
-      if (!f) return null;
-      if (!p) {
-        const seg = f.split('/').filter(Boolean)[0] || null;
-        return seg || null;
-      }
-      if (f === p || !f.startsWith(p + '/')) return null;
-      const rest = f.slice(p.length + 1);
-      const seg = rest.split('/').filter(Boolean)[0] || null;
-      return seg ? `${p}/${seg}` : null;
-    };
 
     // Build child folder list purely from the folder index (fast) — do not scan items
     const childSet = new Set();
     for (const f of (state.mapperFolders || [])) {
-      const child = immediateChild(String(f || ''), current);
+      const child = mapperImmediateChildFolder(String(f || ''), current);
       if (child) childSet.add(child);
     }
     const sorted = Array.from(childSet.values()).sort((a, b) => a.localeCompare(b, 'da-DK'));
@@ -5564,6 +5551,48 @@ function invalidateStoredFolderPreviews(folders) {
   // Keep the last good preview visible; the async server refresh replaces it.
 }
 
+function mapperImmediateChildFolder(folderPath, parentPath) {
+  const f = String(folderPath || '');
+  const p = String(parentPath || '');
+  if (!f) return null;
+  if (!p) {
+    const seg = f.split('/').filter(Boolean)[0] || null;
+    return seg || null;
+  }
+  if (f === p || !f.startsWith(p + '/')) return null;
+  const rest = f.slice(p.length + 1);
+  const seg = rest.split('/').filter(Boolean)[0] || null;
+  return seg ? `${p}/${seg}` : null;
+}
+
+async function prefetchMapperFolderPreviewsForCurrentPath() {
+  if (state.view !== 'mapper') return;
+  const current = String(state.mapperPath || '');
+  const childSet = new Set();
+  for (const f of (state.mapperFolders || [])) {
+    const child = mapperImmediateChildFolder(String(f || ''), current);
+    if (child) childSet.add(child);
+  }
+  const folders = Array.from(childSet.values()).sort((a, b) => a.localeCompare(b, 'da-DK'));
+  if (!folders.length) return;
+  try {
+    const res = await fetch(`/api/folder-previews?folders=${encodeURIComponent(folders.join(','))}`);
+    const data = await res.json().catch(() => ({}));
+    const items = data && data.items && typeof data.items === 'object' ? data.items : {};
+    const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
+    let changed = false;
+    for (const folder of folders) {
+      const urls = Array.isArray(items[folder])
+        ? items[folder].map((u) => String(u || '').trim()).filter(Boolean).slice(0, 4)
+        : [];
+      if (!urls.length) continue;
+      store[folder] = urls;
+      changed = true;
+    }
+    if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
 function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
@@ -5621,21 +5650,30 @@ function appendFolderCard(folder, arr, opts = {}) {
     if (uniqUrls.length === 2 || uniqUrls.length === 3) { variant = 'v2'; return uniqUrls.slice(0,2); }
     variant = 'v4'; return uniqUrls.slice(0,4);
   };
-  const desired = () => (uniqUrls.length === 1 ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4));
+  const desired = () => {
+    if (uniqUrls.length <= 0 && stored && stored.length) {
+      return stored.length >= 4 ? 4 : (stored.length >= 2 ? 2 : 1);
+    }
+    return uniqUrls.length === 1 ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
+  };
   if (stored && stored.length) {
-    const candidates = intersect(stored, uniqUrls);
+    const candidates = uniqUrls.length ? intersect(stored, uniqUrls) : stored;
     if (candidates.length >= desired()) {
       useUrls = candidates.slice(0, desired());
       variant = (useUrls.length === 1 ? 'v1' : (useUrls.length === 2 ? 'v2' : 'v4'));
     } else {
       useUrls = pickFresh();
-      store[folder] = useUrls;
-      saveStore(store);
+      if (useUrls.length) {
+        store[folder] = useUrls;
+        saveStore(store);
+      }
     }
   } else {
     useUrls = pickFresh();
-    store[folder] = useUrls;
-    saveStore(store);
+    if (useUrls.length) {
+      store[folder] = useUrls;
+      saveStore(store);
+    }
   }
   const cells = useUrls.map(u => `<img src="${escapeHtml(u)}" alt="">`).join("");
   const title = opts.title || folder;
@@ -6610,6 +6648,9 @@ async function loadPhotos(append = false) {
   els.viewTitle.textContent = title;
   els.viewSubtitle.textContent = subtitle;
 
+  if (!append && state.view === 'mapper') {
+    await prefetchMapperFolderPreviewsForCurrentPath();
+  }
   renderGrid();
 }
 
@@ -7224,7 +7265,7 @@ function renderUploadMonitor() {
   // Update compact mobile status bar and badge
   try {
     const remaining = Math.max(0, Number(uploadUiState.totalFiles || 0) - Number(uploadUiState.processedFiles || 0));
-    const showMini = (isUploadRunning() || isPostprocess || remaining > 0);
+    const showMini = (isUploadRunning() || (!isPostprocess && remaining > 0));
     if (els.mobileUploadBar) {
       els.mobileUploadBar.classList.toggle('hidden', !showMini);
       if (els.mobileUploadBarFill) {
@@ -7268,6 +7309,18 @@ function renderUploadMonitor() {
   } catch {}
 
   if (!els.uploadMonitor) return;
+  if (!isUploadRunning()) {
+    els.uploadMonitor.classList.add('hidden');
+    try {
+      els.uploadMonitor.style.opacity = '';
+      els.uploadMonitor.style.transition = '';
+    } catch {}
+    if (uploadMonitorHideTimer) {
+      window.clearTimeout(uploadMonitorHideTimer);
+      uploadMonitorHideTimer = null;
+    }
+    return;
+  }
   setUploadStopButtonState();
 
   if (els.uploadMonitorBar) els.uploadMonitorBar.style.width = `${overallPct}%`;
@@ -7329,6 +7382,7 @@ function renderUploadMonitor() {
 
 function showUploadMonitor() {
   ensureUploadMonitorRefs();
+  if (!isUploadRunning()) return;
   bindUploadMonitorDomEvents();
   if (els.uploadMonitor) {
     els.uploadMonitor.classList.remove('hidden');
@@ -7542,7 +7596,6 @@ async function resumeUploadPostprocessAfterRefresh() {
     if (!status.running) return;
 
     uploadUiState.collapsed = false;
-    if (!isSmallMobile()) showUploadMonitor();
 
     while (status && status.running && !uploadQueuePumpRunning && !isUploadRunning()) {
       const stageTotal = Number(status.stage_total || 0);
@@ -14622,10 +14675,9 @@ setView(state.view, { syncUrl: false }).then(async () => {
     }
   } catch {}
   _announceUploadResumeDraftIfNeeded();
-  // Resume upload postprocess monitor/state if page was refreshed mid-run.
-  resumeUploadPostprocessAfterRefresh().catch(() => {});
-  // Resume the same top status for files added directly to the upload folder.
-  pollDirectUploadPostprocessStatus(false).catch(() => {});
+  try {
+    if (els.uploadMonitor) els.uploadMonitor.classList.add('hidden');
+  } catch {}
   startMapperDiskSyncWatcher();
   // Safety: remove any stray backdrops/overlays that might block UI after reload
   try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
