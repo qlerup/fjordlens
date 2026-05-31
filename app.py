@@ -789,6 +789,7 @@ login_manager.login_view = "login"
 # Global scan control
 scan_stop_event = threading.Event()
 UPLOAD_POSTPROCESS_STOP_EVENT = threading.Event()
+STOP_ALL_PROCESS_COOLDOWN_UNTIL = 0.0
 UPLOAD_FOLDER_SYNC_LOCK = threading.Lock()
 UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
 UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
@@ -2055,7 +2056,7 @@ def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
     """Start per-user upload postprocess worker if it is not already running."""
     user = str(uploaded_by or "").strip() or "__unknown__"
     workflow_mode = upload_workflow_mode()
-    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
+    _clear_stop_all_barrier()
     with UPLOAD_POSTPROCESS_LOCK:
         st = dict(UPLOAD_POSTPROCESS_BY_USER.get(user) or {})
         if bool(st.get("running")):
@@ -2130,6 +2131,12 @@ def _mark_upload_postprocess_starting(uploaded_by: str, workflow_mode: str, rel_
             "stage_total": max(0, int(rel_count or 0)),
         },
     )
+
+
+def _clear_stop_all_barrier() -> None:
+    global STOP_ALL_PROCESS_COOLDOWN_UNTIL
+    STOP_ALL_PROCESS_COOLDOWN_UNTIL = 0.0
+    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
 
 
 def _get_upload_postprocess_state(uploaded_by: str) -> Dict[str, Any]:
@@ -10967,8 +10974,9 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
     if not rels:
         return False
 
-    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
     state_user = DIRECT_UPLOAD_POSTPROCESS_USER
+    if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+        return False
     with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
         rels = [rel for rel in rels if rel not in DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS]
         DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.update(rels)
@@ -11212,6 +11220,9 @@ def _sync_upload_folder_from_disk(
 
     if _any_upload_transfer_active():
         return skipped("uploading")
+
+    if float(STOP_ALL_PROCESS_COOLDOWN_UNTIL or 0.0) > time.time():
+        return skipped("stopped")
 
     if _any_regular_upload_postprocess_running():
         return skipped("upload_postprocess")
@@ -13886,7 +13897,7 @@ def api_share_upload_postprocess(token: str):
             "error": state.get("error") if isinstance(state, dict) else None,
         })
 
-    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
+    _clear_stop_all_barrier()
     _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
@@ -16177,6 +16188,8 @@ def api_stop_all_processes():
     if fb:
         return jsonify(fb[0]), fb[1]
 
+    global STOP_ALL_PROCESS_COOLDOWN_UNTIL
+    STOP_ALL_PROCESS_COOLDOWN_UNTIL = time.time() + 120.0
     scan_stop_event.set()
     UPLOAD_POSTPROCESS_STOP_EVENT.set()
     ai_desc_stop_event.set()
@@ -19691,7 +19704,7 @@ def api_upload_postprocess():
         recoverable_count = len(_recover_uploaded_rels_missing_postprocess(uploaded_by, limit=5000))
         return jsonify({"ok": True, "started": False, "running": False, "pending": 0, "recoverable_pending": recoverable_count, "workflow_mode": workflow_mode, "process_status": None, "result": {"ok": True, "workflow_mode": workflow_mode, "received": 0, "indexed": 0, "index_errors": 0, "faces_enabled": faces_auto_index_enabled(), "faces_done": 0, "faces_errors": 0, "ai_enabled": ai_auto_ingest_enabled(), "ai_done": 0, "ai_errors": 0, "ai_desc_enabled": ai_desc_auto_ingest_enabled(), "ai_desc_done": 0, "ai_desc_errors": 0}})
 
-    UPLOAD_POSTPROCESS_STOP_EVENT.clear()
+    _clear_stop_all_barrier()
     _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:

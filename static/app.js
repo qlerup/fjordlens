@@ -11084,6 +11084,55 @@ async function rethumbAll() {
   }
 }
 
+async function stopAllProcesses() {
+  const ok = confirm(tr('stop_all_processes_confirm'));
+  if (!ok) return;
+  const btn = els.stopAllProcessesBtn;
+  const original = btn ? btn.textContent : tr('btn_stop_all_processes');
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+      btn.textContent = tr('status_stopping');
+    }
+    showStatus(tr('stop_all_processes_stopping'), 'ok');
+    try {
+      if (isUploadRunning() || uploadQueuePumpRunning) requestStopUpload();
+      uploadQueue.length = 0;
+    } catch {}
+    const res = await fetch('/api/processes/stop-all', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      showStatus(`${tr('stop_all_processes_failed')} ${data && data.error ? data.error : ''}`.trim(), 'err');
+      return;
+    }
+    state.scanning = false;
+    updateScanButton();
+    try {
+      uploadTransferActive = false;
+      uploadStopRequested = false;
+      uploadQueuePumpRunning = false;
+      activeTusUpload = null;
+      clearDirectPostprocessUploadUi();
+      resetUploadUiState();
+      renderUploadMonitor();
+      if (els.uploadTopStatus) els.uploadTopStatus.classList.add('hidden');
+    } catch {}
+    if (els.rescanBtn) els.rescanBtn.disabled = false;
+    if (els.rethumbBtn) els.rethumbBtn.disabled = false;
+    if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = false;
+    showStatus(tr('stop_all_processes_done'), 'ok');
+  } catch (e) {
+    showStatus(tr('stop_all_processes_error'), 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = original || tr('btn_stop_all_processes');
+    }
+  }
+}
+
 // Clear index (DB + thumbnails, not originals)
 async function clearIndex() {
   const ok = confirm(tr('clear_confirm'));
@@ -11484,6 +11533,7 @@ function applyUiLanguage() {
   if (els.rescanBtn) els.rescanBtn.textContent = tr('btn_rescan_metadata');
   if (els.rethumbBtn) els.rethumbBtn.textContent = tr('btn_rebuild_thumbs');
   if (els.fixThumbsBtn) els.fixThumbsBtn.textContent = tr('btn_fix_missing_thumbs');
+  if (els.stopAllProcessesBtn) els.stopAllProcessesBtn.textContent = tr('btn_stop_all_processes');
   if (els.clearIndexBtn) els.clearIndexBtn.textContent = tr('btn_reset_index');
   if (els.factoryResetBtn) els.factoryResetBtn.textContent = tr('btn_factory_reset');
   updateAiToggleButton();
@@ -12275,6 +12325,7 @@ els.scanBtn && els.scanBtn.addEventListener("click", () => {
 });
 els.rescanBtn && els.rescanBtn.addEventListener("click", rescanMetadata);
 els.rethumbBtn && els.rethumbBtn.addEventListener("click", rethumbAll);
+els.stopAllProcessesBtn && els.stopAllProcessesBtn.addEventListener("click", stopAllProcesses);
 els.clearIndexBtn && els.clearIndexBtn.addEventListener("click", clearIndex);
 async function startAiIngest(scope = 'all') {
   try {
