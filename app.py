@@ -2032,6 +2032,12 @@ def _pending_upload_rels_snapshot() -> set[str]:
         }
 
 
+def _pending_upload_count(uploaded_by: str) -> int:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_PENDING_LOCK:
+        return len(UPLOAD_PENDING_BY_USER.get(user, []))
+
+
 def _direct_upload_active_rels_snapshot() -> set[str]:
     with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
         return set(DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS)
@@ -10951,6 +10957,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             "current_rel": None,
             "stage_processed": 0,
             "stage_total": len(rels),
+            "overall_processed": 0,
+            "overall_total": len(rels),
         },
     )
 
@@ -10996,6 +11004,26 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             aggregate["process_status"] = result["process_status"]
 
     def run() -> None:
+        processed_total = 0
+        known_total = len(rels)
+
+        def set_direct_progress(progress: Dict[str, Any]) -> None:
+            stage_processed = int(progress.get("stage_processed") or 0)
+            pending_count = _pending_upload_count(state_user)
+            payload = dict(
+                progress,
+                workflow_mode=workflow_mode,
+                overall_processed=max(0, min(known_total, processed_total + stage_processed)),
+                overall_total=max(known_total, processed_total + stage_processed),
+            )
+            if str(payload.get("phase") or "").lower() == "done" and (batch or pending_count > 0):
+                payload["phase"] = "starting"
+                payload["current_rel"] = None
+            _set_upload_postprocess_state(
+                state_user,
+                payload,
+            )
+
         try:
             batch = list(rels)
             while batch:
@@ -11008,14 +11036,12 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 result = _postprocess_uploaded_rels(
                     "",
                     chunk,
-                    progress_cb=lambda p: _set_upload_postprocess_state(
-                        state_user,
-                        dict(p, workflow_mode=workflow_mode),
-                    ),
+                    progress_cb=set_direct_progress,
                     workflow_mode=workflow_mode,
                     item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
                 )
                 merge_result(result)
+                processed_total += int(result.get("received") or len(chunk))
                 try:
                     log_event(
                         "direct_upload_postprocess_done",
@@ -11031,6 +11057,15 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 more = _pop_uploaded_rels(state_user)
                 if more:
                     batch.extend(more)
+                    known_total += len(more)
+                state_patch = {
+                    "workflow_mode": workflow_mode,
+                    "overall_processed": max(0, processed_total),
+                    "overall_total": max(known_total, processed_total),
+                }
+                if batch:
+                    state_patch.update({"phase": "starting", "current_rel": None})
+                _set_upload_postprocess_state(state_user, state_patch)
                 if batch and DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC > 0:
                     time.sleep(DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC)
 
@@ -11047,6 +11082,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     "current_rel": None,
                     "stage_processed": int(aggregate.get("received") or 0),
                     "stage_total": int(aggregate.get("received") or 0),
+                    "overall_processed": int(aggregate.get("received") or 0),
+                    "overall_total": max(int(aggregate.get("received") or 0), known_total),
                 },
             )
         except Exception as e:
@@ -19554,8 +19591,15 @@ def api_upload_direct_postprocess_status():
                 "current_rel": None,
                 "stage_processed": 0,
                 "stage_total": 0,
+                "overall_processed": 0,
+                "overall_total": pending_count,
             }
         )
+    overall_processed = int(state.get("overall_processed") or state.get("stage_processed") or 0)
+    overall_total = int(state.get("overall_total") or state.get("stage_total") or 0)
+    if bool(state.get("running")) and pending_count > 0:
+        overall_total += pending_count
+    overall_total = max(overall_total, overall_processed)
     return jsonify(
         {
             "ok": True,
@@ -19571,6 +19615,8 @@ def api_upload_direct_postprocess_status():
             "current_rel": state.get("current_rel"),
             "stage_processed": int(state.get("stage_processed") or 0),
             "stage_total": int(state.get("stage_total") or 0),
+            "overall_processed": overall_processed,
+            "overall_total": overall_total,
         }
     )
 

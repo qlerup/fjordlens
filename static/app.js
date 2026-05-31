@@ -6966,8 +6966,13 @@ function _syncCount(value) {
 function applyDirectPostprocessStatusToUploadUi(status) {
   if (isUploadRunning() || uploadQueuePumpRunning || uploadPostprocessResumeActive) return;
   const src = (status && typeof status === 'object') ? status : {};
-  const total = _syncCount(src.stage_total);
-  const done = _syncCount(src.stage_processed);
+  const stageTotal = _syncCount(src.stage_total);
+  const stageDone = _syncCount(src.stage_processed);
+  const overallTotal = _syncCount(src.overall_total);
+  const overallDone = _syncCount(src.overall_processed);
+  const pending = _syncCount(src.pending);
+  const total = overallTotal || stageTotal || overallDone || stageDone || pending || 0;
+  const done = Math.min(total || overallDone || stageDone || 0, overallDone || stageDone || 0);
   uploadUiState.totalFiles = Math.max(Number(uploadUiState.totalFiles || 0), total || done || 0);
   uploadUiState.processedFiles = Math.max(0, Math.min(uploadUiState.totalFiles || done || 0, done));
   uploadUiState.totalBytes = 0;
@@ -6978,8 +6983,8 @@ function applyDirectPostprocessStatusToUploadUi(status) {
   const useParallel = uploadUiState.workflowMode === 'aggressive' && !!uploadUiState.processStatus;
   uploadUiState.currentPhaseLabel = useParallel ? tr('tab_upload_workflow') : postprocessPhaseLabel(src.phase);
   uploadUiState.currentFileName = useParallel ? tr('upload_workflow_running') : (shortRelName(src.current_rel) || 'Arbejder…');
-  uploadUiState.currentLoaded = done;
-  uploadUiState.currentTotal = total;
+  uploadUiState.currentLoaded = uploadUiState.processedFiles;
+  uploadUiState.currentTotal = uploadUiState.totalFiles;
   directUploadPostprocessUiActive = true;
   renderUploadMonitor();
 }
@@ -7263,8 +7268,11 @@ function renderUploadMonitor() {
         clearUploadTopProcessStatus();
         const activePct = isPostprocess ? stagePct : overallPct;
         const visibleProcessed = Math.max(0, Math.min(uploadUiState.totalFiles, uploadUiState.processedFiles));
+        const phaseLabel = directUploadPostprocessUiActive
+          ? `Baggrund · ${uploadUiState.currentPhaseLabel}`
+          : uploadUiState.currentPhaseLabel;
         const topLabel = isPostprocess
-          ? `${uploadUiState.currentPhaseLabel} · ${stageTxt} · ${activePct}%`
+          ? `${phaseLabel} · ${stageTxt} · ${activePct}%`
           : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%${etaTxt ? ` · ${etaTxt.replace('tid tilbage: ', '')}` : ''}`;
         els.uploadTopStatus.classList.remove('hidden');
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
