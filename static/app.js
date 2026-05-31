@@ -6724,10 +6724,44 @@ let uploadImmediateRevealDone = false;
 let uploadQueuePumpRunning = false;
 let uploadBatchSeq = 0;
 let uploadSessionSavedTotal = 0;
+let uploadTransferHeartbeatTimer = null;
 let directUploadPostprocessPollActive = false;
 let directUploadPostprocessUiActive = false;
 let mapperDiskSyncWatcherTimer = null;
 let mapperDiskSyncWatcherBusy = false;
+
+async function setUploadTransferState(active) {
+  try {
+    await fetch('/api/upload/transfer-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !!active }),
+    });
+  } catch {}
+}
+
+function startUploadTransferHeartbeat() {
+  if (uploadTransferHeartbeatTimer) {
+    window.clearInterval(uploadTransferHeartbeatTimer);
+    uploadTransferHeartbeatTimer = null;
+  }
+  setUploadTransferState(true).catch(() => {});
+  uploadTransferHeartbeatTimer = window.setInterval(() => {
+    if (!uploadQueuePumpRunning && !isUploadRunning()) {
+      stopUploadTransferHeartbeat().catch(() => {});
+      return;
+    }
+    setUploadTransferState(true).catch(() => {});
+  }, 15000);
+}
+
+async function stopUploadTransferHeartbeat() {
+  if (uploadTransferHeartbeatTimer) {
+    window.clearInterval(uploadTransferHeartbeatTimer);
+    uploadTransferHeartbeatTimer = null;
+  }
+  await setUploadTransferState(false);
+}
 const uploadQueue = [];
 const uploadMonitorItemsByKey = new Map();
 const UPLOAD_RESUME_DRAFT_KEY = 'fjordlens.upload.resumeDraft.v1';
@@ -7724,6 +7758,8 @@ async function uploadFiles(fileList, options = {}) {
       let post = null;
       try {
         uploadQueuePumpRunning = true;
+        startUploadTransferHeartbeat();
+        await setUploadTransferState(true);
         let finished = false;
         while (!finished) {
           uploadTransferActive = true;
@@ -7849,6 +7885,7 @@ async function uploadFiles(fileList, options = {}) {
             break;
           }
 
+          await stopUploadTransferHeartbeat();
           uploadUiState.currentPhaseLabel = 'Efterbehandler';
           uploadUiState.currentFileName = 'Klargør…';
           uploadUiState.currentLoaded = 0;
@@ -7928,6 +7965,7 @@ async function uploadFiles(fileList, options = {}) {
         uploadStopRequested = false;
         uploadTransferActive = false;
         uploadQueuePumpRunning = false;
+        await stopUploadTransferHeartbeat();
         const draft = _readUploadResumeDraft();
         if (draft && !(draft.pending || []).length) {
           _clearUploadResumeDraft();

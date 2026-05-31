@@ -75,6 +75,40 @@ const uploadProgress = {
 let uploadProgressHideTimer = null;
 let lastResizeIsMobile = isMobileShareView();
 let pendingShareFilePicker = null;
+let shareUploadTransferHeartbeatTimer = null;
+
+async function setShareUploadTransferState(active) {
+  try {
+    await fetch(`/api/share/${encodeURIComponent(state.token)}/upload/transfer-state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !!active }),
+    });
+  } catch {}
+}
+
+function startShareUploadTransferHeartbeat() {
+  if (shareUploadTransferHeartbeatTimer) {
+    window.clearInterval(shareUploadTransferHeartbeatTimer);
+    shareUploadTransferHeartbeatTimer = null;
+  }
+  setShareUploadTransferState(true).catch(() => {});
+  shareUploadTransferHeartbeatTimer = window.setInterval(() => {
+    if (!uploadProgress.active) {
+      stopShareUploadTransferHeartbeat().catch(() => {});
+      return;
+    }
+    setShareUploadTransferState(true).catch(() => {});
+  }, 15000);
+}
+
+async function stopShareUploadTransferHeartbeat() {
+  if (shareUploadTransferHeartbeatTimer) {
+    window.clearInterval(shareUploadTransferHeartbeatTimer);
+    shareUploadTransferHeartbeatTimer = null;
+  }
+  await setShareUploadTransferState(false);
+}
 
 function clearUploadProgressHideTimer() {
   if (uploadProgressHideTimer) {
@@ -1023,6 +1057,8 @@ async function runUpload(preselectedFiles = null) {
   if (!hasTusClient()) { showStatus('TUS klient mangler. Genindl\u00e6s siden.', 'err'); return; }
   showUploadWarningModal();
   startShareUploadProgress(uploadFiles);
+  startShareUploadTransferHeartbeat();
+  await setShareUploadTransferState(true);
   try {
     for (const f of uploadFiles){
       markShareUploadCurrentFile(f);
@@ -1032,6 +1068,7 @@ async function runUpload(preselectedFiles = null) {
       if (ok) saved+=1; else failed+=1;
     }
   } finally {
+    await stopShareUploadTransferHeartbeat();
     finishShareUploadProgress();
     closeUploadWarningModal();
     if (els.fileInput) els.fileInput.value = '';

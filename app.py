@@ -786,6 +786,9 @@ UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
 UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
 UPLOAD_POSTPROCESS_LOCK = threading.Lock()
+UPLOAD_TRANSFER_ACTIVE_BY_USER: Dict[str, float] = {}
+UPLOAD_TRANSFER_LOCK = threading.Lock()
+UPLOAD_TRANSFER_TTL_SEC = 180.0
 PHOTOFRAME_TOKENS_LOCK = threading.RLock()
 PHOTOFRAME_VIDEO_PREPARE_QUEUE: "queue.Queue[str]" = queue.Queue()
 PHOTOFRAME_VIDEO_PREPARE_LOCK = threading.Lock()
@@ -1958,6 +1961,46 @@ def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
     with UPLOAD_PENDING_LOCK:
         bucket = UPLOAD_PENDING_BY_USER.setdefault(user, [])
         bucket.append(rel)
+
+
+def _cleanup_upload_transfer_active_locked(now_ts: Optional[float] = None) -> None:
+    ts = float(now_ts or time.time())
+    expired = [user for user, expires_at in UPLOAD_TRANSFER_ACTIVE_BY_USER.items() if float(expires_at or 0.0) <= ts]
+    for user in expired:
+        UPLOAD_TRANSFER_ACTIVE_BY_USER.pop(user, None)
+
+
+def _set_upload_transfer_active(uploaded_by: str, active: bool) -> None:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_TRANSFER_LOCK:
+        _cleanup_upload_transfer_active_locked()
+        if active:
+            UPLOAD_TRANSFER_ACTIVE_BY_USER[user] = time.time() + UPLOAD_TRANSFER_TTL_SEC
+        else:
+            UPLOAD_TRANSFER_ACTIVE_BY_USER.pop(user, None)
+
+
+def _is_upload_transfer_active(uploaded_by: str) -> bool:
+    user = str(uploaded_by or "").strip() or "__unknown__"
+    with UPLOAD_TRANSFER_LOCK:
+        _cleanup_upload_transfer_active_locked()
+        return user in UPLOAD_TRANSFER_ACTIVE_BY_USER
+
+
+def _any_upload_transfer_active() -> bool:
+    with UPLOAD_TRANSFER_LOCK:
+        _cleanup_upload_transfer_active_locked()
+        return bool(UPLOAD_TRANSFER_ACTIVE_BY_USER)
+
+
+def _pending_upload_rels_snapshot() -> set[str]:
+    with UPLOAD_PENDING_LOCK:
+        return {
+            str(rel or "").strip()
+            for rels in UPLOAD_PENDING_BY_USER.values()
+            for rel in (rels or [])
+            if str(rel or "").strip()
+        }
 
 
 def _is_upload_postprocess_running(uploaded_by: str) -> bool:
@@ -10972,6 +11015,20 @@ def _sync_upload_folder_from_disk(
     except Exception:
         return {"ok": False, "error": "invalid_folder", "folder": str(folder or "")}
 
+    if _any_upload_transfer_active():
+        return {
+            "ok": True,
+            "folder": logical_folder,
+            "recursive": bool(recursive),
+            "skipped": "uploading",
+            "scanned": 0,
+            "indexed": 0,
+            "unchanged": 0,
+            "postprocess_queued": 0,
+            "unsettled": 0,
+            "errors": 0,
+        }
+
     cap = int(max_files or UPLOAD_FOLDER_SYNC_MAX_FILES)
     cap = max(1, min(UPLOAD_FOLDER_SYNC_MAX_FILES, cap))
     cache_key = f"{logical_folder}|{'r' if recursive else 'd'}|{cap}"
@@ -11005,9 +11062,11 @@ def _sync_upload_folder_from_disk(
         candidate_count = len(candidates)
         candidates = _dedupe_upload_sync_candidates(candidates)
         existing = _existing_photo_rows_for_rels([rel for _, rel in candidates])
+        pending_upload_rels = _pending_upload_rels_snapshot()
         scanned = 0
         indexed = 0
         unchanged = 0
+        pending_uploads = 0
         shadowed = max(0, candidate_count - len(candidates))
         unsettled = 0
         errors = 0
@@ -11028,6 +11087,9 @@ def _sync_upload_folder_from_disk(
                 continue
 
             prev = existing.get(rel)
+            if rel in pending_upload_rels:
+                pending_uploads += 1
+                continue
             if not _photo_row_needs_disk_sync(prev, stat):
                 unchanged += 1
                 if _upload_rel_needs_postprocess_conversion(rel):
@@ -11069,6 +11131,7 @@ def _sync_upload_folder_from_disk(
             "scanned": scanned,
             "indexed": indexed,
             "unchanged": unchanged,
+            "pending_uploads": pending_uploads,
             "shadowed": shadowed,
             "postprocess_queued": len(set(indexed_rels + postprocess_rels)),
             "unsettled": unsettled,
@@ -11080,7 +11143,7 @@ def _sync_upload_folder_from_disk(
         }
         if error_samples:
             result["error_samples"] = error_samples
-        if indexed or errors or unsettled or int(missing_removed.get("photos") or 0):
+        if indexed or errors or unsettled or pending_uploads or int(missing_removed.get("photos") or 0):
             try:
                 log_event("upload_folder_sync_done", **result)
             except Exception:
@@ -13563,6 +13626,27 @@ def api_share_tus_file_override(token: str, upload_id: str):
     return jsonify({"ok": False, "error": "Unsupported method"}), 405, _tus_headers()
 
 
+@app.route("/api/share/<token>/upload/transfer-state", methods=["POST"])
+def api_share_upload_transfer_state(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share:
+        return jsonify({"ok": False, "error": "Share ugyldig eller udlÃ¸bet"}), 404
+    if not _share_is_authorized(share):
+        return jsonify({
+            "ok": False,
+            "password_required": _share_is_password_protected(share),
+            "name_required": _share_requires_visitor_name(share),
+            "error": "Adgang krÃ¦ves",
+        }), 401
+    if int(share["can_upload"] or 0) != 1:
+        return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
+    data = request.get_json(silent=True) or {}
+    active = bool(data.get("active"))
+    uploaded_by = _share_get_visitor_name(share) or "Share-bruger"
+    _set_upload_transfer_active(uploaded_by, active)
+    return jsonify({"ok": True, "active": _is_upload_transfer_active(uploaded_by)})
+
+
 @app.route("/api/share/<token>/upload/postprocess", methods=["POST"])
 def api_share_upload_postprocess(token: str):
     share = _load_share_from_token(token, touch=True)
@@ -13580,6 +13664,18 @@ def api_share_upload_postprocess(token: str):
 
     uploaded_by = _share_get_visitor_name(share) or "Share-bruger"
     workflow_mode = upload_workflow_mode()
+    if _is_upload_transfer_active(uploaded_by):
+        with UPLOAD_PENDING_LOCK:
+            pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+        return jsonify({
+            "ok": False,
+            "error": "Upload er stadig i gang",
+            "uploading": True,
+            "started": False,
+            "running": False,
+            "pending": pending_count,
+            "workflow_mode": workflow_mode,
+        }), 409
     rels = _pop_uploaded_rels(uploaded_by)
 
     if _is_upload_postprocess_running(uploaded_by):
@@ -18898,6 +18994,16 @@ def api_settings_upload_file_types():
 
 
 # --- Upload endpoint (drag & drop) ---
+@app.route("/api/upload/transfer-state", methods=["POST"])
+@login_required
+def api_upload_transfer_state():
+    data = request.get_json(silent=True) or {}
+    active = bool(data.get("active"))
+    uploaded_by = str(getattr(current_user, "username", "") or "")
+    _set_upload_transfer_active(uploaded_by, active)
+    return jsonify({"ok": True, "active": _is_upload_transfer_active(uploaded_by)})
+
+
 @app.route("/api/upload/tus", methods=["OPTIONS"])
 @app.route("/api/upload/tus/<upload_id>", methods=["OPTIONS"])
 @login_required
@@ -19260,6 +19366,18 @@ def api_upload():
 def api_upload_postprocess():
     uploaded_by = str(getattr(current_user, "username", "") or "")
     workflow_mode = upload_workflow_mode()
+    if _is_upload_transfer_active(uploaded_by):
+        with UPLOAD_PENDING_LOCK:
+            pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
+        return jsonify({
+            "ok": False,
+            "error": "Upload er stadig i gang",
+            "uploading": True,
+            "started": False,
+            "running": False,
+            "pending": pending_count,
+            "workflow_mode": workflow_mode,
+        }), 409
     rels = _pop_uploaded_rels(uploaded_by)
 
     if _is_upload_postprocess_running(uploaded_by):
