@@ -386,7 +386,15 @@
                         <span class="ai-toggle-slider" aria-hidden="true"></span>
                         <span id="movConvertToggleText" class="mini-label">Konvertér MOV til MP4 ved upload</span>
                       </label>
+                      <label class="ai-toggle-row" for="movKeepToggle">
+                        <input id="movKeepToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Keep MOV originals" />
+                        <span class="ai-toggle-slider" aria-hidden="true"></span>
+                        <span id="movKeepToggleText" class="mini-label">Bevar originale MOV filer</span>
+                      </label>
                       <div id="movStatus" class="mini-label">MOV: —</div>
+                      <div>
+                        <button id="movBulkConvertBtn" class="btn">Konvertér eksisterende MOV → MP4</button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -987,6 +995,20 @@
         <button id="aiScopeModalCancel" class="btn">Annuller</button>
         <button id="aiScopeModalNew" class="btn">Kun nye uploads</button>
         <button id="aiScopeModalAll" class="btn primary">Alle eksisterende</button>
+      </div>
+    </div>
+  </div>
+  <div id="conversionScopeModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;">
+    <div style="width:560px;max-width:92vw;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 id="conversionScopeModalTitle" style="margin:0;">Start konvertering</h3>
+        <button id="conversionScopeModalClose" class="btn">Luk</button>
+      </div>
+      <p id="conversionScopeModalText" class="mini-label" style="margin:0 0 14px;line-height:1.5;">Vil du konvertere alle eksisterende filer nu, eller kun nye uploads fremover?</p>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="conversionScopeModalCancel" class="btn">Annuller</button>
+        <button id="conversionScopeModalNew" class="btn">Kun nye uploads fremover</button>
+        <button id="conversionScopeModalAll" class="btn primary">Alle eksisterende</button>
       </div>
     </div>
   </div>

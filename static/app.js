@@ -106,7 +106,9 @@
   rawKeepToggle: document.getElementById("rawKeepToggle"),
   rawStatus: document.getElementById("rawStatus"),
   movConvertToggle: document.getElementById("movConvertToggle"),
+  movKeepToggle: document.getElementById("movKeepToggle"),
   movStatus: document.getElementById("movStatus"),
+  movBulkConvertBtn: document.getElementById("movBulkConvertBtn"),
   rawBulkConvertBtn: document.getElementById("rawBulkConvertBtn"),
   heicBulkConvertBtn: document.getElementById("heicBulkConvertBtn"),
   mapperTools: document.getElementById("mapperTools"),
@@ -317,6 +319,13 @@
   aiScopeModalCancel: document.getElementById("aiScopeModalCancel"),
   aiScopeModalNew: document.getElementById("aiScopeModalNew"),
   aiScopeModalAll: document.getElementById("aiScopeModalAll"),
+  conversionScopeModal: document.getElementById("conversionScopeModal"),
+  conversionScopeModalTitle: document.getElementById("conversionScopeModalTitle"),
+  conversionScopeModalText: document.getElementById("conversionScopeModalText"),
+  conversionScopeModalClose: document.getElementById("conversionScopeModalClose"),
+  conversionScopeModalCancel: document.getElementById("conversionScopeModalCancel"),
+  conversionScopeModalNew: document.getElementById("conversionScopeModalNew"),
+  conversionScopeModalAll: document.getElementById("conversionScopeModalAll"),
   aiExternalModal: document.getElementById("aiExternalModal"),
   aiExternalModalTitle: document.getElementById("aiExternalModalTitle"),
   aiExternalModalText: document.getElementById("aiExternalModalText"),
@@ -1277,6 +1286,13 @@ const I18N = {
     ai_scope_all: 'Alle eksisterende',
     ai_scope_new: 'Kun nye uploads fremover',
     ai_scope_cancel: 'Annuller',
+    conversion_scope_title_heic: 'Start HEIC-konvertering',
+    conversion_scope_title_raw: 'Start RAW/DNG-konvertering',
+    conversion_scope_title_mov: 'Start MOV-konvertering',
+    conversion_scope_text: 'Vil du konvertere alle eksisterende filer nu, eller kun nye uploads fremover?',
+    conversion_scope_all: 'Alle eksisterende',
+    conversion_scope_new: 'Kun nye uploads fremover',
+    conversion_scope_cancel: 'Annuller',
     users_loading: 'Indlæser…',
     users_load_error: 'Kan ikke hente brugere.',
     users_panel_title: 'Brugere',
@@ -2012,6 +2028,13 @@ const I18N = {
     ai_scope_all: 'All existing',
     ai_scope_new: 'Only new uploads from now on',
     ai_scope_cancel: 'Cancel',
+    conversion_scope_title_heic: 'Start HEIC conversion',
+    conversion_scope_title_raw: 'Start RAW/DNG conversion',
+    conversion_scope_title_mov: 'Start MOV conversion',
+    conversion_scope_text: 'Do you want to convert all existing files now, or only new uploads from now on?',
+    conversion_scope_all: 'All existing',
+    conversion_scope_new: 'Only new uploads from now on',
+    conversion_scope_cancel: 'Cancel',
     users_loading: 'Loading…',
     users_load_error: 'Could not load users.',
     users_panel_title: 'Users',
@@ -2428,6 +2451,7 @@ let state = {
   facesAutoEnabled: false,
   facesRuntime: 'unknown',
   aiScopePendingFeature: null,
+  conversionScopePendingType: null,
   photoframeItems: [],
   photoframeLoading: false,
   photoframeError: '',
@@ -11608,6 +11632,7 @@ function applyUiLanguage() {
     else if (feature === 'describe') els.aiScopeModalTitle.textContent = tr('ai_scope_title_desc');
     else els.aiScopeModalTitle.textContent = tr('ai_scope_title_ai');
   }
+  updateConversionScopeModalText();
 
   const labels = navLabels();
   const [title, subtitle] = labels[state.view] || ['FjordLens', ''];
@@ -14698,7 +14723,152 @@ function renderRawConversionSettings(data) {
 function renderMovConversionSettings(data) {
   if (!data || !data.ok) return;
   if (els.movConvertToggle) els.movConvertToggle.checked = !!data.convert_on_upload;
-  if (els.movStatus) els.movStatus.textContent = `MOV: konvertering ${data.convert_on_upload ? 'til' : 'fra'}`;
+  if (els.movKeepToggle) els.movKeepToggle.checked = !!data.keep_originals;
+  if (els.movStatus) els.movStatus.textContent = `MOV: konvertering ${data.convert_on_upload ? 'til' : 'fra'}, ${data.keep_originals ? 'bevar originaler' : 'slet originaler'}`;
+}
+
+function conversionTypeConfig(type) {
+  if (type === 'raw') {
+    return {
+      type: 'raw',
+      settingsUrl: '/api/settings/raw',
+      bulkUrl: '/api/raw/convert-existing',
+      statusUrl: '/api/raw/convert-existing/status',
+      render: renderRawConversionSettings,
+      titleKey: 'conversion_scope_title_raw',
+      label: 'RAW',
+      startText: 'RAW-konvertering starter…',
+      runningText: 'RAW-konvertering kører…',
+      doneText: 'RAW-konvertering færdig',
+      failText: 'Kunne ikke starte RAW-konvertering',
+      buttonText: 'Konvertér eksisterende RAW/DNG → JPEG',
+    };
+  }
+  if (type === 'mov') {
+    return {
+      type: 'mov',
+      settingsUrl: '/api/settings/mov',
+      bulkUrl: '/api/mov/convert-existing',
+      statusUrl: '/api/mov/convert-existing/status',
+      render: renderMovConversionSettings,
+      titleKey: 'conversion_scope_title_mov',
+      label: 'MOV',
+      startText: 'MOV-konvertering starter…',
+      runningText: 'MOV-konvertering kører…',
+      doneText: 'MOV-konvertering færdig',
+      failText: 'Kunne ikke starte MOV-konvertering',
+      buttonText: 'Konvertér eksisterende MOV → MP4',
+    };
+  }
+  return {
+    type: 'heic',
+    settingsUrl: '/api/settings/heic',
+    bulkUrl: '/api/heic/convert-existing',
+    statusUrl: '/api/heic/convert-existing/status',
+    render: renderHeicConversionSettings,
+    titleKey: 'conversion_scope_title_heic',
+    label: 'HEIC',
+    startText: 'HEIC-konvertering starter…',
+    runningText: 'HEIC-konvertering kører…',
+    doneText: 'HEIC-konvertering færdig',
+    failText: 'Kunne ikke starte HEIC-konvertering',
+    buttonText: 'Konvertér eksisterende HEIC → JPEG',
+  };
+}
+
+async function loadConversionSettings(type = null) {
+  const types = type ? [type] : ['heic', 'raw', 'mov'];
+  await Promise.all(types.map(async (itemType) => {
+    const cfg = conversionTypeConfig(itemType);
+    try {
+      const r = await fetch(cfg.settingsUrl);
+      const d = await r.json();
+      cfg.render(d);
+    } catch {}
+  }));
+}
+
+async function saveConversionSettings(type, body) {
+  const cfg = conversionTypeConfig(type);
+  const r = await fetch(cfg.settingsUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok || !d || d.ok === false) throw new Error((d && d.error) || 'settings_failed');
+  cfg.render(d);
+  return d;
+}
+
+function updateConversionScopeModalText() {
+  const pendingType = state.conversionScopePendingType || 'heic';
+  const cfg = conversionTypeConfig(pendingType);
+  if (els.conversionScopeModalTitle) els.conversionScopeModalTitle.textContent = tr(cfg.titleKey);
+  if (els.conversionScopeModalText) els.conversionScopeModalText.textContent = tr('conversion_scope_text');
+  if (els.conversionScopeModalNew) els.conversionScopeModalNew.textContent = tr('conversion_scope_new');
+  if (els.conversionScopeModalAll) els.conversionScopeModalAll.textContent = tr('conversion_scope_all');
+  if (els.conversionScopeModalCancel) els.conversionScopeModalCancel.textContent = tr('conversion_scope_cancel');
+  if (els.conversionScopeModalClose) els.conversionScopeModalClose.textContent = tr('scan_modal_close');
+}
+
+function openConversionScopeModal(type) {
+  state.conversionScopePendingType = conversionTypeConfig(type).type;
+  updateConversionScopeModalText();
+  if (els.conversionScopeModal) els.conversionScopeModal.classList.remove('hidden');
+}
+
+function closeConversionScopeModal(options = {}) {
+  const pendingType = state.conversionScopePendingType;
+  if (els.conversionScopeModal) els.conversionScopeModal.classList.add('hidden');
+  state.conversionScopePendingType = null;
+  if (options && options.restore && pendingType) {
+    loadConversionSettings(pendingType).catch(()=>{});
+  }
+}
+
+async function startExistingConversion(type, btn = null) {
+  const cfg = conversionTypeConfig(type);
+  const originalText = btn ? btn.textContent : '';
+  try {
+    if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
+    const r = await fetch(cfg.bulkUrl, { method:'POST' });
+    if (!r.ok) {
+      const d = await r.json().catch(()=>({}));
+      showStatus(d && d.error ? d.error : cfg.failText, 'err');
+      if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
+      return;
+    }
+    showStatus(`Starter konvertering af eksisterende ${cfg.label}…`, 'ok');
+    showTopStatusMessage(cfg.startText, 0);
+    const poll = async () => {
+      try {
+        const s = await fetch(cfg.statusUrl);
+        const d = await s.json();
+        if (s.ok && d && d.ok) {
+          if (!d.running) {
+            if (d.result) {
+              const p = Number(d.result.processed || 0);
+              const e = Number(d.result.errors || 0);
+              showStatus(`${cfg.doneText}: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
+            }
+            await loadPhotos();
+            if (state.view === 'mapper') loadMapperTools();
+            hideTopStatusMessage();
+            if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
+            return;
+          }
+          const pr = d.progress || {};
+          const total = Number(pr.total || 0);
+          const done = Number(pr.processed || 0);
+          const pct = total > 0 ? Math.round((done / total) * 100) : null;
+          const lbl = total > 0 ? `${cfg.doneText.replace(' færdig', '')} · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : cfg.runningText;
+          showTopStatusMessage(lbl, pct);
+        }
+      } catch {}
+      setTimeout(poll, 1200);
+    };
+    setTimeout(poll, 800);
+  } catch {
+    showStatus(cfg.failText, 'err');
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
+  }
 }
 
 // Resolve user role early to gate admin UI (wrapped to avoid top-level await)
@@ -14749,15 +14919,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
   loadUploadFileTypeSettings({ silent: true }).catch(() => {});
   // Load conversion settings into toggles
   try {
-    fetch('/api/settings/heic').then(r=>r.json()).then(d=>{
-      renderHeicConversionSettings(d);
-    }).catch(()=>{});
-    fetch('/api/settings/raw').then(r=>r.json()).then(d=>{
-      renderRawConversionSettings(d);
-    }).catch(()=>{});
-    fetch('/api/settings/mov').then(r=>r.json()).then(d=>{
-      renderMovConversionSettings(d);
-    }).catch(()=>{});
+    loadConversionSettings().catch(()=>{});
   } catch {}
   // If a bulk HEIC conversion is already running, start a passive poll to show top status
   try {
@@ -14807,145 +14969,85 @@ setView(state.view, { syncUrl: false }).then(async () => {
 try {
   if (els.heicConvertToggle) els.heicConvertToggle.addEventListener('change', async ()=>{
     try {
-      const body = { convert_on_upload: !!els.heicConvertToggle.checked };
-      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      renderHeicConversionSettings(d);
-    } catch {}
+      if (els.heicConvertToggle.checked) {
+        openConversionScopeModal('heic');
+      } else {
+        await saveConversionSettings('heic', { convert_on_upload: false });
+      }
+    } catch { loadConversionSettings('heic').catch(()=>{}); }
   });
   if (els.heicKeepToggle) els.heicKeepToggle.addEventListener('change', async ()=>{
     try {
-      const body = { keep_originals: !!els.heicKeepToggle.checked };
-      const r = await fetch('/api/settings/heic', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      renderHeicConversionSettings(d);
-    } catch {}
+      await saveConversionSettings('heic', { keep_originals: !!els.heicKeepToggle.checked });
+    } catch { loadConversionSettings('heic').catch(()=>{}); }
   });
   if (els.rawConvertToggle) els.rawConvertToggle.addEventListener('change', async ()=>{
     try {
-      const body = { convert_on_upload: !!els.rawConvertToggle.checked };
-      const r = await fetch('/api/settings/raw', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      renderRawConversionSettings(d);
-    } catch {}
+      if (els.rawConvertToggle.checked) {
+        openConversionScopeModal('raw');
+      } else {
+        await saveConversionSettings('raw', { convert_on_upload: false });
+      }
+    } catch { loadConversionSettings('raw').catch(()=>{}); }
   });
   if (els.rawKeepToggle) els.rawKeepToggle.addEventListener('change', async ()=>{
     try {
-      const body = { keep_originals: !!els.rawKeepToggle.checked };
-      const r = await fetch('/api/settings/raw', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      renderRawConversionSettings(d);
-    } catch {}
+      await saveConversionSettings('raw', { keep_originals: !!els.rawKeepToggle.checked });
+    } catch { loadConversionSettings('raw').catch(()=>{}); }
   });
   if (els.movConvertToggle) els.movConvertToggle.addEventListener('change', async ()=>{
     try {
-      const body = { convert_on_upload: !!els.movConvertToggle.checked };
-      const r = await fetch('/api/settings/mov', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      const d = await r.json();
-      renderMovConversionSettings(d);
-    } catch {}
-  });
-  if (els.heicBulkConvertBtn) els.heicBulkConvertBtn.addEventListener('click', async ()=>{
-    try {
-      const btn = els.heicBulkConvertBtn;
-      const originalText = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
-      const r = await fetch('/api/heic/convert-existing', { method:'POST' });
-      if (!r.ok) {
-        const d = await r.json().catch(()=>({}));
-        showStatus(d && d.error ? d.error : 'Kunne ikke starte HEIC-konvertering', 'err');
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
-        return;
+      if (els.movConvertToggle.checked) {
+        openConversionScopeModal('mov');
+      } else {
+        await saveConversionSettings('mov', { convert_on_upload: false });
       }
-      showStatus('Starter konvertering af eksisterende HEIC…', 'ok');
-      showTopStatusMessage('HEIC-konvertering starter…', 0);
-      // Poll status; when done, refresh grid so visning peger på JPEG
-      const poll = async () => {
-        try {
-          const s = await fetch('/api/heic/convert-existing/status');
-          const d = await s.json();
-          if (s.ok && d && d.ok) {
-            if (!d.running) {
-              if (d.result) {
-                const p = Number(d.result.processed || 0);
-                const e = Number(d.result.errors || 0);
-                showStatus(`HEIC-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
-              }
-              await loadPhotos();
-              if (state.view === 'mapper') loadMapperTools();
-              hideTopStatusMessage();
-              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende HEIC → JPEG'; }
-              return;
-            }
-            // While running, if progress is available, reflect it in the top bar
-            const pr = d.progress || {};
-            const total = Number(pr.total || 0);
-            const done = Number(pr.processed || 0);
-            const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'HEIC-konvertering kører…';
-            showTopStatusMessage(lbl, pct);
-          }
-        } catch {}
-        setTimeout(poll, 1200);
-      };
-      setTimeout(poll, 800);
+    } catch { loadConversionSettings('mov').catch(()=>{}); }
+  });
+  if (els.movKeepToggle) els.movKeepToggle.addEventListener('change', async ()=>{
+    try {
+      await saveConversionSettings('mov', { keep_originals: !!els.movKeepToggle.checked });
+    } catch { loadConversionSettings('mov').catch(()=>{}); }
+  });
+  if (els.conversionScopeModalClose) els.conversionScopeModalClose.addEventListener('click', ()=> closeConversionScopeModal({ restore: true }));
+  if (els.conversionScopeModalCancel) els.conversionScopeModalCancel.addEventListener('click', ()=> closeConversionScopeModal({ restore: true }));
+  if (els.conversionScopeModal) {
+    els.conversionScopeModal.addEventListener('click', (e) => {
+      if (e.target === els.conversionScopeModal) closeConversionScopeModal({ restore: true });
+    });
+  }
+  if (els.conversionScopeModalNew) els.conversionScopeModalNew.addEventListener('click', async ()=>{
+    const pendingType = state.conversionScopePendingType;
+    closeConversionScopeModal();
+    if (!pendingType) return;
+    try {
+      await saveConversionSettings(pendingType, { convert_on_upload: true });
     } catch {
-      showStatus('Kunne ikke starte HEIC-konvertering', 'err');
-    } finally {
-      try {
-        const btn = els.heicBulkConvertBtn;
-        if (btn && !btn.classList.contains('loading')) {
-          // leave as-is if polling is still running; otherwise restore
-          btn.disabled = false;
-        }
-      } catch {}
+      showStatus('Kunne ikke gemme konverteringsindstilling', 'err');
+      loadConversionSettings(pendingType).catch(()=>{});
     }
   });
-
-  // RAW bulk convert
-  if (els.rawBulkConvertBtn) els.rawBulkConvertBtn.addEventListener('click', async ()=>{
+  if (els.conversionScopeModalAll) els.conversionScopeModalAll.addEventListener('click', async ()=>{
+    const pendingType = state.conversionScopePendingType;
+    closeConversionScopeModal();
+    if (!pendingType) return;
     try {
-      const btn = els.rawBulkConvertBtn;
-      const originalText = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
-      const r = await fetch('/api/raw/convert-existing', { method:'POST' });
-      if (!r.ok) {
-        const d = await r.json().catch(()=>({}));
-        showStatus(d && d.error ? d.error : 'Kunne ikke starte RAW-konvertering', 'err');
-        if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/DNG → JPEG'; }
-        return;
-      }
-      showStatus('Starter konvertering af eksisterende RAW/DNG…', 'ok');
-      showTopStatusMessage('RAW-konvertering starter…', 0);
-      const poll = async () => {
-        try {
-          const s = await fetch('/api/raw/convert-existing/status');
-          const d = await s.json();
-          if (s.ok && d && d.ok) {
-            if (!d.running) {
-              if (d.result) {
-                const p = Number(d.result.processed || 0);
-                const e = Number(d.result.errors || 0);
-                showStatus(`RAW-konvertering færdig: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
-              }
-              await loadPhotos();
-              if (state.view === 'mapper') loadMapperTools();
-              hideTopStatusMessage();
-              if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || 'Konvertér eksisterende RAW/DNG → JPEG'; }
-              return;
-            }
-            const pr = d.progress || {};
-            const total = Number(pr.total || 0);
-            const done = Number(pr.processed || 0);
-            const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `RAW-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW-konvertering kører…';
-            showTopStatusMessage(lbl, pct);
-          }
-        } catch {}
-        setTimeout(poll, 1200);
-      };
-      poll();
-    } catch {}
+      await saveConversionSettings(pendingType, { convert_on_upload: true });
+      await startExistingConversion(pendingType);
+    } catch {
+      showStatus('Kunne ikke starte konvertering', 'err');
+      loadConversionSettings(pendingType).catch(()=>{});
+    }
+  });
+  if (els.heicBulkConvertBtn) els.heicBulkConvertBtn.addEventListener('click', async ()=>{
+    startExistingConversion('heic', els.heicBulkConvertBtn);
+  });
+
+  if (els.rawBulkConvertBtn) els.rawBulkConvertBtn.addEventListener('click', async ()=>{
+    startExistingConversion('raw', els.rawBulkConvertBtn);
+  });
+  if (els.movBulkConvertBtn) els.movBulkConvertBtn.addEventListener('click', async ()=>{
+    startExistingConversion('mov', els.movBulkConvertBtn);
   });
 } catch {}
 

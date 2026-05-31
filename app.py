@@ -2619,7 +2619,7 @@ def _postprocess_uploaded_rels(
                             conn.commit()
                     except Exception:
                         pass
-                    # Optionally delete image originals to save space. MOV originals are kept.
+                    # Optionally delete originals to save space.
                     try:
                         if extl in {".heic", ".heif"}:
                             keep = heic_keep_originals_enabled()
@@ -2628,7 +2628,7 @@ def _postprocess_uploaded_rels(
                             keep = raw_keep_originals_enabled()
                             delete_event = "raw_original_deleted"
                         else:
-                            keep = True
+                            keep = mov_keep_originals_enabled()
                             delete_event = "mov_original_deleted"
                         if not keep:
                             orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
@@ -4586,6 +4586,11 @@ def mov_convert_on_upload_enabled() -> bool:
 
 def raw_convert_on_upload_enabled() -> bool:
     return _get_setting_bool("raw_convert_on_upload", RAW_CONVERT_ON_UPLOAD_DEFAULT)
+
+
+def mov_keep_originals_enabled() -> bool:
+    # default True to keep safety unless explicitly disabled
+    return _get_setting_bool("mov_keep_originals", True)
 
 
 def heic_keep_originals_enabled() -> bool:
@@ -12143,6 +12148,9 @@ _face_thumb_queued: set[int] = set()
 heic_convert_thread = None
 last_heic_convert_result: Optional[Dict[str, Any]] = None
 heic_convert_progress: Dict[str, Any] = {"total": 0, "processed": 0, "errors": 0}
+mov_convert_thread = None
+last_mov_convert_result: Optional[Dict[str, Any]] = None
+mov_convert_progress: Dict[str, Any] = {"total": 0, "processed": 0, "errors": 0}
 
 
 def _face_thumb_name(face_id: int) -> str:
@@ -16378,6 +16386,7 @@ def api_stop_all_processes():
         "rethumb": _thread_is_alive(rethumb_thread),
         "heic_convert": _thread_is_alive(heic_convert_thread),
         "raw_convert": _thread_is_alive(raw_convert_thread),
+        "mov_convert": _thread_is_alive(mov_convert_thread),
         "ai": bool(ai_running),
         "ai_desc": bool(ai_desc_running),
         "faces": bool(_faces_running.is_set()),
@@ -18990,13 +18999,17 @@ def api_settings_mov():
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
         conv = body.get("convert_on_upload")
+        keep = body.get("keep_originals")
         if conv is not None:
             _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
+        if keep is not None:
+            _set_setting("mov_keep_originals", "1" if bool(keep) else "0")
 
     return jsonify(
         {
             "ok": True,
             "convert_on_upload": mov_convert_on_upload_enabled(),
+            "keep_originals": mov_keep_originals_enabled(),
             "env_default_convert": MOV_CONVERT_ON_UPLOAD_DEFAULT,
         }
     )
@@ -19395,6 +19408,153 @@ def api_raw_convert_existing_status():
         "running": running,
         "result": (last_raw_convert_result if not running else None),
         "progress": (raw_convert_progress if running else None),
+    })
+
+
+def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
+    init_db()
+    log_event("mov_bulk_start")
+    processed = 0
+    errors = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.mov'").fetchall()
+    global mov_convert_progress
+    try:
+        mov_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+    except Exception:
+        pass
+    for r in rows:
+        if stop_event and stop_event.is_set():
+            break
+        try:
+            orig_rel = r["rel_path"]
+            src = _disk_path_from_rel_path(orig_rel)
+            if not src.exists():
+                continue
+
+            if orig_rel.startswith("uploads/"):
+                try:
+                    if orig_rel.startswith("uploads/originals/"):
+                        parts = orig_rel.split("/", 2)
+                        sub_rel = parts[2] if len(parts) >= 3 else Path(orig_rel).name
+                    else:
+                        parts = orig_rel.split("/", 1)
+                        sub_rel = parts[1] if len(parts) >= 2 else Path(orig_rel).name
+                except Exception:
+                    sub_rel = Path(orig_rel).name
+                subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+                leaf_mp4 = f"{Path(sub_rel).stem}.mp4"
+                conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only not in {"", "."} else "")
+                conv_dir.mkdir(parents=True, exist_ok=True)
+                dst = conv_dir / leaf_mp4
+                if dst.exists():
+                    i = 1
+                    stem = Path(leaf_mp4).stem
+                    while True:
+                        cand = conv_dir / f"{stem}_{i}.mp4"
+                        if not cand.exists():
+                            dst = cand
+                            break
+                        i += 1
+                tail = dst.name if subdir_only in {"", "."} else (Path(subdir_only) / dst.name).as_posix()
+                new_rel = f"uploads/converted/{tail}"
+            else:
+                dst = src.with_suffix(".mp4")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if dst.exists():
+                    i = 1
+                    stem = dst.stem
+                    while True:
+                        cand = dst.parent / f"{stem}_{i}.mp4"
+                        if not cand.exists():
+                            dst = cand
+                            break
+                        i += 1
+                new_rel = str(Path(orig_rel).with_name(dst.name)).replace("\\", "/")
+
+            _mov_to_mp4(src, dst)
+            try:
+                st = src.stat()
+                os.utime(dst, (st.st_atime, st.st_mtime))
+            except Exception:
+                pass
+
+            meta = extract_metadata(dst, new_rel, generate_thumb=True)
+            _attach_conversion_metadata(
+                meta,
+                from_rel_path=orig_rel,
+                to_rel_path=new_rel,
+                from_ext=src.suffix.lower(),
+                to_ext=str(dst.suffix or "").lower() or meta.get("ext"),
+            )
+            try:
+                up_by = r.get("uploaded_by") if isinstance(r, dict) else (r["uploaded_by"] if "uploaded_by" in r.keys() else None)
+            except Exception:
+                up_by = None
+            if up_by:
+                meta["uploaded_by"] = str(up_by)
+            upsert_photo(meta)
+            try:
+                with closing(get_conn()) as conn2:
+                    conn2.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel,))
+                    conn2.commit()
+            except Exception:
+                pass
+            try:
+                if not mov_keep_originals_enabled():
+                    src.unlink(missing_ok=True)
+            except Exception:
+                pass
+            processed += 1
+            log_event("mov_converted", rel_path=new_rel)
+        except Exception as e:
+            errors += 1
+            log_event("error", rel_path=str(r["rel_path"]), error=f"mov_bulk: {e}")
+        try:
+            mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        except Exception:
+            pass
+    res = {"ok": True, "processed": processed, "errors": errors}
+    log_event("mov_bulk_done", **res)
+    try:
+        mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+    except Exception:
+        pass
+    return res
+
+
+@app.route("/api/mov/convert-existing", methods=["POST"])
+def api_mov_convert_existing():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    global mov_convert_thread, last_mov_convert_result, mov_convert_progress
+    if mov_convert_thread and mov_convert_thread.is_alive():
+        return jsonify({"ok": False, "error": "MOV-konvertering kører allerede"}), 409
+    scan_stop_event.clear()
+    last_mov_convert_result = None
+    try:
+        mov_convert_progress = {"total": 0, "processed": 0, "errors": 0}
+    except Exception:
+        pass
+
+    def run_bulk():
+        global last_mov_convert_result
+        last_mov_convert_result = _convert_existing_mov(stop_event=scan_stop_event)
+
+    mov_convert_thread = threading.Thread(target=run_bulk, daemon=True)
+    mov_convert_thread.start()
+    return jsonify({"ok": True, "started": True})
+
+
+@app.route("/api/mov/convert-existing/status")
+def api_mov_convert_existing_status():
+    running = bool(mov_convert_thread and mov_convert_thread.is_alive())
+    return jsonify({
+        "ok": True,
+        "running": running,
+        "result": (last_mov_convert_result if not running else None),
+        "progress": (mov_convert_progress if running else None),
     })
 
 
