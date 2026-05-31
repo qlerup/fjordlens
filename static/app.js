@@ -5561,19 +5561,7 @@ const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
 function invalidateStoredFolderPreviews(folders) {
   const list = Array.isArray(folders) ? folders : [];
   if (!list.length) return;
-  try {
-    const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
-    let changed = false;
-    for (const raw of list) {
-      const key = String(raw || '').trim();
-      if (!key) continue;
-      if (Object.prototype.hasOwnProperty.call(store, key)) {
-        delete store[key];
-        changed = true;
-      }
-    }
-    if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
-  } catch {}
+  // Keep the last good preview visible; the async server refresh replaces it.
 }
 
 function appendFolderCard(folder, arr, opts = {}) {
@@ -5766,6 +5754,11 @@ function appendFolderCard(folder, arr, opts = {}) {
       if (Array.isArray(saved) && saved.length) {
         // When uniqUrls is empty (we skipped client-side scan), trust server-saved picks
         const normalizedSaved = uniqUrls.length ? normalizePreviewSet(saved.filter((u) => uniqUrls.includes(u)).slice(0, desiredCount)) : normalizePreviewSet(saved);
+        if (normalizedSaved.length) {
+          const latestStore = loadStore();
+          latestStore[folder] = normalizedSaved;
+          saveStore(latestStore);
+        }
         if (!uniqUrls.length) {
           updateGrid(normalizedSaved, variantForCount(normalizedSaved.length));
           return;
@@ -5773,6 +5766,9 @@ function appendFolderCard(folder, arr, opts = {}) {
         if (normalizedSaved.length < desiredCount) {
           const fresh = uniqUrls.slice(0, desiredCount);
           if (fresh.length) {
+            const latestStore = loadStore();
+            latestStore[folder] = fresh;
+            saveStore(latestStore);
             updateGrid(fresh, desiredVariant);
             await persistPreviews(fresh);
           }
