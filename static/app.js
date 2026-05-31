@@ -527,6 +527,8 @@ function renderUploadTopProcessStatus(processStatus) {
     const inFlight = Math.max(0, Number(src.in_flight || 0));
     const queued = Math.max(0, Number(src.queued || Math.max(0, total - processed - inFlight)));
     const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
+    if (!enabled) continue;
+    if (key === 'metadata' && !running && errors <= 0 && (total <= 0 || processed >= total)) continue;
     const statusText = enabled ? `${processed}/${total}${errors ? ` · ${tr('status_errors_label')} ${errors}` : ''}` : tr('upload_proc_off');
     const queueText = enabled
       ? [
