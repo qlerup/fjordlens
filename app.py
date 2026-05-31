@@ -232,6 +232,7 @@ AI_DESC_ENV_AUTO_INGEST_DEFAULT = (os.environ.get("AI_DESC_AUTO_INGEST", "0") in
 AI_DESC_MODEL_ENV_DEFAULT = _normalize_ai_desc_model(os.environ.get("AI_DESC_MODEL", "light"))
 FACES_ENV_AUTO_INDEX_DEFAULT = (os.environ.get("FACES_AUTO_INDEX", "0") in {"1", "true", "True"})
 HEIC_CONVERT_ON_UPLOAD_DEFAULT = (os.environ.get("HEIC_CONVERT_ON_UPLOAD", "0") in {"1", "true", "True"})
+RAW_CONVERT_ON_UPLOAD_DEFAULT = str(os.environ.get("RAW_CONVERT_ON_UPLOAD", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 UPLOAD_WORKFLOW_MODE_GENTLE = "gentle"
 UPLOAD_WORKFLOW_MODE_AGGRESSIVE = "aggressive"
 UPLOAD_WORKFLOW_MODE_DEFAULT = UPLOAD_WORKFLOW_MODE_GENTLE
@@ -2465,7 +2466,7 @@ def _postprocess_uploaded_rels(
         needs_mov_conversion = extl == ".mov" and mov_convert_on_upload_enabled()
         needs_conversion = (
             ((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled())
-            or (extl in RAW_EXTS)
+            or ((extl in RAW_EXTS) and raw_convert_on_upload_enabled())
             or needs_mov_conversion
         )
 
@@ -4031,6 +4032,9 @@ def init_db() -> None:
             row7a = conn.execute("SELECT value FROM settings WHERE key='mov_convert_on_upload'").fetchone()
             if not row7a:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("mov_convert_on_upload", "1" if MOV_CONVERT_ON_UPLOAD_DEFAULT else "0"))
+            row7b = conn.execute("SELECT value FROM settings WHERE key='raw_convert_on_upload'").fetchone()
+            if not row7b:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("raw_convert_on_upload", "1" if RAW_CONVERT_ON_UPLOAD_DEFAULT else "0"))
             row8 = conn.execute("SELECT value FROM settings WHERE key=?", (UPLOAD_ALLOWED_EXTENSIONS_SETTING,)).fetchone()
             if not row8:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", (UPLOAD_ALLOWED_EXTENSIONS_SETTING, json.dumps(sorted(SUPPORTED_EXTS))))
@@ -4578,6 +4582,10 @@ def heic_convert_on_upload_enabled() -> bool:
 
 def mov_convert_on_upload_enabled() -> bool:
     return _get_setting_bool("mov_convert_on_upload", MOV_CONVERT_ON_UPLOAD_DEFAULT)
+
+
+def raw_convert_on_upload_enabled() -> bool:
+    return _get_setting_bool("raw_convert_on_upload", RAW_CONVERT_ON_UPLOAD_DEFAULT)
 
 
 def heic_keep_originals_enabled() -> bool:
@@ -10962,10 +10970,12 @@ def _upload_rel_needs_postprocess_conversion(rel_path: str) -> bool:
         if not mov_convert_on_upload_enabled():
             return False
         converted_exts = (".mp4",)
-    elif ext not in RAW_EXTS:
-        return False
-    else:
+    elif ext in RAW_EXTS:
+        if not raw_convert_on_upload_enabled():
+            return False
         converted_exts = None
+    else:
+        return False
     try:
         converted = _find_existing_converted_for_upload_rel(rel, extensions=converted_exts)
         if converted is not None and converted.exists():
@@ -18954,14 +18964,40 @@ def api_settings_raw():
 
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
+        conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
+        if conv is not None:
+            _set_setting("raw_convert_on_upload", "1" if bool(conv) else "0")
         if keep is not None:
             _set_setting("raw_keep_originals", "1" if bool(keep) else "0")
 
     return jsonify(
         {
             "ok": True,
+            "convert_on_upload": raw_convert_on_upload_enabled(),
             "keep_originals": raw_keep_originals_enabled(),
+            "env_default_convert": RAW_CONVERT_ON_UPLOAD_DEFAULT,
+        }
+    )
+
+
+@app.route("/api/settings/mov", methods=["GET", "POST"])
+def api_settings_mov():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        conv = body.get("convert_on_upload")
+        if conv is not None:
+            _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
+
+    return jsonify(
+        {
+            "ok": True,
+            "convert_on_upload": mov_convert_on_upload_enabled(),
+            "env_default_convert": MOV_CONVERT_ON_UPLOAD_DEFAULT,
         }
     )
 

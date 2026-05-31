@@ -336,8 +336,9 @@
         </div>
 
         <!-- AI -->
-                <!-- Konvertering: HEIC og RAW/DNG -->
+                <!-- Konvertering: billeder og video -->
                 <div class="tab-panel hidden" data-tabpanel="heic">
+                  <div class="mini-label" style="font-weight:800;margin:0 0 8px 2px;">Billedkonvertering</div>
                   <div class="sidebar-card" style="margin-bottom:12px;">
                     <div class="sidebar-card-title">HEIC → JPEG</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
@@ -360,6 +361,11 @@
                   <div class="sidebar-card" style="margin-bottom:12px;">
                     <div class="sidebar-card-title">RAW/DNG → JPEG</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
+                      <label class="ai-toggle-row" for="rawConvertToggle">
+                        <input id="rawConvertToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Convert RAW on upload" />
+                        <span class="ai-toggle-slider" aria-hidden="true"></span>
+                        <span id="rawConvertToggleText" class="mini-label">Konvertér RAW/DNG til JPEG ved upload</span>
+                      </label>
                       <label class="ai-toggle-row" for="rawKeepToggle">
                         <input id="rawKeepToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Keep RAW originals" />
                         <span class="ai-toggle-slider" aria-hidden="true"></span>
@@ -369,6 +375,18 @@
                       <div>
                         <button id="rawBulkConvertBtn" class="btn">Konvertér eksisterende RAW/DNG → JPEG</button>
                       </div>
+                    </div>
+                  </div>
+                  <div class="mini-label" style="font-weight:800;margin:14px 0 8px 2px;">Videokonvertering</div>
+                  <div class="sidebar-card" style="margin-bottom:12px;">
+                    <div class="sidebar-card-title">MOV → MP4</div>
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                      <label class="ai-toggle-row" for="movConvertToggle">
+                        <input id="movConvertToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Convert MOV on upload" />
+                        <span class="ai-toggle-slider" aria-hidden="true"></span>
+                        <span id="movConvertToggleText" class="mini-label">Konvertér MOV til MP4 ved upload</span>
+                      </label>
+                      <div id="movStatus" class="mini-label">MOV: —</div>
                     </div>
                   </div>
                 </div>
