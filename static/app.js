@@ -7507,7 +7507,7 @@ function hasTusClient() {
 
 function postprocessPhaseLabel(phase) {
   const key = String(phase || '').toLowerCase();
-  if (key === 'converting') return 'Konverterer RAW/HEIC';
+  if (key === 'converting') return 'Konverterer RAW/HEIC/MOV';
   if (key === 'metadata') return 'Metadata';
   if (key === 'thumbnails') return 'Thumbnails';
   if (key === 'faces') return 'Ansigtsgenkendelse';

@@ -451,6 +451,70 @@ def _raw_to_jpeg(src: Path, dst: Path) -> None:
         raise RuntimeError(f"RAW convert failed; rawpy={last_error!r}, exiftool={exiftool_error!r}, ffmpeg={e!r}")
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 SUPPORTED_EXTS = IMAGE_EXTS | VIDEO_EXTS
+MOV_CONVERT_ON_UPLOAD_DEFAULT = str(os.environ.get("MOV_CONVERT_ON_UPLOAD", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+MOV_CONVERT_PRESET = str(os.environ.get("MOV_CONVERT_PRESET", "veryfast") or "veryfast").strip() or "veryfast"
+try:
+    MOV_CONVERT_CRF = int(os.environ.get("MOV_CONVERT_CRF", "23") or 23)
+except Exception:
+    MOV_CONVERT_CRF = 23
+MOV_CONVERT_CRF = max(18, min(36, MOV_CONVERT_CRF))
+MOV_CONVERT_AUDIO_BITRATE = str(os.environ.get("MOV_CONVERT_AUDIO_BITRATE", "128k") or "128k").strip() or "128k"
+try:
+    MOV_CONVERT_TIMEOUT_SEC = int(os.environ.get("MOV_CONVERT_TIMEOUT_SEC", "7200") or 7200)
+except Exception:
+    MOV_CONVERT_TIMEOUT_SEC = 7200
+MOV_CONVERT_TIMEOUT_SEC = max(60, min(21600, MOV_CONVERT_TIMEOUT_SEC))
+
+
+def _mov_to_mp4(src: Path, dst: Path) -> None:
+    """Convert MOV uploads to browser-friendly MP4/H.264."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("ffmpeg not available for MOV conversion")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.tmp{dst.suffix}")
+    try:
+        cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-map_metadata",
+            "0",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            MOV_CONVERT_PRESET,
+            "-crf",
+            str(MOV_CONVERT_CRF),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            MOV_CONVERT_AUDIO_BITRATE,
+            "-movflags",
+            "+faststart",
+            str(tmp),
+        ]
+        subprocess.run(cmd, check=True, timeout=MOV_CONVERT_TIMEOUT_SEC)
+        if not tmp.exists() or tmp.stat().st_size <= 0:
+            raise RuntimeError("ffmpeg produced empty output")
+        os.replace(tmp, dst)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
 try:
     UPLOAD_FOLDER_SYNC_MAX_FILES = int(os.environ.get("UPLOAD_FOLDER_SYNC_MAX_FILES", "800") or 800)
 except Exception:
@@ -2398,13 +2462,15 @@ def _postprocess_uploaded_rels(
         })
         disk_path = _disk_path_from_rel_path(rel)
         extl = disk_path.suffix.lower()
+        needs_mov_conversion = extl == ".mov" and mov_convert_on_upload_enabled()
         needs_conversion = (
             ((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled())
             or (extl in RAW_EXTS)
+            or needs_mov_conversion
         )
 
         # Reuse existing metadata for recovered/manual rows unless conversion is
-        # pending for HEIC/RAW files.
+        # pending for HEIC/RAW/MOV files.
         if not needs_conversion:
             checksum_ready = ""
             try:
@@ -2433,7 +2499,7 @@ def _postprocess_uploaded_rels(
         conversion_from_ext: Optional[str] = None
         conversion_to_rel: Optional[str] = None
         conversion_to_ext: Optional[str] = None
-        # Optional: convert HEIC/HEIF and RAW to JPEG in-place (preserve EXIF when possible for HEIC)
+        # Optional: convert HEIC/HEIF/RAW to JPEG and MOV to MP4.
         try:
             if needs_conversion and disk_path.exists():
                 # Announce explicit converting phase in UI
@@ -2446,10 +2512,12 @@ def _postprocess_uploaded_rels(
                 new_rel = None
                 new_path = None
                 try:
+                    target_suffix = ".mp4" if needs_mov_conversion else ".jpg"
+                    orig_rel_norm = str(orig_rel_for_convert).replace("\\", "/").lstrip("/")
+                    orig_is_upload = orig_rel_norm.startswith("uploads/")
                     # Determine destination path under uploads/converted/<subdir>/
                     sub_rel = ""
                     try:
-                        orig_rel_norm = str(orig_rel_for_convert).replace("\\", "/").lstrip("/")
                         if orig_rel_norm.startswith("uploads/originals/"):
                             sub_rel = orig_rel_norm[len("uploads/originals/"):]  # '<sub>/<file>'
                         elif orig_rel_norm.startswith("uploads/"):
@@ -2459,17 +2527,21 @@ def _postprocess_uploaded_rels(
                     except Exception:
                         sub_rel = Path(orig_rel_for_convert).name
                     subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
-                    leaf_jpg = f"{Path(sub_rel).stem}.jpg"
-                    conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
-                    conv_dir.mkdir(parents=True, exist_ok=True)
-                    new_path = conv_dir / leaf_jpg
-                    # Avoid clobbering existing .jpg â€” add numeric suffix
+                    leaf_name = f"{Path(sub_rel).stem}{target_suffix}"
+                    if orig_is_upload:
+                        conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != '.' else '')
+                        conv_dir.mkdir(parents=True, exist_ok=True)
+                        new_path = conv_dir / leaf_name
+                    else:
+                        new_path = disk_path.with_suffix(target_suffix)
+                        new_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Avoid clobbering existing converted files by adding a numeric suffix.
                     if new_path.exists():
                         stem = new_path.stem
                         parent = new_path.parent
                         j = 1
                         while True:
-                            cand = parent / f"{stem}_{j}.jpg"
+                            cand = parent / f"{stem}_{j}{target_suffix}"
                             if not cand.exists():
                                 new_path = cand
                                 break
@@ -2490,9 +2562,11 @@ def _postprocess_uploaded_rels(
                             if exif_bytes:
                                 save_kwargs["exif"] = exif_bytes
                             rgb.save(new_path, **save_kwargs)
-                    else:
+                    elif extl in RAW_EXTS:
                         # RAW â†’ JPEG via rawpy with ffmpeg fallback
                         _raw_to_jpeg(disk_path, new_path)
+                    else:
+                        _mov_to_mp4(disk_path, new_path)
                     # Preserve timestamps
                     try:
                         st = disk_path.stat()
@@ -2500,44 +2574,65 @@ def _postprocess_uploaded_rels(
                     except Exception:
                         pass
                     # Switch rel/disk_path to the converted copy (optionally keep the original under 'originals')
-                    if str(orig_rel_for_convert).replace("\\", "/").lstrip("/").startswith("uploads/"):
-                        # Mirror uploaded source to /uploads/converted/<...>.jpg
+                    if orig_is_upload:
+                        # Mirror uploaded source to /uploads/converted/<...>.
                         try:
-                            tail = str(Path(sub_rel).with_suffix(".jpg")).replace("\\", "/")
+                            if subdir_only not in {"", "."}:
+                                tail = (Path(subdir_only) / new_path.name).as_posix()
+                            else:
+                                tail = new_path.name
                         except Exception:
-                            tail = f"{Path(sub_rel).stem}.jpg"
+                            tail = f"{Path(sub_rel).stem}{target_suffix}"
                         new_rel = f"uploads/converted/{tail}"
                     else:
                         # Library fallback
                         try:
-                            new_rel = str(Path(orig_rel_for_convert).with_suffix(".jpg")).replace("\\", "/")
+                            orig_rel_path = Path(orig_rel_for_convert)
+                            if str(orig_rel_path.parent).replace("\\", "/") not in {"", "."}:
+                                new_rel = (orig_rel_path.parent / new_path.name).as_posix()
+                            else:
+                                new_rel = new_path.name
                         except Exception:
-                            new_rel = str(orig_rel_for_convert) + ".jpg"
+                            new_rel = str(orig_rel_for_convert) + target_suffix
                     rel = new_rel
                     disk_path = new_path
                     conversion_from_rel = orig_rel_for_convert
                     conversion_from_ext = extl
                     conversion_to_rel = rel
-                    conversion_to_ext = str(new_path.suffix or "").lower() if new_path else ".jpg"
+                    conversion_to_ext = str(new_path.suffix or "").lower() if new_path else target_suffix
                     try:
-                        log_event("heic_converted" if extl in {".heic", ".heif"} else "raw_converted", rel_path=rel)
+                        if extl in {".heic", ".heif"}:
+                            event_name = "heic_converted"
+                        elif extl in RAW_EXTS:
+                            event_name = "raw_converted"
+                        else:
+                            event_name = "mov_converted"
+                        log_event(event_name, rel_path=rel)
                     except Exception:
                         pass
                     heic_converted_count += 1
-                    # Remove any stub row created under the original HEIC rel (originals path)
+                    # Remove any stub row created under the original rel (usually uploads/originals).
                     try:
                         with closing(get_conn()) as conn:
                             conn.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel_for_convert,))
                             conn.commit()
                     except Exception:
                         pass
-                    # Optionally delete the physical original to save space
+                    # Optionally delete image originals to save space. MOV originals are kept.
                     try:
-                        keep = heic_keep_originals_enabled() if extl in {".heic", ".heif"} else raw_keep_originals_enabled()
+                        if extl in {".heic", ".heif"}:
+                            keep = heic_keep_originals_enabled()
+                            delete_event = "heic_original_deleted"
+                        elif extl in RAW_EXTS:
+                            keep = raw_keep_originals_enabled()
+                            delete_event = "raw_original_deleted"
+                        else:
+                            keep = True
+                            delete_event = "mov_original_deleted"
                         if not keep:
                             orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
                             orig_path.unlink(missing_ok=True)
-                            log_event("heic_original_deleted" if extl in {".heic", ".heif"} else "raw_original_deleted", rel_path=orig_rel_for_convert)
+                            log_event(delete_event, rel_path=orig_rel_for_convert)
                     except Exception:
                         pass
                 except Exception as e:
@@ -3933,6 +4028,9 @@ def init_db() -> None:
             row7 = conn.execute("SELECT value FROM settings WHERE key='upload_workflow_mode'").fetchone()
             if not row7:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("upload_workflow_mode", UPLOAD_WORKFLOW_MODE_DEFAULT))
+            row7a = conn.execute("SELECT value FROM settings WHERE key='mov_convert_on_upload'").fetchone()
+            if not row7a:
+                conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", ("mov_convert_on_upload", "1" if MOV_CONVERT_ON_UPLOAD_DEFAULT else "0"))
             row8 = conn.execute("SELECT value FROM settings WHERE key=?", (UPLOAD_ALLOWED_EXTENSIONS_SETTING,)).fetchone()
             if not row8:
                 conn.execute("INSERT INTO settings(key, value) VALUES(?,?)", (UPLOAD_ALLOWED_EXTENSIONS_SETTING, json.dumps(sorted(SUPPORTED_EXTS))))
@@ -4476,6 +4574,10 @@ def ai_auto_ingest_enabled() -> bool:
 def heic_convert_on_upload_enabled() -> bool:
     # Controlled by setting; default comes from env (HEIC_CONVERT_ON_UPLOAD_DEFAULT)
     return _get_setting_bool("heic_convert_on_upload", HEIC_CONVERT_ON_UPLOAD_DEFAULT)
+
+
+def mov_convert_on_upload_enabled() -> bool:
+    return _get_setting_bool("mov_convert_on_upload", MOV_CONVERT_ON_UPLOAD_DEFAULT)
 
 
 def heic_keep_originals_enabled() -> bool:
@@ -5843,7 +5945,8 @@ def _related_photo_rel_paths_for_delete(rel_path: str, metadata_json_raw: Any = 
 
     # Fallback for legacy rows without conversion metadata.
     if rel.startswith("uploads/"):
-        conv_path = _find_existing_converted_for_upload_rel(rel)
+        conv_exts = (".mp4",) if Path(rel).suffix.lower() == ".mov" else None
+        conv_path = _find_existing_converted_for_upload_rel(rel, extensions=conv_exts)
         if conv_path is not None:
             conv_rel = _upload_path_to_rel(conv_path)
             if conv_rel:
@@ -10854,10 +10957,17 @@ def _upload_rel_needs_postprocess_conversion(rel_path: str) -> bool:
     if ext in {".heic", ".heif"}:
         if not heic_convert_on_upload_enabled():
             return False
+        converted_exts = None
+    elif ext == ".mov":
+        if not mov_convert_on_upload_enabled():
+            return False
+        converted_exts = (".mp4",)
     elif ext not in RAW_EXTS:
         return False
+    else:
+        converted_exts = None
     try:
-        converted = _find_existing_converted_for_upload_rel(rel)
+        converted = _find_existing_converted_for_upload_rel(rel, extensions=converted_exts)
         if converted is not None and converted.exists():
             return False
     except Exception:
@@ -11375,10 +11485,15 @@ def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # With HEIC conversion enabled, prefer converted upload copies for faster browser loads.
+    # With upload conversion enabled, prefer browser-friendly converted copies.
     try:
         if (not is_video) and rel.startswith("uploads/") and ext in {".heic", ".heif"} and heic_convert_on_upload_enabled():
             conv_path = _find_existing_converted_for_upload_rel(rel)
+            conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
+            if conv_rel:
+                candidates.insert(0, conv_rel)
+        if is_video and rel.startswith("uploads/") and ext == ".mov" and mov_convert_on_upload_enabled():
+            conv_path = _find_existing_converted_for_upload_rel(rel, extensions=(".mp4",))
             conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
             if conv_rel:
                 candidates.insert(0, conv_rel)
@@ -11391,6 +11506,13 @@ def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
             src = _disk_path_from_rel_path(rel)
             if not src.exists():
                 conv_path = _find_existing_converted_for_upload_rel(rel)
+                conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
+                if conv_rel:
+                    candidates.insert(0, conv_rel)
+        elif is_video and rel.startswith("uploads/") and ext == ".mov":
+            src = _disk_path_from_rel_path(rel)
+            if not src.exists():
+                conv_path = _find_existing_converted_for_upload_rel(rel, extensions=(".mp4",))
                 conv_rel = _normalize_rel_for_view_candidate(_upload_path_to_rel(conv_path) if conv_path is not None else "")
                 if conv_rel:
                     candidates.insert(0, conv_rel)
@@ -17889,7 +18011,7 @@ def api_viewable(rel_path: str):
         return (str(e), 500)
 
 
-def _find_existing_converted_for_upload_rel(rel_path: str) -> Optional[Path]:
+def _find_existing_converted_for_upload_rel(rel_path: str, extensions: Optional[Iterable[str]] = None) -> Optional[Path]:
     rel = str(rel_path or "").replace("\\", "/").lstrip("/")
     if rel.startswith("uploads/originals/"):
         tail = rel[len("uploads/originals/"):]
@@ -17903,7 +18025,12 @@ def _find_existing_converted_for_upload_rel(rel_path: str) -> Optional[Path]:
     parent = base.parent
     stem = base.name
     found: list[Path] = []
-    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+    exts = tuple(
+        (e if str(e or "").startswith(".") else f".{e}").lower()
+        for e in (extensions or (".jpg", ".jpeg", ".png", ".webp"))
+        if str(e or "").strip()
+    )
+    for ext in exts:
         cand = UPLOAD_DIR / "converted" / parent / f"{stem}{ext}"
         if cand.exists() and cand.is_file():
             found.append(cand)
@@ -17918,7 +18045,7 @@ def _find_existing_converted_for_upload_rel(rel_path: str) -> Optional[Path]:
     if not conv_parent.exists() or not conv_parent.is_dir():
         return None
     try:
-        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        for ext in exts:
             for cand in conv_parent.glob(f"{stem}_*{ext}"):
                 if cand.exists() and cand.is_file():
                     found.append(cand)
@@ -17971,7 +18098,8 @@ def _resolve_download_path(src: Path, rel_path: str, mode: str) -> Path:
 
     # converted
     if rel.startswith("uploads/"):
-        converted = _find_existing_converted_for_upload_rel(rel)
+        converted_exts = (".mp4",) if Path(rel).suffix.lower() in {".mov", ".mp4"} else None
+        converted = _find_existing_converted_for_upload_rel(rel, extensions=converted_exts)
         if converted is not None and converted.exists():
             return converted
         if rel.startswith("uploads/converted/"):
