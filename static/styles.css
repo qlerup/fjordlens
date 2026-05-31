@@ -466,6 +466,14 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
 }
+.file-type-chip.custom {
+  border-color: rgba(251, 191, 36, 0.48);
+  background: rgba(251, 191, 36, 0.16);
+  color: #fde68a;
+}
+.file-type-chip.custom button {
+  background: rgba(251, 191, 36, 0.18);
+}
 .file-type-chip button {
   width: 18px;
   height: 18px;

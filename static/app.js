@@ -9184,16 +9184,18 @@ function renderUploadFileTypeSettings() {
   const data = state.uploadFileTypes || {};
   const allowed = Array.isArray(data.allowed_extensions) ? data.allowed_extensions.slice().sort() : [];
   const blocked = Array.isArray(data.blocked_extensions) ? data.blocked_extensions.slice().sort() : [];
+  const customSet = new Set(Array.isArray(data.custom_extensions) ? data.custom_extensions : []);
   if (els.fileTypeAllowedList) {
     if (!allowed.length) {
       els.fileTypeAllowedList.innerHTML = `<div class="mini-label">${escapeHtml(tr('file_types_allowed_empty'))}</div>`;
     } else {
-      els.fileTypeAllowedList.innerHTML = allowed.map((ext) => (
-        `<span class="file-type-chip">` +
+      els.fileTypeAllowedList.innerHTML = allowed.map((ext) => {
+        const chipClass = customSet.has(ext) ? 'file-type-chip custom' : 'file-type-chip';
+        return `<span class="${chipClass}">` +
         `<span>${escapeHtml(ext)}</span>` +
         `<button type="button" data-file-type-remove="${escapeHtml(ext)}" aria-label="Fjern ${escapeHtml(ext)}">&times;</button>` +
-        `</span>`
-      )).join('');
+        `</span>`;
+      }).join('');
     }
   }
   if (els.fileTypeBlockedList) {
