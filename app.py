@@ -3607,9 +3607,6 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_photos_captured_at ON photos(captured_at);
             CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
                 CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
-                CREATE INDEX IF NOT EXISTS idx_photos_phash_dct ON photos(phash_dct);
-                CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
-                CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash);
 
                 CREATE TABLE IF NOT EXISTS geo_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3644,9 +3641,6 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_photos_favorite ON photos(favorite);
             CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(gps_lat, gps_lon);
             CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
-            CREATE INDEX IF NOT EXISTS idx_photos_phash_dct ON photos(phash_dct);
-            CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
-            CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash);
 
             CREATE TABLE IF NOT EXISTS people (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
