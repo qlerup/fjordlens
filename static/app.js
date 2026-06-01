@@ -1168,6 +1168,8 @@ const I18N = {
     status_ai_prefix: 'AI',
     status_ai_desc_prefix: 'Beskrivelser',
     status_embedded_label: 'embedded',
+    status_library_label: 'bibliotek',
+    status_missing_label: 'mangler',
     status_described_label: 'beskrevet',
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
@@ -1915,6 +1917,8 @@ const I18N = {
     status_ai_prefix: 'AI',
     status_ai_desc_prefix: 'Descriptions',
     status_embedded_label: 'embedded',
+    status_library_label: 'library',
+    status_missing_label: 'missing',
     status_described_label: 'described',
     status_processed_label: 'processed',
     status_stopped: 'stopped',
@@ -13120,7 +13124,14 @@ async function pollAiStatus() {
         const embedded = Number(source && source.embedded) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · ${tr('status_embedded_label')} ${embedded}/${total} · ${tr('status_errors_label')} ${failed}`;
+        const coverage = (s && s.coverage && typeof s.coverage === 'object') ? s.coverage : null;
+        const coverageTotal = Number(coverage && coverage.total) || 0;
+        const coverageEmbedded = Number(coverage && coverage.embedded) || 0;
+        const coverageMissing = Number(coverage && coverage.missing) || 0;
+        const coverageText = coverage
+          ? ` · ${tr('status_library_label')} ${coverageEmbedded}/${coverageTotal} · ${tr('status_missing_label')} ${coverageMissing}`
+          : '';
+        els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · ${tr('status_embedded_label')} ${embedded}/${total} · ${tr('status_errors_label')} ${failed}${coverageText}`;
       }
     }
   } catch {

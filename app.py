@@ -16626,6 +16626,26 @@ def _is_ai_embedding_supported_rel(rel_path: str) -> bool:
     return ext in IMAGE_EXTS
 
 
+def _ai_embedding_coverage() -> Dict[str, int]:
+    counts = {"total": 0, "embedded": 0, "missing": 0, "unsupported": 0}
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute("SELECT rel_path, embedding_json FROM photos").fetchall()
+    except Exception:
+        return counts
+
+    for row in rows:
+        if not _is_ai_embedding_supported_rel(row["rel_path"]):
+            counts["unsupported"] += 1
+            continue
+        counts["total"] += 1
+        if str(row["embedding_json"] or "").strip():
+            counts["embedded"] += 1
+        else:
+            counts["missing"] += 1
+    return counts
+
+
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
     if not _is_ai_embedding_supported_rel(rel_path):
         log_event("ai_embed_skip_unsupported", rel_path=rel_path)
@@ -16980,6 +17000,7 @@ def api_ai_status():
         "running": ai_running,
         "auto_ingest": ai_auto_ingest_enabled(),
         **ai_counts,
+        "coverage": _ai_embedding_coverage(),
         "runtime": {
             "service_ok": rt["service_ok"],
             "ai": rt["ai_device"],
