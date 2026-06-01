@@ -258,8 +258,12 @@
   similarModalClose: document.getElementById("similarModalClose"),
   similarModalTitle: document.getElementById("similarModalTitle"),
   similarDistanceForm: document.getElementById("similarDistanceForm"),
-  similarDistanceLabel: document.getElementById("similarDistanceLabel"),
-  similarDistanceInput: document.getElementById("similarDistanceInput"),
+  similarPhashDistanceLabel: document.getElementById("similarPhashDistanceLabel"),
+  similarPhashDistanceInput: document.getElementById("similarPhashDistanceInput"),
+  similarDhashDistanceLabel: document.getElementById("similarDhashDistanceLabel"),
+  similarDhashDistanceInput: document.getElementById("similarDhashDistanceInput"),
+  similarAhashDistanceLabel: document.getElementById("similarAhashDistanceLabel"),
+  similarAhashDistanceInput: document.getElementById("similarAhashDistanceInput"),
   similarDistanceApply: document.getElementById("similarDistanceApply"),
   similarModalStatus: document.getElementById("similarModalStatus"),
   similarModalGrid: document.getElementById("similarModalGrid"),
@@ -1484,11 +1488,13 @@ const I18N = {
     similar_fetch_error: 'Fejl ved hentning af lignende',
     similar_view_title: 'Lignende billeder',
     similar_view_subtitle: 'Fundet via billed-embedding',
-    similar_modal_title: 'Lignende billeder (pHash nær)',
+    similar_modal_title: 'Lignende billeder (hash nær)',
     similar_modal_loading: 'Finder lignende billeder...',
-    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende pHash-afstand.',
-    similar_modal_count: 'Fundet {count} lignende billeder (afstand ≤ {distance}).',
-    similar_distance_label: 'pHash afstand',
+    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende hash-afstande.',
+    similar_modal_count: 'Fundet {count} lignende billeder (pHash ≤ {phash}, dHash ≤ {dhash}, aHash ≤ {ahash}).',
+    similar_phash_label: 'pHash',
+    similar_dhash_label: 'dHash',
+    similar_ahash_label: 'aHash',
     similar_distance_find: 'Find',
     raw_meta_show: 'Vis rå metadata (JSON)',
     raw_meta_hide: 'Skjul rå metadata (JSON)',
@@ -2228,11 +2234,13 @@ const I18N = {
     similar_fetch_error: 'Error while loading similar photos',
     similar_view_title: 'Similar photos',
     similar_view_subtitle: 'Found via image embedding',
-    similar_modal_title: 'Similar photos (pHash near)',
+    similar_modal_title: 'Similar photos (hash near)',
     similar_modal_loading: 'Finding similar photos...',
-    similar_modal_empty: 'No similar photos found with current pHash distance.',
-    similar_modal_count: 'Found {count} similar photos (distance ≤ {distance}).',
-    similar_distance_label: 'pHash distance',
+    similar_modal_empty: 'No similar photos found with the current hash distances.',
+    similar_modal_count: 'Found {count} similar photos (pHash ≤ {phash}, dHash ≤ {dhash}, aHash ≤ {ahash}).',
+    similar_phash_label: 'pHash',
+    similar_dhash_label: 'dHash',
+    similar_ahash_label: 'aHash',
     similar_distance_find: 'Find',
     raw_meta_show: 'Show raw metadata (JSON)',
     raw_meta_hide: 'Hide raw metadata (JSON)',
@@ -2403,7 +2411,7 @@ let state = {
   viewerItems: null,
   similarModalItems: [],
   similarSourceId: 0,
-  similarPhashDistance: 9,
+  similarHashDistances: { phash: 9, dhash: 12, ahash: 12 },
   folder: null,
   // logs
   // Default off; enable only for authorized users
@@ -11506,7 +11514,9 @@ function applyUiLanguage() {
   if (els.profileLink) els.profileLink.textContent = tr('profile_link');
   const logoutLink = document.querySelector('.sidebar-footer a[href="/logout"]');
   if (logoutLink) logoutLink.textContent = tr('logout_link');
-  if (els.similarDistanceLabel) els.similarDistanceLabel.textContent = tr('similar_distance_label');
+  if (els.similarPhashDistanceLabel) els.similarPhashDistanceLabel.textContent = tr('similar_phash_label');
+  if (els.similarDhashDistanceLabel) els.similarDhashDistanceLabel.textContent = tr('similar_dhash_label');
+  if (els.similarAhashDistanceLabel) els.similarAhashDistanceLabel.textContent = tr('similar_ahash_label');
   if (els.similarDistanceApply) els.similarDistanceApply.textContent = tr('similar_distance_find');
 
   const tabText = {
@@ -14669,47 +14679,67 @@ if (viFavoriteBtn) {
   });
 }
 
-const SIMILAR_PHASH_DISTANCE_DEFAULT = 9;
+const SIMILAR_HASH_DISTANCE_DEFAULTS = { phash: 9, dhash: 12, ahash: 12 };
+const SIMILAR_HASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarHashDistances.v2';
 const SIMILAR_PHASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarPhashDistance.v1';
 
-function normalizeSimilarPhashDistance(value) {
+function normalizeSimilarHashDistance(value, fallback = 12) {
   const n = Math.round(Number(value));
-  if (!Number.isFinite(n)) return SIMILAR_PHASH_DISTANCE_DEFAULT;
-  return Math.max(0, Math.min(20, n));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(64, n));
 }
 
-function readSimilarPhashDistance() {
+function normalizeSimilarHashSettings(value = {}) {
+  const src = (value && typeof value === 'object') ? value : {};
+  return {
+    phash: normalizeSimilarHashDistance(src.phash, SIMILAR_HASH_DISTANCE_DEFAULTS.phash),
+    dhash: normalizeSimilarHashDistance(src.dhash, SIMILAR_HASH_DISTANCE_DEFAULTS.dhash),
+    ahash: normalizeSimilarHashDistance(src.ahash, SIMILAR_HASH_DISTANCE_DEFAULTS.ahash),
+  };
+}
+
+function readSimilarHashSettings() {
   try {
-    const stored = window.localStorage.getItem(SIMILAR_PHASH_DISTANCE_STORAGE_KEY);
-    if (stored !== null && stored !== undefined && stored !== '') {
-      return normalizeSimilarPhashDistance(stored);
+    const stored = window.localStorage.getItem(SIMILAR_HASH_DISTANCE_STORAGE_KEY);
+    if (stored) {
+      return normalizeSimilarHashSettings(JSON.parse(stored));
     }
   } catch {}
-  if (state.similarPhashDistance !== null && state.similarPhashDistance !== undefined && state.similarPhashDistance !== '') {
-    return normalizeSimilarPhashDistance(state.similarPhashDistance);
-  }
-  return SIMILAR_PHASH_DISTANCE_DEFAULT;
-}
-
-function storeSimilarPhashDistance(value) {
-  const distance = normalizeSimilarPhashDistance(value);
-  state.similarPhashDistance = distance;
   try {
-    window.localStorage.setItem(SIMILAR_PHASH_DISTANCE_STORAGE_KEY, String(distance));
+    const oldPhash = window.localStorage.getItem(SIMILAR_PHASH_DISTANCE_STORAGE_KEY);
+    if (oldPhash !== null && oldPhash !== undefined && oldPhash !== '') {
+      return normalizeSimilarHashSettings({ ...SIMILAR_HASH_DISTANCE_DEFAULTS, phash: oldPhash });
+    }
   } catch {}
-  return distance;
-}
-
-function setSimilarDistanceInput(value) {
-  const distance = normalizeSimilarPhashDistance(value);
-  if (els.similarDistanceInput) {
-    els.similarDistanceInput.value = String(distance);
+  if (state.similarHashDistances && typeof state.similarHashDistances === 'object') {
+    return normalizeSimilarHashSettings(state.similarHashDistances);
   }
-  return distance;
+  return normalizeSimilarHashSettings(SIMILAR_HASH_DISTANCE_DEFAULTS);
 }
 
-function currentSimilarDistanceInputValue() {
-  return normalizeSimilarPhashDistance(els.similarDistanceInput ? els.similarDistanceInput.value : readSimilarPhashDistance());
+function storeSimilarHashSettings(value) {
+  const settings = normalizeSimilarHashSettings(value);
+  state.similarHashDistances = settings;
+  try {
+    window.localStorage.setItem(SIMILAR_HASH_DISTANCE_STORAGE_KEY, JSON.stringify(settings));
+  } catch {}
+  return settings;
+}
+
+function setSimilarDistanceInputs(value) {
+  const settings = normalizeSimilarHashSettings(value);
+  if (els.similarPhashDistanceInput) els.similarPhashDistanceInput.value = String(settings.phash);
+  if (els.similarDhashDistanceInput) els.similarDhashDistanceInput.value = String(settings.dhash);
+  if (els.similarAhashDistanceInput) els.similarAhashDistanceInput.value = String(settings.ahash);
+  return settings;
+}
+
+function currentSimilarHashInputValues() {
+  return normalizeSimilarHashSettings({
+    phash: els.similarPhashDistanceInput ? els.similarPhashDistanceInput.value : undefined,
+    dhash: els.similarDhashDistanceInput ? els.similarDhashDistanceInput.value : undefined,
+    ahash: els.similarAhashDistanceInput ? els.similarAhashDistanceInput.value : undefined,
+  });
 }
 
 function _setSimilarModalStatus(message, kind = 'ok') {
@@ -14758,6 +14788,11 @@ function renderSimilarModalGrid(items, opts = {}) {
     appendCardTo(it, els.similarModalGrid);
     const card = els.similarModalGrid.lastElementChild;
     if (!card || !(card instanceof HTMLElement)) return;
+    const hd = it && it.hash_distances && typeof it.hash_distances === 'object' ? it.hash_distances : null;
+    if (hd) {
+      const hashTitle = `pHash ${hd.phash ?? '-'} · dHash ${hd.dhash ?? '-'} · aHash ${hd.ahash ?? '-'}`;
+      card.setAttribute('title', card.getAttribute('title') ? `${card.getAttribute('title')} · ${hashTitle}` : hashTitle);
+    }
     card.addEventListener('click', (ev) => {
       if (ev && ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
       if (_consumeMapperDragSelectClickSuppression()) {
@@ -14776,16 +14811,25 @@ function renderSimilarModalGrid(items, opts = {}) {
 }
 
 async function loadSimilarForSource(sourceId, distanceValue) {
-  const distance = storeSimilarPhashDistance(distanceValue);
-  setSimilarDistanceInput(distance);
+  const distances = storeSimilarHashSettings(distanceValue);
+  setSimilarDistanceInputs(distances);
   if (!sourceId) return;
   if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
   _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
   if (els.similarDistanceApply) els.similarDistanceApply.disabled = true;
-  if (els.similarDistanceInput) els.similarDistanceInput.disabled = true;
+  [els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
+    if (input) input.disabled = true;
+  });
   renderSimilarModalGrid([], { showEmpty: false });
   try {
-    const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}`);
+    const qs = new URLSearchParams({
+      limit: '120',
+      distance: String(distances.phash),
+      phash_distance: String(distances.phash),
+      dhash_distance: String(distances.dhash),
+      ahash_distance: String(distances.ahash),
+    });
+    const res = await fetch(`/api/photos/${sourceId}/similar-phash?${qs.toString()}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data || data.ok === false) {
       _setSimilarModalStatus((data && data.error) ? String(data.error) : tr('similar_fetch_failed'), 'err');
@@ -14793,9 +14837,12 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     }
     const items = Array.isArray(data.items) ? data.items : [];
     state.similarModalItems = items;
+    const returnedDistances = data && data.distances && typeof data.distances === 'object' ? data.distances : distances;
     const msg = tr('similar_modal_count')
       .replace('{count}', String(items.length))
-      .replace('{distance}', String(data.distance != null ? data.distance : distance));
+      .replace('{phash}', String(returnedDistances.phash ?? distances.phash))
+      .replace('{dhash}', String(returnedDistances.dhash ?? distances.dhash))
+      .replace('{ahash}', String(returnedDistances.ahash ?? distances.ahash));
     _setSimilarModalStatus(items.length ? msg : tr('similar_modal_empty'), items.length ? 'ok' : 'ok');
     if (els.similarModalTitle) {
       els.similarModalTitle.textContent = `${tr('similar_modal_title')} (${items.length})`;
@@ -14805,14 +14852,16 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
   } finally {
     if (els.similarDistanceApply) els.similarDistanceApply.disabled = false;
-    if (els.similarDistanceInput) els.similarDistanceInput.disabled = false;
+    [els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
+      if (input) input.disabled = false;
+    });
   }
 }
 
 async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
-  const distance = setSimilarDistanceInput(readSimilarPhashDistance());
+  const distances = setSimilarDistanceInputs(readSimilarHashSettings());
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
@@ -14820,7 +14869,7 @@ async function openSimilarForSelected(){
   state.similarModalItems = [];
   renderSimilarModalGrid([], { showEmpty: false });
   openSimilarModal();
-  await loadSimilarForSource(sourceId, distance);
+  await loadSimilarForSource(sourceId, distances);
 }
 const viSimilarBtn = document.getElementById('viSimilarBtn');
 if (viSimilarBtn) viSimilarBtn.addEventListener('click', openSimilarForSelected);
@@ -14830,7 +14879,7 @@ if (els.similarDistanceForm) {
     event.preventDefault();
     const sourceId = Number(state.similarSourceId || _resolveSelectedPhotoIdForSimilar() || 0);
     if (!sourceId) return;
-    loadSimilarForSource(sourceId, currentSimilarDistanceInputValue()).catch(() => {
+    loadSimilarForSource(sourceId, currentSimilarHashInputValues()).catch(() => {
       _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
     });
   });

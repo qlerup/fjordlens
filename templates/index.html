@@ -792,8 +792,15 @@
       </div>
       <div class="modal-body">
         <form id="similarDistanceForm" class="similar-distance-form">
-          <label id="similarDistanceLabel" for="similarDistanceInput">pHash afstand</label>
-          <input id="similarDistanceInput" class="input-number small" type="number" min="0" max="20" step="1" value="9" inputmode="numeric">
+          <label for="similarPhashDistanceInput"><span id="similarPhashDistanceLabel">pHash</span>
+            <input id="similarPhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="9" inputmode="numeric">
+          </label>
+          <label for="similarDhashDistanceInput"><span id="similarDhashDistanceLabel">dHash</span>
+            <input id="similarDhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="12" inputmode="numeric">
+          </label>
+          <label for="similarAhashDistanceInput"><span id="similarAhashDistanceLabel">aHash</span>
+            <input id="similarAhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="12" inputmode="numeric">
+          </label>
           <button id="similarDistanceApply" class="btn small primary" type="submit">Find</button>
         </form>
         <section id="similarModalStatus" class="status hidden"></section>

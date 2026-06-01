@@ -13,6 +13,7 @@ import os
 import sqlite3
 import zipfile
 import unicodedata
+import math
 from contextlib import closing
 from datetime import datetime, timedelta
 import time
@@ -3586,6 +3587,9 @@ def init_db() -> None:
                 gps_name TEXT,
                 checksum_sha256 TEXT,
                 phash TEXT,
+                phash_dct TEXT,
+                dhash TEXT,
+                ahash TEXT,
                 thumb_name TEXT,
                 favorite INTEGER DEFAULT 0,
                 people_count INTEGER DEFAULT 0,
@@ -3603,6 +3607,9 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_photos_captured_at ON photos(captured_at);
             CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
                 CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
+                CREATE INDEX IF NOT EXISTS idx_photos_phash_dct ON photos(phash_dct);
+                CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
+                CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash);
 
                 CREATE TABLE IF NOT EXISTS geo_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3637,6 +3644,9 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_photos_favorite ON photos(favorite);
             CREATE INDEX IF NOT EXISTS idx_photos_gps ON photos(gps_lat, gps_lon);
             CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
+            CREATE INDEX IF NOT EXISTS idx_photos_phash_dct ON photos(phash_dct);
+            CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
+            CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash);
 
             CREATE TABLE IF NOT EXISTS people (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3838,6 +3848,30 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE photos ADD COLUMN ai_desc_caption TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN phash_dct TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN dhash TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN ahash TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_phash_dct ON photos(phash_dct)")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash)")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash)")
         except Exception:
             pass
         try:
@@ -9163,13 +9197,68 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
+def _hash_resample_filter() -> Any:
+    resampling = getattr(Image, "Resampling", Image)
+    return getattr(resampling, "LANCZOS", Image.BICUBIC)
+
+
 def average_hash(img: Image.Image, hash_size: int = 8) -> str:
-    gray = img.convert("L").resize((hash_size, hash_size))
+    gray = img.convert("L").resize((hash_size, hash_size), _hash_resample_filter())
     pixels = list(gray.getdata())
     avg = sum(pixels) / len(pixels)
     bits = "".join("1" if p > avg else "0" for p in pixels)
     # binary -> hex string
     return f"{int(bits, 2):0{hash_size*hash_size//4}x}"
+
+
+def difference_hash(img: Image.Image, hash_size: int = 8) -> str:
+    gray = img.convert("L").resize((hash_size + 1, hash_size), _hash_resample_filter())
+    pixels = list(gray.getdata())
+    bits = []
+    row_width = hash_size + 1
+    for y in range(hash_size):
+        offset = y * row_width
+        for x in range(hash_size):
+            bits.append("1" if pixels[offset + x] > pixels[offset + x + 1] else "0")
+    return f"{int(''.join(bits), 2):0{hash_size*hash_size//4}x}"
+
+
+def perceptual_hash(img: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> str:
+    size = hash_size * highfreq_factor
+    gray = img.convert("L").resize((size, size), _hash_resample_filter())
+    pixels = [float(p) for p in gray.getdata()]
+    cos_cache = [
+        [math.cos(((2 * x + 1) * u * math.pi) / (2 * size)) for x in range(size)]
+        for u in range(hash_size)
+    ]
+    coeffs = []
+    for v in range(hash_size):
+        for u in range(hash_size):
+            total = 0.0
+            cos_u = cos_cache[u]
+            cos_v = cos_cache[v]
+            for y in range(size):
+                row = y * size
+                cv = cos_v[y]
+                for x in range(size):
+                    total += pixels[row + x] * cos_u[x] * cv
+            coeffs.append(total)
+    values = coeffs[1:] or coeffs
+    sorted_values = sorted(values)
+    median = sorted_values[len(sorted_values) // 2] if sorted_values else 0.0
+    bits = "".join("1" if c > median else "0" for c in coeffs)
+    return f"{int(bits, 2):0{hash_size*hash_size//4}x}"
+
+
+def image_hashes(img: Image.Image) -> Dict[str, str]:
+    ahash = average_hash(img)
+    return {
+        "ahash": ahash,
+        "dhash": difference_hash(img),
+        "phash_dct": perceptual_hash(img),
+        # Keep the legacy phash column compatible with older duplicate code.
+        "phash": ahash,
+    }
 
 
 def _rational_to_float(v: Any) -> Optional[float]:
@@ -9613,6 +9702,9 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     exif_map: Dict[str, Any] = {}
     thumb_name = None
     phash = None
+    phash_dct = None
+    dhash = None
+    ahash = None
     # Ensure all DB-bound fields exist (videos may not populate them)
     for k in (
         "width", "height", "camera_make", "camera_model", "lens_model",
@@ -9661,7 +9753,11 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     if generate_thumb:
                         thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
                     try:
-                        phash = average_hash(img)
+                        hashes = image_hashes(img)
+                        phash = hashes.get("phash")
+                        phash_dct = hashes.get("phash_dct")
+                        dhash = hashes.get("dhash")
+                        ahash = hashes.get("ahash")
                     except Exception:
                         phash = None
                 else:
@@ -9688,7 +9784,11 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     metadata["gps_name"] = None  # placeholder for future reverse geocoding
                     thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
                     try:
-                        phash = average_hash(img)
+                        hashes = image_hashes(img)
+                        phash = hashes.get("phash")
+                        phash_dct = hashes.get("phash_dct")
+                        dhash = hashes.get("dhash")
+                        ahash = hashes.get("ahash")
                     except Exception:
                         phash = None
         except Exception as e:
@@ -9810,6 +9910,9 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
 
     metadata["checksum_sha256"] = sha256_file(path)
     metadata["phash"] = phash
+    metadata["phash_dct"] = phash_dct
+    metadata["dhash"] = dhash
+    metadata["ahash"] = ahash
     metadata["thumb_name"] = thumb_name
     metadata["ai_tags"] = build_ai_tags(metadata["filename"], exif_map, metadata.get("gps_lat"), metadata.get("gps_lon"))
     metadata["exif_json"] = exif_map
@@ -9825,6 +9928,12 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         "modified_fs": metadata["modified_fs"],
     }
     mj["image"] = {"width": metadata.get("width"), "height": metadata.get("height")}
+    mj["hashes"] = {
+        "phash": phash_dct,
+        "dhash": dhash,
+        "ahash": ahash,
+        "legacy_phash": phash,
+    }
     mj["exif"] = exif_map
     # Add AI description tags and caption if present
     ai_desc_tags = metadata.get("ai_desc_tags")
@@ -10664,13 +10773,13 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
             INSERT INTO photos (
                 rel_path, filename, ext, file_size, width, height, created_fs, modified_fs,
                 captured_at, camera_make, camera_model, lens_model, iso, focal_length, f_number,
-                exposure_time, gps_lat, gps_lon, gps_name, checksum_sha256, phash, thumb_name,
+                exposure_time, gps_lat, gps_lon, gps_name, checksum_sha256, phash, phash_dct, dhash, ahash, thumb_name,
                 favorite, people_count, ai_tags, embedding_json, metadata_json, exif_json,
                 uploaded_by, imported_at, last_scanned_at
             ) VALUES (
                 :rel_path, :filename, :ext, :file_size, :width, :height, :created_fs, :modified_fs,
                 :captured_at, :camera_make, :camera_model, :lens_model, :iso, :focal_length, :f_number,
-                :exposure_time, :gps_lat, :gps_lon, :gps_name, :checksum_sha256, :phash, :thumb_name,
+                :exposure_time, :gps_lat, :gps_lon, :gps_name, :checksum_sha256, :phash, :phash_dct, :dhash, :ahash, :thumb_name,
                 COALESCE((SELECT favorite FROM photos WHERE rel_path=:rel_path), 0),
                 COALESCE((SELECT people_count FROM photos WHERE rel_path=:rel_path), 0),
                 :ai_tags, COALESCE((SELECT embedding_json FROM photos WHERE rel_path=:rel_path), NULL),
@@ -10700,6 +10809,9 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 gps_name=excluded.gps_name,
                 checksum_sha256=excluded.checksum_sha256,
                 phash=excluded.phash,
+                phash_dct=excluded.phash_dct,
+                dhash=excluded.dhash,
+                ahash=excluded.ahash,
                 thumb_name=excluded.thumb_name,
                 ai_tags=excluded.ai_tags,
                 metadata_json=excluded.metadata_json,
@@ -12917,6 +13029,75 @@ def _hamdist_hex(a: str, b: str) -> int:
         return (va ^ vb).bit_count()
     except Exception:
         return 64  # max for 64-bit pHash
+
+
+def _clamp_hash_distance_arg(name: str, default: int) -> int:
+    try:
+        value = int(request.args.get(name, str(default)))
+    except Exception:
+        value = int(default)
+    return max(0, min(64, value))
+
+
+def _photo_hash_value(row_data: Dict[str, Any], key: str) -> str:
+    if key == "ahash":
+        return str(row_data.get("ahash") or row_data.get("phash") or "").strip().lower()
+    if key == "phash_dct":
+        return str(row_data.get("phash_dct") or "").strip().lower()
+    return str(row_data.get(key) or "").strip().lower()
+
+
+def _compute_photo_hashes_from_disk(rel_path: str) -> Dict[str, str]:
+    try:
+        path = _disk_path_from_rel_path(rel_path)
+        if not path.exists() or path.suffix.lower() in VIDEO_EXTS:
+            return {}
+        with Image.open(path) as img:
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+            return image_hashes(img)
+    except Exception:
+        return {}
+
+
+def _ensure_photo_hashes(conn: sqlite3.Connection, row_data: Dict[str, Any]) -> Dict[str, Any]:
+    rel_path = str(row_data.get("rel_path") or "").strip()
+    if not rel_path:
+        return row_data
+    has_all = all(_photo_hash_value(row_data, key) for key in ("ahash", "dhash", "phash_dct"))
+    if has_all:
+        return row_data
+
+    hashes = _compute_photo_hashes_from_disk(rel_path)
+    if not hashes:
+        return row_data
+
+    next_data = dict(row_data)
+    for key in ("ahash", "dhash", "phash_dct", "phash"):
+        if hashes.get(key):
+            next_data[key] = hashes[key]
+
+    try:
+        conn.execute(
+            """
+            UPDATE photos
+            SET ahash=?, dhash=?, phash_dct=?, phash=COALESCE(NULLIF(phash, ''), ?)
+            WHERE id=?
+            """,
+            (
+                next_data.get("ahash"),
+                next_data.get("dhash"),
+                next_data.get("phash_dct"),
+                next_data.get("phash"),
+                int(next_data.get("id") or 0),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    return next_data
 
 
 @app.route("/api/duplicates")
@@ -17239,55 +17420,97 @@ def api_similar(photo_id: int):
 @app.route("/api/photos/<int:photo_id>/similar-phash")
 def api_similar_phash(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "120"))))
-    try:
-        dist_thr = int(request.args.get("distance", "9"))
-    except Exception:
-        dist_thr = 9
-    dist_thr = max(0, min(20, dist_thr))
+    phash_thr = _clamp_hash_distance_arg("phash_distance", _clamp_hash_distance_arg("distance", 9))
+    dhash_thr = _clamp_hash_distance_arg("dhash_distance", 12)
+    ahash_thr = _clamp_hash_distance_arg("ahash_distance", 12)
+    thresholds = {"phash": phash_thr, "dhash": dhash_thr, "ahash": ahash_thr}
 
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id, rel_path, phash FROM photos WHERE id=?", (photo_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, rel_path, phash, phash_dct, dhash, ahash FROM photos WHERE id=?",
+            (photo_id,),
+        ).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
-        seed_phash = str(row["phash"] or "").strip().lower()
-        if not seed_phash:
+        seed = _ensure_photo_hashes(conn, dict(row))
+        seed_hashes = {
+            "phash": _photo_hash_value(seed, "phash_dct"),
+            "dhash": _photo_hash_value(seed, "dhash"),
+            "ahash": _photo_hash_value(seed, "ahash"),
+        }
+        if not all(seed_hashes.values()):
             return jsonify({
                 "ok": True,
                 "items": [],
                 "count": 0,
-                "distance": dist_thr,
-                "source": "phash_near",
+                "distance": phash_thr,
+                "distances": thresholds,
+                "source": "multi_hash_near",
             })
 
         candidates = conn.execute(
-            "SELECT id, rel_path, phash FROM photos WHERE id<>? AND phash IS NOT NULL AND phash != ''",
+            """
+            SELECT id, rel_path, phash, phash_dct, dhash, ahash
+            FROM photos
+            WHERE id<>?
+              AND (
+                phash IS NOT NULL OR phash_dct IS NOT NULL OR dhash IS NOT NULL OR ahash IS NOT NULL
+              )
+            """,
             (photo_id,),
         ).fetchall()
 
-        phash_scored: list[tuple[int, int]] = []
+        scored: list[tuple[int, int, int, int, int]] = []
+        hash_distances_by_id: dict[int, Dict[str, int]] = {}
         for r in candidates:
-            rel = str(r["rel_path"] or "")
+            candidate = dict(r)
+            rel = str(candidate.get("rel_path") or "")
             if not _is_rel_path_allowed_for_current_user(rel, conn):
                 continue
-            pid = int(r["id"])
-            p = str(r["phash"] or "").strip().lower()
-            if not p:
+
+            candidate_ahash = _photo_hash_value(candidate, "ahash")
+            if not candidate_ahash:
                 continue
-            d = _hamdist_hex(seed_phash, p)
-            if d <= dist_thr:
-                phash_scored.append((d, pid))
+            ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_ahash)
+            if ahash_dist > ahash_thr:
+                continue
 
-        phash_scored.sort(key=lambda x: (x[0], -x[1]))
+            if not (_photo_hash_value(candidate, "dhash") and _photo_hash_value(candidate, "phash_dct")):
+                candidate = _ensure_photo_hashes(conn, candidate)
 
-        phash_by_id: dict[int, int] = {}
+            candidate_hashes = {
+                "phash": _photo_hash_value(candidate, "phash_dct"),
+                "dhash": _photo_hash_value(candidate, "dhash"),
+                "ahash": _photo_hash_value(candidate, "ahash"),
+            }
+            if not all(candidate_hashes.values()):
+                continue
+
+            phash_dist = _hamdist_hex(seed_hashes["phash"], candidate_hashes["phash"])
+            dhash_dist = _hamdist_hex(seed_hashes["dhash"], candidate_hashes["dhash"])
+            ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_hashes["ahash"])
+            if phash_dist <= phash_thr and dhash_dist <= dhash_thr and ahash_dist <= ahash_thr:
+                pid = int(candidate.get("id") or 0)
+                combined = phash_dist + dhash_dist + ahash_dist
+                hash_distances_by_id[pid] = {
+                    "phash": int(phash_dist),
+                    "dhash": int(dhash_dist),
+                    "ahash": int(ahash_dist),
+                    "combined": int(combined),
+                }
+                scored.append((combined, phash_dist, dhash_dist, ahash_dist, pid))
+
+        scored.sort(key=lambda x: (x[0], x[1], x[2], x[3], -x[4]))
+
         ordered_ids: list[int] = []
-        for d, pid in phash_scored:
-            if pid in phash_by_id:
+        seen_ids: set[int] = set()
+        for _combined, _pd, _dd, _ad, pid in scored:
+            if pid in seen_ids:
                 continue
-            phash_by_id[pid] = int(d)
+            seen_ids.add(pid)
             ordered_ids.append(pid)
             if len(ordered_ids) >= limit:
                 break
@@ -17297,8 +17520,9 @@ def api_similar_phash(photo_id: int):
                 "ok": True,
                 "items": [],
                 "count": 0,
-                "distance": dist_thr,
-                "source": "phash_near",
+                "distance": phash_thr,
+                "distances": thresholds,
+                "source": "multi_hash_near",
             })
 
         top_ids = ordered_ids
@@ -17312,16 +17536,19 @@ def api_similar_phash(photo_id: int):
             if not r:
                 continue
             pub = row_to_public(r)
-            if pid in phash_by_id:
-                pub["distance"] = int(phash_by_id[pid])
+            distances = hash_distances_by_id.get(pid)
+            if distances:
+                pub["distance"] = int(distances.get("combined") or 0)
+                pub["hash_distances"] = distances
             items.append(pub)
 
     return jsonify({
         "ok": True,
         "items": items,
         "count": len(items),
-        "distance": dist_thr,
-        "source": "phash_near",
+        "distance": phash_thr,
+        "distances": thresholds,
+        "source": "multi_hash_near",
     })
 
 
