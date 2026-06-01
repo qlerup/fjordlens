@@ -1491,7 +1491,7 @@ const I18N = {
     similar_modal_title: 'Lignende billeder (hash nær)',
     similar_modal_loading: 'Finder lignende billeder...',
     similar_modal_empty: 'Ingen lignende billeder fundet med nuværende hash-afstande.',
-    similar_modal_count: 'Fundet {count} lignende billeder (pHash ≤ {phash}, dHash ≤ {dhash}, aHash ≤ {ahash}).',
+    similar_modal_count: 'Fundet {count} lignende billeder (grænser: pHash {phash}, dHash {dhash}, aHash {ahash}).',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -2237,7 +2237,7 @@ const I18N = {
     similar_modal_title: 'Similar photos (hash near)',
     similar_modal_loading: 'Finding similar photos...',
     similar_modal_empty: 'No similar photos found with the current hash distances.',
-    similar_modal_count: 'Found {count} similar photos (pHash ≤ {phash}, dHash ≤ {dhash}, aHash ≤ {ahash}).',
+    similar_modal_count: 'Found {count} similar photos (limits: pHash {phash}, dHash {dhash}, aHash {ahash}).',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -14790,7 +14790,7 @@ function renderSimilarModalGrid(items, opts = {}) {
     if (!card || !(card instanceof HTMLElement)) return;
     const hd = it && it.hash_distances && typeof it.hash_distances === 'object' ? it.hash_distances : null;
     if (hd) {
-      const hashTitle = `pHash ${hd.phash ?? '-'} · dHash ${hd.dhash ?? '-'} · aHash ${hd.ahash ?? '-'}`;
+      const hashTitle = `pHash ${hd.phash ?? '-'} · dHash ${hd.dhash ?? '-'} · aHash ${hd.ahash ?? '-'} · match ${hd.matched_hashes ?? '-'}/3`;
       card.setAttribute('title', card.getAttribute('title') ? `${card.getAttribute('title')} · ${hashTitle}` : hashTitle);
     }
     card.addEventListener('click', (ev) => {

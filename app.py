@@ -13094,6 +13094,32 @@ def _ensure_photo_hashes(conn: sqlite3.Connection, row_data: Dict[str, Any]) -> 
     return next_data
 
 
+def _similar_hash_match(
+    distances: Dict[str, int],
+    thresholds: Dict[str, int],
+) -> tuple[bool, int, int]:
+    pass_count = 0
+    for key in ("phash", "dhash", "ahash"):
+        if int(distances.get(key) or 64) <= int(thresholds.get(key) or 0):
+            pass_count += 1
+
+    combined = (
+        int(distances.get("phash") or 64)
+        + int(distances.get("dhash") or 64)
+        + int(distances.get("ahash") or 64)
+    )
+    combined_threshold = (
+        int(thresholds.get("phash") or 0)
+        + int(thresholds.get("dhash") or 0)
+        + int(thresholds.get("ahash") or 0)
+    )
+    if pass_count >= 2:
+        return True, pass_count, combined
+    if pass_count >= 1 and combined <= combined_threshold:
+        return True, pass_count, combined
+    return False, pass_count, combined
+
+
 @app.route("/api/duplicates")
 def api_duplicates():
     fb = _forbid_user_role_for_maintenance()
@@ -17457,51 +17483,72 @@ def api_similar_phash(photo_id: int):
             (photo_id,),
         ).fetchall()
 
-        scored: list[tuple[int, int, int, int, int]] = []
         hash_distances_by_id: dict[int, Dict[str, int]] = {}
-        for r in candidates:
-            candidate = dict(r)
-            rel = str(candidate.get("rel_path") or "")
-            if not _is_rel_path_allowed_for_current_user(rel, conn):
-                continue
+        broad_ahash_prefilter = max(ahash_thr + 12, ahash_thr * 2, 24)
 
-            candidate_ahash = _photo_hash_value(candidate, "ahash")
-            if not candidate_ahash:
-                continue
-            ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_ahash)
-            if ahash_dist > ahash_thr:
-                continue
+        def scan_candidates(full_scan: bool = False) -> list[tuple[int, int, int, int, int, int]]:
+            scored_rows: list[tuple[int, int, int, int, int, int]] = []
+            for r in candidates:
+                candidate = dict(r)
+                rel = str(candidate.get("rel_path") or "")
+                if not _is_rel_path_allowed_for_current_user(rel, conn):
+                    continue
 
-            if not (_photo_hash_value(candidate, "dhash") and _photo_hash_value(candidate, "phash_dct")):
-                candidate = _ensure_photo_hashes(conn, candidate)
+                candidate_ahash = _photo_hash_value(candidate, "ahash")
+                has_all_candidate_hashes = all(
+                    _photo_hash_value(candidate, key) for key in ("ahash", "dhash", "phash_dct")
+                )
+                if not has_all_candidate_hashes:
+                    if candidate_ahash and not full_scan:
+                        ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_ahash)
+                        if ahash_dist > broad_ahash_prefilter:
+                            continue
+                    candidate = _ensure_photo_hashes(conn, candidate)
 
-            candidate_hashes = {
-                "phash": _photo_hash_value(candidate, "phash_dct"),
-                "dhash": _photo_hash_value(candidate, "dhash"),
-                "ahash": _photo_hash_value(candidate, "ahash"),
-            }
-            if not all(candidate_hashes.values()):
-                continue
-
-            phash_dist = _hamdist_hex(seed_hashes["phash"], candidate_hashes["phash"])
-            dhash_dist = _hamdist_hex(seed_hashes["dhash"], candidate_hashes["dhash"])
-            ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_hashes["ahash"])
-            if phash_dist <= phash_thr and dhash_dist <= dhash_thr and ahash_dist <= ahash_thr:
-                pid = int(candidate.get("id") or 0)
-                combined = phash_dist + dhash_dist + ahash_dist
-                hash_distances_by_id[pid] = {
-                    "phash": int(phash_dist),
-                    "dhash": int(dhash_dist),
-                    "ahash": int(ahash_dist),
-                    "combined": int(combined),
+                candidate_hashes = {
+                    "phash": _photo_hash_value(candidate, "phash_dct"),
+                    "dhash": _photo_hash_value(candidate, "dhash"),
+                    "ahash": _photo_hash_value(candidate, "ahash"),
                 }
-                scored.append((combined, phash_dist, dhash_dist, ahash_dist, pid))
+                if not all(candidate_hashes.values()):
+                    continue
 
-        scored.sort(key=lambda x: (x[0], x[1], x[2], x[3], -x[4]))
+                distances = {
+                    "phash": _hamdist_hex(seed_hashes["phash"], candidate_hashes["phash"]),
+                    "dhash": _hamdist_hex(seed_hashes["dhash"], candidate_hashes["dhash"]),
+                    "ahash": _hamdist_hex(seed_hashes["ahash"], candidate_hashes["ahash"]),
+                }
+                matched, pass_count, combined = _similar_hash_match(distances, thresholds)
+                if not matched:
+                    continue
+
+                pid = int(candidate.get("id") or 0)
+                hash_distances_by_id[pid] = {
+                    "phash": int(distances["phash"]),
+                    "dhash": int(distances["dhash"]),
+                    "ahash": int(distances["ahash"]),
+                    "combined": int(combined),
+                    "matched_hashes": int(pass_count),
+                }
+                scored_rows.append((
+                    0 if pass_count >= 2 else 1,
+                    combined,
+                    int(distances["phash"]),
+                    int(distances["dhash"]),
+                    int(distances["ahash"]),
+                    pid,
+                ))
+            return scored_rows
+
+        scored = scan_candidates(full_scan=False)
+        if not scored:
+            scored = scan_candidates(full_scan=True)
+
+        scored.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4], -x[5]))
 
         ordered_ids: list[int] = []
         seen_ids: set[int] = set()
-        for _combined, _pd, _dd, _ad, pid in scored:
+        for _rank, _combined, _pd, _dd, _ad, pid in scored:
             if pid in seen_ids:
                 continue
             seen_ids.add(pid)
