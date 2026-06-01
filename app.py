@@ -12763,6 +12763,16 @@ def _cosine(a: list[float], b: list[float]) -> float:
         return -1.0
 
 
+def _json_embedding(value: Any) -> Optional[list[float]]:
+    try:
+        emb = json.loads(value) if isinstance(value, str) else value
+        if isinstance(emb, list) and emb:
+            return [float(x or 0.0) for x in emb]
+    except Exception:
+        pass
+    return None
+
+
 QUERY_STOPWORDS_DA = {
     "der", "som", "og", "i", "på", "ved", "til", "af", "for", "med",
     "en", "et", "den", "det", "de", "er", "at", "om", "fra", "har",
@@ -17532,6 +17542,9 @@ def api_similar(photo_id: int):
 @app.route("/api/photos/<int:photo_id>/similar-phash")
 def api_similar_phash(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "120"))))
+    method = str(request.args.get("mode") or request.args.get("method") or "hash").strip().lower()
+    if method not in {"hash", "ai", "hybrid"}:
+        method = "hash"
     phash_thr = _clamp_hash_distance_arg("phash_distance", _clamp_hash_distance_arg("distance", 9))
     dhash_thr = _clamp_hash_distance_arg("dhash_distance", 12)
     ahash_thr = _clamp_hash_distance_arg("ahash_distance", 12)
@@ -17549,107 +17562,172 @@ def api_similar_phash(photo_id: int):
 
         source_row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
         source_item = row_to_public(source_row) if source_row else None
-        seed = _ensure_photo_hashes(conn, dict(row))
-        seed_hashes = {
-            "phash": _photo_hash_value(seed, "phash_dct"),
-            "dhash": _photo_hash_value(seed, "dhash"),
-            "ahash": _photo_hash_value(seed, "ahash"),
-        }
-        if not all(seed_hashes.values()):
-            return jsonify({
-                "ok": True,
-                "items": [],
-                "count": 0,
-                "distance": phash_thr,
-                "distances": thresholds,
-                "source_item": source_item,
-                "source": "multi_hash_near",
-            })
-
-        candidates = conn.execute(
-            """
-            SELECT id, rel_path, phash, phash_dct, dhash, ahash
-            FROM photos
-            WHERE id<>?
-              AND (
-                phash IS NOT NULL OR phash_dct IS NOT NULL OR dhash IS NOT NULL OR ahash IS NOT NULL
-              )
-            """,
-            (photo_id,),
-        ).fetchall()
-
         hash_distances_by_id: dict[int, Dict[str, int]] = {}
-        broad_ahash_prefilter = max(ahash_thr + 12, ahash_thr * 2, 24)
+        hash_quality_by_id: dict[int, float] = {}
+        hash_rank_by_id: dict[int, int] = {}
+        ai_similarity_by_id: dict[int, float] = {}
+        ai_rank_by_id: dict[int, int] = {}
 
-        def scan_candidates(full_scan: bool = False) -> list[tuple[int, int, int, int, int, int]]:
-            scored_rows: list[tuple[int, int, int, int, int, int]] = []
-            for r in candidates:
-                candidate = dict(r)
-                rel = str(candidate.get("rel_path") or "")
+        def hash_results() -> list[int]:
+            seed = _ensure_photo_hashes(conn, dict(row))
+            seed_hashes = {
+                "phash": _photo_hash_value(seed, "phash_dct"),
+                "dhash": _photo_hash_value(seed, "dhash"),
+                "ahash": _photo_hash_value(seed, "ahash"),
+            }
+            if not all(seed_hashes.values()):
+                return []
+
+            candidates = conn.execute(
+                """
+                SELECT id, rel_path, phash, phash_dct, dhash, ahash
+                FROM photos
+                WHERE id<>?
+                  AND (
+                    phash IS NOT NULL OR phash_dct IS NOT NULL OR dhash IS NOT NULL OR ahash IS NOT NULL
+                  )
+                """,
+                (photo_id,),
+            ).fetchall()
+            broad_ahash_prefilter = max(ahash_thr + 12, ahash_thr * 2, 24)
+            combined_threshold = max(1, phash_thr + dhash_thr + ahash_thr)
+
+            def scan_candidates(full_scan: bool = False) -> list[tuple[int, int, int, int, int, int]]:
+                scored_rows: list[tuple[int, int, int, int, int, int]] = []
+                for r in candidates:
+                    candidate = dict(r)
+                    rel = str(candidate.get("rel_path") or "")
+                    if not _is_rel_path_allowed_for_current_user(rel, conn):
+                        continue
+
+                    candidate_ahash = _photo_hash_value(candidate, "ahash")
+                    has_all_candidate_hashes = all(
+                        _photo_hash_value(candidate, key) for key in ("ahash", "dhash", "phash_dct")
+                    )
+                    if not has_all_candidate_hashes:
+                        if candidate_ahash and not full_scan:
+                            ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_ahash)
+                            if ahash_dist > broad_ahash_prefilter:
+                                continue
+                        candidate = _ensure_photo_hashes(conn, candidate)
+
+                    candidate_hashes = {
+                        "phash": _photo_hash_value(candidate, "phash_dct"),
+                        "dhash": _photo_hash_value(candidate, "dhash"),
+                        "ahash": _photo_hash_value(candidate, "ahash"),
+                    }
+                    if not all(candidate_hashes.values()):
+                        continue
+
+                    distances = {
+                        "phash": _hamdist_hex(seed_hashes["phash"], candidate_hashes["phash"]),
+                        "dhash": _hamdist_hex(seed_hashes["dhash"], candidate_hashes["dhash"]),
+                        "ahash": _hamdist_hex(seed_hashes["ahash"], candidate_hashes["ahash"]),
+                    }
+                    matched, pass_count, combined = _similar_hash_match(distances, thresholds)
+                    if not matched:
+                        continue
+
+                    pid = int(candidate.get("id") or 0)
+                    hash_distances_by_id[pid] = {
+                        "phash": int(distances["phash"]),
+                        "dhash": int(distances["dhash"]),
+                        "ahash": int(distances["ahash"]),
+                        "combined": int(combined),
+                        "matched_hashes": int(pass_count),
+                    }
+                    hash_quality_by_id[pid] = max(0.0, min(1.0, 1.0 - (float(combined) / float(combined_threshold + 12))))
+                    scored_rows.append((
+                        0 if pass_count >= 2 else 1,
+                        combined,
+                        int(distances["phash"]),
+                        int(distances["dhash"]),
+                        int(distances["ahash"]),
+                        pid,
+                    ))
+                return scored_rows
+
+            scored = scan_candidates(full_scan=False)
+            if not scored:
+                scored = scan_candidates(full_scan=True)
+            scored.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4], -x[5]))
+            ordered: list[int] = []
+            seen: set[int] = set()
+            for rank, (_match_rank, _combined, _pd, _dd, _ad, pid) in enumerate(scored):
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                hash_rank_by_id[pid] = rank
+                ordered.append(pid)
+            return ordered
+
+        def ai_results() -> list[int]:
+            source_emb = _json_embedding(source_row["embedding_json"] if source_row else None)
+            if not source_emb and source_row and _is_ai_embedding_supported_rel(str(source_row["rel_path"] or "")):
+                src = _disk_path_from_rel_path(str(source_row["rel_path"] or ""))
+                source_emb = _ai_embed_image_path(src) if src.exists() else None
+                if source_emb:
+                    conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(source_emb), photo_id))
+                    conn.commit()
+            if not source_emb:
+                return []
+
+            rows = conn.execute(
+                """
+                SELECT id, rel_path, embedding_json
+                FROM photos
+                WHERE id<>?
+                  AND embedding_json IS NOT NULL
+                  AND embedding_json != ''
+                """,
+                (photo_id,),
+            ).fetchall()
+            scored: list[tuple[float, int]] = []
+            for r in rows:
+                rel = str(r["rel_path"] or "")
                 if not _is_rel_path_allowed_for_current_user(rel, conn):
                     continue
+                emb = _json_embedding(r["embedding_json"])
+                if not emb:
+                    continue
+                similarity = _cosine(source_emb, emb)
+                if similarity <= -0.5:
+                    continue
+                pid = int(r["id"] or 0)
+                ai_similarity_by_id[pid] = float(similarity)
+                scored.append((float(similarity), pid))
+            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            ordered = []
+            for rank, (_score, pid) in enumerate(scored):
+                ai_rank_by_id[pid] = rank
+                ordered.append(pid)
+            return ordered
 
-                candidate_ahash = _photo_hash_value(candidate, "ahash")
-                has_all_candidate_hashes = all(
-                    _photo_hash_value(candidate, key) for key in ("ahash", "dhash", "phash_dct")
+        hash_ids = hash_results() if method in {"hash", "hybrid"} else []
+        ai_ids = ai_results() if method in {"ai", "hybrid"} else []
+
+        if method == "hash":
+            ordered_ids = hash_ids[:limit]
+        elif method == "ai":
+            ordered_ids = ai_ids[:limit]
+        else:
+            union_ids = set(hash_ids[: max(limit * 2, 120)])
+            union_ids.update(ai_ids[: max(limit * 2, 120)])
+
+            def hybrid_score(pid: int) -> tuple[float, int, int, int]:
+                ai_sim = ai_similarity_by_id.get(pid)
+                ai_norm = max(0.0, min(1.0, ((float(ai_sim) + 1.0) / 2.0))) if ai_sim is not None else 0.0
+                hash_quality = float(hash_quality_by_id.get(pid, 0.0))
+                both_bonus = 0.08 if (pid in ai_similarity_by_id and pid in hash_distances_by_id) else 0.0
+                combined_score = (ai_norm * 0.68) + (hash_quality * 0.32) + both_bonus
+                return (
+                    combined_score,
+                    -int(ai_rank_by_id.get(pid, 999999)),
+                    -int(hash_rank_by_id.get(pid, 999999)),
+                    int(pid),
                 )
-                if not has_all_candidate_hashes:
-                    if candidate_ahash and not full_scan:
-                        ahash_dist = _hamdist_hex(seed_hashes["ahash"], candidate_ahash)
-                        if ahash_dist > broad_ahash_prefilter:
-                            continue
-                    candidate = _ensure_photo_hashes(conn, candidate)
 
-                candidate_hashes = {
-                    "phash": _photo_hash_value(candidate, "phash_dct"),
-                    "dhash": _photo_hash_value(candidate, "dhash"),
-                    "ahash": _photo_hash_value(candidate, "ahash"),
-                }
-                if not all(candidate_hashes.values()):
-                    continue
-
-                distances = {
-                    "phash": _hamdist_hex(seed_hashes["phash"], candidate_hashes["phash"]),
-                    "dhash": _hamdist_hex(seed_hashes["dhash"], candidate_hashes["dhash"]),
-                    "ahash": _hamdist_hex(seed_hashes["ahash"], candidate_hashes["ahash"]),
-                }
-                matched, pass_count, combined = _similar_hash_match(distances, thresholds)
-                if not matched:
-                    continue
-
-                pid = int(candidate.get("id") or 0)
-                hash_distances_by_id[pid] = {
-                    "phash": int(distances["phash"]),
-                    "dhash": int(distances["dhash"]),
-                    "ahash": int(distances["ahash"]),
-                    "combined": int(combined),
-                    "matched_hashes": int(pass_count),
-                }
-                scored_rows.append((
-                    0 if pass_count >= 2 else 1,
-                    combined,
-                    int(distances["phash"]),
-                    int(distances["dhash"]),
-                    int(distances["ahash"]),
-                    pid,
-                ))
-            return scored_rows
-
-        scored = scan_candidates(full_scan=False)
-        if not scored:
-            scored = scan_candidates(full_scan=True)
-
-        scored.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4], -x[5]))
-
-        ordered_ids: list[int] = []
-        seen_ids: set[int] = set()
-        for _rank, _combined, _pd, _dd, _ad, pid in scored:
-            if pid in seen_ids:
-                continue
-            seen_ids.add(pid)
-            ordered_ids.append(pid)
-            if len(ordered_ids) >= limit:
-                break
+            ordered_ids = sorted(union_ids, key=hybrid_score, reverse=True)[:limit]
 
         if not ordered_ids:
             return jsonify({
@@ -17659,7 +17737,8 @@ def api_similar_phash(photo_id: int):
                 "distance": phash_thr,
                 "distances": thresholds,
                 "source_item": source_item,
-                "source": "multi_hash_near",
+                "method": method,
+                "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
             })
 
         top_ids = ordered_ids
@@ -17677,6 +17756,8 @@ def api_similar_phash(photo_id: int):
             if distances:
                 pub["distance"] = int(distances.get("combined") or 0)
                 pub["hash_distances"] = distances
+            if pid in ai_similarity_by_id:
+                pub["ai_similarity"] = round(float(ai_similarity_by_id[pid]), 6)
             items.append(pub)
 
     return jsonify({
@@ -17686,7 +17767,8 @@ def api_similar_phash(photo_id: int):
         "distance": phash_thr,
         "distances": thresholds,
         "source_item": source_item,
-        "source": "multi_hash_near",
+        "method": method,
+        "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
     })
 
 

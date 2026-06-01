@@ -258,6 +258,8 @@
   similarModalClose: document.getElementById("similarModalClose"),
   similarModalTitle: document.getElementById("similarModalTitle"),
   similarDistanceForm: document.getElementById("similarDistanceForm"),
+  similarMethodLabel: document.getElementById("similarMethodLabel"),
+  similarMethodSelect: document.getElementById("similarMethodSelect"),
   similarPhashDistanceLabel: document.getElementById("similarPhashDistanceLabel"),
   similarPhashDistanceInput: document.getElementById("similarPhashDistanceInput"),
   similarDhashDistanceLabel: document.getElementById("similarDhashDistanceLabel"),
@@ -1496,9 +1498,15 @@ const I18N = {
     similar_view_subtitle: 'Fundet via billed-embedding',
     similar_modal_title: 'Lignende billeder (hash nær)',
     similar_modal_loading: 'Finder lignende billeder...',
-    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende hash-afstande.',
+    similar_modal_empty: 'Ingen lignende billeder fundet med nuværende metode og indstillinger.',
     similar_modal_count: 'Fundet {count} lignende billeder (grænser: pHash {phash}, dHash {dhash}, aHash {ahash}).',
+    similar_modal_count_ai: 'Fundet {count} lignende billeder med AI-embedding.',
+    similar_modal_count_hybrid: 'Fundet {count} lignende billeder med Hash + AI (grænser: pHash {phash}, dHash {dhash}, aHash {ahash}).',
     similar_source_label: 'Matcher fra',
+    similar_method_label: 'Metode',
+    similar_method_hash: 'Hash',
+    similar_method_ai: 'AI',
+    similar_method_hybrid: 'Hash + AI',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -2246,9 +2254,15 @@ const I18N = {
     similar_view_subtitle: 'Found via image embedding',
     similar_modal_title: 'Similar photos (hash near)',
     similar_modal_loading: 'Finding similar photos...',
-    similar_modal_empty: 'No similar photos found with the current hash distances.',
+    similar_modal_empty: 'No similar photos found with the current method and settings.',
     similar_modal_count: 'Found {count} similar photos (limits: pHash {phash}, dHash {dhash}, aHash {ahash}).',
+    similar_modal_count_ai: 'Found {count} similar photos with AI embeddings.',
+    similar_modal_count_hybrid: 'Found {count} similar photos with Hash + AI (limits: pHash {phash}, dHash {dhash}, aHash {ahash}).',
     similar_source_label: 'Matching from',
+    similar_method_label: 'Method',
+    similar_method_hash: 'Hash',
+    similar_method_ai: 'AI',
+    similar_method_hybrid: 'Hash + AI',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -2423,6 +2437,7 @@ let state = {
   similarModalItems: [],
   similarSourceId: 0,
   similarSourceItem: null,
+  similarMethod: 'hybrid',
   similarHashDistances: { phash: 9, dhash: 12, ahash: 12 },
   folder: null,
   // logs
@@ -11531,6 +11546,18 @@ function applyUiLanguage() {
   if (els.similarAhashDistanceLabel) els.similarAhashDistanceLabel.textContent = tr('similar_ahash_label');
   if (els.similarDistanceApply) els.similarDistanceApply.textContent = tr('similar_distance_find');
   if (els.similarSourceLabel) els.similarSourceLabel.textContent = tr('similar_source_label');
+  if (els.similarMethodLabel) els.similarMethodLabel.textContent = tr('similar_method_label');
+  if (els.similarMethodSelect) {
+    const methodLabels = {
+      hash: tr('similar_method_hash'),
+      ai: tr('similar_method_ai'),
+      hybrid: tr('similar_method_hybrid'),
+    };
+    Object.entries(methodLabels).forEach(([value, text]) => {
+      const opt = els.similarMethodSelect.querySelector(`option[value="${value}"]`);
+      if (opt) opt.textContent = text;
+    });
+  }
 
   const tabText = {
     maint: tr('tab_maint'),
@@ -14710,6 +14737,41 @@ if (viFavoriteBtn) {
 const SIMILAR_HASH_DISTANCE_DEFAULTS = { phash: 9, dhash: 12, ahash: 12 };
 const SIMILAR_HASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarHashDistances.v2';
 const SIMILAR_PHASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarPhashDistance.v1';
+const SIMILAR_METHOD_STORAGE_KEY = 'fjordlens.similarMethod.v1';
+const SIMILAR_METHODS = new Set(['hash', 'ai', 'hybrid']);
+
+function normalizeSimilarMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  return SIMILAR_METHODS.has(method) ? method : 'hybrid';
+}
+
+function readSimilarMethod() {
+  try {
+    const stored = window.localStorage.getItem(SIMILAR_METHOD_STORAGE_KEY);
+    if (stored) return normalizeSimilarMethod(stored);
+  } catch {}
+  return normalizeSimilarMethod(state.similarMethod || 'hybrid');
+}
+
+function storeSimilarMethod(value) {
+  const method = normalizeSimilarMethod(value);
+  state.similarMethod = method;
+  try {
+    window.localStorage.setItem(SIMILAR_METHOD_STORAGE_KEY, method);
+  } catch {}
+  return method;
+}
+
+function setSimilarMethodInput(value) {
+  const method = normalizeSimilarMethod(value);
+  if (els.similarMethodSelect) els.similarMethodSelect.value = method;
+  if (els.similarDistanceForm) els.similarDistanceForm.dataset.method = method;
+  return method;
+}
+
+function currentSimilarMethod() {
+  return normalizeSimilarMethod(els.similarMethodSelect ? els.similarMethodSelect.value : state.similarMethod);
+}
 
 function normalizeSimilarHashDistance(value, fallback = 12) {
   const n = Math.round(Number(value));
@@ -14863,6 +14925,10 @@ function renderSimilarModalGrid(items, opts = {}) {
       const hashTitle = `pHash ${hd.phash ?? '-'} · dHash ${hd.dhash ?? '-'} · aHash ${hd.ahash ?? '-'} · match ${hd.matched_hashes ?? '-'}/3`;
       card.setAttribute('title', card.getAttribute('title') ? `${card.getAttribute('title')} · ${hashTitle}` : hashTitle);
     }
+    if (Number.isFinite(Number(it && it.ai_similarity))) {
+      const aiTitle = `AI ${(Number(it.ai_similarity) * 100).toFixed(1)}%`;
+      card.setAttribute('title', card.getAttribute('title') ? `${card.getAttribute('title')} · ${aiTitle}` : aiTitle);
+    }
     card.addEventListener('click', (ev) => {
       if (ev && ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
       if (_consumeMapperDragSelectClickSuppression()) {
@@ -14882,6 +14948,8 @@ function renderSimilarModalGrid(items, opts = {}) {
 
 async function loadSimilarForSource(sourceId, distanceValue) {
   const distances = storeSimilarHashSettings(distanceValue);
+  const method = storeSimilarMethod(currentSimilarMethod());
+  setSimilarMethodInput(method);
   setSimilarDistanceInputs(distances);
   if (!sourceId) return;
   if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
@@ -14889,13 +14957,14 @@ async function loadSimilarForSource(sourceId, distanceValue) {
   renderSimilarSource(state.similarSourceItem);
   _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
   if (els.similarDistanceApply) els.similarDistanceApply.disabled = true;
-  [els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
+  [els.similarMethodSelect, els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
     if (input) input.disabled = true;
   });
   renderSimilarModalGrid([], { showEmpty: false });
   try {
     const qs = new URLSearchParams({
       limit: '120',
+      mode: method,
       distance: String(distances.phash),
       phash_distance: String(distances.phash),
       dhash_distance: String(distances.dhash),
@@ -14914,7 +14983,11 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     }
     state.similarModalItems = items;
     const returnedDistances = data && data.distances && typeof data.distances === 'object' ? data.distances : distances;
-    const msg = tr('similar_modal_count')
+    const returnedMethod = normalizeSimilarMethod((data && data.method) || method);
+    const msgKey = returnedMethod === 'ai'
+      ? 'similar_modal_count_ai'
+      : (returnedMethod === 'hybrid' ? 'similar_modal_count_hybrid' : 'similar_modal_count');
+    const msg = tr(msgKey)
       .replace('{count}', String(items.length))
       .replace('{phash}', String(returnedDistances.phash ?? distances.phash))
       .replace('{dhash}', String(returnedDistances.dhash ?? distances.dhash))
@@ -14928,7 +15001,7 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
   } finally {
     if (els.similarDistanceApply) els.similarDistanceApply.disabled = false;
-    [els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
+    [els.similarMethodSelect, els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
       if (input) input.disabled = false;
     });
   }
@@ -14937,6 +15010,7 @@ async function loadSimilarForSource(sourceId, distanceValue) {
 async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
+  setSimilarMethodInput(readSimilarMethod());
   const distances = setSimilarDistanceInputs(readSimilarHashSettings());
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
@@ -14961,6 +15035,13 @@ if (els.similarDistanceForm) {
       _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
     });
   });
+}
+if (els.similarMethodSelect) {
+  els.similarMethodSelect.addEventListener('change', () => {
+    const method = storeSimilarMethod(els.similarMethodSelect.value);
+    setSimilarMethodInput(method);
+  });
+  setSimilarMethodInput(readSimilarMethod());
 }
 if (els.similarModalClose) {
   els.similarModalClose.addEventListener('click', () => closeSimilarModal());

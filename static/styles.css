@@ -3059,6 +3059,18 @@ body.detail-open .detail-panel {
 .similar-distance-form .input-number {
   width: 82px;
 }
+.similar-distance-form .input-select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  min-height: 32px;
+  min-width: 116px;
+  padding: 6px 8px;
+}
+.similar-distance-form[data-method="ai"] .similar-hash-control {
+  display: none;
+}
 .similar-source-panel {
   display: flex;
   align-items: center;

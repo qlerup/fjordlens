@@ -792,13 +792,20 @@
       </div>
       <div class="modal-body">
         <form id="similarDistanceForm" class="similar-distance-form">
-          <label for="similarPhashDistanceInput"><span id="similarPhashDistanceLabel">pHash</span>
+          <label for="similarMethodSelect"><span id="similarMethodLabel">Metode</span>
+            <select id="similarMethodSelect" class="input-select small">
+              <option value="hybrid">Hash + AI</option>
+              <option value="hash">Hash</option>
+              <option value="ai">AI</option>
+            </select>
+          </label>
+          <label class="similar-hash-control" for="similarPhashDistanceInput"><span id="similarPhashDistanceLabel">pHash</span>
             <input id="similarPhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="9" inputmode="numeric">
           </label>
-          <label for="similarDhashDistanceInput"><span id="similarDhashDistanceLabel">dHash</span>
+          <label class="similar-hash-control" for="similarDhashDistanceInput"><span id="similarDhashDistanceLabel">dHash</span>
             <input id="similarDhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="12" inputmode="numeric">
           </label>
-          <label for="similarAhashDistanceInput"><span id="similarAhashDistanceLabel">aHash</span>
+          <label class="similar-hash-control" for="similarAhashDistanceInput"><span id="similarAhashDistanceLabel">aHash</span>
             <input id="similarAhashDistanceInput" class="input-number small" type="number" min="0" max="64" step="1" value="12" inputmode="numeric">
           </label>
           <button id="similarDistanceApply" class="btn small primary" type="submit">Find</button>
