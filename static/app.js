@@ -6764,9 +6764,13 @@ const uploadUiState = {
   processStatus: null,
   collapsed: false,
   transferStartedAt: 0,
+  transferStartBytes: 0,
   transferLastSampleAt: 0,
   transferLastSampleBytes: 0,
   transferRateBps: 0,
+  transferSamples: [],
+  transferEtaSeconds: 0,
+  transferLastEtaAt: 0,
 };
 
 let uploadOverlayHideTimer = null;
@@ -7177,9 +7181,13 @@ function resetUploadUiState() {
   uploadUiState.workflowMode = 'gentle';
   uploadUiState.processStatus = null;
   uploadUiState.transferStartedAt = 0;
+  uploadUiState.transferStartBytes = 0;
   uploadUiState.transferLastSampleAt = 0;
   uploadUiState.transferLastSampleBytes = 0;
   uploadUiState.transferRateBps = 0;
+  uploadUiState.transferSamples = [];
+  uploadUiState.transferEtaSeconds = 0;
+  uploadUiState.transferLastEtaAt = 0;
   uploadMonitorItemsByKey.clear();
 }
 
@@ -7196,34 +7204,90 @@ function updateUploadTransferEstimate(uploadedBytes) {
   const uploaded = Math.max(0, Number(uploadedBytes || 0));
   if (!uploadUiState.transferStartedAt) {
     uploadUiState.transferStartedAt = now;
+    uploadUiState.transferStartBytes = uploaded;
     uploadUiState.transferLastSampleAt = now;
     uploadUiState.transferLastSampleBytes = uploaded;
     uploadUiState.transferRateBps = 0;
+    uploadUiState.transferSamples = [{ at: now, bytes: uploaded }];
+    uploadUiState.transferEtaSeconds = 0;
+    uploadUiState.transferLastEtaAt = 0;
     return;
   }
   const lastAt = Number(uploadUiState.transferLastSampleAt || 0);
   const lastBytes = Number(uploadUiState.transferLastSampleBytes || 0);
+  if (uploaded < lastBytes) {
+    uploadUiState.transferStartedAt = now;
+    uploadUiState.transferStartBytes = uploaded;
+    uploadUiState.transferLastSampleAt = now;
+    uploadUiState.transferLastSampleBytes = uploaded;
+    uploadUiState.transferRateBps = 0;
+    uploadUiState.transferSamples = [{ at: now, bytes: uploaded }];
+    uploadUiState.transferEtaSeconds = 0;
+    uploadUiState.transferLastEtaAt = 0;
+    return;
+  }
   const elapsedMs = Math.max(0, now - lastAt);
   const deltaBytes = uploaded - lastBytes;
-  if (elapsedMs < 650 || deltaBytes <= 0) return;
+  if (elapsedMs < 900 || deltaBytes <= 0) return;
   const instantRate = deltaBytes / (elapsedMs / 1000);
+  const samples = Array.isArray(uploadUiState.transferSamples) ? uploadUiState.transferSamples : [];
+  samples.push({ at: now, bytes: uploaded });
+  const sampleWindowMs = 18000;
+  while (samples.length > 2 && (now - Number(samples[0].at || 0)) > sampleWindowMs) {
+    samples.shift();
+  }
+  uploadUiState.transferSamples = samples;
+  const firstWindowSample = samples[0] || { at: now, bytes: uploaded };
+  const windowElapsedMs = Math.max(0, now - Number(firstWindowSample.at || now));
+  const windowBytes = Math.max(0, uploaded - Number(firstWindowSample.bytes || 0));
+  const windowRate = windowElapsedMs >= 2500 && windowBytes > 0
+    ? windowBytes / (windowElapsedMs / 1000)
+    : 0;
+  const sessionElapsedMs = Math.max(0, now - Number(uploadUiState.transferStartedAt || now));
+  const sessionBytes = Math.max(0, uploaded - Number(uploadUiState.transferStartBytes || 0));
+  const sessionRate = sessionElapsedMs >= 2500 && sessionBytes > 0
+    ? sessionBytes / (sessionElapsedMs / 1000)
+    : 0;
+  let measuredRate = instantRate;
+  if (windowRate > 0 && sessionRate > 0) {
+    measuredRate = (windowRate * 0.58) + (sessionRate * 0.42);
+  } else if (windowRate > 0) {
+    measuredRate = windowRate;
+  } else if (sessionRate > 0) {
+    measuredRate = sessionRate;
+  }
   const currentRate = Number(uploadUiState.transferRateBps || 0);
   uploadUiState.transferRateBps = currentRate > 0
-    ? ((currentRate * 0.72) + (instantRate * 0.28))
-    : instantRate;
+    ? ((currentRate * 0.84) + (measuredRate * 0.16))
+    : measuredRate;
   uploadUiState.transferLastSampleAt = now;
   uploadUiState.transferLastSampleBytes = uploaded;
 }
 
 function uploadEtaLabel(uploadedBytes) {
   if (!isUploadRunning() || uploadStopRequested) return '';
+  const now = Date.now();
   const total = Math.max(0, Number(uploadUiState.totalBytes || 0));
   const uploaded = Math.max(0, Number(uploadedBytes || 0));
   const remaining = Math.max(0, total - uploaded);
   if (!total || !remaining) return '';
   const rate = Math.max(0, Number(uploadUiState.transferRateBps || 0));
-  if (rate < 1024) return 'tid tilbage: beregner...';
-  return `tid tilbage: ${formatUploadEta(remaining / rate)}`;
+  const sampleCount = Array.isArray(uploadUiState.transferSamples) ? uploadUiState.transferSamples.length : 0;
+  const estimateAgeMs = Math.max(0, now - Number(uploadUiState.transferStartedAt || now));
+  if (rate < 1024 || sampleCount < 2 || estimateAgeMs < 2500) return 'tid tilbage: beregner...';
+  let etaSeconds = remaining / rate;
+  const previousEta = Math.max(0, Number(uploadUiState.transferEtaSeconds || 0));
+  const previousAt = Number(uploadUiState.transferLastEtaAt || 0);
+  if (previousEta > 0 && previousAt > 0) {
+    const elapsedSeconds = Math.max(0, (now - previousAt) / 1000);
+    const expectedEta = Math.max(0, previousEta - elapsedSeconds);
+    const etaDelta = etaSeconds - expectedEta;
+    const etaWeight = etaDelta > 0 ? 0.18 : 0.28;
+    etaSeconds = expectedEta + (etaDelta * etaWeight);
+  }
+  uploadUiState.transferEtaSeconds = etaSeconds;
+  uploadUiState.transferLastEtaAt = now;
+  return `tid tilbage: ${formatUploadEta(etaSeconds)}`;
 }
 
 function setUploadStopButtonState() {
