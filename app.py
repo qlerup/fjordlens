@@ -16621,7 +16621,15 @@ last_ai_desc_result: Optional[Dict[str, Any]] = None
 ai_desc_stop_event = threading.Event()
 
 
+def _is_ai_embedding_supported_rel(rel_path: str) -> bool:
+    ext = Path(str(rel_path or "")).suffix.lower()
+    return ext in IMAGE_EXTS
+
+
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
+    if not _is_ai_embedding_supported_rel(rel_path):
+        log_event("ai_embed_skip_unsupported", rel_path=rel_path)
+        return False
     disk_path = _disk_path_from_rel_path(rel_path)
     if not disk_path.exists():
         return False
@@ -16663,7 +16671,10 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
     ai_counts = {"embedded": 0, "failed": 0, "total": 0}
     log_event("ai_embed_start")
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT id, rel_path FROM photos WHERE (embedding_json IS NULL OR embedding_json = '')").fetchall()
+        rows = conn.execute(
+            "SELECT id, rel_path FROM photos WHERE (embedding_json IS NULL OR embedding_json = '')"
+        ).fetchall()
+    rows = [row for row in rows if _is_ai_embedding_supported_rel(row["rel_path"])]
     for row in rows:
         if stop_event and stop_event.is_set():
             break
@@ -16694,6 +16705,9 @@ def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, embedding_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
+            return
+        if not _is_ai_embedding_supported_rel(rel_path):
+            log_event("ai_embed_skip_unsupported", rel_path=rel_path, source="upload")
             return
         if row["embedding_json"]:
             return
