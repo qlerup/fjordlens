@@ -1740,7 +1740,7 @@ def index_faces_for_photo(rel_path: str) -> int:
                 except Exception as e:
                     log_event("error", rel_path=rel_path, error=f"face_insert: {e}")
             try:
-                conn.execute("UPDATE photos SET people_count=? WHERE id=?", (count, photo_id))
+                conn.execute("UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?", (count, now_iso(), photo_id))
                 conn.commit()
             except Exception:
                 pass
@@ -3593,6 +3593,7 @@ def init_db() -> None:
                 thumb_name TEXT,
                 favorite INTEGER DEFAULT 0,
                 people_count INTEGER DEFAULT 0,
+                faces_indexed_at TEXT,
                 ai_tags TEXT,
                 ai_desc_tags TEXT,
                 ai_desc_caption TEXT,
@@ -3854,6 +3855,23 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE photos ADD COLUMN ahash TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE photos ADD COLUMN faces_indexed_at TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                """
+                UPDATE photos
+                SET faces_indexed_at=COALESCE(NULLIF(faces_indexed_at, ''), last_scanned_at, imported_at, ?)
+                WHERE COALESCE(people_count, 0) > 0
+                  AND (faces_indexed_at IS NULL OR TRIM(faces_indexed_at) = '')
+                """,
+                (now_iso(),),
+            )
+            conn.commit()
         except Exception:
             pass
         try:
@@ -10688,6 +10706,36 @@ faces_counts: Dict[str, int] = {"processed": 0, "total": 0}
 last_faces_result: Optional[Dict[str, Any]] = None
 
 
+def _is_faces_index_supported_rel(rel_path: str) -> bool:
+    ext = Path(str(rel_path or "")).suffix.lower()
+    return ext in SUPPORTED_EXTS
+
+
+def _faces_index_coverage() -> Dict[str, int]:
+    counts = {"total": 0, "indexed": 0, "missing": 0, "with_faces": 0, "faces": 0, "unsupported": 0}
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute("SELECT rel_path, people_count, faces_indexed_at FROM photos").fetchall()
+    except Exception:
+        return counts
+
+    for row in rows:
+        if not _is_faces_index_supported_rel(row["rel_path"]):
+            counts["unsupported"] += 1
+            continue
+        counts["total"] += 1
+        people_count = int(row["people_count"] or 0)
+        indexed_at = str(row["faces_indexed_at"] or "").strip()
+        if indexed_at:
+            counts["indexed"] += 1
+        else:
+            counts["missing"] += 1
+        if people_count > 0:
+            counts["with_faces"] += 1
+            counts["faces"] += people_count
+    return counts
+
+
 def _index_faces_worker(all_photos: bool = False):
     global faces_counts, last_faces_result
     try:
@@ -10695,7 +10743,14 @@ def _index_faces_worker(all_photos: bool = False):
             if all_photos:
                 rows = conn.execute("SELECT rel_path FROM photos").fetchall()
             else:
-                rows = conn.execute("SELECT rel_path FROM photos WHERE people_count=0").fetchall()
+                rows = conn.execute(
+                    """
+                    SELECT rel_path
+                    FROM photos
+                    WHERE faces_indexed_at IS NULL OR TRIM(faces_indexed_at) = ''
+                    """
+                ).fetchall()
+        rows = [row for row in rows if _is_faces_index_supported_rel(row["rel_path"])]
         total = len(rows)
         faces_counts = {"processed": 0, "total": total}
         for row in rows:
@@ -10747,6 +10802,7 @@ def api_faces_status():
         "running": _faces_running.is_set(),
         "auto_index": faces_auto_index_enabled(),
         **faces_counts,
+        "coverage": _faces_index_coverage(),
         "runtime": {
             "service_ok": rt["service_ok"],
             "ai": rt["ai_device"],
@@ -10768,7 +10824,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 rel_path, filename, ext, file_size, width, height, created_fs, modified_fs,
                 captured_at, camera_make, camera_model, lens_model, iso, focal_length, f_number,
                 exposure_time, gps_lat, gps_lon, gps_name, checksum_sha256, phash, phash_dct, dhash, ahash, thumb_name,
-                favorite, people_count, ai_tags, embedding_json, metadata_json, exif_json,
+                favorite, people_count, faces_indexed_at, ai_tags, embedding_json, metadata_json, exif_json,
                 uploaded_by, imported_at, last_scanned_at
             ) VALUES (
                 :rel_path, :filename, :ext, :file_size, :width, :height, :created_fs, :modified_fs,
@@ -10776,6 +10832,7 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 :exposure_time, :gps_lat, :gps_lon, :gps_name, :checksum_sha256, :phash, :phash_dct, :dhash, :ahash, :thumb_name,
                 COALESCE((SELECT favorite FROM photos WHERE rel_path=:rel_path), 0),
                 COALESCE((SELECT people_count FROM photos WHERE rel_path=:rel_path), 0),
+                COALESCE((SELECT faces_indexed_at FROM photos WHERE rel_path=:rel_path), NULL),
                 :ai_tags, COALESCE((SELECT embedding_json FROM photos WHERE rel_path=:rel_path), NULL),
                 :metadata_json, :exif_json,
                 COALESCE((SELECT uploaded_by FROM photos WHERE rel_path=:rel_path), :uploaded_by),

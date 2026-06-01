@@ -1170,6 +1170,7 @@ const I18N = {
     status_embedded_label: 'embedded',
     status_library_label: 'bibliotek',
     status_missing_label: 'mangler',
+    status_faces_found_label: 'ansigter',
     status_described_label: 'beskrevet',
     status_processed_label: 'behandlet',
     status_stopped: 'stoppet',
@@ -1919,6 +1920,7 @@ const I18N = {
     status_embedded_label: 'embedded',
     status_library_label: 'library',
     status_missing_label: 'missing',
+    status_faces_found_label: 'faces',
     status_described_label: 'described',
     status_processed_label: 'processed',
     status_stopped: 'stopped',
@@ -13013,7 +13015,15 @@ async function pollFacesStatus() {
       const source = (!s.running && s.last) ? s.last : s;
       const processed = Number(source && source.processed) || 0;
       const total = Number(source && source.total) || 0;
-      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} · ${tr('status_processed_label')} ${processed}/${total}`;
+      const coverage = (s && s.coverage && typeof s.coverage === 'object') ? s.coverage : null;
+      const coverageTotal = Number(coverage && coverage.total) || 0;
+      const coverageIndexed = Number(coverage && coverage.indexed) || 0;
+      const coverageMissing = Number(coverage && coverage.missing) || 0;
+      const facesFound = Number(coverage && coverage.faces) || 0;
+      const coverageText = coverage
+        ? ` · ${tr('status_library_label')} ${coverageIndexed}/${coverageTotal} · ${tr('status_missing_label')} ${coverageMissing} · ${tr('status_faces_found_label')} ${facesFound}`
+        : '';
+      els.facesStatus.textContent = `${tr('status_faces_prefix')}: ${run} · ${tr('status_processed_label')} ${processed}/${total}${coverageText}`;
     }
     if (s && s.running) {
       // While faces are indexing, refresh People view incrementally when progress increases
