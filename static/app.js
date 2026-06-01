@@ -14714,7 +14714,7 @@ async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
   // Recommended balanced profile for "Lignende".
-  const distance = 12;
+  const distance = 11;
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
