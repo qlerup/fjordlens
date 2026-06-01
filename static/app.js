@@ -2342,6 +2342,7 @@ function updateAiToggleButton() {
   if (els.aiIngestToggleText) {
     els.aiIngestToggleText.textContent = enabled ? tr('btn_stop_ai') : tr('btn_start_ai');
   }
+  updateSimilarMethodAvailability();
 }
 
 function updateAiDescribeToggleButton() {
@@ -2441,8 +2442,14 @@ let state = {
   similarModalItems: [],
   similarSourceId: 0,
   similarSourceItem: null,
+  similarSourceFolder: '',
+  similarSourceCoverageFolder: '',
+  similarSourceFolderCoverageKnown: false,
+  similarSourceFolderEmbedded: 0,
+  similarSourceFolderTotal: 0,
+  similarSourceFolderMissing: 0,
   similarMethod: 'hybrid',
-  similarAiMin: 80,
+  similarAiMin: 88,
   similarHashDistances: { phash: 9, dhash: 12, ahash: 12 },
   folder: null,
   // logs
@@ -2479,6 +2486,9 @@ let state = {
   searchLanguage: resolveUiLanguage(APP_PROFILE.search_language || 'da'),
   aiRunning: false,
   aiAutoEnabled: false,
+  aiCoverageEmbedded: 0,
+  aiCoverageTotal: 0,
+  aiCoverageMissing: 0,
   aiRuntime: 'unknown',
   aiDescribeRunning: false,
   aiDescribeStopping: false,
@@ -13156,6 +13166,10 @@ async function pollAiStatus() {
     const s = await r.json();
     state.aiRunning = !!(s && s.ok && s.running);
     state.aiAutoEnabled = !!(s && s.ok && s.auto_ingest);
+    const coverage = (s && s.coverage && typeof s.coverage === 'object') ? s.coverage : null;
+    state.aiCoverageTotal = Number(coverage && coverage.total) || 0;
+    state.aiCoverageEmbedded = Number(coverage && coverage.embedded) || 0;
+    state.aiCoverageMissing = Number(coverage && coverage.missing) || 0;
     state.aiRuntime = String((s && s.runtime && s.runtime.ai) || 'unknown');
     updateAiToggleButton();
     updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
@@ -13167,7 +13181,6 @@ async function pollAiStatus() {
         const embedded = Number(source && source.embedded) || 0;
         const total = Number(source && source.total) || 0;
         const failed = Number(source && source.failed) || 0;
-        const coverage = (s && s.coverage && typeof s.coverage === 'object') ? s.coverage : null;
         const coverageTotal = Number(coverage && coverage.total) || 0;
         const coverageEmbedded = Number(coverage && coverage.embedded) || 0;
         const coverageMissing = Number(coverage && coverage.missing) || 0;
@@ -13177,6 +13190,7 @@ async function pollAiStatus() {
         els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${run} · ${tr('status_embedded_label')} ${embedded}/${total} · ${tr('status_errors_label')} ${failed}${coverageText}`;
       }
     }
+    updateSimilarMethodAvailability();
   } catch {
     state.aiRunning = false;
     state.aiAutoEnabled = false;
@@ -13184,6 +13198,7 @@ async function pollAiStatus() {
     updateAiToggleButton();
     updateRuntimeIndicator(els.aiEmbedRuntime, state.aiRuntime);
     if (els.aiStatus) els.aiStatus.textContent = `${tr('status_ai_prefix')}: ${tr('status_dash')}`;
+    updateSimilarMethodAvailability();
   }
   // Poll mens der kører noget
   try {
@@ -14745,7 +14760,7 @@ const SIMILAR_HASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarHashDistances.v2';
 const SIMILAR_PHASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarPhashDistance.v1';
 const SIMILAR_METHOD_STORAGE_KEY = 'fjordlens.similarMethod.v1';
 const SIMILAR_METHODS = new Set(['hash', 'ai', 'hybrid']);
-const SIMILAR_AI_MIN_DEFAULT = 80;
+const SIMILAR_AI_MIN_DEFAULT = 88;
 const SIMILAR_AI_MIN_STORAGE_KEY = 'fjordlens.similarAiMin.v1';
 
 function normalizeSimilarMethod(value) {
@@ -14753,16 +14768,93 @@ function normalizeSimilarMethod(value) {
   return SIMILAR_METHODS.has(method) ? method : 'hybrid';
 }
 
+function normalizeSimilarSourceFolder(relPath) {
+  let folder = String(relPath || '').replace(/\\/g, '/').trim();
+  if (!folder) return '';
+  folder = folder.includes('/') ? folder.split('/').slice(0, -1).join('/') : '';
+  if (folder === 'uploads') folder = '';
+  else if (folder.startsWith('uploads/')) folder = folder.slice('uploads/'.length);
+  if (folder.startsWith('converted/')) folder = folder.slice('converted/'.length);
+  if (folder.startsWith('originals/')) folder = folder.slice('originals/'.length);
+  return folder;
+}
+
+function setSimilarSourceFolderCoverage(coverage) {
+  const sourceFolder = String(state.similarSourceFolder || '');
+  if (!coverage || typeof coverage !== 'object') {
+    state.similarSourceCoverageFolder = sourceFolder;
+    state.similarSourceFolderCoverageKnown = false;
+    state.similarSourceFolderEmbedded = 0;
+    state.similarSourceFolderTotal = 0;
+    state.similarSourceFolderMissing = 0;
+    return;
+  }
+  const coverageFolder = normalizeSimilarSourceFolder(
+    Object.prototype.hasOwnProperty.call(coverage, 'folder') ? coverage.folder : sourceFolder
+  );
+  state.similarSourceCoverageFolder = coverageFolder;
+  state.similarSourceFolderEmbedded = Number(coverage.embedded) || 0;
+  state.similarSourceFolderTotal = Number(coverage.total) || 0;
+  state.similarSourceFolderMissing = Number(coverage.missing) || 0;
+  state.similarSourceFolderCoverageKnown = (coverageFolder === sourceFolder);
+}
+
+function setSimilarSourceItem(item) {
+  state.similarSourceItem = item || null;
+  state.similarSourceFolder = normalizeSimilarSourceFolder(
+    state.similarSourceItem && state.similarSourceItem.rel_path ? state.similarSourceItem.rel_path : ''
+  );
+  setSimilarSourceFolderCoverage(null);
+  renderSimilarSource(state.similarSourceItem);
+}
+
+function isSimilarAiMethodAvailable() {
+  if (!!state.aiAutoEnabled || !!state.aiRunning) return true;
+  const hasSourceContext = !!state.similarSourceItem || Number(state.similarSourceId || 0) > 0;
+  if (hasSourceContext) {
+    const sourceFolder = String(state.similarSourceFolder || '');
+    const coverageFolder = String(state.similarSourceCoverageFolder || '');
+    if (state.similarSourceFolderCoverageKnown && coverageFolder === sourceFolder) {
+      return Number(state.similarSourceFolderEmbedded || 0) > 0;
+    }
+    return false;
+  }
+  const embedded = Number(state.aiCoverageEmbedded || 0);
+  return embedded > 0;
+}
+
+function normalizeSimilarMethodForAvailability(value) {
+  const method = normalizeSimilarMethod(value);
+  if (!isSimilarAiMethodAvailable() && method === 'ai') return 'hash';
+  return method;
+}
+
+function updateSimilarMethodAvailability() {
+  if (!els.similarMethodSelect) return;
+  const aiOption = els.similarMethodSelect.querySelector('option[value="ai"]');
+  const aiAvailable = isSimilarAiMethodAvailable();
+  if (aiOption) {
+    aiOption.disabled = !aiAvailable;
+    aiOption.hidden = !aiAvailable;
+  }
+  const current = normalizeSimilarMethod(els.similarMethodSelect.value);
+  const next = normalizeSimilarMethodForAvailability(current);
+  if (next !== current) {
+    storeSimilarMethod(next);
+    setSimilarMethodInput(next);
+  }
+}
+
 function readSimilarMethod() {
   try {
     const stored = window.localStorage.getItem(SIMILAR_METHOD_STORAGE_KEY);
-    if (stored) return normalizeSimilarMethod(stored);
+    if (stored) return normalizeSimilarMethodForAvailability(stored);
   } catch {}
-  return normalizeSimilarMethod(state.similarMethod || 'hybrid');
+  return normalizeSimilarMethodForAvailability(state.similarMethod || 'hybrid');
 }
 
 function storeSimilarMethod(value) {
-  const method = normalizeSimilarMethod(value);
+  const method = normalizeSimilarMethodForAvailability(value);
   state.similarMethod = method;
   try {
     window.localStorage.setItem(SIMILAR_METHOD_STORAGE_KEY, method);
@@ -14771,14 +14863,14 @@ function storeSimilarMethod(value) {
 }
 
 function setSimilarMethodInput(value) {
-  const method = normalizeSimilarMethod(value);
+  const method = normalizeSimilarMethodForAvailability(value);
   if (els.similarMethodSelect) els.similarMethodSelect.value = method;
   if (els.similarDistanceForm) els.similarDistanceForm.dataset.method = method;
   return method;
 }
 
 function currentSimilarMethod() {
-  return normalizeSimilarMethod(els.similarMethodSelect ? els.similarMethodSelect.value : state.similarMethod);
+  return normalizeSimilarMethodForAvailability(els.similarMethodSelect ? els.similarMethodSelect.value : state.similarMethod);
 }
 
 function normalizeSimilarAiMin(value, fallback = SIMILAR_AI_MIN_DEFAULT) {
@@ -14898,8 +14990,7 @@ function closeSimilarModal(opts = {}) {
   if (clearItems) {
     state.similarModalItems = [];
     state.similarSourceId = 0;
-    state.similarSourceItem = null;
-    renderSimilarSource(null);
+    setSimilarSourceItem(null);
   }
 }
 
@@ -14998,8 +15089,11 @@ async function loadSimilarForSource(sourceId, distanceValue) {
   setSimilarDistanceInputs(distances);
   if (!sourceId) return;
   if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
-  state.similarSourceItem = state.similarSourceItem || findPhotoItemById(sourceId);
-  renderSimilarSource(state.similarSourceItem);
+  if (!state.similarSourceItem) {
+    setSimilarSourceItem(findPhotoItemById(sourceId));
+  } else {
+    renderSimilarSource(state.similarSourceItem);
+  }
   _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
   if (els.similarDistanceApply) els.similarDistanceApply.disabled = true;
   [els.similarMethodSelect, els.similarAiMinInput, els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
@@ -15024,8 +15118,11 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     }
     const items = Array.isArray(data.items) ? data.items : [];
     if (data.source_item && typeof data.source_item === 'object') {
-      state.similarSourceItem = data.source_item;
-      renderSimilarSource(state.similarSourceItem);
+      setSimilarSourceItem(data.source_item);
+    }
+    if (data.ai_folder_coverage && typeof data.ai_folder_coverage === 'object') {
+      setSimilarSourceFolderCoverage(data.ai_folder_coverage);
+      updateSimilarMethodAvailability();
     }
     state.similarModalItems = items;
     const returnedDistances = data && data.distances && typeof data.distances === 'object' ? data.distances : distances;
@@ -15061,16 +15158,16 @@ async function loadSimilarForSource(sourceId, distanceValue) {
 async function openSimilarForSelected(){
   const sourceId = _resolveSelectedPhotoIdForSimilar();
   if (!sourceId) return;
-  setSimilarMethodInput(readSimilarMethod());
-  setSimilarAiMinInput(readSimilarAiMin());
-  const distances = setSimilarDistanceInputs(readSimilarHashSettings());
   if (els.viewer && !els.viewer.classList.contains('hidden')) {
     closeViewer();
   }
   state.similarSourceId = sourceId;
-  state.similarSourceItem = findPhotoItemById(sourceId);
+  setSimilarSourceItem(findPhotoItemById(sourceId));
   state.similarModalItems = [];
-  renderSimilarSource(state.similarSourceItem);
+  updateSimilarMethodAvailability();
+  setSimilarMethodInput(readSimilarMethod());
+  setSimilarAiMinInput(readSimilarAiMin());
+  const distances = setSimilarDistanceInputs(readSimilarHashSettings());
   renderSimilarModalGrid([], { showEmpty: false });
   openSimilarModal();
   await loadSimilarForSource(sourceId, distances);
@@ -15092,7 +15189,9 @@ if (els.similarMethodSelect) {
   els.similarMethodSelect.addEventListener('change', () => {
     const method = storeSimilarMethod(els.similarMethodSelect.value);
     setSimilarMethodInput(method);
+    updateSimilarMethodAvailability();
   });
+  updateSimilarMethodAvailability();
   setSimilarMethodInput(readSimilarMethod());
 }
 if (els.similarAiMinInput) {
@@ -16195,7 +16294,6 @@ async function renderTwofaPanel(){
 
 async function renderProfilePanel() {
   const wrap = document.getElementById('profilePanelInner');
-  if (!wrap) return;
   wrap.textContent = '...';
 
   const setProfileInlineStatus = (text, type = 'ok') => {

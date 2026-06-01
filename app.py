@@ -16713,6 +16713,53 @@ def _ai_embedding_coverage() -> Dict[str, int]:
     return counts
 
 
+def _similar_rel_folder_key(rel_path: Any) -> str:
+    rel = str(rel_path or "").replace("\\", "/").strip().strip("/")
+    if not rel:
+        return ""
+    folder = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    if folder == "uploads":
+        folder = ""
+    elif folder.startswith("uploads/"):
+        folder = folder[len("uploads/") :]
+    if folder.startswith("converted/"):
+        folder = folder[len("converted/") :]
+    if folder.startswith("originals/"):
+        folder = folder[len("originals/") :]
+    return folder.strip("/")
+
+
+def _ai_embedding_coverage_for_source_folder(conn: sqlite3.Connection, source_rel_path: str) -> Dict[str, Any]:
+    folder_key = _similar_rel_folder_key(source_rel_path)
+    counts: Dict[str, Any] = {
+        "folder": folder_key,
+        "total": 0,
+        "embedded": 0,
+        "missing": 0,
+        "unsupported": 0,
+    }
+    try:
+        rows = conn.execute("SELECT rel_path, embedding_json FROM photos").fetchall()
+    except Exception:
+        return counts
+
+    for row in rows:
+        rel = str(row["rel_path"] or "")
+        if _similar_rel_folder_key(rel) != folder_key:
+            continue
+        if not _is_rel_path_allowed_for_current_user(rel, conn):
+            continue
+        if not _is_ai_embedding_supported_rel(rel):
+            counts["unsupported"] += 1
+            continue
+        counts["total"] += 1
+        if str(row["embedding_json"] or "").strip():
+            counts["embedded"] += 1
+        else:
+            counts["missing"] += 1
+    return counts
+
+
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
     if not _is_ai_embedding_supported_rel(rel_path):
         log_event("ai_embed_skip_unsupported", rel_path=rel_path)
@@ -17509,6 +17556,7 @@ def api_similar(photo_id: int):
         return jsonify({"ok": False, "error": "not_found"}), 404
     if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "not_found"}), 404
+    source_folder_key = _similar_rel_folder_key(str(row["rel_path"] or ""))
     emb = None
     try:
         emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -17527,6 +17575,9 @@ def api_similar(photo_id: int):
         rows = conn.execute("SELECT * FROM photos WHERE embedding_json IS NOT NULL AND embedding_json != '' AND id<>?", (photo_id,)).fetchall()
     scored = []
     for r in rows:
+        rel = str(r["rel_path"] or "")
+        if _similar_rel_folder_key(rel) != source_folder_key:
+            continue
         try:
             e2 = json.loads(r["embedding_json"]) if r["embedding_json"] else None
             s = _cosine(emb, e2) if e2 else -1.0
@@ -17546,9 +17597,9 @@ def api_similar_phash(photo_id: int):
     if method not in {"hash", "ai", "hybrid"}:
         method = "hash"
     try:
-        ai_min_similarity = float(request.args.get("ai_min_similarity", request.args.get("ai_min", "0.8")))
+        ai_min_similarity = float(request.args.get("ai_min_similarity", request.args.get("ai_min", "0.88")))
     except Exception:
-        ai_min_similarity = 0.8
+        ai_min_similarity = 0.88
     if ai_min_similarity > 1.0:
         ai_min_similarity = ai_min_similarity / 100.0
     ai_min_similarity = max(-1.0, min(1.0, ai_min_similarity))
@@ -17567,8 +17618,10 @@ def api_similar_phash(photo_id: int):
         if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
+        source_folder_key = _similar_rel_folder_key(str(row["rel_path"] or ""))
         source_row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
         source_item = row_to_public(source_row) if source_row else None
+        ai_folder_coverage = _ai_embedding_coverage_for_source_folder(conn, str(row["rel_path"] or ""))
         hash_distances_by_id: dict[int, Dict[str, int]] = {}
         hash_quality_by_id: dict[int, float] = {}
         hash_rank_by_id: dict[int, int] = {}
@@ -17604,6 +17657,8 @@ def api_similar_phash(photo_id: int):
                 for r in candidates:
                     candidate = dict(r)
                     rel = str(candidate.get("rel_path") or "")
+                    if _similar_rel_folder_key(rel) != source_folder_key:
+                        continue
                     if not _is_rel_path_allowed_for_current_user(rel, conn):
                         continue
 
@@ -17692,6 +17747,8 @@ def api_similar_phash(photo_id: int):
             scored: list[tuple[float, int]] = []
             for r in rows:
                 rel = str(r["rel_path"] or "")
+                if _similar_rel_folder_key(rel) != source_folder_key:
+                    continue
                 if not _is_rel_path_allowed_for_current_user(rel, conn):
                     continue
                 emb = _json_embedding(r["embedding_json"])
@@ -17745,6 +17802,7 @@ def api_similar_phash(photo_id: int):
                 "distances": thresholds,
                 "ai_min_similarity": round(ai_min_similarity, 4),
                 "source_item": source_item,
+                "ai_folder_coverage": ai_folder_coverage,
                 "method": method,
                 "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
             })
@@ -17776,6 +17834,7 @@ def api_similar_phash(photo_id: int):
         "distances": thresholds,
         "ai_min_similarity": round(ai_min_similarity, 4),
         "source_item": source_item,
+        "ai_folder_coverage": ai_folder_coverage,
         "method": method,
         "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
     })
