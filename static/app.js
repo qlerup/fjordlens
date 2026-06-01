@@ -2448,6 +2448,8 @@ let state = {
   similarSourceFolderEmbedded: 0,
   similarSourceFolderTotal: 0,
   similarSourceFolderMissing: 0,
+  similarMethodTouchedInModal: false,
+  similarAutoSelectAiPending: false,
   similarMethod: 'hybrid',
   similarAiMin: 88,
   similarHashDistances: { phash: 9, dhash: 12, ahash: 12 },
@@ -14823,6 +14825,29 @@ function isSimilarAiMethodAvailable() {
   return embedded > 0;
 }
 
+function shouldPreselectSimilarAiMethod() {
+  if (!!state.aiAutoEnabled || !!state.aiRunning) return true;
+  const sourceFolder = String(state.similarSourceFolder || '');
+  const coverageFolder = String(state.similarSourceCoverageFolder || '');
+  if (state.similarSourceFolderCoverageKnown && coverageFolder === sourceFolder) {
+    return Number(state.similarSourceFolderEmbedded || 0) > 0;
+  }
+  return false;
+}
+
+function applyPreferredSimilarMethod(opts = {}) {
+  const force = !!(opts && opts.force);
+  if (!force && !!state.similarMethodTouchedInModal) return false;
+  if (!shouldPreselectSimilarAiMethod()) return false;
+  const preferred = normalizeSimilarMethodForAvailability('ai');
+  if (preferred !== 'ai') return false;
+  const current = currentSimilarMethod();
+  if (current === 'ai') return false;
+  storeSimilarMethod('ai');
+  setSimilarMethodInput('ai');
+  return true;
+}
+
 function normalizeSimilarMethodForAvailability(value) {
   const method = normalizeSimilarMethod(value);
   if (!isSimilarAiMethodAvailable() && method === 'ai') return 'hash';
@@ -14990,6 +15015,8 @@ function closeSimilarModal(opts = {}) {
   if (clearItems) {
     state.similarModalItems = [];
     state.similarSourceId = 0;
+    state.similarMethodTouchedInModal = false;
+    state.similarAutoSelectAiPending = false;
     setSimilarSourceItem(null);
   }
 }
@@ -15081,6 +15108,7 @@ function renderSimilarModalGrid(items, opts = {}) {
 }
 
 async function loadSimilarForSource(sourceId, distanceValue) {
+  let retryWithPreferredAi = false;
   const distances = storeSimilarHashSettings(distanceValue);
   const method = storeSimilarMethod(currentSimilarMethod());
   const aiMin = storeSimilarAiMin(currentSimilarAiMin());
@@ -15123,6 +15151,9 @@ async function loadSimilarForSource(sourceId, distanceValue) {
     if (data.ai_folder_coverage && typeof data.ai_folder_coverage === 'object') {
       setSimilarSourceFolderCoverage(data.ai_folder_coverage);
       updateSimilarMethodAvailability();
+      if (state.similarAutoSelectAiPending && applyPreferredSimilarMethod()) {
+        retryWithPreferredAi = (method !== 'ai');
+      }
     }
     state.similarModalItems = items;
     const returnedDistances = data && data.distances && typeof data.distances === 'object' ? data.distances : distances;
@@ -15148,10 +15179,14 @@ async function loadSimilarForSource(sourceId, distanceValue) {
   } catch {
     _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
   } finally {
+    state.similarAutoSelectAiPending = false;
     if (els.similarDistanceApply) els.similarDistanceApply.disabled = false;
     [els.similarMethodSelect, els.similarAiMinInput, els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
       if (input) input.disabled = false;
     });
+  }
+  if (retryWithPreferredAi) {
+    await loadSimilarForSource(sourceId, distances);
   }
 }
 
@@ -15162,10 +15197,13 @@ async function openSimilarForSelected(){
     closeViewer();
   }
   state.similarSourceId = sourceId;
+  state.similarMethodTouchedInModal = false;
+  state.similarAutoSelectAiPending = true;
   setSimilarSourceItem(findPhotoItemById(sourceId));
   state.similarModalItems = [];
   updateSimilarMethodAvailability();
   setSimilarMethodInput(readSimilarMethod());
+  applyPreferredSimilarMethod({ force: true });
   setSimilarAiMinInput(readSimilarAiMin());
   const distances = setSimilarDistanceInputs(readSimilarHashSettings());
   renderSimilarModalGrid([], { showEmpty: false });
@@ -15187,6 +15225,8 @@ if (els.similarDistanceForm) {
 }
 if (els.similarMethodSelect) {
   els.similarMethodSelect.addEventListener('change', () => {
+    state.similarMethodTouchedInModal = true;
+    state.similarAutoSelectAiPending = false;
     const method = storeSimilarMethod(els.similarMethodSelect.value);
     setSimilarMethodInput(method);
     updateSimilarMethodAvailability();
