@@ -265,6 +265,9 @@
   similarAhashDistanceLabel: document.getElementById("similarAhashDistanceLabel"),
   similarAhashDistanceInput: document.getElementById("similarAhashDistanceInput"),
   similarDistanceApply: document.getElementById("similarDistanceApply"),
+  similarSourcePanel: document.getElementById("similarSourcePanel"),
+  similarSourceLabel: document.getElementById("similarSourceLabel"),
+  similarSourcePreview: document.getElementById("similarSourcePreview"),
   similarModalStatus: document.getElementById("similarModalStatus"),
   similarModalGrid: document.getElementById("similarModalGrid"),
   menuBtn: document.getElementById("menuBtn"),
@@ -1492,6 +1495,7 @@ const I18N = {
     similar_modal_loading: 'Finder lignende billeder...',
     similar_modal_empty: 'Ingen lignende billeder fundet med nuværende hash-afstande.',
     similar_modal_count: 'Fundet {count} lignende billeder (grænser: pHash {phash}, dHash {dhash}, aHash {ahash}).',
+    similar_source_label: 'Matcher fra',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -2238,6 +2242,7 @@ const I18N = {
     similar_modal_loading: 'Finding similar photos...',
     similar_modal_empty: 'No similar photos found with the current hash distances.',
     similar_modal_count: 'Found {count} similar photos (limits: pHash {phash}, dHash {dhash}, aHash {ahash}).',
+    similar_source_label: 'Matching from',
     similar_phash_label: 'pHash',
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
@@ -2411,6 +2416,7 @@ let state = {
   viewerItems: null,
   similarModalItems: [],
   similarSourceId: 0,
+  similarSourceItem: null,
   similarHashDistances: { phash: 9, dhash: 12, ahash: 12 },
   folder: null,
   // logs
@@ -11518,6 +11524,7 @@ function applyUiLanguage() {
   if (els.similarDhashDistanceLabel) els.similarDhashDistanceLabel.textContent = tr('similar_dhash_label');
   if (els.similarAhashDistanceLabel) els.similarAhashDistanceLabel.textContent = tr('similar_ahash_label');
   if (els.similarDistanceApply) els.similarDistanceApply.textContent = tr('similar_distance_find');
+  if (els.similarSourceLabel) els.similarSourceLabel.textContent = tr('similar_source_label');
 
   const tabText = {
     maint: tr('tab_maint'),
@@ -14765,12 +14772,54 @@ function closeSimilarModal(opts = {}) {
   if (clearItems) {
     state.similarModalItems = [];
     state.similarSourceId = 0;
+    state.similarSourceItem = null;
+    renderSimilarSource(null);
   }
 }
 
 function openSimilarModal() {
   if (!els.similarModal) return;
   els.similarModal.classList.remove('hidden');
+}
+
+function findPhotoItemById(photoId) {
+  const id = Number(photoId || 0);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const pools = [state.items, state.viewerItems, state.similarModalItems];
+  for (const pool of pools) {
+    if (!Array.isArray(pool)) continue;
+    const found = pool.find((it) => Number(it && it.id) === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function renderSimilarSource(item) {
+  if (!els.similarSourcePanel || !els.similarSourcePreview) return;
+  els.similarSourcePreview.innerHTML = '';
+  if (!item) {
+    els.similarSourcePanel.classList.add('hidden');
+    return;
+  }
+  if (els.similarSourceLabel) els.similarSourceLabel.textContent = tr('similar_source_label');
+  const card = document.createElement('article');
+  card.className = 'photo-card similar-source-card';
+  card.innerHTML = cardHTML(item);
+  try {
+    const title = String(item.filename || item.rel_path || '').trim();
+    if (title) card.setAttribute('title', title);
+  } catch {}
+  card.querySelectorAll('img').forEach((img) => {
+    img.setAttribute('draggable', 'false');
+  });
+  card.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeSimilarModal({ clearItems: false });
+    openViewerWithItems([item], 0);
+  });
+  els.similarSourcePreview.appendChild(card);
+  els.similarSourcePanel.classList.remove('hidden');
 }
 
 function renderSimilarModalGrid(items, opts = {}) {
@@ -14815,6 +14864,8 @@ async function loadSimilarForSource(sourceId, distanceValue) {
   setSimilarDistanceInputs(distances);
   if (!sourceId) return;
   if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
+  state.similarSourceItem = state.similarSourceItem || findPhotoItemById(sourceId);
+  renderSimilarSource(state.similarSourceItem);
   _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
   if (els.similarDistanceApply) els.similarDistanceApply.disabled = true;
   [els.similarPhashDistanceInput, els.similarDhashDistanceInput, els.similarAhashDistanceInput].forEach((input) => {
@@ -14836,6 +14887,10 @@ async function loadSimilarForSource(sourceId, distanceValue) {
       return;
     }
     const items = Array.isArray(data.items) ? data.items : [];
+    if (data.source_item && typeof data.source_item === 'object') {
+      state.similarSourceItem = data.source_item;
+      renderSimilarSource(state.similarSourceItem);
+    }
     state.similarModalItems = items;
     const returnedDistances = data && data.distances && typeof data.distances === 'object' ? data.distances : distances;
     const msg = tr('similar_modal_count')
@@ -14866,7 +14921,9 @@ async function openSimilarForSelected(){
     closeViewer();
   }
   state.similarSourceId = sourceId;
+  state.similarSourceItem = findPhotoItemById(sourceId);
   state.similarModalItems = [];
+  renderSimilarSource(state.similarSourceItem);
   renderSimilarModalGrid([], { showEmpty: false });
   openSimilarModal();
   await loadSimilarForSource(sourceId, distances);

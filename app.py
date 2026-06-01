@@ -17455,6 +17455,8 @@ def api_similar_phash(photo_id: int):
         if not _is_rel_path_allowed_for_current_user(row["rel_path"], conn):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
+        source_row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        source_item = row_to_public(source_row) if source_row else None
         seed = _ensure_photo_hashes(conn, dict(row))
         seed_hashes = {
             "phash": _photo_hash_value(seed, "phash_dct"),
@@ -17468,6 +17470,7 @@ def api_similar_phash(photo_id: int):
                 "count": 0,
                 "distance": phash_thr,
                 "distances": thresholds,
+                "source_item": source_item,
                 "source": "multi_hash_near",
             })
 
@@ -17563,6 +17566,7 @@ def api_similar_phash(photo_id: int):
                 "count": 0,
                 "distance": phash_thr,
                 "distances": thresholds,
+                "source_item": source_item,
                 "source": "multi_hash_near",
             })
 
@@ -17589,6 +17593,7 @@ def api_similar_phash(photo_id: int):
         "count": len(items),
         "distance": phash_thr,
         "distances": thresholds,
+        "source_item": source_item,
         "source": "multi_hash_near",
     })
 

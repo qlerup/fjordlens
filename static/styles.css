@@ -3059,6 +3059,40 @@ body.detail-open .detail-panel {
 .similar-distance-form .input-number {
   width: 82px;
 }
+.similar-source-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+}
+.similar-source-panel.hidden {
+  display: none !important;
+}
+.similar-source-label {
+  flex: 0 0 auto;
+  min-width: 98px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.similar-source-preview {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.similar-source-card {
+  width: 170px;
+  flex: 0 0 170px;
+  content-visibility: visible;
+  contain-intrinsic-size: auto;
+}
+.similar-source-card .card-thumb {
+  aspect-ratio: 4 / 3;
+}
 #similarModalGrid.gallery-grid {
   margin-top: 10px;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -3158,6 +3192,14 @@ body.detail-open .detail-panel {
   .similar-modal-dialog {
     width: calc(100vw - 12px) !important;
     max-height: calc(100vh - 16px);
+  }
+  .similar-source-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .similar-source-card {
+    width: min(190px, 54vw);
+    flex-basis: auto;
   }
   .viewer-info {
     position: fixed;
