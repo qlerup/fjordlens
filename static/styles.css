@@ -3071,6 +3071,9 @@ body.detail-open .detail-panel {
 .similar-distance-form[data-method="ai"] .similar-hash-control {
   display: none;
 }
+.similar-distance-form[data-method="hash"] .similar-ai-control {
+  display: none;
+}
 .similar-source-panel {
   display: flex;
   align-items: center;

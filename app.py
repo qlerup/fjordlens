@@ -17545,6 +17545,13 @@ def api_similar_phash(photo_id: int):
     method = str(request.args.get("mode") or request.args.get("method") or "hash").strip().lower()
     if method not in {"hash", "ai", "hybrid"}:
         method = "hash"
+    try:
+        ai_min_similarity = float(request.args.get("ai_min_similarity", request.args.get("ai_min", "0.8")))
+    except Exception:
+        ai_min_similarity = 0.8
+    if ai_min_similarity > 1.0:
+        ai_min_similarity = ai_min_similarity / 100.0
+    ai_min_similarity = max(-1.0, min(1.0, ai_min_similarity))
     phash_thr = _clamp_hash_distance_arg("phash_distance", _clamp_hash_distance_arg("distance", 9))
     dhash_thr = _clamp_hash_distance_arg("dhash_distance", 12)
     ahash_thr = _clamp_hash_distance_arg("ahash_distance", 12)
@@ -17691,7 +17698,7 @@ def api_similar_phash(photo_id: int):
                 if not emb:
                     continue
                 similarity = _cosine(source_emb, emb)
-                if similarity <= -0.5:
+                if similarity < ai_min_similarity:
                     continue
                 pid = int(r["id"] or 0)
                 ai_similarity_by_id[pid] = float(similarity)
@@ -17736,6 +17743,7 @@ def api_similar_phash(photo_id: int):
                 "count": 0,
                 "distance": phash_thr,
                 "distances": thresholds,
+                "ai_min_similarity": round(ai_min_similarity, 4),
                 "source_item": source_item,
                 "method": method,
                 "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
@@ -17766,6 +17774,7 @@ def api_similar_phash(photo_id: int):
         "count": len(items),
         "distance": phash_thr,
         "distances": thresholds,
+        "ai_min_similarity": round(ai_min_similarity, 4),
         "source_item": source_item,
         "method": method,
         "source": "ai_embedding" if method == "ai" else ("hash_ai_hybrid" if method == "hybrid" else "multi_hash_near"),
