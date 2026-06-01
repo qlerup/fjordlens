@@ -122,6 +122,8 @@
   mapperHeaderEditAction: document.getElementById("mapperHeaderEditAction"),
   mapperHeaderShareAction: document.getElementById("mapperHeaderShareAction"),
   mapperHeaderUploadAction: document.getElementById("mapperHeaderUploadAction"),
+  mapperHeaderSortNewestAction: document.getElementById("mapperHeaderSortNewestAction"),
+  mapperHeaderSortOldestAction: document.getElementById("mapperHeaderSortOldestAction"),
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperHeaderRenameAction: document.getElementById("mapperHeaderRenameAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
@@ -2465,6 +2467,7 @@ let state = {
   showHiddenPeople: false,
   mapperPath: "",
   mapperFolders: [],
+  mapperSort: "date_desc",
   settingsTab: '',
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
@@ -2742,6 +2745,10 @@ function _normalizeMapperPath(path) {
   if (cleaned === 'uploads') return '';
   if (cleaned.startsWith('uploads/')) return cleaned.slice('uploads/'.length);
   return cleaned;
+}
+
+function _normalizeMapperSort(sort) {
+  return String(sort || '').trim().toLowerCase() === 'date_asc' ? 'date_asc' : 'date_desc';
 }
 
 function _readRouteStateFromUrl() {
@@ -6699,7 +6706,7 @@ async function loadPhotos(append = false) {
   const qs = new URLSearchParams({
     q: state.q,
     view: state.view,
-    sort: state.sort,
+    sort: state.view === 'mapper' ? _normalizeMapperSort(state.mapperSort) : state.sort,
     folder: state.view === 'mapper' ? (state.mapperPath || "") : (state.folder || ""),
     search_lang: state.searchLanguage || 'da',
   });
@@ -8275,6 +8282,21 @@ function renderMapperContext(path = '') {
     els.mapperHeaderUploadAction.textContent = tr('mapper_menu_upload');
     els.mapperHeaderUploadAction.disabled = !!state.mapperEditMode;
     els.mapperHeaderUploadAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
+  }
+  const mapperSortMode = _normalizeMapperSort(state.mapperSort);
+  if (els.mapperHeaderSortNewestAction) {
+    const isActive = mapperSortMode === 'date_desc';
+    els.mapperHeaderSortNewestAction.textContent = tr('sort_date_desc');
+    els.mapperHeaderSortNewestAction.disabled = !!state.mapperEditMode || isActive;
+    els.mapperHeaderSortNewestAction.classList.toggle('is-active-sort', isActive);
+    els.mapperHeaderSortNewestAction.title = tr('sort_date_desc');
+  }
+  if (els.mapperHeaderSortOldestAction) {
+    const isActive = mapperSortMode === 'date_asc';
+    els.mapperHeaderSortOldestAction.textContent = tr('sort_date_asc');
+    els.mapperHeaderSortOldestAction.disabled = !!state.mapperEditMode || isActive;
+    els.mapperHeaderSortOldestAction.classList.toggle('is-active-sort', isActive);
+    els.mapperHeaderSortOldestAction.title = tr('sort_date_asc');
   }
   if (els.mapperHeaderRenameAction) {
     const canRenameInEdit = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0;
@@ -11450,6 +11472,9 @@ async function setView(view, opts = {}) {
     if (nextView === 'settings' && role === 'user') nextView = 'timeline';
   } catch {}
   state.view = nextView;
+  if (nextView === 'mapper') {
+    state.mapperSort = _normalizeMapperSort(state.mapperSort);
+  }
   const labels = navLabels();
   const [title, subtitle] = labels[nextView] || ['FjordLens', ''];
   if (els.viewTitle) els.viewTitle.textContent = title;
@@ -12466,6 +12491,22 @@ if (els.mapperHeaderUploadAction) {
   els.mapperHeaderUploadAction.addEventListener('click', () => {
     closeMapperHeaderMenu();
     openMapperUploadPicker();
+  });
+}
+if (els.mapperHeaderSortNewestAction) {
+  els.mapperHeaderSortNewestAction.addEventListener('click', async () => {
+    if (state.mapperEditMode) return;
+    state.mapperSort = 'date_desc';
+    closeMapperHeaderMenu();
+    await loadPhotos();
+  });
+}
+if (els.mapperHeaderSortOldestAction) {
+  els.mapperHeaderSortOldestAction.addEventListener('click', async () => {
+    if (state.mapperEditMode) return;
+    state.mapperSort = 'date_asc';
+    closeMapperHeaderMenu();
+    await loadPhotos();
   });
 }
 if (els.mapperHeaderShareAction) {
