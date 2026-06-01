@@ -169,6 +169,7 @@
   detailName: document.getElementById("detailName"),
   detailPath: document.getElementById("detailPath"),
   detailDate: document.getElementById("detailDate"),
+  detailTime: document.getElementById("detailTime"),
   detailSize: document.getElementById("detailSize"),
   detailDims: document.getElementById("detailDims"),
   detailConvertedRow: document.getElementById("detailConvertedRow"),
@@ -2864,6 +2865,23 @@ function fmtDate(s) {
   }
 }
 
+function _pad2(n) {
+  return String(Number(n) || 0).padStart(2, '0');
+}
+
+function fmtDateParts(s) {
+  if (!s) return { date: '-', time: '-' };
+  try {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return { date: '-', time: '-' };
+    const date = `${_pad2(d.getDate())}-${_pad2(d.getMonth() + 1)}-${d.getFullYear()}`;
+    const time = `${_pad2(d.getHours())}:${_pad2(d.getMinutes())}:${_pad2(d.getSeconds())}`;
+    return { date, time };
+  } catch {
+    return { date: '-', time: '-' };
+  }
+}
+
 function _repairMojibakeText(value) {
   const txt = String(value || '');
   if (!/[ÃÂ]/.test(txt) || typeof TextDecoder === 'undefined') return txt;
@@ -4913,7 +4931,10 @@ function setDetail(item) {
 
   els.detailName.textContent = item.filename || "-";
   els.detailPath.textContent = item.rel_path || "-";
-  els.detailDate.textContent = fmtDate(item.captured_at || item.modified_fs || item.created_fs);
+  const capturedDisplay = item.captured_at || item.modified_fs || item.created_fs;
+  const capturedParts = fmtDateParts(capturedDisplay);
+  els.detailDate.textContent = capturedParts.date;
+  if (els.detailTime) els.detailTime.textContent = capturedParts.time;
   // Prefill date editor
   try {
     const iso = (item.captured_at || item.modified_fs || item.created_fs || '').toString();
@@ -6548,7 +6569,7 @@ function openViewer(index) {
   // Populate slide-out info with the current item's metadata
   try {
     const title = (it.filename || it.rel_path || "-");
-    const date = fmtDate(it.captured_at || it.modified_fs || it.created_fs);
+    const dateParts = fmtDateParts(it.captured_at || it.modified_fs || it.created_fs);
     const dims = it.width && it.height ? `${it.width} × ${it.height}` : "-";
     const dev = it.device_label || [it.camera_make, it.camera_model].filter(Boolean).join(" ");
     const lens = it.lens_label || it.lens_model || "-";
@@ -6564,7 +6585,8 @@ function openViewer(index) {
       if (el) el.textContent = String(value == null ? '-' : value);
     };
     setText('viTitle', title);
-    setText('viDate', date);
+    setText('viDate', dateParts.date);
+    setText('viTime', dateParts.time);
     setText('viSize', fmtBytes(it.file_size));
     setText('viDims', dims);
     setText('viDevice', dev || '-');
