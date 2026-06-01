@@ -118,6 +118,7 @@
   mapperSearchShell: document.getElementById("mapperSearchShell"),
   mapperSearchToggleBtn: document.getElementById("mapperSearchToggleBtn"),
   mapperSearchInput: document.getElementById("mapperSearchInput"),
+  mapperSortSelect: document.getElementById("mapperSortSelect"),
   mapperHeaderMenu: document.getElementById("mapperHeaderMenu"),
   mapperHeaderEditAction: document.getElementById("mapperHeaderEditAction"),
   mapperHeaderShareAction: document.getElementById("mapperHeaderShareAction"),
@@ -11585,8 +11586,24 @@ function applyUiLanguage() {
       if (opt) opt.textContent = text;
     });
   }
+  if (els.mapperSortSelect) {
+    const descOpt = els.mapperSortSelect.querySelector('option[value="date_desc"]');
+    const ascOpt = els.mapperSortSelect.querySelector('option[value="date_asc"]');
+    if (descOpt) descOpt.textContent = tr('sort_date_desc');
+    if (ascOpt) ascOpt.textContent = tr('sort_date_asc');
+  }
   
 
+  if (els.mapperSortSelect) {
+    const descOpt = els.mapperSortSelect.querySelector('option[value="date_desc"]');
+    const ascOpt = els.mapperSortSelect.querySelector('option[value="date_asc"]');
+    if (descOpt) descOpt.textContent = tr('sort_date_desc');
+    if (ascOpt) ascOpt.textContent = tr('sort_date_asc');
+    if (els.mapperSortSelect.value !== mapperSortMode) {
+      els.mapperSortSelect.value = mapperSortMode;
+    }
+    els.mapperSortSelect.disabled = !!state.mapperEditMode;
+  }
   const navMap = {
     timeline: tr('nav_timeline'),
     favorites: tr('nav_favorites'),
@@ -12528,6 +12545,13 @@ if (els.mapperHeaderSortOldestAction) {
     if (state.mapperEditMode) return;
     state.mapperSort = 'date_asc';
     closeMapperHeaderMenu();
+    await loadPhotos();
+  });
+}
+if (els.mapperSortSelect) {
+  els.mapperSortSelect.addEventListener('change', async () => {
+    if (state.mapperEditMode) return;
+    state.mapperSort = _normalizeMapperSort(els.mapperSortSelect.value);
     await loadPhotos();
   });
 }

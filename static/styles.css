@@ -1032,6 +1032,12 @@ body.view-kameraer .timeline-header-actions {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(91,140,255,0.12);
 }
+.mapper-sort-select {
+  width: 164px;
+  min-width: 164px;
+  min-height: 42px;
+  flex: 0 0 auto;
+}
 .mapper-search-shell .search-toggle-btn {
   width: 34px;
   height: 34px;
@@ -3363,7 +3369,15 @@ body.view-personer .topbar { display: none !important; }
   /* Hide drag-and-drop zone on mobile (no DnD support) */
   #mapperDropZone { display: none !important; }
   body.view-mapper #mapperSearchShell { order: 1; }
-  body.view-mapper #mapperEditBtn { order: 2; }
+  body.view-mapper #mapperSortSelect {
+    order: 2;
+    width: 138px;
+    min-width: 138px;
+    min-height: 42px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  body.view-mapper #mapperEditBtn { order: 3; }
   body.view-mapper .topbar .search-shell,
   body.view-mapper .topbar .search-wrap,
   body.view-mapper .topbar .select { display: none !important; }
