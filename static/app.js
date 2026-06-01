@@ -257,6 +257,10 @@
   similarModal: document.getElementById("similarModal"),
   similarModalClose: document.getElementById("similarModalClose"),
   similarModalTitle: document.getElementById("similarModalTitle"),
+  similarDistanceForm: document.getElementById("similarDistanceForm"),
+  similarDistanceLabel: document.getElementById("similarDistanceLabel"),
+  similarDistanceInput: document.getElementById("similarDistanceInput"),
+  similarDistanceApply: document.getElementById("similarDistanceApply"),
   similarModalStatus: document.getElementById("similarModalStatus"),
   similarModalGrid: document.getElementById("similarModalGrid"),
   menuBtn: document.getElementById("menuBtn"),
@@ -1484,6 +1488,8 @@ const I18N = {
     similar_modal_loading: 'Finder lignende billeder...',
     similar_modal_empty: 'Ingen lignende billeder fundet med nuværende pHash-afstand.',
     similar_modal_count: 'Fundet {count} lignende billeder (afstand ≤ {distance}).',
+    similar_distance_label: 'pHash afstand',
+    similar_distance_find: 'Find',
     raw_meta_show: 'Vis rå metadata (JSON)',
     raw_meta_hide: 'Skjul rå metadata (JSON)',
   },
@@ -2226,6 +2232,8 @@ const I18N = {
     similar_modal_loading: 'Finding similar photos...',
     similar_modal_empty: 'No similar photos found with current pHash distance.',
     similar_modal_count: 'Found {count} similar photos (distance ≤ {distance}).',
+    similar_distance_label: 'pHash distance',
+    similar_distance_find: 'Find',
     raw_meta_show: 'Show raw metadata (JSON)',
     raw_meta_hide: 'Hide raw metadata (JSON)',
   },
@@ -2395,6 +2403,7 @@ let state = {
   viewerItems: null,
   similarModalItems: [],
   similarSourceId: 0,
+  similarPhashDistance: 9,
   folder: null,
   // logs
   // Default off; enable only for authorized users
@@ -2479,10 +2488,12 @@ let state = {
 const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
 const APP_UPDATE_STATUS_POLL_MS = 2500;
+const APP_UPDATE_BADGE_POLL_MS = 30000;
 const APP_UPDATE_RECONNECT_MAX_MS = 20 * 60 * 1000;
 const APP_UPDATE_RELOAD_DELAY_MS = 1800;
 const APP_UPDATE_RECONNECT_KEY = 'fjordlens.appUpdate.reconnect.v1';
 let appUpdateStatusPollTimer = null;
+let appUpdateBadgePollTimer = null;
 let appUpdateChoiceResolver = null;
 let appUpdateReloadTimer = null;
 
@@ -9727,13 +9738,22 @@ function startAppUpdateStatusPolling() {
   }, APP_UPDATE_STATUS_POLL_MS);
 }
 
+function startAppUpdateBadgePolling() {
+  if (!els.appUpdateTitle || appUpdateBadgePollTimer) return;
+  const tick = () => {
+    loadAppUpdateStatus({ silent: true, skipFollowPolling: true }).catch(() => {});
+  };
+  tick();
+  appUpdateBadgePollTimer = setInterval(tick, APP_UPDATE_BADGE_POLL_MS);
+}
+
 async function loadAppUpdateStatus(opts = {}) {
   if (!els.appUpdateTitle) return null;
   try {
     const res = await fetch('/api/app-update/status', { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     renderAppUpdate(data || {});
-    if (shouldKeepAppUpdatePolling(data || {})) startAppUpdateStatusPolling();
+    if (!opts.skipFollowPolling && shouldKeepAppUpdatePolling(data || {})) startAppUpdateStatusPolling();
     return data;
   } catch (e) {
     const reconnecting = appUpdateReconnectActive();
@@ -9748,7 +9768,7 @@ async function loadAppUpdateStatus(opts = {}) {
       error: reconnecting ? '' : (opts.silent ? '' : tr('app_update_unavailable')),
     };
     renderAppUpdate(data);
-    if (reconnecting && !appUpdateStatusPollTimer) startAppUpdateStatusPolling();
+    if (!opts.skipFollowPolling && reconnecting && !appUpdateStatusPollTimer) startAppUpdateStatusPolling();
     return data;
   }
 }
@@ -11486,6 +11506,8 @@ function applyUiLanguage() {
   if (els.profileLink) els.profileLink.textContent = tr('profile_link');
   const logoutLink = document.querySelector('.sidebar-footer a[href="/logout"]');
   if (logoutLink) logoutLink.textContent = tr('logout_link');
+  if (els.similarDistanceLabel) els.similarDistanceLabel.textContent = tr('similar_distance_label');
+  if (els.similarDistanceApply) els.similarDistanceApply.textContent = tr('similar_distance_find');
 
   const tabText = {
     maint: tr('tab_maint'),
@@ -14647,6 +14669,49 @@ if (viFavoriteBtn) {
   });
 }
 
+const SIMILAR_PHASH_DISTANCE_DEFAULT = 9;
+const SIMILAR_PHASH_DISTANCE_STORAGE_KEY = 'fjordlens.similarPhashDistance.v1';
+
+function normalizeSimilarPhashDistance(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return SIMILAR_PHASH_DISTANCE_DEFAULT;
+  return Math.max(0, Math.min(20, n));
+}
+
+function readSimilarPhashDistance() {
+  try {
+    const stored = window.localStorage.getItem(SIMILAR_PHASH_DISTANCE_STORAGE_KEY);
+    if (stored !== null && stored !== undefined && stored !== '') {
+      return normalizeSimilarPhashDistance(stored);
+    }
+  } catch {}
+  if (state.similarPhashDistance !== null && state.similarPhashDistance !== undefined && state.similarPhashDistance !== '') {
+    return normalizeSimilarPhashDistance(state.similarPhashDistance);
+  }
+  return SIMILAR_PHASH_DISTANCE_DEFAULT;
+}
+
+function storeSimilarPhashDistance(value) {
+  const distance = normalizeSimilarPhashDistance(value);
+  state.similarPhashDistance = distance;
+  try {
+    window.localStorage.setItem(SIMILAR_PHASH_DISTANCE_STORAGE_KEY, String(distance));
+  } catch {}
+  return distance;
+}
+
+function setSimilarDistanceInput(value) {
+  const distance = normalizeSimilarPhashDistance(value);
+  if (els.similarDistanceInput) {
+    els.similarDistanceInput.value = String(distance);
+  }
+  return distance;
+}
+
+function currentSimilarDistanceInputValue() {
+  return normalizeSimilarPhashDistance(els.similarDistanceInput ? els.similarDistanceInput.value : readSimilarPhashDistance());
+}
+
 function _setSimilarModalStatus(message, kind = 'ok') {
   if (!els.similarModalStatus) return;
   const txt = String(message || '').trim();
@@ -14710,20 +14775,15 @@ function renderSimilarModalGrid(items, opts = {}) {
   });
 }
 
-async function openSimilarForSelected(){
-  const sourceId = _resolveSelectedPhotoIdForSimilar();
+async function loadSimilarForSource(sourceId, distanceValue) {
+  const distance = storeSimilarPhashDistance(distanceValue);
+  setSimilarDistanceInput(distance);
   if (!sourceId) return;
-  // Recommended balanced profile for "Lignende".
-  const distance = 8;
-  if (els.viewer && !els.viewer.classList.contains('hidden')) {
-    closeViewer();
-  }
-  state.similarSourceId = sourceId;
-  state.similarModalItems = [];
   if (els.similarModalTitle) els.similarModalTitle.textContent = tr('similar_modal_title');
   _setSimilarModalStatus(tr('similar_modal_loading'), 'ok');
+  if (els.similarDistanceApply) els.similarDistanceApply.disabled = true;
+  if (els.similarDistanceInput) els.similarDistanceInput.disabled = true;
   renderSimilarModalGrid([], { showEmpty: false });
-  openSimilarModal();
   try {
     const res = await fetch(`/api/photos/${sourceId}/similar-phash?limit=120&distance=${encodeURIComponent(distance)}`);
     const data = await res.json().catch(() => ({}));
@@ -14743,11 +14803,38 @@ async function openSimilarForSelected(){
     renderSimilarModalGrid(items);
   } catch {
     _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
+  } finally {
+    if (els.similarDistanceApply) els.similarDistanceApply.disabled = false;
+    if (els.similarDistanceInput) els.similarDistanceInput.disabled = false;
   }
+}
+
+async function openSimilarForSelected(){
+  const sourceId = _resolveSelectedPhotoIdForSimilar();
+  if (!sourceId) return;
+  const distance = setSimilarDistanceInput(readSimilarPhashDistance());
+  if (els.viewer && !els.viewer.classList.contains('hidden')) {
+    closeViewer();
+  }
+  state.similarSourceId = sourceId;
+  state.similarModalItems = [];
+  renderSimilarModalGrid([], { showEmpty: false });
+  openSimilarModal();
+  await loadSimilarForSource(sourceId, distance);
 }
 const viSimilarBtn = document.getElementById('viSimilarBtn');
 if (viSimilarBtn) viSimilarBtn.addEventListener('click', openSimilarForSelected);
 if (els.similarBtn) els.similarBtn.addEventListener('click', openSimilarForSelected);
+if (els.similarDistanceForm) {
+  els.similarDistanceForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const sourceId = Number(state.similarSourceId || _resolveSelectedPhotoIdForSimilar() || 0);
+    if (!sourceId) return;
+    loadSimilarForSource(sourceId, currentSimilarDistanceInputValue()).catch(() => {
+      _setSimilarModalStatus(tr('similar_fetch_error'), 'err');
+    });
+  });
+}
 if (els.similarModalClose) {
   els.similarModalClose.addEventListener('click', () => closeSimilarModal());
 }
@@ -14784,6 +14871,8 @@ if (state.view === 'mapper') {
 }
 
 applyUiLanguage();
+startAppUpdateBadgePolling();
+
 function renderHeicConversionSettings(data) {
   if (!data || !data.ok) return;
   if (els.heicConvertToggle) els.heicConvertToggle.checked = !!data.convert_on_upload;
@@ -14995,12 +15084,6 @@ setView(state.view, { syncUrl: false }).then(async () => {
     state.logsRunning = false;
   }
   loadUploadFileTypeSettings({ silent: true }).catch(() => {});
-  try {
-    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (role !== 'user' && state.view !== 'settings') {
-      loadAppUpdateStatus({ silent: true }).catch(() => {});
-    }
-  } catch {}
   // Load conversion settings into toggles
   try {
     loadConversionSettings().catch(()=>{});

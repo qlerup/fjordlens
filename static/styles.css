@@ -3042,6 +3042,20 @@ body.detail-open .detail-panel {
 #similarModal .modal-body {
   overflow: auto;
 }
+.similar-distance-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.similar-distance-form label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.similar-distance-form .input-number {
+  width: 82px;
+}
 #similarModalGrid.gallery-grid {
   margin-top: 10px;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
