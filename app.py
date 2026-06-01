@@ -17240,9 +17240,9 @@ def api_similar(photo_id: int):
 def api_similar_phash(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "120"))))
     try:
-        dist_thr = int(request.args.get("distance", "11"))
+        dist_thr = int(request.args.get("distance", "8"))
     except Exception:
-        dist_thr = 11
+        dist_thr = 8
     dist_thr = max(0, min(20, dist_thr))
 
     with closing(get_conn()) as conn:
