@@ -637,6 +637,30 @@ def inject_template_i18n():
         "app_build": APP_BUILD_ID,
     }
 
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    for candidate in (
+        DATA_DIR / "robots.txt",
+        Path(__file__).parent / "static" / "robots.txt",
+    ):
+        if candidate.exists():
+            content = candidate.read_text(encoding="utf-8")
+            break
+    else:
+        content = "User-agent: *\nDisallow: /admin\nDisallow: /api\n"
+    from flask import Response
+    resp = Response(content, mimetype="text/plain")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 # --- iOS/Android Home Screen icons at well-known root URLs ---
 def _png_response(data: bytes):
     from flask import Response
