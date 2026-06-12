@@ -11,6 +11,7 @@
   "traefik_prefix": "/lens",
   "compose_dir_env": "FJORDLENS_DIR",
   "source_url": "https://github.com/qlerup/fjordlens",
+  "icon_url": "https://raw.githubusercontent.com/qlerup/fjordlens/main/static/logos/icons/fjordlens-mark-transparent-512.png",
   "sort_order": 1,
   "setup_steps": [
     {
