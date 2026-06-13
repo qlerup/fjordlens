@@ -4537,6 +4537,7 @@ def enforce_login_for_app():
         "login",
         "verify_2fa",
         "setup",
+        "hub_login",
         "api_health",
         "api_auth_session",
         "apple_touch_icon",
@@ -20867,6 +20868,25 @@ def login():
 def logout():
     logout_user()
     return _no_store_response(redirect(url_for("login")))
+
+
+@app.route("/hub-login")
+def hub_login():
+    if not _fjordhub_managed():
+        return _no_store_response(redirect(url_for("login")))
+    token = request.args.get("token", "").strip()
+    if not token:
+        return _no_store_response(redirect(url_for("login")))
+    result = _hub_api("/api/hub/sso-verify", {"token": token}, method="GET")
+    if not result.get("ok"):
+        return _no_store_response(redirect(url_for("login")))
+    try:
+        local_user = _ensure_managed_local_user(result)
+        _log_login_attempt(str(result.get("username", "")), int(local_user.id), str(local_user.username), True, "login_success", "hub_sso")
+        login_user(local_user)
+    except Exception:
+        return _no_store_response(redirect(url_for("login")))
+    return _no_store_response(redirect(url_for("index")))
 
 
 @app.route("/api/auth/session", methods=["GET"])
