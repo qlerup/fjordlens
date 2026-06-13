@@ -21177,9 +21177,103 @@ def api_admin_users():
                 pass
             _set_user_allowed_folders(conn, uid, allowed_folders)
             conn.commit()
+        _hub_sync_user(u, role)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+# ── FjordHub integration ──────────────────────────────────────────────────────
+
+_FJORDHUB_API_KEY = os.environ.get("FJORDHUB_API_KEY", "")
+_FJORDHUB_URL = os.environ.get("FJORDHUB_URL", "")
+_FJORDHUB_APP_ID = os.environ.get("FJORDHUB_APP_ID", "fjordlens")
+
+
+def _hub_authorized() -> bool:
+    if not _FJORDHUB_API_KEY:
+        return False
+    return request.headers.get("X-Hub-Key") == _FJORDHUB_API_KEY
+
+
+def _hub_sync_user(username: str, role: str) -> None:
+    import json as _json
+    import urllib.request as _urlreq
+    if not _FJORDHUB_URL or not _FJORDHUB_API_KEY:
+        return
+    try:
+        payload = _json.dumps({
+            "app_id": _FJORDHUB_APP_ID,
+            "username": username,
+            "role": role,
+        }).encode()
+        req = _urlreq.Request(
+            f"{_FJORDHUB_URL}/api/hub/user-sync", data=payload, method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("X-Hub-Key", _FJORDHUB_API_KEY)
+        _urlreq.urlopen(req, timeout=3)
+    except Exception:
+        pass
+
+
+@app.route("/api/hub/users", methods=["GET", "POST"])
+def hub_users():
+    if not _hub_authorized():
+        return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                "SELECT id, username, role, created_at FROM users ORDER BY id"
+            ).fetchall()
+        return jsonify({"ok": True, "items": [
+            {"id": r["id"], "username": r["username"], "role": r["role"] or "user", "created_at": r["created_at"]}
+            for r in rows
+        ]})
+    data = request.get_json(silent=True) or {}
+    u = str(data.get("username") or "").strip()
+    p = str(data.get("password") or "")
+    role = str(data.get("role") or "user").strip().lower()
+    if role not in ("admin", "user"):
+        role = "user"
+    if not u or not p:
+        return jsonify({"ok": False, "error": "username og password påkrævet"}), 400
+    if len(p) < 6:
+        return jsonify({"ok": False, "error": "Adgangskode skal være mindst 6 tegn"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO users(username, password_hash, is_admin, role, ui_language, search_language, created_at) VALUES (?,?,?,?,?,?,?)",
+                (u, generate_password_hash(p), 1 if role == "admin" else 0, role, DEFAULT_UI_LANGUAGE, DEFAULT_SEARCH_LANGUAGE, now_iso()),
+            )
+            conn.commit()
+        return jsonify({"ok": True}), 201
+    except Exception as exc:
+        if "UNIQUE" in str(exc) or "unique" in str(exc).lower():
+            return jsonify({"ok": False, "error": "Brugernavn findes allerede"}), 409
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/hub/users/<int:user_id>", methods=["PATCH", "DELETE"])
+def hub_user(user_id: int):
+    if not _hub_authorized():
+        return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if request.method == "DELETE":
+        with closing(get_conn()) as conn:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+            conn.commit()
+        return jsonify({"ok": True})
+    data = request.get_json(silent=True) or {}
+    role = str(data.get("role") or "user").strip().lower()
+    if role not in ("admin", "user"):
+        return jsonify({"ok": False, "error": "Ugyldig rolle"}), 400
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE users SET role=?, is_admin=? WHERE id=?",
+            (role, 1 if role == "admin" else 0, user_id),
+        )
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/shares", methods=["GET"])
