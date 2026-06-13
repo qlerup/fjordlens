@@ -66,6 +66,8 @@ _UPLOAD_DIR_ENV = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_DIR")
 UPLOAD_DIR = Path(_UPLOAD_DIR_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 DB_PATH = DATA_DIR / "fjordlens.db"
+INSTALL_STATE_PATH = DATA_DIR / "fjordlens.install.json"
+INSTALL_STATE_LOCK = threading.Lock()
 _SQLITE_JOURNAL_MODE_ENV = str(os.environ.get("SQLITE_JOURNAL_MODE", "") or "").strip().upper()
 _SQLITE_JOURNAL_MODE_ALLOWED = {"DELETE", "WAL", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}
 
@@ -2056,6 +2058,52 @@ def ensure_dirs() -> None:
         (UPLOAD_DIR / "converted").mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
+
+def _install_state_exists() -> bool:
+    return INSTALL_STATE_PATH.exists()
+
+
+def _install_state_now() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _mark_install_initialized(reason: str = "unknown") -> None:
+    if _install_state_exists():
+        return
+    with INSTALL_STATE_LOCK:
+        if _install_state_exists():
+            return
+        payload = {
+            "app": "fjordlens",
+            "initialized": True,
+            "initialized_at": _install_state_now(),
+            "reason": str(reason or "unknown"),
+            "db_path": str(DB_PATH),
+        }
+        INSTALL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = INSTALL_STATE_PATH.with_name(f".{INSTALL_STATE_PATH.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp_path, INSTALL_STATE_PATH)
+
+
+def _ensure_install_state_for_existing_users() -> None:
+    try:
+        if users_count() > 0:
+            _mark_install_initialized("existing-users")
+    except Exception:
+        pass
+
+
+def _setup_locked_response():
+    message = "FjordLens er allerede initialiseret, men databasen mangler eller er tom."
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": message, "recovery_required": True}), 503
+    return render_template(
+        "setup_locked.html",
+        app_name="FjordLens",
+        db_path=str(DB_PATH),
+    ), 503
 
 
 # Note: We intentionally avoid creating folders on startup.
@@ -4127,6 +4175,7 @@ def ensure_runtime_bootstrap() -> None:
             return
         ensure_dirs()
         init_db()
+        _ensure_install_state_for_existing_users()
         DB_BOOTSTRAP_READY = True
 
 
@@ -4530,9 +4579,14 @@ def enforce_login_for_app():
     }
     if request.endpoint in open_endpoints:
         return None
-    # Bootstrap: if no users exist, redirect to setup
+    # Bootstrap: if no users exist, redirect to setup unless this install already ran.
     try:
-        if users_count() == 0 and request.endpoint != "setup":
+        user_count = users_count()
+        if user_count > 0:
+            _ensure_install_state_for_existing_users()
+        elif _install_state_exists() and request.endpoint not in {"setup", "api_health"}:
+            return _setup_locked_response()
+        elif request.endpoint != "setup":
             return redirect(url_for("setup"))
     except Exception:
         pass
@@ -9191,7 +9245,10 @@ def setup():
     ensure_runtime_bootstrap()
     # If a user already exists, send to login
     if users_count() > 0:
+        _ensure_install_state_for_existing_users()
         return redirect(url_for("login"))
+    if _install_state_exists():
+        return _setup_locked_response()
     require_token = bool(_read_secret("SETUP_TOKEN"))
     if request.method == "POST":
         token = (request.form.get("token") or "").strip()
@@ -9211,6 +9268,7 @@ def setup():
                     (u, generate_password_hash(p), 1, "admin", now_iso()),
                 )
                 conn.commit()
+            _mark_install_initialized("first-admin-created")
             # Redirect directly to login after successful creation
             return redirect(url_for("login", created=1))
         except Exception as e:
@@ -20733,6 +20791,11 @@ def _no_store_response(resp):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     ensure_runtime_bootstrap()
+    if users_count() == 0:
+        if _install_state_exists():
+            return _setup_locked_response()
+        return _no_store_response(redirect(url_for("setup")))
+    _ensure_install_state_for_existing_users()
     if current_user.is_authenticated:
         return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
     if request.method == "POST":
