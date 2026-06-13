@@ -4,6 +4,8 @@ services:
     container_name: fjordlens
     ports:
       - "${APP_PORT:-9080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Keep 1 worker: background jobs use in-process state/events and are not safe across multiple workers.
     command: >
       gunicorn wsgi:application
@@ -39,6 +41,9 @@ services:
       MOV_CONVERT_AUDIO_BITRATE: ${MOV_CONVERT_AUDIO_BITRATE:-128k}
       MOV_CONVERT_TIMEOUT_SEC: ${MOV_CONVERT_TIMEOUT_SEC:-7200}
       FJORDLENS_UPDATER_URL: http://fjordlens-updater:8090
+      FJORDHUB_URL: ${FJORDHUB_URL:-}
+      FJORDHUB_APP_ID: ${FJORDHUB_APP_ID:-fjordlens}
+      FJORDHUB_API_KEY: ${FJORDHUB_API_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s
