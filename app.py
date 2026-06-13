@@ -4586,6 +4586,10 @@ def enforce_login_for_app():
             _ensure_install_state_for_existing_users()
         elif _install_state_exists() and request.endpoint not in {"setup", "api_health"}:
             return _setup_locked_response()
+        elif _FJORDHUB_API_KEY:
+            if request.endpoint not in {"login", "verify_2fa"}:
+                return redirect(url_for("login"))
+            return None
         elif request.endpoint != "setup":
             return redirect(url_for("setup"))
     except Exception:
