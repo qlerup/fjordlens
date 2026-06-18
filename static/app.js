@@ -15732,6 +15732,7 @@ async function renderUsersPanel(){
     const items = js.items || [];
     const loginAudit = Array.isArray(js.login_audit) ? js.login_audit : [];
     const availableFolders = Array.isArray(js.available_folders) ? js.available_folders : [];
+    const managedByHub = !!js.managed_by_fjordhub;
     const rows = items.map(u => {
       const role = String(u.role || '').toLowerCase();
       const aclButton = role === 'admin'
@@ -15740,7 +15741,7 @@ async function renderUsersPanel(){
       return `
       <tr>
         <td class="col-id muted">#${u.id}</td>
-        <td class="col-user"><strong>${u.username}</strong></td>
+        <td class="col-user"><strong>${u.username}</strong>${managedByHub ? ' <span class="badge muted">Hub</span>' : ''}</td>
         <td class="col-role">${u.role}</td>
         <td class="col-lang">${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
         <td class="col-2fa">${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>
@@ -16197,6 +16198,11 @@ async function renderUsersPanel(){
         const esl = document.getElementById('eu_search_language');
         if (eu) eu.value = user.username || '';
         if (ep) ep.value = '';
+        if (eu) eu.disabled = managedByHub;
+        if (ep) {
+          ep.disabled = managedByHub;
+          ep.placeholder = managedByHub ? 'Styres i FjordHub' : 'Tom = uændret';
+        }
         if (er) er.value = user.role || 'user';
         if (eul) eul.value = user.ui_language || 'da';
         if (esl) esl.value = user.search_language || 'da';

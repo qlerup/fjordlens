@@ -109,7 +109,7 @@ services:
       FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES: ${FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES:-30}
       TZ: ${TZ:-Europe/Copenhagen}
     volumes:
-      - .:/repo
+      - "${APP_REPO_DIR:-.}:/repo"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}/updater:/state"
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

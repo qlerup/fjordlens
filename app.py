@@ -1975,9 +1975,11 @@ class User(UserMixin):
         is_admin_fallback: Optional[bool] = None,
         ui_language: Optional[str] = None,
         search_language: Optional[str] = None,
+        hub_user_id: Optional[int] = None,
     ):
         self.id = str(id)
         self.username = username
+        self.hub_user_id = int(hub_user_id) if hub_user_id is not None else None
         role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
         if role_norm not in {"admin", "user"}:
             role_norm = "user"
@@ -2018,12 +2020,16 @@ def _row_to_user(row: sqlite3.Row) -> Optional[User]:
         search_language = row["search_language"] if "search_language" in row.keys() else None
     except Exception:
         search_language = None
+    try:
+        hub_user_id = int(row["hub_user_id"]) if "hub_user_id" in row.keys() and row["hub_user_id"] is not None else None
+    except Exception:
+        hub_user_id = None
     is_admin_fallback = False
     try:
         is_admin_fallback = bool(row["is_admin"]) if "is_admin" in row.keys() else False
     except Exception:
         is_admin_fallback = False
-    return User(int(row["id"]), row["username"], role, is_admin_fallback, ui_language, search_language)
+    return User(int(row["id"]), row["username"], role, is_admin_fallback, ui_language, search_language, hub_user_id)
 
 
 @login_manager.user_loader
@@ -2031,7 +2037,7 @@ def load_user(user_id: str) -> Optional[User]:
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, is_admin, role, ui_language, search_language FROM users WHERE id = ?",
+                "SELECT id, username, is_admin, role, ui_language, search_language, hub_user_id FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         return _row_to_user(row)
@@ -3743,6 +3749,8 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 1,
                 role TEXT,
+                hub_user_id INTEGER,
+                hub_synced_at TEXT,
                 ui_language TEXT DEFAULT 'da',
                 search_language TEXT DEFAULT 'da',
                 theme_mode TEXT DEFAULT 'system',
@@ -3875,6 +3883,18 @@ def init_db() -> None:
         # Add role column if missing and backfill values from is_admin
         try:
             conn.execute("ALTER TABLE users ADD COLUMN role TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN hub_user_id INTEGER")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN hub_synced_at TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_hub_user_id ON users(hub_user_id) WHERE hub_user_id IS NOT NULL")
         except Exception:
             pass
         try:
@@ -20795,6 +20815,37 @@ def _no_store_response(resp):
     return resp
 
 
+def _complete_managed_login(local_user: User, username_input: str, success_reason: str, next_url: Optional[str] = None):
+    safe_next = _safe_auth_next_url(next_url)
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT id, username, is_admin, role, totp_enabled, totp_secret, totp_setup_done, totp_remember_days FROM users WHERE id=?",
+                (int(local_user.id),),
+            ).fetchone()
+    except Exception:
+        row = None
+
+    if row is not None and int(row["totp_enabled"] or 0) == 1:
+        setup_done = int(row["totp_setup_done"] or 0)
+        totp_secret = row["totp_secret"]
+        if not totp_secret or setup_done == 0:
+            _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_password", "2fa_setup_required")
+            login_user(local_user)
+            return _no_store_response(redirect(url_for("setup_2fa")))
+        if _trust_cookie_valid_for(int(local_user.id)):
+            _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_success", "fjordhub_trusted_device")
+            login_user(local_user)
+            return _no_store_response(redirect(safe_next))
+        session["2fa_user_id"] = int(local_user.id)
+        _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_password", "2fa_required")
+        return _no_store_response(redirect(url_for("verify_2fa", next=safe_next)))
+
+    _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_success", success_reason)
+    login_user(local_user)
+    return _no_store_response(redirect(safe_next))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     ensure_runtime_bootstrap()
@@ -20807,9 +20858,7 @@ def login():
             hub_user = _hub_authenticate(username, password)
             if hub_user:
                 local_user = _ensure_managed_local_user(hub_user)
-                _log_login_attempt(username, int(local_user.id), str(local_user.username), True, "login_success", "fjordhub_ok")
-                login_user(local_user)
-                return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
+                return _complete_managed_login(local_user, username, "fjordhub_ok", request.args.get("next"))
             _log_login_attempt(username, None, None, False, "login_failed", "fjordhub_invalid")
             return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
         created = True if (request.args.get("created") in ("1", "true", "True")) else False
@@ -20882,11 +20931,9 @@ def hub_login():
         return _no_store_response(redirect(url_for("login")))
     try:
         local_user = _ensure_managed_local_user(result)
-        _log_login_attempt(str(result.get("username", "")), int(local_user.id), str(local_user.username), True, "login_success", "hub_sso")
-        login_user(local_user)
+        return _complete_managed_login(local_user, str(result.get("username", "")), "hub_sso", url_for("index"))
     except Exception:
         return _no_store_response(redirect(url_for("login")))
-    return _no_store_response(redirect(url_for("index")))
 
 
 @app.route("/api/auth/session", methods=["GET"])
@@ -21053,6 +21100,8 @@ def admin_users():
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     msg = None
+    if _fjordhub_managed() and request.method == "POST":
+        return redirect(url_for("index"))
     if request.method == "POST":
         action = (request.form.get("action") or "create").strip()
         if action == "create":
@@ -21159,6 +21208,7 @@ def api_admin_users():
                 "username": r["username"],
                 "role": (r["role"] or ("admin" if int(r["is_admin"] or 0) else "user")),
                 "is_admin": bool(r["is_admin"] or 0),
+                "managed_by_fjordhub": False,
                 "totp_enabled": bool(r["totp_enabled"] or 0),
                 "ui_language": _normalize_language(r["ui_language"], DEFAULT_UI_LANGUAGE),
                 "search_language": _normalize_language(r["search_language"], DEFAULT_SEARCH_LANGUAGE),
@@ -21297,34 +21347,206 @@ def _hub_delete_user_access(user_id: int) -> dict:
     return _hub_api(f"/api/hub/apps/users/{int(user_id)}", {}, method="DELETE")
 
 
-def _ensure_managed_local_user(hub_user: dict) -> User:
-    user_id = int(hub_user["id"])
-    username = str(hub_user.get("username") or "").strip()
-    role = "admin" if str(hub_user.get("role") or "user").lower() == "admin" else "user"
+FJORDHUB_MANAGED_PASSWORD_HASH = "fjordhub-managed"
+
+
+def _coerce_hub_user_id(value: Any) -> Optional[int]:
+    try:
+        hub_user_id = int(value)
+        return hub_user_id if hub_user_id > 0 else None
+    except Exception:
+        return None
+
+
+def _coerce_hub_role(value: Any) -> str:
+    return "admin" if str(value or "user").strip().lower() == "admin" else "user"
+
+
+def _ensure_hub_user_columns(conn: sqlite3.Connection) -> None:
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]  # type: ignore[index]
+    except Exception:
+        cols = []
+    if "hub_user_id" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN hub_user_id INTEGER")
+    if "hub_synced_at" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN hub_synced_at TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_hub_user_id ON users(hub_user_id) WHERE hub_user_id IS NOT NULL")
+
+
+def _acl_permission_max(left: str, right: str) -> str:
+    rank = {"view": 1, "upload": 2, "edit": 3}
+    left_clean = str(left or "view").strip().lower()
+    right_clean = str(right or "view").strip().lower()
+    if left_clean not in rank:
+        left_clean = "view"
+    if right_clean not in rank:
+        right_clean = "view"
+    return left_clean if rank[left_clean] >= rank[right_clean] else right_clean
+
+
+def _merge_managed_user_rows(conn: sqlite3.Connection, source_id: int, target_id: int) -> None:
+    if int(source_id) == int(target_id):
+        return
+
+    source_acl = conn.execute(
+        "SELECT folder_path, COALESCE(permission,'view') AS permission FROM user_folder_access WHERE user_id=?",
+        (int(source_id),),
+    ).fetchall()
+    for row in source_acl:
+        folder_path = _normalize_folder_acl_path(row["folder_path"])
+        if not folder_path:
+            continue
+        permission = str(row["permission"] or "view").strip().lower()
+        existing = conn.execute(
+            "SELECT permission FROM user_folder_access WHERE user_id=? AND folder_path=?",
+            (int(target_id), folder_path),
+        ).fetchone()
+        if existing:
+            merged = _acl_permission_max(str(existing["permission"] or "view"), permission)
+            conn.execute(
+                "UPDATE user_folder_access SET permission=? WHERE user_id=? AND folder_path=?",
+                (merged, int(target_id), folder_path),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO user_folder_access(user_id, folder_path, permission, created_at) VALUES(?,?,?,?)",
+                (int(target_id), folder_path, permission if permission in {"view", "upload", "edit"} else "view", now_iso()),
+            )
+
+    conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (int(source_id),))
+    for table, column in (
+        ("login_audit", "user_id"),
+        ("share_links", "created_by_user_id"),
+        ("folder_owners", "user_id"),
+    ):
+        try:
+            conn.execute(f"UPDATE {table} SET {column}=? WHERE {column}=?", (int(target_id), int(source_id)))
+        except Exception:
+            pass
+
+    row = conn.execute("SELECT password_hash FROM users WHERE id=?", (int(source_id),)).fetchone()
+    if row is not None and str(row["password_hash"] or "") == FJORDHUB_MANAGED_PASSWORD_HASH:
+        conn.execute("DELETE FROM users WHERE id=?", (int(source_id),))
+    else:
+        conn.execute("UPDATE users SET hub_user_id=NULL, hub_synced_at=NULL WHERE id=?", (int(source_id),))
+
+
+def _hub_user_id_for_local_user(local_user_id: int) -> int:
     with closing(get_conn()) as conn:
-        conn.execute(
-            """
-            INSERT INTO users(id, username, password_hash, is_admin, role, ui_language, search_language, created_at)
-            VALUES(?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                username=excluded.username,
-                is_admin=excluded.is_admin,
-                role=excluded.role
-            """,
-            (
-                user_id,
-                username,
-                "fjordhub-managed",
-                1 if role == "admin" else 0,
-                role,
-                DEFAULT_UI_LANGUAGE,
-                DEFAULT_SEARCH_LANGUAGE,
-                now_iso(),
-            ),
-        )
+        try:
+            _ensure_hub_user_columns(conn)
+            row = conn.execute(
+                "SELECT id, hub_user_id, password_hash FROM users WHERE id=?",
+                (int(local_user_id),),
+            ).fetchone()
+        except Exception:
+            row = None
+    if not row:
+        return int(local_user_id)
+    hub_user_id = _coerce_hub_user_id(row["hub_user_id"])
+    if hub_user_id:
+        return hub_user_id
+    if str(row["password_hash"] or "") == FJORDHUB_MANAGED_PASSWORD_HASH:
+        return int(row["id"])
+    return int(local_user_id)
+
+
+def _delete_local_managed_user(local_user_id: int) -> None:
+    with closing(get_conn()) as conn:
+        _ensure_hub_user_columns(conn)
         row = conn.execute(
-            "SELECT id, username, is_admin, role, ui_language, search_language FROM users WHERE id=?",
-            (user_id,),
+            "SELECT id, password_hash, hub_user_id FROM users WHERE id=?",
+            (int(local_user_id),),
+        ).fetchone()
+        if row is None:
+            return
+        if row["hub_user_id"] is None and str(row["password_hash"] or "") != FJORDHUB_MANAGED_PASSWORD_HASH:
+            return
+        conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (int(local_user_id),))
+        conn.execute("DELETE FROM users WHERE id=?", (int(local_user_id),))
+        conn.commit()
+
+
+def _ensure_managed_local_user(hub_user: dict) -> User:
+    hub_user_id = _coerce_hub_user_id(hub_user.get("id"))
+    if not hub_user_id:
+        raise ValueError("FjordHub bruger mangler id.")
+    username = str(hub_user.get("username") or "").strip()
+    if not username:
+        raise ValueError("FjordHub bruger mangler brugernavn.")
+    role = _coerce_hub_role(hub_user.get("role"))
+    ui_language = _normalize_language(hub_user.get("language"), DEFAULT_UI_LANGUAGE)
+    with closing(get_conn()) as conn:
+        _ensure_hub_user_columns(conn)
+        row = conn.execute(
+            "SELECT * FROM users WHERE hub_user_id=? LIMIT 1",
+            (hub_user_id,),
+        ).fetchone()
+        username_row = conn.execute(
+            "SELECT * FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (username,),
+        ).fetchone()
+        legacy_row = conn.execute(
+            "SELECT * FROM users WHERE id=? AND password_hash=? LIMIT 1",
+            (hub_user_id, FJORDHUB_MANAGED_PASSWORD_HASH),
+        ).fetchone()
+
+        target = row or username_row or legacy_row
+        if row is not None and username_row is not None and int(row["id"]) != int(username_row["id"]):
+            _merge_managed_user_rows(conn, int(row["id"]), int(username_row["id"]))
+            target = username_row
+        elif row is None and legacy_row is not None and username_row is not None and int(legacy_row["id"]) != int(username_row["id"]):
+            _merge_managed_user_rows(conn, int(legacy_row["id"]), int(username_row["id"]))
+            target = username_row
+
+        if target is not None:
+            local_user_id = int(target["id"])
+            current_search_language = _normalize_language(
+                target["search_language"] if "search_language" in target.keys() else None,
+                DEFAULT_SEARCH_LANGUAGE,
+            )
+            conn.execute(
+                """
+                UPDATE users
+                SET username=?, password_hash=?, is_admin=?, role=?,
+                    hub_user_id=?, hub_synced_at=?, ui_language=?, search_language=?
+                WHERE id=?
+                """,
+                (
+                    username,
+                    FJORDHUB_MANAGED_PASSWORD_HASH,
+                    1 if role == "admin" else 0,
+                    role,
+                    hub_user_id,
+                    now_iso(),
+                    ui_language,
+                    current_search_language,
+                    local_user_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO users(username, password_hash, is_admin, role, hub_user_id, hub_synced_at, ui_language, search_language, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    username,
+                    FJORDHUB_MANAGED_PASSWORD_HASH,
+                    1 if role == "admin" else 0,
+                    role,
+                    hub_user_id,
+                    now_iso(),
+                    ui_language,
+                    DEFAULT_SEARCH_LANGUAGE,
+                    now_iso(),
+                ),
+            )
+            local_user_id = int(cur.lastrowid)
+        row = conn.execute(
+            "SELECT id, username, is_admin, role, ui_language, search_language, hub_user_id FROM users WHERE id=?",
+            (local_user_id,),
         ).fetchone()
         conn.commit()
     user = _row_to_user(row)
@@ -21335,11 +21557,14 @@ def _ensure_managed_local_user(hub_user: dict) -> User:
 
 def _managed_user_item(hub_user: dict, allowed_folders: list[dict] | None = None) -> dict:
     local_user = _ensure_managed_local_user(hub_user)
+    hub_user_id = _coerce_hub_user_id(hub_user.get("id")) or getattr(local_user, "hub_user_id", None)
     return {
         "id": int(local_user.id),
+        "hub_user_id": hub_user_id,
         "username": local_user.username,
         "role": local_user.role,
         "is_admin": local_user.is_admin,
+        "managed_by_fjordhub": True,
         "totp_enabled": False,
         "ui_language": local_user.ui_language,
         "search_language": local_user.search_language,
@@ -21380,13 +21605,20 @@ def _api_admin_users_managed():
         with closing(get_conn()) as conn:
             all_folders = _list_all_photo_folders(conn)
             acl_by_user = _managed_acl_by_user(conn)
+        items: list[dict] = []
+        for user in hub_users:
+            if not isinstance(user, dict):
+                continue
+            try:
+                item = _managed_user_item(user)
+                item["allowed_folders"] = acl_by_user.get(int(item["id"]), [])
+                items.append(item)
+            except Exception as exc:
+                app.logger.warning("Could not sync FjordHub user into FjordLens: %s", exc)
         return jsonify({
             "ok": True,
-            "items": [
-                _managed_user_item(user, acl_by_user.get(int(user.get("id") or 0), []))
-                for user in hub_users
-                if isinstance(user, dict)
-            ],
+            "managed_by_fjordhub": True,
+            "items": items,
             "available_folders": all_folders,
             "login_audit": [],
         })
@@ -21399,11 +21631,22 @@ def _api_admin_users_managed():
         "username": str(data.get("username") or "").strip(),
         "password": str(data.get("password") or ""),
         "role": role,
+        "language": _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE),
     })
     if not result.get("ok"):
         return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke oprette bruger i FjordHub"}), 400
     hub_user = result.get("user") or result.get("item") or {}
     item = _managed_user_item(hub_user if isinstance(hub_user, dict) else {})
+    ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
+    search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE users SET ui_language=?, search_language=? WHERE id=?",
+            (ui_language, search_language, int(item["id"])),
+        )
+        conn.commit()
+    item["ui_language"] = ui_language
+    item["search_language"] = search_language
     raw_allowed = data.get("allowed_folders")
     if isinstance(raw_allowed, list):
         with closing(get_conn()) as conn:
@@ -21817,10 +22060,38 @@ def api_admin_users_delete(uid: int):
             role = str(data.get("role") or "user").strip().lower()
             if role not in {"admin", "user"}:
                 return jsonify({"ok": False, "error": "invalid_role"}), 400
-            result = _hub_update_user_role(uid, role)
+            with closing(get_conn()) as conn:
+                _ensure_hub_user_columns(conn)
+                row = conn.execute(
+                    "SELECT id, username, hub_user_id FROM users WHERE id=?",
+                    (int(uid),),
+                ).fetchone()
+            if row is None:
+                return jsonify({"ok": False, "error": "not_found"}), 404
+            requested_username = str(data.get("username") or row["username"] or "").strip()
+            if requested_username.lower() != str(row["username"] or "").strip().lower():
+                return jsonify({"ok": False, "error": "username_managed_by_fjordhub"}), 400
+            if str(data.get("password") or "").strip():
+                return jsonify({"ok": False, "error": "password_managed_by_fjordhub"}), 400
+            if str(uid) == str(current_user.id) and role != "admin":
+                return jsonify({"ok": False, "error": "cannot_demote_self"}), 400
+            hub_user_id = _hub_user_id_for_local_user(uid)
+            result = _hub_update_user_role(hub_user_id, role)
             if not result.get("ok"):
                 return jsonify({"ok": False, "error": result.get("error") or "update_failed"}), 400
-            item = _managed_user_item(result.get("user") or result.get("item") or {"id": uid, "username": data.get("username"), "role": role})
+            ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
+            search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
+            with closing(get_conn()) as conn:
+                conn.execute(
+                    "UPDATE users SET ui_language=?, search_language=? WHERE id=?",
+                    (ui_language, search_language, int(uid)),
+                )
+                conn.commit()
+            item = _managed_user_item(
+                result.get("user") or result.get("item") or {"id": hub_user_id, "username": row["username"], "role": role}
+            )
+            item["ui_language"] = ui_language
+            item["search_language"] = search_language
             raw_allowed = data.get("allowed_folders")
             if isinstance(raw_allowed, list):
                 with closing(get_conn()) as conn:
@@ -21830,9 +22101,11 @@ def api_admin_users_delete(uid: int):
             return jsonify({"ok": True, "item": item})
         if str(uid) == str(current_user.id):
             return jsonify({"ok": False, "error": "cannot_delete_self"}), 400
-        result = _hub_delete_user_access(uid)
+        hub_user_id = _hub_user_id_for_local_user(uid)
+        result = _hub_delete_user_access(hub_user_id)
         if not result.get("ok"):
             return jsonify({"ok": False, "error": result.get("error") or "delete_failed"}), 400
+        _delete_local_managed_user(uid)
         return jsonify({"ok": True})
     if request.method == "PUT":
         data = request.get_json(silent=True) or {}
