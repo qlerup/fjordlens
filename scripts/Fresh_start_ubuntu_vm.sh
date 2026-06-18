@@ -327,6 +327,35 @@ configure_nfs_upload_mount_if_enabled() {
   echo "    NFS mount active: ${SETUP_NFS_MOUNT_ROOT}"
 }
 
+gpu_preflight_vm() {
+  if [ "$AI_DEVICE" = "cpu" ]; then
+    return 1
+  fi
+  echo
+  echo "==> GPU preflight"
+  print_cmd "docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+  if docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
+    echo "    Docker GPU test: OK"
+    return 0
+  fi
+  echo "WARNING: Docker cannot start a GPU container with --gpus all."
+  if [ "$AI_DEVICE" = "cuda" ]; then
+    echo "ERROR: AI_DEVICE=cuda requires working NVIDIA Docker runtime."
+    exit 1
+  fi
+  if [ -t 0 ] && [ -t 1 ]; then
+    if ask_yes_no "GPU preflight failed. Continue with CPU-safe install?" "y"; then
+      AI_DEVICE="cpu"
+      return 1
+    fi
+    echo "Stopped before container start."
+    exit 1
+  fi
+  echo "WARNING: Continuing with CPU-safe install."
+  AI_DEVICE="cpu"
+  return 1
+}
+
 run_preflight_and_start() {
   require_runtime_tools
   configure_nfs_upload_mount_if_enabled
@@ -368,8 +397,13 @@ run_preflight_and_start() {
   echo
   echo "==> Starting containers"
   cd "$REPO_DIR"
-  print_cmd "docker compose up -d --build"
-  docker compose up -d --build
+  if gpu_preflight_vm; then
+    print_cmd "docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build"
+    docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+  else
+    print_cmd "docker compose up -d --build"
+    docker compose up -d --build
+  fi
   host_ip="$(detect_host_ip)"
   echo "==> Done"
   echo "    Open: http://${host_ip}:${APP_PORT:-9080}"

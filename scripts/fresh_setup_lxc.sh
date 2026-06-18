@@ -641,6 +641,9 @@ print_summary() {
   echo "  APP_REPO_DIR=${APP_REPO_DIR}"
   echo "  AI_DEVICE=${AI_DEVICE}"
   echo "  ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE}"
+  if [ -n "${GPU_PROXMOX_VMID:-}" ]; then
+    echo "  GPU_PROXMOX_VMID=${GPU_PROXMOX_VMID}"
+  fi
   echo "  DATA_DIR=${DATA_DIR}"
   echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
   echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
@@ -688,24 +691,26 @@ edit_menu() {
     echo
     echo "Edit settings menu:"
     echo "  1) Basic app settings"
-    echo "  2) Proxmox/LXC mount paths"
-    echo "  3) Storage paths"
-    echo "  4) Library source (PHOTO_DIR)"
-    echo "  5) Feature toggles"
-    echo "  6) In-app updater"
-    echo "  7) SQLite + fs-type checks"
-    echo "  8) Done editing (back to summary)"
-    choice="$(ask_input "Choose section number" "8" "1-8" "Type the number for what you want to edit.")"
+    echo "  2) GPU passthrough"
+    echo "  3) Proxmox/LXC mount paths"
+    echo "  4) Storage paths"
+    echo "  5) Library source (PHOTO_DIR)"
+    echo "  6) Feature toggles"
+    echo "  7) In-app updater"
+    echo "  8) SQLite + fs-type checks"
+    echo "  9) Done editing (back to summary)"
+    choice="$(ask_input "Choose section number" "9" "1-9" "Type the number for what you want to edit.")"
     case "$choice" in
       1) step_1_basic ;;
-      2) step_2_mounts ;;
-      3) step_3_storage ;;
-      4) step_4_library ;;
-      5) step_5_features ;;
-      6) step_6_updater ;;
-      7) step_7_sqlite ;;
-      8|"") break ;;
-      *) echo "Invalid choice. Please select 1-8." ;;
+      2) step_2_gpu ;;
+      3) step_2_mounts ;;
+      4) step_3_storage ;;
+      5) step_4_library ;;
+      6) step_5_features ;;
+      7) step_6_updater ;;
+      8) step_7_sqlite ;;
+      9|"") break ;;
+      *) echo "Invalid choice. Please select 1-9." ;;
     esac
   done
 }
@@ -753,6 +758,7 @@ fi
 
 load_env_with_defaults
 step_1_basic
+step_2_gpu
 step_2_mounts
 step_3_storage
 step_4_library
