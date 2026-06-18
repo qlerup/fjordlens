@@ -36,11 +36,11 @@
           "key": "AI_DEVICE",
           "label": "AI-enhed",
           "type": "select",
-          "default": "auto",
-          "hint": "auto bruger GPU hvis tilgængeligt og falder tilbage til CPU",
+          "default": "cpu",
+          "hint": "CPU virker på alle hosts. GPU kræver manuel GPU-runtime/override.",
           "options": [
-            {"value": "auto", "label": "Auto (anbefalet)"},
-            {"value": "cpu", "label": "CPU"},
+            {"value": "cpu", "label": "CPU (anbefalet)"},
+            {"value": "auto", "label": "Auto"},
             {"value": "cuda", "label": "CUDA (NVIDIA GPU)"}
           ]
         },

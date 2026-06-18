@@ -126,6 +126,12 @@ If you prefer to start manually without preflight:
 docker compose up -d --build
 ```
 
+Base `docker-compose.yml` is CPU-safe and does not request a GPU. To opt in to NVIDIA GPU passthrough on a host where `docker run --gpus all ...` already works:
+
+```bash
+AI_DEVICE=auto docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
 ### Synology NAS (SSH)
 
 ```bash
@@ -191,7 +197,7 @@ sh scripts/fresh_setup_lxc.sh
 - checks `/dev/nvidia*` visibility inside the LXC
 - auto-sets `no-cgroups = true` in `/etc/nvidia-container-runtime/config.toml` when needed
 - restarts Docker runtime when runtime config changes
-- runs CUDA + PyTorch GPU smoke tests before `docker compose up`
+- runs CUDA + PyTorch GPU smoke tests before adding the GPU compose override
 - prints exact Proxmox host `pct`/`/etc/pve/lxc/<CTID>.conf` hints if passthrough is still incomplete
 - configures in-app updater defaults, including automatic background update checks
 - verifies Docker and `/var/run/docker.sock` availability for the updater container
@@ -376,7 +382,7 @@ See `.env.example` for defaults. Most-used variables:
 - `LOG_LEVEL`: app log level
 - `ENABLE_LIBRARY_SOURCE`: enable/disable library source (`PHOTO_DIR`) usage (`0` by default)
 - `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
-- `AI_DEVICE`: AI runtime preference (`auto`, `cpu`, `cuda`; default `auto`)
+- `AI_DEVICE`: AI runtime preference (`cpu`, `auto`, `cuda`; default `cpu`)
 - `ENABLE_GPU_GUIDE`: enable guided GPU preflight in `scripts/fresh_setup_lxc.sh` (`1` by default)
 - `AI_DEBUG_PORT`: optional host port for AI service
 - `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
@@ -441,18 +447,18 @@ docker compose logs --tail=200
 
 ### GPU acceleration is not used
 
-`AI_DEVICE=auto` enables automatic CUDA use when the container can see a GPU.
+Base `docker-compose.yml` intentionally starts without a GPU request, so FjordHub and CPU-only hosts can install cleanly.
 
-If health still reports CPU, run the LXC GPU guide first:
+For Proxmox LXC, set `AI_DEVICE=auto` or `AI_DEVICE=cuda`, then run the LXC GPU guide:
 
 ```bash
 sh scripts/fresh_setup_lxc.sh --start-only
 ```
 
-Then verify Docker GPU passthrough is enabled on the host/runtime and rebuild:
+For manual starts after Docker GPU passthrough is working, use the GPU override:
 
 ```bash
-docker compose up -d --build
+AI_DEVICE=auto docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
 Manual recovery checklist is available in:
@@ -467,6 +473,7 @@ fjordlens_synology_github_ready/
 |  |- app.py
 |  |- Dockerfile
 |  |- docker-compose.yml
+|  |- docker-compose.gpu.yml
 |  |- docker-compose.no-library.yml
 |  |- ai_service/
 |  |- static/

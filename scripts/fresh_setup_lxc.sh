@@ -219,7 +219,7 @@ load_env_with_defaults() {
   : "${THUMBS_HOST_DIR:=/opt/fjordlens-data/thumbs}"
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
-  : "${AI_DEVICE:=auto}"
+  : "${AI_DEVICE:=cpu}"
   : "${ENABLE_GPU_GUIDE:=1}"
   : "${SQLITE_JOURNAL_MODE:=}"
   : "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
@@ -445,9 +445,14 @@ gpu_preflight_lxc() {
 run_preflight_and_start() {
   require_runtime_tools
   preflight_paths
+  USE_GPU_COMPOSE=0
 
   if is_truthy "$ENABLE_GPU_GUIDE"; then
-    if ! gpu_preflight_lxc; then
+    if gpu_preflight_lxc; then
+      if [ "$AI_DEVICE" != "cpu" ]; then
+        USE_GPU_COMPOSE=1
+      fi
+    else
       if [ "$AI_DEVICE" = "cuda" ]; then
         echo "ERROR: AI_DEVICE=cuda but GPU preflight failed."
         echo "Fix the host passthrough/runtime and rerun:"
@@ -473,8 +478,13 @@ run_preflight_and_start() {
   echo
   echo "==> Starting containers"
   cd "$REPO_DIR"
-  print_cmd "docker compose up -d --build"
-  docker compose up -d --build
+  if [ "${USE_GPU_COMPOSE:-0}" = "1" ]; then
+    print_cmd "docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build"
+    docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+  else
+    print_cmd "docker compose up -d --build"
+    docker compose up -d --build
+  fi
   host_ip="$(detect_host_ip)"
   echo "==> Done"
   echo "    Open: http://${host_ip}:${APP_PORT:-9080}"
@@ -486,13 +496,13 @@ step_1_basic() {
   APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
   TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
   LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
-  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: auto/cpu/cuda)" "$AI_DEVICE" "auto" "auto uses CUDA when available and falls back to CPU.")"
+  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "CPU works everywhere. auto/cuda only use GPU when the GPU override is active.")"
   ai_device_choice_lc="$(printf "%s" "$ai_device_choice" | tr '[:upper:]' '[:lower:]')"
   case "$ai_device_choice_lc" in
     auto|cpu|cuda) AI_DEVICE="$ai_device_choice_lc" ;;
     *)
-      echo "Invalid AI_DEVICE '${ai_device_choice}'. Using auto."
-      AI_DEVICE="auto"
+      echo "Invalid AI_DEVICE '${ai_device_choice}'. Using cpu."
+      AI_DEVICE="cpu"
       ;;
   esac
   if ask_yes_no "Run guided GPU checks/fixes for Proxmox LXC (ENABLE_GPU_GUIDE)?" "$(is_truthy "$ENABLE_GPU_GUIDE" && echo y || echo n)"; then
