@@ -499,10 +499,15 @@ run_preflight_and_start() {
 
 step_1_basic() {
   echo
-  echo "Step 1/7: Basic app settings"
+  echo "Step 1/8: Basic app settings"
   APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
   TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
   LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
+}
+
+step_2_gpu() {
+  echo
+  echo "Step 2/8: GPU passthrough (optional)"
   ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "CPU works everywhere. auto/cuda only use GPU when the GPU override is active.")"
   ai_device_choice_lc="$(printf "%s" "$ai_device_choice" | tr '[:upper:]' '[:lower:]')"
   case "$ai_device_choice_lc" in
@@ -512,7 +517,19 @@ step_1_basic() {
       AI_DEVICE="cpu"
       ;;
   esac
-  if ask_yes_no "Run guided GPU checks/fixes for Proxmox LXC (ENABLE_GPU_GUIDE)?" "$(is_truthy "$ENABLE_GPU_GUIDE" && echo y || echo n)"; then
+
+  if [ "$AI_DEVICE" = "cpu" ]; then
+    ENABLE_GPU_GUIDE="0"
+    echo "    GPU disabled. FjordLens will install using CPU-safe compose."
+    return 0
+  fi
+
+  ENABLE_GPU_GUIDE="1"
+  GPU_PROXMOX_VMID="$(ask_input "Proxmox LXC VMID (GPU_PROXMOX_VMID)" "$GPU_PROXMOX_VMID" "100" "Used only for the generated PVE host commands if passthrough is missing.")"
+  if ask_yes_no "Show Proxmox host commands for NVIDIA passthrough now?" "y"; then
+    print_gpu_host_fix_hint "$(char_major /dev/nvidia-uvm || true)" "$(dir_char_major /dev/nvidia-caps || true)"
+  fi
+  if ask_yes_no "Run Docker GPU preflight before starting containers?" "y"; then
     ENABLE_GPU_GUIDE="1"
   else
     ENABLE_GPU_GUIDE="0"
@@ -521,7 +538,7 @@ step_1_basic() {
 
 step_2_mounts() {
   echo
-  echo "Step 2/7: Proxmox LXC mount strategy"
+  echo "Step 3/8: Proxmox LXC mount strategy"
   echo "  This LXC version does NOT edit /etc/fstab and does NOT mount NFS itself."
   echo "  Expected model: Proxmox host mounts Synology/NFS and bind-mounts paths into the LXC."
   echo "  Example LXC mount points:"
@@ -540,14 +557,14 @@ step_2_mounts() {
 
 step_3_storage() {
   echo
-  echo "Step 3/7: Storage paths (inside the LXC)"
+  echo "Step 4/8: Storage paths (inside the LXC)"
   DATA_DIR="$(ask_input "DATA_DIR (db/cache/internal state)" "$DATA_DIR" "/opt/fjordlens-data/appdata" "Stores database, cache, temp files, and internal app data.")"
   THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/opt/fjordlens-data/thumbs" "Root directory where thumbnails are stored. Local storage is recommended.")"
 }
 
 step_4_library() {
   echo
-  echo "Step 4/7: Optional library source"
+  echo "Step 5/8: Optional library source"
   if ask_yes_no "Enable separate read-only library source (PHOTO_DIR)?" "$(is_truthy "$ENABLE_LIBRARY_SOURCE" && echo y || echo n)"; then
     ENABLE_LIBRARY_SOURCE="1"
     PHOTO_DIR="$(ask_input "PHOTO_DIR (library source path)" "$PHOTO_DIR" "/mnt/fjordlens-nfs/photos" "Path inside this LXC pointing to a Proxmox bind mount with your library photos.")"
@@ -562,7 +579,7 @@ step_4_library() {
 
 step_5_features() {
   echo
-  echo "Step 5/7: Feature toggles"
+  echo "Step 6/8: Feature toggles"
   if ask_yes_no "Enable scan/rescan/rethumb UI + endpoints?" "$(is_truthy "$ENABLE_SCAN_FEATURES" && echo y || echo n)"; then
     ENABLE_SCAN_FEATURES="1"
   else
@@ -572,7 +589,7 @@ step_5_features() {
 
 step_6_updater() {
   echo
-  echo "Step 6/7: In-app updater"
+  echo "Step 7/8: In-app updater"
   echo "  FjordLens includes an admin-only updater tab."
   echo "  It checks GitHub for new commits and can run the same update flow as scripts/update.sh."
   echo "  The updater container uses /var/run/docker.sock to rebuild/restart the FjordLens services."
@@ -596,7 +613,7 @@ step_6_updater() {
 
 step_7_sqlite() {
   echo
-  echo "Step 7/7: SQLite + mount checks"
+  echo "Step 8/8: SQLite + mount checks"
   sqlite_choice="$(ask_input "SQLite journal mode (auto/WAL/DELETE/TRUNCATE/PERSIST/MEMORY/OFF)" "${SQLITE_JOURNAL_MODE:-auto}" "auto or DELETE (network storage)" "Choose auto for automatic selection. On some network-backed paths, DELETE can be more stable.")"
   sqlite_choice_lc="$(printf "%s" "$sqlite_choice" | tr '[:upper:]' '[:lower:]')"
   if [ "$sqlite_choice_lc" = "auto" ] || [ -z "$sqlite_choice_lc" ]; then
