@@ -33,18 +33,6 @@
           "hint": "Region/By-format, f.eks. Europe/Copenhagen"
         },
         {
-          "key": "AI_DEVICE",
-          "label": "AI-enhed",
-          "type": "select",
-          "default": "cpu",
-          "hint": "CPU virker på alle hosts. GPU kræver manuel GPU-runtime/override.",
-          "options": [
-            {"value": "cpu", "label": "CPU (anbefalet)"},
-            {"value": "auto", "label": "Auto"},
-            {"value": "cuda", "label": "CUDA (NVIDIA GPU)"}
-          ]
-        },
-        {
           "key": "LOG_LEVEL",
           "label": "Log-niveau",
           "type": "select",
