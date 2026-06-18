@@ -21464,6 +21464,18 @@ def _delete_local_managed_user(local_user_id: int) -> None:
         if row["hub_user_id"] is None and str(row["password_hash"] or "") != FJORDHUB_MANAGED_PASSWORD_HASH:
             return
         conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (int(local_user_id),))
+        try:
+            conn.execute("UPDATE login_audit SET user_id=NULL WHERE user_id=?", (int(local_user_id),))
+        except Exception:
+            pass
+        try:
+            conn.execute("UPDATE share_links SET created_by_user_id=NULL WHERE created_by_user_id=?", (int(local_user_id),))
+        except Exception:
+            pass
+        try:
+            conn.execute("DELETE FROM folder_owners WHERE user_id=?", (int(local_user_id),))
+        except Exception:
+            pass
         conn.execute("DELETE FROM users WHERE id=?", (int(local_user_id),))
         conn.commit()
 
