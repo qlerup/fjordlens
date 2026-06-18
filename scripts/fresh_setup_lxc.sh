@@ -326,6 +326,7 @@ preflight_paths() {
 print_gpu_host_fix_hint() {
   nvidia_uvm_major="$1"
   nvidia_caps_major="$2"
+  ctid="${GPU_PROXMOX_VMID:-<CTID>}"
   if [ -z "$nvidia_uvm_major" ]; then
     nvidia_uvm_major="510"
   fi
@@ -333,26 +334,30 @@ print_gpu_host_fix_hint() {
     nvidia_caps_major="235"
   fi
   cat <<EOF2
-    Suggested Proxmox host checks (run on host, not inside LXC):
-      pct stop <CTID>
-      nano /etc/pve/lxc/<CTID>.conf
+    Run on the Proxmox host, not inside this LXC:
 
-    Ensure these lines exist:
-      features: nesting=1,keyctl=1
-      lxc.apparmor.profile: unconfined
-      lxc.cgroup2.devices.allow: c 195:* rwm
-      lxc.cgroup2.devices.allow: c ${nvidia_uvm_major}:* rwm
-      lxc.cgroup2.devices.allow: c ${nvidia_caps_major}:* rwm
-      lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
-      lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
-      lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
-      lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file
-      lxc.mount.entry: /dev/nvidia-caps dev/nvidia-caps none bind,optional,create=dir
-      lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file
-      lxc.mount.entry: /sys/class/drm sys/class/drm none ro,bind,optional,create=dir
+      ctid="${ctid}"
+      conf="/etc/pve/lxc/\${ctid}.conf"
+      pct stop "\$ctid"
+      cp "\$conf" "\$conf.bak.\$(date +%Y%m%d%H%M%S)"
+      set_line() { key="\$1"; value="\$2"; if grep -q "^\${key}:" "\$conf"; then sed -i "s|^\${key}:.*|\${key}: \${value}|" "\$conf"; else printf "%s: %s\\n" "\$key" "\$value" >> "\$conf"; fi; }
+      add_line() { grep -qxF "\$1" "\$conf" || printf "%s\\n" "\$1" >> "\$conf"; }
+      set_line features "nesting=1,keyctl=1"
+      set_line lxc.apparmor.profile "unconfined"
+      add_line "lxc.cgroup2.devices.allow: c 195:* rwm"
+      add_line "lxc.cgroup2.devices.allow: c ${nvidia_uvm_major}:* rwm"
+      add_line "lxc.cgroup2.devices.allow: c ${nvidia_caps_major}:* rwm"
+      add_line "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file"
+      add_line "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
+      add_line "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
+      add_line "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
+      add_line "lxc.mount.entry: /dev/nvidia-caps dev/nvidia-caps none bind,optional,create=dir"
+      add_line "lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file"
+      add_line "lxc.mount.entry: /sys/class/drm sys/class/drm none ro,bind,optional,create=dir"
+      pct start "\$ctid"
 
-    Then restart the CT:
-      pct start <CTID>
+    After the LXC has restarted, rerun:
+      sh scripts/fresh_setup_lxc.sh --start-only
 EOF2
 }
 
