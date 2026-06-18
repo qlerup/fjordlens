@@ -132,6 +132,8 @@ Base `docker-compose.yml` is CPU-safe and does not request a GPU. To opt in to N
 AI_DEVICE=auto docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
+When installing through FjordHub, use the optional GPU step in the wizard. It can show the Proxmox host commands, run a Docker GPU preflight, and only then enable the GPU compose override.
+
 ### Synology NAS (SSH)
 
 ```bash
@@ -194,7 +196,9 @@ sh scripts/fresh_setup_lxc.sh
 
 `scripts/fresh_setup_lxc.sh` now includes optional guided GPU setup (`ENABLE_GPU_GUIDE=1`):
 
+- asks for GPU as its own setup step before container start
 - checks `/dev/nvidia*` visibility inside the LXC
+- prints idempotent Proxmox host commands for the LXC config when passthrough is missing
 - auto-sets `no-cgroups = true` in `/etc/nvidia-container-runtime/config.toml` when needed
 - restarts Docker runtime when runtime config changes
 - runs CUDA + PyTorch GPU smoke tests before adding the GPU compose override
