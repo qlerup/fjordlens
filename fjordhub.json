@@ -46,6 +46,32 @@
       ]
     },
     {
+      "id": "gpu",
+      "title": "GPU (valgfrit)",
+      "gpu_helper": true,
+      "fields": [
+        {
+          "key": "ENABLE_GPU_COMPOSE",
+          "label": "Aktiver NVIDIA GPU passthrough",
+          "type": "toggle",
+          "default": "0",
+          "hint": "Slå kun til efter GPU-testen er OK. Ellers installeres FjordLens sikkert på CPU."
+        },
+        {
+          "key": "AI_DEVICE",
+          "label": "AI-enhed",
+          "type": "select",
+          "default": "cpu",
+          "hint": "CPU virker på alle hosts. Auto/CUDA bruges sammen med GPU passthrough.",
+          "options": [
+            {"value": "cpu", "label": "CPU (anbefalet)"},
+            {"value": "auto", "label": "Auto"},
+            {"value": "cuda", "label": "CUDA (NVIDIA GPU)"}
+          ]
+        }
+      ]
+    },
+    {
       "id": "storage",
       "title": "Lagerplads",
       "fields": [
