@@ -16631,11 +16631,23 @@ async function fetchDuplicates() {
     const qs = new URLSearchParams({ distance: dist, min });
     if (folder) qs.set('folder', folder);
     const res = await fetch(`/api/duplicates?${qs}`);
-    const data = await res.json();
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      const preview = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+      throw new Error(preview || `HTTP ${res.status}`);
+    }
     if (!res.ok) { setDupeStatus((data && data.error) || 'Fejl ved duplet-søgning.', 'err'); return; }
-    const c = data?.counts || {};
+    const c = (data && data.counts) || {};
     const totalGroups = (c.checksum || 0) + (c.phash_equal || 0) + (c.phash_near || 0);
-    renderDuplicates(data);
+    try {
+      renderDuplicates(data);
+    } catch (renderErr) {
+      try { console.error(renderErr); } catch {}
+      throw new Error(`Visning fejlede: ${(renderErr && renderErr.message) || renderErr || 'ukendt fejl'}`);
+    }
     const inFolder = folder ? ` i "${folder.split('/').pop()}"` : '';
     if (totalGroups === 0) {
       setDupeStatus(`Ingen dupletter fundet${inFolder}.`, 'ok');
@@ -16647,11 +16659,14 @@ async function fetchDuplicates() {
       setDupeStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter${inFolder}: ${parts.join(', ')}.`, 'ok');
     }
   } catch (e) {
-    setDupeStatus('Fejl ved duplet-søgning.', 'err');
+    const detail = String((e && e.message) || e || '').trim();
+    setDupeStatus(detail ? `Fejl ved duplet-søgning: ${detail}` : 'Fejl ved duplet-søgning.', 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
   }
 }
+
+try { window.fetchDuplicates = fetchDuplicates; } catch {}
 
 // Duplicate comparison modal — lazy init (modal HTML is after the script tag in DOM)
 let _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
