@@ -16669,8 +16669,9 @@ async function fetchDuplicates() {
 try { window.fetchDuplicates = fetchDuplicates; } catch {}
 
 // Duplicate comparison modal — lazy init (modal HTML is after the script tag in DOM)
-let _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
-let _dupeCompareInited = false;
+var _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
+var _dupeCompareInited = false;
+var _dupeCompareLastOpenAt = 0;
 
 function getDupePairCardData() {
   if (!window.__fjordlensDupePairCardData) {
@@ -16681,12 +16682,15 @@ function getDupePairCardData() {
 
 function ensureDupeCompareModal() {
   let modal = document.getElementById('dupeCompareModal');
-  if (modal) return modal;
-  modal = document.createElement('div');
-  modal.id = 'dupeCompareModal';
-  modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-modal', 'true');
-  modal.innerHTML = `
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'dupeCompareModal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    document.body.appendChild(modal);
+  }
+  if (!modal.querySelector('#dupeCompareImages')) {
+    modal.innerHTML = `
     <div class="dupe-compare-box">
       <div class="dupe-compare-header">
         <h3>Sammenlign billeder</h3>
@@ -16699,7 +16703,7 @@ function ensureDupeCompareModal() {
       </div>
     </div>
   `;
-  document.body.appendChild(modal);
+  }
   return modal;
 }
 
@@ -16709,7 +16713,6 @@ function _initDupeCompare() {
   if (!modal) return false;
   _dupeCompareInited = true;
 
-  const imagesEl = document.getElementById('dupeCompareImages');
   const mergeBtn = document.getElementById('dupeCompareMerge');
   const closeBtn = document.getElementById('dupeCompareClose');
   const cancelBtn = document.getElementById('dupeCompareCancel');
@@ -16741,8 +16744,13 @@ function _initDupeCompare() {
 
   // Expose open function after init
   window._openDupeCompare = function(a, b, cardEl) {
+    const activeModal = ensureDupeCompareModal();
+    const imagesEl = activeModal ? activeModal.querySelector('#dupeCompareImages') : null;
+    if (!activeModal || !imagesEl) {
+      setDupeStatus('Kunne ikke åbne sammenligning: modal mangler.', 'err');
+      return;
+    }
     _dupeCompareA = a; _dupeCompareB = b; _dupeCompareCard = cardEl;
-    if (!imagesEl) return;
     imagesEl.innerHTML = '';
     [a, b].forEach(it => {
       const side = document.createElement('div');
@@ -16766,8 +16774,8 @@ function _initDupeCompare() {
       side.appendChild(meta);
       imagesEl.appendChild(side);
     });
-    modal.classList.add('open');
-    modal.style.display = 'flex';
+    activeModal.classList.add('open');
+    activeModal.style.display = 'flex';
     document.addEventListener('keydown', _escClose);
   };
   return true;
@@ -16799,6 +16807,9 @@ function openDupeCompareFromCard(cardEl, ev = null) {
   if (!pair || !pair.a || !pair.b) return;
   try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
   try { ev && ev.stopPropagation && ev.stopPropagation(); } catch {}
+  const now = Date.now();
+  if (now - _dupeCompareLastOpenAt < 250) return;
+  _dupeCompareLastOpenAt = now;
   openDupeCompare(pair.a, pair.b, cardEl);
 }
 
@@ -16874,10 +16885,10 @@ function renderDuplicates(data) {
     const openCompare = (ev = null) => {
       const target = ev && ev.target;
       if (target && target.closest && target.closest('button, a, input, select, textarea')) return;
-      try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
-      openDupeCompare(a, b, card);
+      openDupeCompareFromCard(card, ev);
     };
     card.addEventListener('click', openCompare);
+    card.addEventListener('pointerup', openCompare);
     card.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       openCompare(ev);
