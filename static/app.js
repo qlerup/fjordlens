@@ -16722,6 +16722,22 @@ window._openDupeCompare = function(a, b, cardEl) {
   if (_initDupeCompare()) window._openDupeCompare(a, b, cardEl);
 };
 
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _initDupeCompare, { once: true });
+} else {
+  setTimeout(_initDupeCompare, 0);
+}
+
+function openDupeCompare(a, b, cardEl) {
+  if (window._openDupeCompare) {
+    window._openDupeCompare(a, b, cardEl);
+    return;
+  }
+  if (_initDupeCompare() && window._openDupeCompare) {
+    window._openDupeCompare(a, b, cardEl);
+  }
+}
+
 async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.classList.add('loading'); }
   const statusEl = document.getElementById('dupeStatus');
@@ -16768,19 +16784,32 @@ function renderDuplicates(data) {
   function makePairCard(a, b, badgeClass, badgeText, onMerge) {
     const card = document.createElement('div');
     card.className = 'dupe-pair-card';
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('title', 'Klik for at sammenligne billederne');
+    const openCompare = (ev = null) => {
+      const target = ev && ev.target;
+      if (target && target.closest && target.closest('button, a, input, select, textarea')) return;
+      try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
+      openDupeCompare(a, b, card);
+    };
+    card.addEventListener('click', openCompare);
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      openCompare(ev);
+    });
     const thumbs = document.createElement('div');
     thumbs.className = 'dupe-pair-thumbs';
     [a, b].forEach(it => {
       if (it.thumb_url) {
         const img = document.createElement('img');
         img.src = it.thumb_url; img.alt = ''; img.loading = 'lazy';
-        img.style.cursor = 'pointer';
         img.title = 'Klik for at sammenligne';
-        img.addEventListener('click', () => { if (window._openDupeCompare) window._openDupeCompare(a, b, card); });
         thumbs.appendChild(img);
       } else {
         const ph = document.createElement('div');
         ph.className = 'dupe-thumb-ph'; ph.textContent = 'Ingen';
+        ph.title = 'Klik for at sammenligne';
         thumbs.appendChild(ph);
       }
     });
