@@ -16656,10 +16656,35 @@ async function fetchDuplicates() {
 // Duplicate comparison modal — lazy init (modal HTML is after the script tag in DOM)
 let _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
 let _dupeCompareInited = false;
+const _dupePairCardData = new WeakMap();
+
+function ensureDupeCompareModal() {
+  let modal = document.getElementById('dupeCompareModal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'dupeCompareModal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.innerHTML = `
+    <div class="dupe-compare-box">
+      <div class="dupe-compare-header">
+        <h3>Sammenlign billeder</h3>
+        <button class="btn small" id="dupeCompareClose" type="button">&times; Luk</button>
+      </div>
+      <div class="dupe-compare-images" id="dupeCompareImages"></div>
+      <div class="dupe-compare-footer">
+        <button class="btn" id="dupeCompareCancel" type="button">Annuller</button>
+        <button class="btn primary" id="dupeCompareMerge" type="button">Flet (auto) - slet duplikat</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  return modal;
+}
 
 function _initDupeCompare() {
   if (_dupeCompareInited) return true;
-  const modal = document.getElementById('dupeCompareModal');
+  const modal = ensureDupeCompareModal();
   if (!modal) return false;
   _dupeCompareInited = true;
 
@@ -16670,6 +16695,7 @@ function _initDupeCompare() {
 
   const _close = () => {
     modal.classList.remove('open');
+    modal.style.display = '';
     _dupeCompareA = _dupeCompareB = _dupeCompareCard = null;
     document.removeEventListener('keydown', _escClose);
   };
@@ -16695,6 +16721,7 @@ function _initDupeCompare() {
   // Expose open function after init
   window._openDupeCompare = function(a, b, cardEl) {
     _dupeCompareA = a; _dupeCompareB = b; _dupeCompareCard = cardEl;
+    if (!imagesEl) return;
     imagesEl.innerHTML = '';
     [a, b].forEach(it => {
       const side = document.createElement('div');
@@ -16719,6 +16746,7 @@ function _initDupeCompare() {
       imagesEl.appendChild(side);
     });
     modal.classList.add('open');
+    modal.style.display = 'flex';
     document.addEventListener('keydown', _escClose);
   };
   return true;
@@ -16743,6 +16771,35 @@ function openDupeCompare(a, b, cardEl) {
     window._openDupeCompare(a, b, cardEl);
   }
 }
+
+function openDupeCompareFromCard(cardEl, ev = null) {
+  if (!cardEl) return;
+  const pair = _dupePairCardData.get(cardEl);
+  if (!pair || !pair.a || !pair.b) return;
+  try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
+  try { ev && ev.stopPropagation && ev.stopPropagation(); } catch {}
+  openDupeCompare(pair.a, pair.b, cardEl);
+}
+
+document.addEventListener('click', (ev) => {
+  const target = ev && ev.target;
+  if (!(target instanceof Element)) return;
+  const card = target.closest('.dupe-pair-card');
+  if (!card) return;
+  if (els.dupeResults && !els.dupeResults.contains(card)) return;
+  if (target.closest('button, a, input, select, textarea')) return;
+  openDupeCompareFromCard(card, ev);
+}, true);
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const target = ev && ev.target;
+  if (!(target instanceof Element)) return;
+  const card = target.closest('.dupe-pair-card');
+  if (!card || target !== card) return;
+  if (els.dupeResults && !els.dupeResults.contains(card)) return;
+  openDupeCompareFromCard(card, ev);
+}, true);
 
 async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.classList.add('loading'); }
@@ -16789,6 +16846,7 @@ function renderDuplicates(data) {
   function makePairCard(a, b, badgeClass, badgeText, onMerge) {
     const card = document.createElement('div');
     card.className = 'dupe-pair-card';
+    _dupePairCardData.set(card, { a, b });
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
     card.setAttribute('title', 'Klik for at sammenligne billederne');
