@@ -6708,7 +6708,7 @@ async function loadPhotoframeStatus() {
   }
 }
 
-async function loadPhotos(append = false) {
+async function loadPhotos(append = false, preserveScroll = false) {
   if (state.view === 'photoframe') {
     state.items = [];
     const labels = navLabels();
@@ -6786,7 +6786,11 @@ async function loadPhotos(append = false) {
   if (!append && state.view === 'mapper') {
     await prefetchMapperFolderPreviewsForCurrentPath();
   }
+  const _savedScrollY = (preserveScroll && !append) ? window.scrollY : 0;
   renderGrid();
+  if (_savedScrollY > 0) {
+    requestAnimationFrame(() => window.scrollTo(0, _savedScrollY));
+  }
 }
 
 async function loadPeople(useCache = true) {
@@ -7092,7 +7096,7 @@ async function maybeRefreshPhotosDuringPostprocess(force = false) {
   uploadLiveRefreshBusy = true;
   uploadLiveRefreshAt = now;
   try {
-    await loadPhotos();
+    await loadPhotos(false, true);
   } catch {}
   uploadLiveRefreshBusy = false;
 }
@@ -7190,7 +7194,7 @@ function handleMapperDiskSyncStatus(sync) {
   if (unsettled > 0) {
     window.setTimeout(() => {
       if (state.view === 'mapper' && !state.photosLoading) {
-        loadPhotos().catch(() => {});
+        loadPhotos(false, true).catch(() => {});
       }
     }, 1800);
   }
@@ -7217,7 +7221,7 @@ async function checkMapperDiskSyncNow() {
     }
     const changed = _syncCount(sync.indexed) + _syncCount(sync.missing_removed) + _syncCount(sync.missing_thumbs_removed);
     if (changed > 0) {
-      await loadPhotos();
+      await loadPhotos(false, true);
       try { await loadMapperTools(state.mapperPath || ''); } catch {}
     }
   } catch {
@@ -11283,7 +11287,7 @@ async function pollRethumbStatus() {
         const r = data.result;
         showStatus(`${tr('rethumb_done_prefix')}: ${r.processed}, errors: ${r.errors}.`, "ok");
       }
-      await loadPhotos();
+      await loadPhotos(false, true);
       return;
     }
   } catch {}
@@ -11419,7 +11423,7 @@ async function fixMissingThumbs() {
             const processed = (d.result && d.result.processed) || 0;
             const errors = (d.result && d.result.errors) || 0;
             showStatus(`${tr('rethumb_done_prefix')}: ${processed}, errors: ${errors}.`, errors > 0 ? 'err' : 'ok');
-            await loadPhotos();
+            await loadPhotos(false, true);
             return;
           }
         }
@@ -16579,15 +16583,35 @@ async function renderProfilePanel() {
 async function fetchDuplicates() {
   const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
+  const btn = els.dupesRun;
+  const setStatus = (txt, type) => {
+    if (!els.dupeStatus) return;
+    els.dupeStatus.textContent = txt;
+    els.dupeStatus.classList.remove('hidden', 'ok', 'err');
+    if (type) els.dupeStatus.classList.add(type);
+  };
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
   try {
-    if (els.dupeStatus) { els.dupeStatus.textContent = `Søger efter dupletter (afstand=${dist}, min=${min})...`; els.dupeStatus.classList.remove("hidden", "err"); els.dupeStatus.classList.add("ok"); }
-    if (els.dupeResults) els.dupeResults.innerHTML = "";
+    setStatus(`Søger efter dupletter… (afstand=${dist}, min=${min})`, 'ok');
+    if (els.dupeResults) els.dupeResults.innerHTML = '';
     const res = await fetch(`/api/duplicates?distance=${encodeURIComponent(dist)}&min=${encodeURIComponent(min)}`);
     const data = await res.json();
+    const totalGroups = (data?.groups?.length) || 0;
     renderDuplicates(data);
-    if (els.dupeStatus) { els.dupeStatus.textContent = `Færdig. Checksum-grupper: ${data?.counts?.checksum || 0}, pHash-lige: ${data?.counts?.phash_equal || 0}, pHash-nære: ${data?.counts?.phash_near || 0}`; }
+    if (totalGroups === 0) {
+      setStatus('Ingen dupletter fundet.', 'ok');
+    } else {
+      const c = data?.counts || {};
+      const parts = [];
+      if (c.checksum) parts.push(`${c.checksum} identiske`);
+      if (c.phash_equal) parts.push(`${c.phash_equal} visuelt ens`);
+      if (c.phash_near) parts.push(`${c.phash_near} lignende`);
+      setStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter: ${parts.join(', ')}.`, 'ok');
+    }
   } catch (e) {
-    if (els.dupeStatus) { els.dupeStatus.textContent = `Fejl ved duplet-søgning.`; els.dupeStatus.classList.remove("ok"); els.dupeStatus.classList.add("err"); }
+    setStatus('Fejl ved duplet-søgning.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
   }
 }
 
