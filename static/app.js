@@ -12022,6 +12022,20 @@ async function refreshShareDuckdnsConfig() {
   }
 }
 
+function applyMapperShareDuckdnsToggleState(options = {}) {
+  if (!els.mapperShareDuckdnsToggle) return;
+  const preserveUserChoice = !!(options && options.preserveUserChoice);
+  const enabled = !!state.shareDuckdnsConfigured;
+  const wasDisabled = !!els.mapperShareDuckdnsToggle.disabled;
+  if (!enabled) {
+    els.mapperShareDuckdnsToggle.checked = false;
+  } else if (!preserveUserChoice || wasDisabled) {
+    els.mapperShareDuckdnsToggle.checked = true;
+  }
+  els.mapperShareDuckdnsToggle.disabled = !enabled;
+  els.mapperShareDuckdnsToggle.title = enabled ? '' : tr('mapper_share_duckdns_not_configured');
+}
+
 async function openMapperShareModal() {
   if (!els.mapperShareModal) return;
   const folders = _getSelectedMapperFolders();
@@ -12029,19 +12043,13 @@ async function openMapperShareModal() {
     showStatus(tr('mapper_share_select_one'), 'err');
     return;
   }
-  await refreshShareDuckdnsConfig();
-  applyUiLanguage();
+  try { applyUiLanguage(); } catch (err) { try { console.error(err); } catch {} }
   if (els.mapperShareNameInput) els.mapperShareNameInput.value = _defaultMapperShareName(folders);
   if (els.mapperShareFolderInput) els.mapperShareFolderInput.value = _selectedMapperFoldersText(folders);
   if (els.mapperShareExpireValue) els.mapperShareExpireValue.value = '7';
   if (els.mapperShareExpireUnit) els.mapperShareExpireUnit.value = 'days';
   if (els.mapperSharePermission) els.mapperSharePermission.value = 'view';
-  if (els.mapperShareDuckdnsToggle) {
-    const enabled = !!state.shareDuckdnsConfigured;
-    els.mapperShareDuckdnsToggle.checked = enabled;
-    els.mapperShareDuckdnsToggle.disabled = !enabled;
-    els.mapperShareDuckdnsToggle.title = enabled ? '' : tr('mapper_share_duckdns_not_configured');
-  }
+  applyMapperShareDuckdnsToggleState({ preserveUserChoice: false });
   if (els.mapperSharePasswordToggle) els.mapperSharePasswordToggle.checked = false;
   if (els.mapperShareRequireNameToggle) els.mapperShareRequireNameToggle.checked = false;
   _syncMapperSharePasswordVisibility();
@@ -12059,6 +12067,15 @@ async function openMapperShareModal() {
     els.mapperShareModalConfirm.textContent = tr('mapper_share_generate');
   }
   els.mapperShareModal.classList.remove('hidden');
+
+  const refreshId = (state.mapperShareDuckdnsRefreshId = Number(state.mapperShareDuckdnsRefreshId || 0) + 1);
+  refreshShareDuckdnsConfig()
+    .then(() => {
+      if (state.mapperShareDuckdnsRefreshId !== refreshId) return;
+      if (!els.mapperShareModal || els.mapperShareModal.classList.contains('hidden')) return;
+      applyMapperShareDuckdnsToggleState({ preserveUserChoice: true });
+    })
+    .catch(() => {});
 }
 
 function closeMapperShareModal(clearOutput = true) {
@@ -12556,10 +12573,21 @@ if (els.mapperSortSelect) {
   });
 }
 if (els.mapperHeaderShareAction) {
-  els.mapperHeaderShareAction.addEventListener('click', async () => {
-    await openMapperShareModal();
+  let mapperShareActionLastTouchAt = 0;
+  const runMapperShareAction = async (e = null) => {
+    try { e && e.preventDefault && e.preventDefault(); } catch {}
+    try { e && e.stopPropagation && e.stopPropagation(); } catch {}
     closeMapperHeaderMenu();
+    await openMapperShareModal();
+  };
+  els.mapperHeaderShareAction.addEventListener('click', async (e) => {
+    if (Date.now() - mapperShareActionLastTouchAt < 500) return;
+    await runMapperShareAction(e);
   });
+  els.mapperHeaderShareAction.addEventListener('touchend', async (e) => {
+    mapperShareActionLastTouchAt = Date.now();
+    await runMapperShareAction(e);
+  }, { passive: false });
 }
 if (els.mapperHeaderRenameAction) {
   els.mapperHeaderRenameAction.addEventListener('click', () => {
