@@ -16671,7 +16671,13 @@ try { window.fetchDuplicates = fetchDuplicates; } catch {}
 // Duplicate comparison modal — lazy init (modal HTML is after the script tag in DOM)
 let _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
 let _dupeCompareInited = false;
-const _dupePairCardData = new WeakMap();
+
+function getDupePairCardData() {
+  if (!window.__fjordlensDupePairCardData) {
+    window.__fjordlensDupePairCardData = new WeakMap();
+  }
+  return window.__fjordlensDupePairCardData;
+}
 
 function ensureDupeCompareModal() {
   let modal = document.getElementById('dupeCompareModal');
@@ -16789,7 +16795,7 @@ function openDupeCompare(a, b, cardEl) {
 
 function openDupeCompareFromCard(cardEl, ev = null) {
   if (!cardEl) return;
-  const pair = _dupePairCardData.get(cardEl);
+  const pair = getDupePairCardData().get(cardEl);
   if (!pair || !pair.a || !pair.b) return;
   try { ev && ev.preventDefault && ev.preventDefault(); } catch {}
   try { ev && ev.stopPropagation && ev.stopPropagation(); } catch {}
@@ -16861,7 +16867,7 @@ function renderDuplicates(data) {
   function makePairCard(a, b, badgeClass, badgeText, onMerge) {
     const card = document.createElement('div');
     card.className = 'dupe-pair-card';
-    _dupePairCardData.set(card, { a, b });
+    getDupePairCardData().set(card, { a, b });
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
     card.setAttribute('title', 'Klik for at sammenligne billederne');
