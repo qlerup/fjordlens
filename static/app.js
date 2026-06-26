@@ -16610,11 +16610,12 @@ async function fetchDuplicates() {
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
   const folder = els.dupeFolder ? els.dupeFolder.value : '';
   const btn = els.dupesRun;
+  const statusEl = document.getElementById('dupeStatus');
   const setStatus = (txt, type) => {
-    if (!els.dupeStatus) return;
-    els.dupeStatus.textContent = txt;
-    els.dupeStatus.classList.remove('hidden', 'ok', 'err');
-    if (type) els.dupeStatus.classList.add(type);
+    if (!statusEl) return;
+    statusEl.textContent = txt;
+    statusEl.className = `status${type ? ' ' + type : ''}`;
+    statusEl.style.display = 'block';
   };
   if (btn) { btn.disabled = true; btn.classList.add('loading'); }
   try {
@@ -16625,13 +16626,13 @@ async function fetchDuplicates() {
     const res = await fetch(`/api/duplicates?${qs}`);
     const data = await res.json();
     if (!res.ok) { setStatus((data && data.error) || 'Fejl ved duplet-søgning.', 'err'); return; }
-    const totalGroups = (data?.groups?.length) || 0;
+    const c = data?.counts || {};
+    const totalGroups = (c.checksum || 0) + (c.phash_equal || 0) + (c.phash_near || 0);
     renderDuplicates(data);
     const inFolder = folder ? ` i "${folder.split('/').pop()}"` : '';
     if (totalGroups === 0) {
       setStatus(`Ingen dupletter fundet${inFolder}.`, 'ok');
     } else {
-      const c = data?.counts || {};
       const parts = [];
       if (c.checksum) parts.push(`${c.checksum} identiske`);
       if (c.phash_equal) parts.push(`${c.phash_equal} visuelt ens`);
