@@ -13299,6 +13299,18 @@ def _similar_hash_match(
     return False, pass_count, combined
 
 
+def _dup_norm_rel(rel_path: str) -> str:
+    """Normalize uploads/originals/ and uploads/converted/ to uploads/ for folder display."""
+    rel = rel_path.replace("\\", "/").strip("/")
+    if rel.startswith("uploads/originals/"):
+        parts = rel.split("/", 2)
+        return f"uploads/{parts[2]}" if len(parts) >= 3 else "uploads"
+    if rel.startswith("uploads/converted/"):
+        parts = rel.split("/", 2)
+        return f"uploads/{parts[2]}" if len(parts) >= 3 else "uploads"
+    return rel
+
+
 @app.route("/api/duplicates")
 def api_duplicates():
     fb = _forbid_user_role_for_maintenance()
@@ -13318,7 +13330,7 @@ def api_duplicates():
 
     if folder_filter:
         prefix = folder_filter + "/"
-        rows = [r for r in rows if (r.get("rel_path") or "").replace("\\", "/").startswith(prefix)]
+        rows = [r for r in rows if _dup_norm_rel(r.get("rel_path") or "").startswith(prefix)]
 
     # Exact duplicates by checksum
     by_checksum: dict[str, list[dict]] = {}
@@ -13430,22 +13442,18 @@ def api_duplicates_folders():
         return jsonify(fb[0]), fb[1]
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path FROM photos WHERE phash IS NOT NULL").fetchall()
-    # Count photos per folder (including subfolders)
     from collections import Counter
     folder_direct: Counter = Counter()
     all_folders: set = set()
     for r in rows:
-        rel = (r[0] or "").replace("\\", "/").strip("/")
+        rel = _dup_norm_rel(r[0] or "")
         parts = rel.split("/")
         if len(parts) <= 1:
             continue
-        # The immediate parent folder of this photo
         immediate = "/".join(parts[:-1])
         folder_direct[immediate] += 1
-        # Register all ancestor folders too
         for i in range(1, len(parts)):
             all_folders.add("/".join(parts[:i]))
-    # Build folder list with total counts (photos in folder and all subfolders)
     result = []
     for folder in sorted(all_folders, key=lambda x: x.lower()):
         prefix = folder + "/"
@@ -13612,6 +13620,54 @@ def api_duplicates_merge_auto():
         return api_duplicates_merge_impl(keep_id, drop_id)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/duplicates/merge-all-pairs", methods=["POST"])
+def api_duplicates_merge_all_pairs():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    body = request.get_json(silent=True) or {}
+    pairs = body.get("pairs") or []
+    if not pairs:
+        return jsonify({"ok": False, "error": "No pairs provided"}), 400
+    merged = 0
+    errors = 0
+    for p in pairs:
+        try:
+            id1 = int(p.get("id1") or 0)
+            id2 = int(p.get("id2") or 0)
+            if not id1 or not id2 or id1 == id2:
+                errors += 1
+                continue
+            # Use merge-auto logic to decide which to keep
+            with closing(get_conn()) as conn:
+                a = conn.execute("SELECT * FROM photos WHERE id=?", (id1,)).fetchone()
+                b = conn.execute("SELECT * FROM photos WHERE id=?", (id2,)).fetchone()
+            if not a or not b:
+                errors += 1
+                continue
+            sa = _metadata_score_row(a)
+            sb = _metadata_score_row(b)
+            if sa >= sb:
+                keep_id, drop_id = id1, id2
+            else:
+                keep_id, drop_id = id2, id1
+            result = api_duplicates_merge_impl(keep_id, drop_id)
+            if hasattr(result, 'get_json'):
+                d = result.get_json()
+                if d and d.get("ok"):
+                    merged += 1
+                else:
+                    errors += 1
+            elif isinstance(result, tuple):
+                errors += 1
+            else:
+                merged += 1
+        except Exception:
+            errors += 1
+    log_event("dupe_merge_all", merged=merged, errors=errors)
+    return jsonify({"ok": True, "merged": merged, "errors": errors})
 
 
 def api_duplicates_merge_impl(keep_id: int, drop_id: int):

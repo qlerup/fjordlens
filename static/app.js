@@ -16646,6 +16646,39 @@ async function fetchDuplicates() {
   }
 }
 
+async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
+  if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.classList.add('loading'); }
+  const statusEl = document.getElementById('dupeStatus');
+  const setDupeStatus = (txt, type) => {
+    if (!statusEl) return;
+    statusEl.textContent = txt;
+    statusEl.className = `status${type ? ' ' + type : ''}`;
+    statusEl.style.display = 'block';
+  };
+  const pairs = pairKeys.map(k => { const [id1, id2] = k.split(':').map(Number); return { id1, id2 }; });
+  setDupeStatus(`Fletter ${pairs.length} par…`, 'ok');
+  try {
+    const res = await fetch('/api/duplicates/merge-all-pairs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairs })
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) {
+      setDupeStatus((d && d.error) || 'Fejl ved batch-fletning.', 'err');
+      return;
+    }
+    const msg = `Flettet ${d.merged} par${d.errors ? `, ${d.errors} fejl` : ''}.`;
+    setDupeStatus(msg, d.errors ? 'err' : 'ok');
+    if (sectionEl && sectionEl.parentElement) sectionEl.parentElement.removeChild(sectionEl);
+    try { fetchDuplicates(); } catch {}
+  } catch (e) {
+    setDupeStatus('Fejl ved batch-fletning.', 'err');
+  } finally {
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.classList.remove('loading'); }
+  }
+}
+
 function renderDuplicates(data) {
   if (!els.dupeResults) return;
   const wrap = els.dupeResults;
@@ -16654,116 +16687,158 @@ function renderDuplicates(data) {
     wrap.innerHTML = "<div class='empty'>Ingen resultater.</div>";
     return;
   }
-  // Build quick lookup of group pairs for intersection (checksum ∩ phash_equal)
-  const checksumPairs = new Set();
-  const phashPairs = new Set();
-  try {
-    const findGrp = (reason) => (data.groups.find(g => g.reason === reason) || {}).items || [];
-    const addPairs = (items, set) => {
-      for (const arr of items) {
-        if (arr.length === 2) {
-          const ids = [Number(arr[0].id), Number(arr[1].id)].sort((a,b)=>a-b).join(':');
-          set.add(ids);
-        }
-      }
-    };
-    addPairs(findGrp('checksum'), checksumPairs);
-    addPairs(findGrp('phash_equal'), phashPairs);
-  } catch {}
 
-  const intersectionPairs = [...checksumPairs].filter(x => phashPairs.has(x));
-  if (intersectionPairs.length) {
+  // Helper: build a pair-card DOM element
+  function makePairCard(a, b, badgeClass, badgeText, onMerge) {
+    const card = document.createElement('div');
+    card.className = 'dupe-pair-card';
+    const thumbs = document.createElement('div');
+    thumbs.className = 'dupe-pair-thumbs';
+    [a, b].forEach(it => {
+      if (it.thumb_url) {
+        const link = document.createElement('a');
+        link.href = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : '#';
+        link.target = '_blank'; link.rel = 'noopener';
+        const img = document.createElement('img');
+        img.src = it.thumb_url; img.alt = ''; img.loading = 'lazy';
+        link.appendChild(img);
+        thumbs.appendChild(link);
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'dupe-thumb-ph'; ph.textContent = 'Ingen';
+        thumbs.appendChild(ph);
+      }
+    });
+    card.appendChild(thumbs);
+    const footer = document.createElement('div');
+    footer.className = 'dupe-pair-footer';
+    const names = document.createElement('div');
+    names.className = 'dupe-pair-names';
+    const s1 = document.createElement('span'); s1.textContent = a.filename || '';
+    const s2 = document.createElement('span'); s2.textContent = b.filename || '';
+    names.appendChild(s1); names.appendChild(s2);
+    const badge = document.createElement('span');
+    badge.className = `dupe-match-badge ${badgeClass}`; badge.textContent = badgeText;
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny primary'; btn.textContent = 'Flet';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.classList.add('loading');
+      try { await onMerge(card); } finally { btn.disabled = false; btn.classList.remove('loading'); }
+    });
+    footer.appendChild(names); footer.appendChild(badge); footer.appendChild(btn);
+    card.appendChild(footer);
+    return card;
+  }
+
+  // Helper: section with header + "Flet alle" + collapsible grid
+  function makeSection(titleText, pairKeys, isPrimary, renderGrid) {
     const sec = document.createElement('section');
     sec.className = 'dupe-group';
-    const title = document.createElement('h4');
-    title.textContent = `100% match · ${intersectionPairs.length} par`;
-    title.style.cursor = 'pointer';
-    const content = document.createElement('div');
-    content.style.display = 'none';
-    title.addEventListener('click', ()=>{ content.style.display = (content.style.display==='none'?'block':'none'); });
-    sec.appendChild(title);
-    // Render each pair with merge buttons
-    const getItemById = (reason, id) => {
-      const g = (data.groups.find(x=>x.reason===reason)||{}).items||[];
-      for (const arr of g) {
-        for (const it of arr) if (Number(it.id)===Number(id)) return it;
+    const hdr = document.createElement('div');
+    hdr.className = 'dupe-group-header';
+    const h4 = document.createElement('h4');
+    h4.textContent = titleText;
+    hdr.appendChild(h4);
+    if (pairKeys.length) {
+      const mergeAllBtn = document.createElement('button');
+      mergeAllBtn.className = `btn tiny${isPrimary ? ' primary' : ''}`;
+      mergeAllBtn.textContent = 'Flet alle (auto)';
+      mergeAllBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Flet alle ${pairKeys.length} par?\n\nDette sletter ${pairKeys.length} filer permanent fra disk.`)) return;
+        await _mergeAllPairs(pairKeys, mergeAllBtn, sec);
+      });
+      hdr.appendChild(mergeAllBtn);
+    }
+    sec.appendChild(hdr);
+    const grid = document.createElement('div');
+    grid.className = 'dupe-pair-grid';
+    renderGrid(grid);
+    // Start collapsed if many pairs
+    if (pairKeys.length > 12) {
+      grid.style.display = 'none';
+      const toggle = document.createElement('button');
+      toggle.className = 'btn tiny'; toggle.textContent = `Vis ${pairKeys.length} par`;
+      toggle.style.marginTop = '4px';
+      toggle.addEventListener('click', () => {
+        const hidden = grid.style.display === 'none';
+        grid.style.display = hidden ? '' : 'none';
+        toggle.textContent = hidden ? 'Skjul' : `Vis ${pairKeys.length} par`;
+      });
+      sec.appendChild(toggle);
+    }
+    sec.appendChild(grid);
+    return sec;
+  }
+
+  // Async merge single pair via merge-auto endpoint
+  async function mergePair(aId, bId, cardEl) {
+    const r = await fetch('/api/duplicates/merge-auto', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id1: aId, id2: bId}) });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
+    cardEl && cardEl.parentElement && cardEl.parentElement.removeChild(cardEl);
+    const statusEl = document.getElementById('dupeStatus');
+    if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
+  }
+
+  // Build intersection (100% match = checksum ∩ phash_equal)
+  const checksumPairs = new Set();
+  const phashPairs = new Set();
+  const findGrp = (reason) => (data.groups.find(g => g.reason === reason) || {}).items || [];
+  const addPairKeys = (items, set) => {
+    for (const arr of items) {
+      if (arr.length >= 2) {
+        const ids = [Number(arr[0].id), Number(arr[1].id)].sort((a,b)=>a-b).join(':');
+        set.add(ids);
+      }
+    }
+  };
+  try { addPairKeys(findGrp('checksum'), checksumPairs); addPairKeys(findGrp('phash_equal'), phashPairs); } catch {}
+  const intersectionKeys = [...checksumPairs].filter(x => phashPairs.has(x));
+
+  // 100% match section
+  if (intersectionKeys.length) {
+    const getItemById = (id) => {
+      for (const reason of ['checksum', 'phash_equal']) {
+        for (const arr of findGrp(reason)) for (const it of arr) if (Number(it.id) === id) return it;
       }
       return null;
     };
-    for (const key of intersectionPairs) {
-      const [aId, bId] = key.split(':').map(Number);
-      const a = getItemById('checksum', aId) || getItemById('phash_equal', aId);
-      const b = getItemById('checksum', bId) || getItemById('phash_equal', bId);
-      const strip = document.createElement('div');
-      strip.className = 'dupe-strip';
-      const makeCell = (it) => {
-        const cell = document.createElement('div');
-        cell.className = 'dupe-item';
-        cell.innerHTML = `${it.thumb_url ? `<img class='dupe-thumb' src='${it.thumb_url}' alt=''>` : `<div class='dupe-thumb' style='display:grid;place-items:center;background:#1b1f29;'>Ingen</div>`}<small>${it.filename || ''}</small>`;
-        return cell;
-      };
-      const left = makeCell(a);
-      const right = makeCell(b);
-      const btnWrap = document.createElement('div');
-      btnWrap.style.display = 'grid';
-      btnWrap.style.placeItems = 'center';
-      btnWrap.style.gap = '6px';
-      const lbl = document.createElement('div'); lbl.className='mini-label'; lbl.textContent='100% match';
-      const autoBtn = document.createElement('button'); autoBtn.className='btn tiny primary'; autoBtn.textContent='Flet (auto)';
-      autoBtn.addEventListener('click', async ()=>{
-        try {
-          autoBtn.disabled = true; autoBtn.classList.add('loading');
-          const r = await fetch('/api/duplicates/merge-auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id1: aId, id2: bId })});
-          let txt = await r.text();
-          let d = {};
-          try { d = JSON.parse(txt); } catch { d = {}; }
-          autoBtn.disabled = false; autoBtn.classList.remove('loading');
-          if (!r.ok || !d || !d.ok) { showStatus((d && d.error) || (txt || 'Fletning fejlede'), 'err'); alert((d && d.error) || txt || 'Fletning fejlede'); return; }
-          showStatus('Flettet automatisk (metadata vurderet).', 'ok');
-          strip.parentElement && strip.parentElement.removeChild(strip);
-          // Refresh counts so grupper opdateres
-          try { if (document.getElementById('dupeResults')) fetchDuplicates(); } catch {}
-        } catch { autoBtn.disabled = false; autoBtn.classList.remove('loading'); showStatus('Fletning fejlede', 'err'); }
-      });
-      btnWrap.appendChild(lbl); btnWrap.appendChild(autoBtn);
-      strip.appendChild(left); strip.appendChild(btnWrap); strip.appendChild(right);
-      content.appendChild(strip);
-    }
-    sec.appendChild(content);
+    const sec = makeSection(`100% match · ${intersectionKeys.length} par`, intersectionKeys, true, (grid) => {
+      for (const key of intersectionKeys) {
+        const [aId, bId] = key.split(':').map(Number);
+        const a = getItemById(aId), b = getItemById(bId);
+        if (!a || !b) continue;
+        grid.appendChild(makePairCard(a, b, 'exact', '100%', (card) => mergePair(aId, bId, card)));
+      }
+    });
     wrap.appendChild(sec);
   }
 
+  // Per-reason sections (excluding pairs already in 100% match)
+  const titleMap = { checksum: 'Identiske (checksum)', phash_equal: 'Visuelt ens (pHash)', phash_near: 'Lignende (pHash nær)' };
+  const badgeMap = { checksum: ['exact','≡'], phash_equal: ['exact','≈'], phash_near: ['near','~'] };
   for (const grp of data.groups) {
     const sets = grp.items || [];
     if (!sets.length) continue;
-    const sec = document.createElement("section");
-    sec.className = "dupe-group";
-    const titleMap = { checksum: "Checksum", phash_equal: "pHash (ens)", phash_near: `pHash (nær)` };
-    const name = titleMap[grp.reason] || grp.reason;
-    const header = document.createElement('h4');
-    header.textContent = `${name} · ${sets.length} grupper`;
-    header.style.cursor = 'pointer';
-    sec.appendChild(header);
-    const content = document.createElement('div');
-    content.style.display = 'none';
-    header.addEventListener('click', ()=>{ content.style.display = (content.style.display==='none'?'block':'none'); });
-    for (const arr of sets) {
-      const strip = document.createElement("div");
-      strip.className = "dupe-strip";
-      for (const it of arr) {
-        const a = document.createElement("a");
-        a.className = "dupe-item";
-        a.href = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : "#";
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.innerHTML = `${it.thumb_url ? `<img class='dupe-thumb' src='${it.thumb_url}' alt=''>` : `<div class='dupe-thumb' style='display:grid;place-items:center;background:#1b1f29;'>Ingen</div>`}<small>${it.filename || ''}</small>`;
-        strip.appendChild(a);
+    const pairKeys = sets.filter(arr => arr.length >= 2).map(arr => {
+      return [Number(arr[0].id), Number(arr[1].id)].sort((a,b)=>a-b).join(':');
+    }).filter(k => !intersectionKeys.includes(k));
+    if (!pairKeys.length) continue;
+    const [bCls, bTxt] = badgeMap[grp.reason] || ['near', grp.reason];
+    const sec = makeSection(`${titleMap[grp.reason] || grp.reason} · ${pairKeys.length} par`, pairKeys, false, (grid) => {
+      for (let i = 0; i < sets.length; i++) {
+        const arr = sets[i];
+        if (arr.length < 2) continue;
+        const key = [Number(arr[0].id), Number(arr[1].id)].sort((a,b)=>a-b).join(':');
+        if (intersectionKeys.includes(key)) continue;
+        const a = arr[0], b = arr[1];
+        grid.appendChild(makePairCard(a, b, bCls, bTxt, (card) => mergePair(Number(a.id), Number(b.id), card)));
       }
-      content.appendChild(strip);
-    }
-    sec.appendChild(content);
+    });
     wrap.appendChild(sec);
   }
+
   if (!wrap.children.length) {
     wrap.innerHTML = "<div class='empty'>Ingen dupletter fundet med de aktuelle kriterier.</div>";
   }
