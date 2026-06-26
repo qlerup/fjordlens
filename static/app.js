@@ -16584,6 +16584,14 @@ async function renderProfilePanel() {
 }
 
 // Duplicates UI
+function setDupeStatus(txt, type) {
+  const statusEl = document.getElementById('dupeStatus');
+  if (!statusEl) return;
+  statusEl.textContent = txt;
+  statusEl.className = `status${type ? ' ' + type : ''}`;
+  statusEl.style.display = 'block';
+}
+
 async function loadDupeFolders() {
   if (!els.dupeFolder) return;
   try {
@@ -16605,42 +16613,41 @@ async function loadDupeFolders() {
   } catch {}
 }
 
+async function refreshDuplicatesAfterMerge(message = 'Flettet. Opdaterer...') {
+  setDupeStatus(message, 'ok');
+  try { await loadDupeFolders(); } catch {}
+  await fetchDuplicates();
+}
+
 async function fetchDuplicates() {
   const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
   const folder = els.dupeFolder ? els.dupeFolder.value : '';
   const btn = els.dupesRun;
-  const statusEl = document.getElementById('dupeStatus');
-  const setStatus = (txt, type) => {
-    if (!statusEl) return;
-    statusEl.textContent = txt;
-    statusEl.className = `status${type ? ' ' + type : ''}`;
-    statusEl.style.display = 'block';
-  };
   if (btn) { btn.disabled = true; btn.classList.add('loading'); }
   try {
-    setStatus(`Søger efter dupletter… (afstand=${dist}, min=${min})`, 'ok');
+    setDupeStatus(`Søger efter dupletter… (afstand=${dist}, min=${min})`, 'ok');
     if (els.dupeResults) els.dupeResults.innerHTML = '';
     const qs = new URLSearchParams({ distance: dist, min });
     if (folder) qs.set('folder', folder);
     const res = await fetch(`/api/duplicates?${qs}`);
     const data = await res.json();
-    if (!res.ok) { setStatus((data && data.error) || 'Fejl ved duplet-søgning.', 'err'); return; }
+    if (!res.ok) { setDupeStatus((data && data.error) || 'Fejl ved duplet-søgning.', 'err'); return; }
     const c = data?.counts || {};
     const totalGroups = (c.checksum || 0) + (c.phash_equal || 0) + (c.phash_near || 0);
     renderDuplicates(data);
     const inFolder = folder ? ` i "${folder.split('/').pop()}"` : '';
     if (totalGroups === 0) {
-      setStatus(`Ingen dupletter fundet${inFolder}.`, 'ok');
+      setDupeStatus(`Ingen dupletter fundet${inFolder}.`, 'ok');
     } else {
       const parts = [];
       if (c.checksum) parts.push(`${c.checksum} identiske`);
       if (c.phash_equal) parts.push(`${c.phash_equal} visuelt ens`);
       if (c.phash_near) parts.push(`${c.phash_near} lignende`);
-      setStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter${inFolder}: ${parts.join(', ')}.`, 'ok');
+      setDupeStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter${inFolder}: ${parts.join(', ')}.`, 'ok');
     }
   } catch (e) {
-    setStatus('Fejl ved duplet-søgning.', 'err');
+    setDupeStatus('Fejl ved duplet-søgning.', 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
   }
@@ -16680,9 +16687,8 @@ function _initDupeCompare() {
       const d = await r.json();
       if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
       _dupeCompareCard && _dupeCompareCard.parentElement && _dupeCompareCard.parentElement.removeChild(_dupeCompareCard);
-      const statusEl = document.getElementById('dupeStatus');
-      if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
       _close();
+      await refreshDuplicatesAfterMerge('Flettet. Opdaterer dupletter...');
     } finally { mergeBtn.disabled = false; mergeBtn.classList.remove('loading'); }
   });
 
@@ -16761,9 +16767,8 @@ async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
       return;
     }
     const msg = `Flettet ${d.merged} par${d.errors ? `, ${d.errors} fejl` : ''}.`;
-    setDupeStatus(msg, d.errors ? 'err' : 'ok');
     if (sectionEl && sectionEl.parentElement) sectionEl.parentElement.removeChild(sectionEl);
-    try { fetchDuplicates(); } catch {}
+    await refreshDuplicatesAfterMerge(`${msg} Opdaterer dupletter...`);
   } catch (e) {
     setDupeStatus('Fejl ved batch-fletning.', 'err');
   } finally {
@@ -16878,8 +16883,7 @@ function renderDuplicates(data) {
     const d = await r.json();
     if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
     cardEl && cardEl.parentElement && cardEl.parentElement.removeChild(cardEl);
-    const statusEl = document.getElementById('dupeStatus');
-    if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
+    await refreshDuplicatesAfterMerge('Flettet. Opdaterer dupletter...');
   }
 
   // Build intersection (100% match = checksum ∩ phash_equal)
