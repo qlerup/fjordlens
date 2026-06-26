@@ -11416,8 +11416,9 @@ async function fixMissingThumbs() {
         const d = await r.json();
         if (r.ok && d && d.ok) {
           if (!d.running) {
-            const processed = d.result && (d.result.processed || 0);
-            showStatus(`${tr('rethumb_done_prefix')} ${processed}.`, 'ok');
+            const processed = (d.result && d.result.processed) || 0;
+            const errors = (d.result && d.result.errors) || 0;
+            showStatus(`${tr('rethumb_done_prefix')}: ${processed}, errors: ${errors}.`, errors > 0 ? 'err' : 'ok');
             await loadPhotos();
             return;
           }

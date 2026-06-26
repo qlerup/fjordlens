@@ -9709,8 +9709,11 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
         THUMB_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    if thumb_path.exists() and not force:
-        return thumb_name
+    try:
+        if thumb_path.exists() and thumb_path.stat().st_size > 0 and not force:
+            return thumb_name
+    except Exception:
+        pass
 
     # For animated GIFs we use the first frame for a deterministic thumbnail.
     try:
@@ -16619,7 +16622,8 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
             if prev:
                 tp = THUMB_DIR / prev
                 try:
-                    expected_ok = tp.exists() and (tp.stat().st_mtime >= stat.st_mtime)
+                    tpstat = tp.stat()
+                    expected_ok = tpstat.st_size > 0 and (tpstat.st_mtime >= stat.st_mtime)
                 except Exception:
                     expected_ok = False
             if expected_ok:
