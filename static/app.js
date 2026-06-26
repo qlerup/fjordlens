@@ -17022,9 +17022,8 @@ function renderDuplicates(data) {
   }
 }
 
-// Buttons for duplicates (both buttons do the same action)
+// Button click is wired inline in the template so it still works if later app.js setup aborts.
 els.dupesBtn && els.dupesBtn.addEventListener('click', fetchDuplicates);
-els.dupesRun && els.dupesRun.addEventListener('click', fetchDuplicates);
 
 // Live logs
 // Determine severity for a log event -> one of: 'ok' | 'warn' | 'err' | 'info'
