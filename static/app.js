@@ -16646,6 +16646,69 @@ async function fetchDuplicates() {
   }
 }
 
+// Duplicate comparison modal
+(function() {
+  const modal = document.getElementById('dupeCompareModal');
+  const imagesEl = document.getElementById('dupeCompareImages');
+  const mergeBtn = document.getElementById('dupeCompareMerge');
+  const closeBtn = document.getElementById('dupeCompareClose');
+  const cancelBtn = document.getElementById('dupeCompareCancel');
+  if (!modal) return;
+
+  let _currentA = null, _currentB = null, _currentCard = null;
+
+  window._openDupeCompare = function(a, b, cardEl) {
+    _currentA = a; _currentB = b; _currentCard = cardEl;
+    imagesEl.innerHTML = '';
+    [a, b].forEach(it => {
+      const side = document.createElement('div');
+      side.className = 'dupe-compare-side';
+      const src = it.thumb_url ? it.thumb_url.replace('/api/thumbs/', '/api/original/').replace(/[^/]+$/, encodeURIComponent(it.rel_path || '')) : null;
+      const imgSrc = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : it.thumb_url;
+      if (imgSrc) {
+        const img = document.createElement('img');
+        img.src = imgSrc;
+        img.alt = it.filename || '';
+        img.addEventListener('click', () => window.open(imgSrc, '_blank'));
+        side.appendChild(img);
+      } else {
+        const ph = document.createElement('div');
+        ph.style.cssText = 'aspect-ratio:4/3;background:#0d0f14;border-radius:10px;display:grid;place-items:center;color:var(--muted);';
+        ph.textContent = 'Ingen thumbnail';
+        side.appendChild(ph);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'dupe-compare-meta';
+      meta.innerHTML = `<strong>${it.filename || '—'}</strong>${it.rel_path ? `<span>${it.rel_path}</span>` : ''}${it.file_size ? `<span>${(it.file_size/1024/1024).toFixed(1)} MB</span>` : ''}${it.captured_at ? `<span>${it.captured_at.slice(0,10)}</span>` : ''}`;
+      side.appendChild(meta);
+      imagesEl.appendChild(side);
+    });
+    modal.classList.add('open');
+    document.addEventListener('keydown', _escClose);
+  };
+
+  const _close = () => { modal.classList.remove('open'); _currentA = _currentB = _currentCard = null; document.removeEventListener('keydown', _escClose); };
+  const _escClose = (e) => { if (e.key === 'Escape') _close(); };
+
+  closeBtn && closeBtn.addEventListener('click', _close);
+  cancelBtn && cancelBtn.addEventListener('click', _close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+
+  mergeBtn && mergeBtn.addEventListener('click', async () => {
+    if (!_currentA || !_currentB) return;
+    mergeBtn.disabled = true; mergeBtn.classList.add('loading');
+    try {
+      const r = await fetch('/api/duplicates/merge-auto', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id1: Number(_currentA.id), id2: Number(_currentB.id)}) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
+      _currentCard && _currentCard.parentElement && _currentCard.parentElement.removeChild(_currentCard);
+      const statusEl = document.getElementById('dupeStatus');
+      if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
+      _close();
+    } finally { mergeBtn.disabled = false; mergeBtn.classList.remove('loading'); }
+  });
+})();
+
 async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.classList.add('loading'); }
   const statusEl = document.getElementById('dupeStatus');
@@ -16696,13 +16759,12 @@ function renderDuplicates(data) {
     thumbs.className = 'dupe-pair-thumbs';
     [a, b].forEach(it => {
       if (it.thumb_url) {
-        const link = document.createElement('a');
-        link.href = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : '#';
-        link.target = '_blank'; link.rel = 'noopener';
         const img = document.createElement('img');
         img.src = it.thumb_url; img.alt = ''; img.loading = 'lazy';
-        link.appendChild(img);
-        thumbs.appendChild(link);
+        img.style.cursor = 'pointer';
+        img.title = 'Klik for at sammenligne';
+        img.addEventListener('click', () => { if (window._openDupeCompare) window._openDupeCompare(a, b, card); });
+        thumbs.appendChild(img);
       } else {
         const ph = document.createElement('div');
         ph.className = 'dupe-thumb-ph'; ph.textContent = 'Ingen';
