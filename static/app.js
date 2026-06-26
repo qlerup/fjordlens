@@ -16646,34 +16646,63 @@ async function fetchDuplicates() {
   }
 }
 
-// Duplicate comparison modal
-(function() {
+// Duplicate comparison modal — lazy init (modal HTML is after the script tag in DOM)
+let _dupeCompareA = null, _dupeCompareB = null, _dupeCompareCard = null;
+let _dupeCompareInited = false;
+
+function _initDupeCompare() {
+  if (_dupeCompareInited) return true;
   const modal = document.getElementById('dupeCompareModal');
+  if (!modal) return false;
+  _dupeCompareInited = true;
+
   const imagesEl = document.getElementById('dupeCompareImages');
   const mergeBtn = document.getElementById('dupeCompareMerge');
   const closeBtn = document.getElementById('dupeCompareClose');
   const cancelBtn = document.getElementById('dupeCompareCancel');
-  if (!modal) return;
 
-  let _currentA = null, _currentB = null, _currentCard = null;
+  const _close = () => {
+    modal.classList.remove('open');
+    _dupeCompareA = _dupeCompareB = _dupeCompareCard = null;
+    document.removeEventListener('keydown', _escClose);
+  };
+  const _escClose = (e) => { if (e.key === 'Escape') _close(); };
 
+  closeBtn && closeBtn.addEventListener('click', _close);
+  cancelBtn && cancelBtn.addEventListener('click', _close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+
+  mergeBtn && mergeBtn.addEventListener('click', async () => {
+    if (!_dupeCompareA || !_dupeCompareB) return;
+    mergeBtn.disabled = true; mergeBtn.classList.add('loading');
+    try {
+      const r = await fetch('/api/duplicates/merge-auto', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id1: Number(_dupeCompareA.id), id2: Number(_dupeCompareB.id)}) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
+      _dupeCompareCard && _dupeCompareCard.parentElement && _dupeCompareCard.parentElement.removeChild(_dupeCompareCard);
+      const statusEl = document.getElementById('dupeStatus');
+      if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
+      _close();
+    } finally { mergeBtn.disabled = false; mergeBtn.classList.remove('loading'); }
+  });
+
+  // Expose open function after init
   window._openDupeCompare = function(a, b, cardEl) {
-    _currentA = a; _currentB = b; _currentCard = cardEl;
+    _dupeCompareA = a; _dupeCompareB = b; _dupeCompareCard = cardEl;
     imagesEl.innerHTML = '';
     [a, b].forEach(it => {
       const side = document.createElement('div');
       side.className = 'dupe-compare-side';
-      const src = it.thumb_url ? it.thumb_url.replace('/api/thumbs/', '/api/original/').replace(/[^/]+$/, encodeURIComponent(it.rel_path || '')) : null;
       const imgSrc = it.rel_path ? `/api/original/${encodeURIComponent(it.rel_path)}` : it.thumb_url;
       if (imgSrc) {
         const img = document.createElement('img');
-        img.src = imgSrc;
-        img.alt = it.filename || '';
+        img.src = imgSrc; img.alt = it.filename || '';
+        img.title = 'Klik for at åbne originalen';
         img.addEventListener('click', () => window.open(imgSrc, '_blank'));
         side.appendChild(img);
       } else {
         const ph = document.createElement('div');
-        ph.style.cssText = 'aspect-ratio:4/3;background:#0d0f14;border-radius:10px;display:grid;place-items:center;color:var(--muted);';
+        ph.style.cssText = 'aspect-ratio:4/3;background:#0d0f14;border-radius:10px;display:grid;place-items:center;color:var(--muted);font-size:.8rem;';
         ph.textContent = 'Ingen thumbnail';
         side.appendChild(ph);
       }
@@ -16686,28 +16715,12 @@ async function fetchDuplicates() {
     modal.classList.add('open');
     document.addEventListener('keydown', _escClose);
   };
+  return true;
+}
 
-  const _close = () => { modal.classList.remove('open'); _currentA = _currentB = _currentCard = null; document.removeEventListener('keydown', _escClose); };
-  const _escClose = (e) => { if (e.key === 'Escape') _close(); };
-
-  closeBtn && closeBtn.addEventListener('click', _close);
-  cancelBtn && cancelBtn.addEventListener('click', _close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
-
-  mergeBtn && mergeBtn.addEventListener('click', async () => {
-    if (!_currentA || !_currentB) return;
-    mergeBtn.disabled = true; mergeBtn.classList.add('loading');
-    try {
-      const r = await fetch('/api/duplicates/merge-auto', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id1: Number(_currentA.id), id2: Number(_currentB.id)}) });
-      const d = await r.json();
-      if (!r.ok || !d.ok) { alert((d && d.error) || 'Fletning fejlede'); return; }
-      _currentCard && _currentCard.parentElement && _currentCard.parentElement.removeChild(_currentCard);
-      const statusEl = document.getElementById('dupeStatus');
-      if (statusEl) { statusEl.textContent = 'Flettet.'; statusEl.className = 'status ok'; statusEl.style.display = 'block'; }
-      _close();
-    } finally { mergeBtn.disabled = false; mergeBtn.classList.remove('loading'); }
-  });
-})();
+window._openDupeCompare = function(a, b, cardEl) {
+  if (_initDupeCompare()) window._openDupeCompare(a, b, cardEl);
+};
 
 async function _mergeAllPairs(pairKeys, triggerBtn, sectionEl) {
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.classList.add('loading'); }
@@ -16816,19 +16829,16 @@ function renderDuplicates(data) {
     const grid = document.createElement('div');
     grid.className = 'dupe-pair-grid';
     renderGrid(grid);
-    // Start collapsed if many pairs
-    if (pairKeys.length > 12) {
-      grid.style.display = 'none';
-      const toggle = document.createElement('button');
-      toggle.className = 'btn tiny'; toggle.textContent = `Vis ${pairKeys.length} par`;
-      toggle.style.marginTop = '4px';
-      toggle.addEventListener('click', () => {
-        const hidden = grid.style.display === 'none';
-        grid.style.display = hidden ? '' : 'none';
-        toggle.textContent = hidden ? 'Skjul' : `Vis ${pairKeys.length} par`;
-      });
-      sec.appendChild(toggle);
-    }
+    grid.style.display = 'none';
+    const toggle = document.createElement('button');
+    toggle.className = 'btn tiny'; toggle.textContent = `Vis ${pairKeys.length} par`;
+    toggle.style.marginTop = '4px';
+    toggle.addEventListener('click', () => {
+      const hidden = grid.style.display === 'none';
+      grid.style.display = hidden ? '' : 'none';
+      toggle.textContent = hidden ? 'Skjul' : `Vis ${pairKeys.length} par`;
+    });
+    sec.appendChild(toggle);
     sec.appendChild(grid);
     return sec;
   }
