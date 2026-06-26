@@ -597,11 +597,36 @@
               <select id="dupeFolder" class="input-number" style="min-width:180px;max-width:320px;flex:1;">
                 <option value="">Alle mapper</option>
               </select>
-              <button id="dupesRun" class="btn" type="button" onclick="fetchDuplicates()">Scan</button>
+              <button id="dupesRun" class="btn" type="button" onclick="runDuplicateScanButton()">Scan</button>
             </div>
             <section id="dupeStatus" class="status hidden"></section>
             <div id="dupeResults" class="dupe-groups"></div>
           </div>
+          <script>
+            window.runDuplicateScanButton = function(){
+              const statusEl = document.getElementById('dupeStatus');
+              const show = function(message){
+                if (!statusEl) return;
+                statusEl.textContent = message;
+                statusEl.className = 'status err';
+                statusEl.style.display = 'block';
+              };
+              if (typeof window.fetchDuplicates === 'function') {
+                try {
+                  const result = window.fetchDuplicates();
+                  if (result && typeof result.catch === 'function') {
+                    result.catch(function(err){
+                      show('Fejl ved duplet-søgning: ' + ((err && err.message) || err || 'ukendt fejl'));
+                    });
+                  }
+                } catch (err) {
+                  show('Fejl ved duplet-søgning: ' + ((err && err.message) || err || 'ukendt fejl'));
+                }
+                return;
+              }
+              show('Duplet-scanner er ikke indlæst. Genindlæs siden.');
+            };
+          </script>
         </div>
 
         <!-- Logs -->
