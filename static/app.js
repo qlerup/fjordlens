@@ -244,6 +244,7 @@
   dupesRun: document.getElementById("dupesRun"),
   dupeDist: document.getElementById("dupeDist"),
   dupeMin: document.getElementById("dupeMin"),
+  dupeFolder: document.getElementById("dupeFolder"),
   dupeStatus: document.getElementById("dupeStatus"),
   dupeResults: document.getElementById("dupeResults"),
   // viewer
@@ -14019,6 +14020,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'shared') {
       loadDnsShares();
     }
+    if (tab === 'other') {
+      loadDupeFolders().catch(() => {});
+    }
     // Sync mobile selector when clicking desktop tabs
     try { const sel = document.getElementById('settingsTabSelect'); if (sel) sel.value = tab; } catch {}
     if (state.view === 'settings') _syncRouteStateToUrl();
@@ -16580,9 +16584,31 @@ async function renderProfilePanel() {
 }
 
 // Duplicates UI
+async function loadDupeFolders() {
+  if (!els.dupeFolder) return;
+  try {
+    const res = await fetch('/api/duplicates/folders');
+    const data = await res.json();
+    if (!data.ok) return;
+    const sel = els.dupeFolder;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Alle mapper</option>';
+    for (const f of data.folders) {
+      const opt = document.createElement('option');
+      opt.value = f.path;
+      const name = f.path.split('/').pop();
+      const indent = '  '.repeat(f.depth) + (f.depth > 0 ? '└ ' : '');
+      opt.textContent = `${indent}${name}  (${f.count})`;
+      sel.appendChild(opt);
+    }
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  } catch {}
+}
+
 async function fetchDuplicates() {
   const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
+  const folder = els.dupeFolder ? els.dupeFolder.value : '';
   const btn = els.dupesRun;
   const setStatus = (txt, type) => {
     if (!els.dupeStatus) return;
@@ -16594,19 +16620,23 @@ async function fetchDuplicates() {
   try {
     setStatus(`Søger efter dupletter… (afstand=${dist}, min=${min})`, 'ok');
     if (els.dupeResults) els.dupeResults.innerHTML = '';
-    const res = await fetch(`/api/duplicates?distance=${encodeURIComponent(dist)}&min=${encodeURIComponent(min)}`);
+    const qs = new URLSearchParams({ distance: dist, min });
+    if (folder) qs.set('folder', folder);
+    const res = await fetch(`/api/duplicates?${qs}`);
     const data = await res.json();
+    if (!res.ok) { setStatus((data && data.error) || 'Fejl ved duplet-søgning.', 'err'); return; }
     const totalGroups = (data?.groups?.length) || 0;
     renderDuplicates(data);
+    const inFolder = folder ? ` i "${folder.split('/').pop()}"` : '';
     if (totalGroups === 0) {
-      setStatus('Ingen dupletter fundet.', 'ok');
+      setStatus(`Ingen dupletter fundet${inFolder}.`, 'ok');
     } else {
       const c = data?.counts || {};
       const parts = [];
       if (c.checksum) parts.push(`${c.checksum} identiske`);
       if (c.phash_equal) parts.push(`${c.phash_equal} visuelt ens`);
       if (c.phash_near) parts.push(`${c.phash_near} lignende`);
-      setStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter: ${parts.join(', ')}.`, 'ok');
+      setStatus(`Fundet ${totalGroups} gruppe${totalGroups !== 1 ? 'r' : ''} med dupletter${inFolder}: ${parts.join(', ')}.`, 'ok');
     }
   } catch (e) {
     setStatus('Fejl ved duplet-søgning.', 'err');

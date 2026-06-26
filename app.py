@@ -13309,11 +13309,16 @@ def api_duplicates():
     except ValueError:
         dist_thr = 5
     min_group = max(2, int(request.args.get("min", "2")))
+    folder_filter = request.args.get("folder", "").strip().strip("/")
 
     with closing(get_conn()) as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT id, filename, rel_path, file_size, phash, checksum_sha256, thumb_name, captured_at FROM photos WHERE phash IS NOT NULL"
         ).fetchall()]
+
+    if folder_filter:
+        prefix = folder_filter + "/"
+        rows = [r for r in rows if (r.get("rel_path") or "").replace("\\", "/").startswith(prefix)]
 
     # Exact duplicates by checksum
     by_checksum: dict[str, list[dict]] = {}
@@ -13416,6 +13421,37 @@ def api_duplicates():
         },
     }
     return jsonify(resp)
+
+
+@app.route("/api/duplicates/folders")
+def api_duplicates_folders():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT rel_path FROM photos WHERE phash IS NOT NULL").fetchall()
+    # Count photos per folder (including subfolders)
+    from collections import Counter
+    folder_direct: Counter = Counter()
+    all_folders: set = set()
+    for r in rows:
+        rel = (r[0] or "").replace("\\", "/").strip("/")
+        parts = rel.split("/")
+        if len(parts) <= 1:
+            continue
+        # The immediate parent folder of this photo
+        immediate = "/".join(parts[:-1])
+        folder_direct[immediate] += 1
+        # Register all ancestor folders too
+        for i in range(1, len(parts)):
+            all_folders.add("/".join(parts[:i]))
+    # Build folder list with total counts (photos in folder and all subfolders)
+    result = []
+    for folder in sorted(all_folders, key=lambda x: x.lower()):
+        prefix = folder + "/"
+        count = sum(v for k, v in folder_direct.items() if k == folder or k.startswith(prefix))
+        result.append({"path": folder, "count": count, "depth": folder.count("/")})
+    return jsonify({"ok": True, "folders": result})
 
 
 @app.route("/api/duplicates/merge", methods=["POST"])
