@@ -16619,6 +16619,26 @@ async function refreshDuplicatesAfterMerge(message = 'Flettet. Opdaterer...') {
   await fetchDuplicates();
 }
 
+function getDupeExpandedSections() {
+  if (!window.__fjordlensDupeExpandedSections) {
+    window.__fjordlensDupeExpandedSections = new Set();
+  }
+  return window.__fjordlensDupeExpandedSections;
+}
+
+function captureDupeExpandedSections() {
+  const expanded = getDupeExpandedSections();
+  try {
+    document.querySelectorAll('#dupeResults .dupe-group[data-dupe-section-key]').forEach(sec => {
+      const key = sec.getAttribute('data-dupe-section-key') || '';
+      const grid = sec.querySelector('.dupe-pair-grid');
+      if (!key || !grid) return;
+      if (grid.style.display === 'none') expanded.delete(key);
+      else expanded.add(key);
+    });
+  } catch {}
+}
+
 async function fetchDuplicates() {
   const dist = parseInt(els.dupeDist ? els.dupeDist.value : 5, 10) || 5;
   const min = parseInt(els.dupeMin ? els.dupeMin.value : 2, 10) || 2;
@@ -16626,6 +16646,7 @@ async function fetchDuplicates() {
   const btn = els.dupesRun;
   if (btn) { btn.disabled = true; btn.classList.add('loading'); }
   try {
+    captureDupeExpandedSections();
     setDupeStatus(`Søger efter dupletter… (afstand=${dist}, min=${min})`, 'ok');
     if (els.dupeResults) els.dupeResults.innerHTML = '';
     const qs = new URLSearchParams({ distance: dist, min });
@@ -16930,9 +16951,10 @@ function renderDuplicates(data) {
   }
 
   // Helper: section with header + "Flet alle" + collapsible grid
-  function makeSection(titleText, pairKeys, isPrimary, renderGrid) {
+  function makeSection(sectionKey, titleText, pairKeys, isPrimary, renderGrid) {
     const sec = document.createElement('section');
     sec.className = 'dupe-group';
+    sec.dataset.dupeSectionKey = sectionKey;
     const hdr = document.createElement('div');
     hdr.className = 'dupe-group-header';
     const h4 = document.createElement('h4');
@@ -16953,14 +16975,18 @@ function renderDuplicates(data) {
     const grid = document.createElement('div');
     grid.className = 'dupe-pair-grid';
     renderGrid(grid);
-    grid.style.display = 'none';
+    const expanded = getDupeExpandedSections();
+    const isOpen = expanded.has(sectionKey);
+    grid.style.display = isOpen ? '' : 'none';
     const toggle = document.createElement('button');
-    toggle.className = 'btn tiny'; toggle.textContent = `Vis ${pairKeys.length} par`;
+    toggle.className = 'btn tiny'; toggle.textContent = isOpen ? 'Skjul' : `Vis ${pairKeys.length} par`;
     toggle.style.marginTop = '4px';
     toggle.addEventListener('click', () => {
       const hidden = grid.style.display === 'none';
       grid.style.display = hidden ? '' : 'none';
       toggle.textContent = hidden ? 'Skjul' : `Vis ${pairKeys.length} par`;
+      if (hidden) expanded.add(sectionKey);
+      else expanded.delete(sectionKey);
     });
     sec.appendChild(toggle);
     sec.appendChild(grid);
@@ -16999,7 +17025,7 @@ function renderDuplicates(data) {
       }
       return null;
     };
-    const sec = makeSection(`100% match · ${intersectionKeys.length} par`, intersectionKeys, true, (grid) => {
+    const sec = makeSection('intersection', `100% match · ${intersectionKeys.length} par`, intersectionKeys, true, (grid) => {
       for (const key of intersectionKeys) {
         const [aId, bId] = key.split(':').map(Number);
         const a = getItemById(aId), b = getItemById(bId);
@@ -17021,7 +17047,7 @@ function renderDuplicates(data) {
     }).filter(k => !intersectionKeys.includes(k));
     if (!pairKeys.length) continue;
     const [bCls, bTxt] = badgeMap[grp.reason] || ['near', grp.reason];
-    const sec = makeSection(`${titleMap[grp.reason] || grp.reason} · ${pairKeys.length} par`, pairKeys, false, (grid) => {
+    const sec = makeSection(`reason:${grp.reason}`, `${titleMap[grp.reason] || grp.reason} · ${pairKeys.length} par`, pairKeys, false, (grid) => {
       for (let i = 0; i < sets.length; i++) {
         const arr = sets[i];
         if (arr.length < 2) continue;
