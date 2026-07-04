@@ -2655,6 +2655,10 @@ body.view-photoframe .photoframe-header-actions {
 #viewer {
   box-sizing: border-box;
 }
+body.viewer-scroll-lock {
+  overflow: hidden;
+  touch-action: none;
+}
 #viewer.viewer-info-open {
   padding-right: 0;
 }
@@ -2718,8 +2722,8 @@ body.view-photoframe .photoframe-header-actions {
   backdrop-filter: blur(2px);
 }
 #viewerClose {
-  left: 12px;
-  right: auto;
+  left: auto;
+  right: 12px;
   top: 12px;
 }
 #viewerInfoMediaBtn {
@@ -3351,9 +3355,6 @@ body.detail-open .detail-panel {
     box-shadow: 0 1px 4px rgba(0,0,0,0.10);
     color: #333;
     backdrop-filter: none;
-  }
-  #viewerClose {
-    left: 44px;
   }
   #viewerMenu {
     top: calc(env(safe-area-inset-top) + 52px);

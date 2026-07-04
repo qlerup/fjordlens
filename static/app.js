@@ -6551,6 +6551,7 @@ function openViewer(index) {
   }
   updateViewerLandscapeClass(it);
   els.viewer.classList.remove("hidden");
+  document.body.classList.add('viewer-scroll-lock');
   try {
     requestAnimationFrame(() => {
       positionViewerInfoPanel();
@@ -6625,6 +6626,7 @@ function closeViewer() {
   if (!els.viewer) return;
   els.viewer.classList.add("hidden");
   els.viewer.classList.remove('viewer-landscape');
+  document.body.classList.remove('viewer-scroll-lock');
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
   if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.removeAttribute('src'); }
 }
