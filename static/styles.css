@@ -184,8 +184,8 @@ body {
 .actions { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 
 /* Alerts */
-.err { color:#ffe4e4; background: rgba(255,107,107,0.08); border:1px solid rgba(255,107,107,0.4); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
-.ok  { color:#d1fae5; background: rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.35); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
+.err { color: var(--danger); background: rgba(255,107,107,0.08); border:1px solid rgba(255,107,107,0.4); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
+.ok  { color: var(--ok); background: rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.35); padding:8px 10px; border-radius:10px; margin-bottom:10px; }
 
 /* Drawer backdrop (ensure hidden by default on all viewports) */
 .drawer-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; pointer-events: none; }
@@ -1233,8 +1233,8 @@ body.view-kameraer .timeline-header-actions {
   padding: 10px 12px;
   color: var(--muted);
 }
-.status.ok { border-color: rgba(52, 211, 153, 0.45); color: #d1fae5; }
-.status.err { border-color: rgba(255, 107, 107, 0.45); color: #ffe4e4; }
+.status.ok { border-color: rgba(52, 211, 153, 0.45); color: var(--ok); }
+.status.err { border-color: rgba(255, 107, 107, 0.45); color: var(--danger); }
 .hidden { display: none !important; }
 
 .mapper-tools {
