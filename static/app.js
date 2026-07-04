@@ -740,6 +740,13 @@ function applyTheme(mode){
   }
   try { localStorage.setItem(THEME_STORE_KEY, mode); } catch {}
 }
+function setStoredProfileTheme(mode) {
+  mode = (mode === 'light' || mode === 'dark') ? mode : 'system';
+  try {
+    if (window.APP_PROFILE && typeof window.APP_PROFILE === 'object') window.APP_PROFILE.theme_mode = mode;
+    if (APP_PROFILE && typeof APP_PROFILE === 'object') APP_PROFILE.theme_mode = mode;
+  } catch {}
+}
 function initThemeControls(){
   // Apply saved preference immediately
   let saved = 'system';
@@ -6550,7 +6557,9 @@ function openViewer(index) {
     }
   }
   updateViewerLandscapeClass(it);
+  const viewerWasHidden = els.viewer.classList.contains('hidden');
   els.viewer.classList.remove("hidden");
+  if (viewerWasHidden) els.viewer.classList.remove('viewer-controls-visible');
   document.body.classList.add('viewer-scroll-lock');
   try {
     requestAnimationFrame(() => {
@@ -14532,6 +14541,8 @@ if (els.viewer) {
       }
     } else if (viewerDragActive) {
       animateViewerDragReset();
+    } else if (absX < 10 && absY < 10 && dt < 500) {
+      toggleViewerControls();
     }
     resetViewerTouchState();
   }, { passive: true });
@@ -14604,6 +14615,13 @@ let viewerInfoDragStartTime = 0;
 
 function isMobileViewerLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
+}
+
+function toggleViewerControls(forceVisible = null) {
+  if (!els.viewer || !isMobileViewerLayout()) return;
+  if (forceVisible === true) els.viewer.classList.add('viewer-controls-visible');
+  else if (forceVisible === false) els.viewer.classList.remove('viewer-controls-visible');
+  else els.viewer.classList.toggle('viewer-controls-visible');
 }
 
 function isViewerInfoPanelOpen() {
@@ -16529,7 +16547,12 @@ async function renderProfilePanel() {
     if (uiSelect) uiSelect.value = me.ui_language || state.uiLanguage || 'da';
     if (searchSelect) searchSelect.value = me.search_language || state.searchLanguage || 'da';
     const themeSelect = document.getElementById('pf_theme_mode');
-    if (themeSelect) themeSelect.value = (me.theme_mode || 'system');
+    if (themeSelect) {
+      themeSelect.value = (me.theme_mode || 'system');
+      themeSelect.addEventListener('change', () => {
+        try { applyTheme(themeSelect.value || 'system'); } catch {}
+      });
+    }
 
     const openTwofaBtn = document.getElementById('pf_open_twofa');
     if (openTwofaBtn) {
@@ -16570,6 +16593,7 @@ async function renderProfilePanel() {
         state.currentUser.username = username;
         state.uiLanguage = resolveUiLanguage(ui_language);
         state.searchLanguage = resolveUiLanguage(search_language);
+        setStoredProfileTheme(theme_mode);
         applyUiLanguage();
         try { applyTheme(theme_mode); } catch {}
         await loadPhotos();

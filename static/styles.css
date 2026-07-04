@@ -3356,6 +3356,17 @@ body.detail-open .detail-panel {
     color: #333;
     backdrop-filter: none;
   }
+  #viewerClose,
+  #viewerInfoMediaBtn {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  #viewer.viewer-controls-visible #viewerClose,
+  #viewer.viewer-controls-visible #viewerInfoMediaBtn {
+    opacity: 1;
+    pointer-events: auto;
+  }
   #viewerMenu {
     top: calc(env(safe-area-inset-top) + 52px);
     right: 10px;

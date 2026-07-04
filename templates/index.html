@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="{{ ui_lang|default('da') }}">
+<html lang="{{ ui_lang|default('da') }}"{% if user_profile and user_profile.theme_mode in ('light', 'dark') %} data-theme="{{ user_profile.theme_mode }}"{% endif %}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FjordLens</title>
+  <script>
+    (() => {
+      try {
+        const mode = localStorage.getItem('fl_theme_mode');
+        if (mode === 'light' || mode === 'dark') document.documentElement.setAttribute('data-theme', mode);
+        else if (mode === 'system') document.documentElement.removeAttribute('data-theme');
+      } catch (_) {}
+    })();
+  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
   <!-- App icons / PWA manifest -->
   <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v=app_build) }}" sizes="any">
