@@ -8669,8 +8669,8 @@ function renderDnsSharesList() {
     return `
       <tr>
         <td class="col-folder">${escapeHtml(folder)}</td>
-        <td class="col-access">${escapeHtml(permissionLabel)}</td>
-        <td class="col-expires">${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
+        <td class="col-access" data-label="${escapeHtml(tr('dns_shares_col_access'))}">${escapeHtml(permissionLabel)}</td>
+        <td class="col-expires" data-label="${escapeHtml(tr('dns_shares_col_expires'))}">${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
         <td class="col-last-used">${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
         <td class="col-link">${linkCell}</td>
         <td class="col-actions" style="text-align:right;">

@@ -1931,7 +1931,32 @@ body.view-kameraer .timeline-header-actions {
 @media (max-width: 760px) {
   #sharedLinksList .dns-shares-table-wrap table {
     min-width: 0;
-    table-layout: fixed;
+    table-layout: auto;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap thead {
+    display: none;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap tbody,
+  #sharedLinksList .dns-shares-table-wrap tr,
+  #sharedLinksList .dns-shares-table-wrap td {
+    display: block;
+    width: 100%;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap tbody tr {
+    padding: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  #sharedLinksList .dns-shares-table-wrap tbody tr:first-child {
+    border-top: 0;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap tbody td {
+    padding: 0;
+    border: 0;
   }
 
   #sharedLinksList .dns-shares-table-wrap th.col-last-used,
@@ -1943,32 +1968,73 @@ body.view-kameraer .timeline-header-actions {
 
   #sharedLinksList .dns-shares-table-wrap th.col-folder,
   #sharedLinksList .dns-shares-table-wrap td.col-folder {
-    width: 40%;
+    width: auto;
     word-break: break-word;
+    font-weight: 700;
+    font-size: 0.92rem;
+    line-height: 1.4;
   }
 
-  #sharedLinksList .dns-shares-table-wrap th.col-access,
   #sharedLinksList .dns-shares-table-wrap td.col-access,
-  #sharedLinksList .dns-shares-table-wrap th.col-expires,
   #sharedLinksList .dns-shares-table-wrap td.col-expires {
-    white-space: nowrap;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-access::before,
+  #sharedLinksList .dns-shares-table-wrap td.col-expires::before {
+    content: attr(data-label);
+    color: var(--text);
+    font-weight: 600;
+    flex: 0 0 auto;
+    text-align: left;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-expires {
+    font-variant-numeric: tabular-nums;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-access,
+  #sharedLinksList .dns-shares-table-wrap td.col-expires {
+    white-space: normal;
   }
 
   #sharedLinksList .dns-shares-table-wrap th.col-actions,
   #sharedLinksList .dns-shares-table-wrap td.col-actions {
     text-align: left !important;
-    width: 32%;
+    width: auto;
+    margin-top: 12px;
+    padding-top: 10px !important;
   }
 
   #sharedLinksList .dns-shares-table-wrap td.col-actions .dns-share-actions {
-    justify-content: flex-start;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 0.8fr);
+    gap: 6px;
   }
 
   #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-copy],
   #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-qr],
   #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-extend] {
     display: none;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 6px 4px;
+    font-size: 0.8rem;
+    border-radius: 8px;
   }
 }
 
