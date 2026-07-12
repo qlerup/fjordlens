@@ -8668,12 +8668,12 @@ function renderDnsSharesList() {
     const qrBtn = `<button class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
     return `
       <tr>
-        <td>${escapeHtml(folder)}</td>
-        <td>${escapeHtml(permissionLabel)}</td>
-        <td>${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
-        <td>${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
-        <td>${linkCell}</td>
-        <td style="text-align:right;">
+        <td class="col-folder">${escapeHtml(folder)}</td>
+        <td class="col-access">${escapeHtml(permissionLabel)}</td>
+        <td class="col-expires">${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
+        <td class="col-last-used">${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
+        <td class="col-link">${linkCell}</td>
+        <td class="col-actions" style="text-align:right;">
           <div class="dns-share-actions">
             <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
             ${qrBtn}
@@ -8688,16 +8688,16 @@ function renderDnsSharesList() {
   }).join('');
 
   els.sharedLinksList.innerHTML = `
-    <div class="data-table">
+    <div class="data-table dns-shares-table-wrap">
       <table>
         <thead>
           <tr>
-            <th>${escapeHtml(tr('dns_shares_col_folder'))}</th>
-            <th>${escapeHtml(tr('dns_shares_col_access'))}</th>
-            <th>${escapeHtml(tr('dns_shares_col_expires'))}</th>
-            <th>${escapeHtml(tr('dns_shares_col_last_used'))}</th>
-            <th>${escapeHtml(tr('dns_shares_col_link'))}</th>
-            <th style="text-align:right;">${escapeHtml(tr('dns_shares_col_actions'))}</th>
+            <th class="col-folder">${escapeHtml(tr('dns_shares_col_folder'))}</th>
+            <th class="col-access">${escapeHtml(tr('dns_shares_col_access'))}</th>
+            <th class="col-expires">${escapeHtml(tr('dns_shares_col_expires'))}</th>
+            <th class="col-last-used">${escapeHtml(tr('dns_shares_col_last_used'))}</th>
+            <th class="col-link">${escapeHtml(tr('dns_shares_col_link'))}</th>
+            <th class="col-actions" style="text-align:right;">${escapeHtml(tr('dns_shares_col_actions'))}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>

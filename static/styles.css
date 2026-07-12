@@ -1917,6 +1917,61 @@ body.view-kameraer .timeline-header-actions {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+#sharedLinksList .dns-shares-table-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+#sharedLinksList .dns-shares-table-wrap table {
+  min-width: 960px;
+}
+
+@media (max-width: 760px) {
+  #sharedLinksList .dns-shares-table-wrap table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap th.col-last-used,
+  #sharedLinksList .dns-shares-table-wrap td.col-last-used,
+  #sharedLinksList .dns-shares-table-wrap th.col-link,
+  #sharedLinksList .dns-shares-table-wrap td.col-link {
+    display: none;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap th.col-folder,
+  #sharedLinksList .dns-shares-table-wrap td.col-folder {
+    width: 40%;
+    word-break: break-word;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap th.col-access,
+  #sharedLinksList .dns-shares-table-wrap td.col-access,
+  #sharedLinksList .dns-shares-table-wrap th.col-expires,
+  #sharedLinksList .dns-shares-table-wrap td.col-expires {
+    white-space: nowrap;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap th.col-actions,
+  #sharedLinksList .dns-shares-table-wrap td.col-actions {
+    text-align: left !important;
+    width: 32%;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .dns-share-actions {
+    justify-content: flex-start;
+    gap: 4px;
+  }
+
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-copy],
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-qr],
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-extend] {
+    display: none;
+  }
+}
+
 .card-body { padding: 10px; }
 .card-title {
   margin: 0 0 5px;
