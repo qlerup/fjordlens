@@ -4586,6 +4586,12 @@ def enforce_login_for_app():
         "api_share_tus_head",
         "api_share_tus_file",
         "api_share_tus_file_override",
+        # These are part of the token-authorized share upload flow.  The
+        # endpoints validate the share, visitor session and upload permission
+        # themselves, so they must run before the normal app login gate.
+        "api_share_upload_transfer_state",
+        "api_share_upload_postprocess",
+        "api_share_upload_postprocess_status",
         "api_share_delete",
         "api_frame_feed",
         "api_frame_heartbeat",

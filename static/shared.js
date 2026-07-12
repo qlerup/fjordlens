@@ -502,7 +502,7 @@ function isProbablyIosDevice() {
 }
 
 function shouldShowUploadPrepNotice() {
-  return isProbablyIosDevice();
+  return isMobileShareView() || isProbablyIosDevice();
 }
 
 function closeUploadPrepModal() {
@@ -621,13 +621,7 @@ function renderGrid() {
       const up = document.createElement('article');
       up.className = 'photo-card upload-card';
       up.innerHTML = `<div class="card-thumb"><div class="upload-plus" aria-label="${t('upload_pick')}">+</div></div>`;
-      const openPicker = () => {
-        if (els.fileInput) {
-          try { if (typeof els.fileInput.showPicker === 'function') { els.fileInput.showPicker(); return; } } catch {}
-          try { els.fileInput.click(); } catch {}
-        }
-      };
-      up.addEventListener('click', openPicker);
+      up.addEventListener('click', () => openShareFilePicker());
       els.grid.appendChild(up);
     }
   } catch {}
