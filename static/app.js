@@ -7247,7 +7247,8 @@ async function pollDirectUploadPostprocessStatus(forceShow = false) {
       if (status.running || pending > 0) {
         sawRunning = true;
         applyDirectPostprocessStatusToUploadUi(status);
-        await maybeRefreshPhotosDuringPostprocess(false);
+        // No grid refresh while postprocess is running - a single refresh
+        // happens below once everything is done (avoids flicker/scroll jumps).
         await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(status)));
         continue;
       }
@@ -7275,6 +7276,10 @@ function handleMapperDiskSyncStatus(sync) {
   }
   if (unsettled > 0) {
     window.setTimeout(() => {
+      // Skip while upload/postprocess is active - the postprocess flows do a
+      // single grid refresh when they finish.
+      if (directUploadPostprocessPollActive || uploadPostprocessResumeActive) return;
+      if (isUploadRunning() || uploadQueuePumpRunning) return;
       if (state.view === 'mapper' && !state.photosLoading) {
         loadPhotos(false, true).catch(() => {});
       }
@@ -7920,15 +7925,8 @@ async function resumeUploadPostprocessAfterRefresh() {
       uploadUiState.currentTotal = stageTotal;
       renderUploadMonitor();
 
-      const phase = String(status.phase || '').toLowerCase();
-      const proc = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
-      const parallelRefresh = (phase === 'parallel') && !!proc;
-      if (phase === 'metadata' || phase === 'thumbnails' || phase === 'faces' || parallelRefresh) {
-        // Refresh during 'faces' too to reveal any thumbnails that finished
-        // right at the phase boundary.
-        maybeRefreshPhotosDuringPostprocess(false);
-      }
-
+      // No grid refresh while postprocess is running - a single refresh
+      // happens after the loop once everything is done (avoids flicker/scroll jumps).
       await new Promise((resolve) => window.setTimeout(resolve, uploadPostprocessPollDelayMs(status)));
       status = await readStatus();
     }
@@ -8260,12 +8258,9 @@ async function uploadFiles(fileList, options = {}) {
               uploadUiState.currentFileName = useParallel ? tr('upload_workflow_running') : (n || 'Arbejder…');
               uploadUiState.currentLoaded = Number(status.stage_processed || 0);
               uploadUiState.currentTotal = Number(status.stage_total || 0);
-              const phase = String(status.phase || '').toLowerCase();
-              const proc = (status.process_status && typeof status.process_status === 'object') ? status.process_status : null;
-              const parallelRefresh = (phase === 'parallel') && !!proc;
-              if (['metadata','thumbnails','faces'].includes(phase) || parallelRefresh) {
-                maybeRefreshPhotosDuringPostprocess(false);
-              }
+              // No grid refresh while postprocess is running - the single
+              // refresh happens after the upload flow finishes (avoids
+              // flicker/scroll jumps).
               renderUploadMonitor();
             });
           } catch (postErr) {
