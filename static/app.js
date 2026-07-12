@@ -8718,14 +8718,14 @@ function renderDnsSharesList() {
       : `<span class="mini-label">${escapeHtml(tr('dns_shares_link_unavailable'))}</span>`;
     const isActive = !!item.active;
     const actionBtn = isActive
-      ? `<button class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_deactivate'))}</button>`
-      : `<button class="btn small" data-share-activate="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_activate'))}</button>`;
-    const editBtn = `<button class="btn small" data-share-edit="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_edit'))}</button>`;
-    const deleteBtn = `<button class="btn danger small" data-share-delete="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_delete'))}</button>`;
+      ? `<button type="button" class="btn danger small" data-share-revoke="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_deactivate'))}</button>`
+      : `<button type="button" class="btn small" data-share-activate="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_activate'))}</button>`;
+    const editBtn = `<button type="button" class="btn small" data-share-edit="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_edit'))}</button>`;
+    const deleteBtn = `<button type="button" class="btn danger small" data-share-delete="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_delete'))}</button>`;
     const extendBtn = isActive
-      ? `<button class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
+      ? `<button type="button" class="btn small" data-share-extend="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_extend'))}</button>`
       : '';
-    const qrBtn = `<button class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
+    const qrBtn = `<button type="button" class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
     return `
       <tr>
         <td class="col-folder">${escapeHtml(folder)}</td>
@@ -8735,7 +8735,7 @@ function renderDnsSharesList() {
         <td class="col-link">${linkCell}</td>
         <td class="col-actions" style="text-align:right;">
           <div class="dns-share-actions">
-            <button class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
+            <button type="button" class="btn small" data-share-copy="${Number(item.id || 0)}">${escapeHtml(tr('dns_shares_copy'))}</button>
             ${qrBtn}
             ${editBtn}
             ${extendBtn}
@@ -8913,11 +8913,15 @@ async function openSharedEditModal(shareId) {
   }
   showSharedEditError('');
   state.sharedEditShareId = sid;
+  els.sharedEditModal.classList.remove('hidden');
+  els.sharedEditModal.setAttribute('aria-busy', 'true');
+  if (els.sharedEditModalSave) els.sharedEditModalSave.disabled = true;
 
   try {
     await loadSharedFolderOptions(true);
   } catch (err) {
-    showSharedStatus((err && err.message) || tr('dns_shares_edit_load_folders_failed'), 'err');
+    showSharedEditError((err && err.message) || tr('dns_shares_edit_load_folders_failed'));
+    els.sharedEditModal.removeAttribute('aria-busy');
     return;
   }
   await refreshShareDuckdnsConfig();
@@ -8956,7 +8960,7 @@ async function openSharedEditModal(shareId) {
     els.sharedEditModalSave.classList.remove('loading');
     els.sharedEditModalSave.textContent = tr('dns_shares_edit_save');
   }
-  els.sharedEditModal.classList.remove('hidden');
+  els.sharedEditModal.removeAttribute('aria-busy');
 }
 
 async function saveSharedEditModal() {
@@ -14262,8 +14266,11 @@ if (els.aiPerfPresetFast) {
 }
 if (els.sharedLinksList) {
   els.sharedLinksList.addEventListener('click', async (e) => {
-    const target = e.target;
-    if (!(target instanceof HTMLElement)) return;
+    const source = e.target;
+    if (!(source instanceof Element)) return;
+    const target = source.closest('button[data-share-copy], button[data-share-qr], button[data-share-edit], button[data-share-revoke], button[data-share-activate], button[data-share-extend], button[data-share-delete]');
+    if (!(target instanceof HTMLElement) || !els.sharedLinksList.contains(target)) return;
+    e.preventDefault();
     const copyId = Number(target.getAttribute('data-share-copy') || 0) || 0;
     if (copyId > 0) {
       const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === copyId) : null;
