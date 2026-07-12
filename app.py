@@ -2196,7 +2196,10 @@ def _is_upload_postprocess_running(uploaded_by: str) -> bool:
         return bool(st.get("running"))
 
 
-def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
+def _ensure_upload_postprocess_running(
+    uploaded_by: str,
+    share_context: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Start per-user upload postprocess worker if it is not already running."""
     user = str(uploaded_by or "").strip() or "__unknown__"
     workflow_mode = upload_workflow_mode()
@@ -2218,6 +2221,7 @@ def _ensure_upload_postprocess_running(uploaded_by: str) -> bool:
                 "current_rel": None,
                 "stage_processed": 0,
                 "stage_total": 0,
+                "share_context": dict(share_context) if isinstance(share_context, dict) else None,
             }
         )
         UPLOAD_POSTPROCESS_BY_USER[user] = st
@@ -2258,7 +2262,12 @@ def _set_upload_postprocess_state(uploaded_by: str, patch: Dict[str, Any]) -> No
         UPLOAD_POSTPROCESS_BY_USER[user] = cur
 
 
-def _mark_upload_postprocess_starting(uploaded_by: str, workflow_mode: str, rel_count: int = 0) -> None:
+def _mark_upload_postprocess_starting(
+    uploaded_by: str,
+    workflow_mode: str,
+    rel_count: int = 0,
+    share_context: Optional[Dict[str, Any]] = None,
+) -> None:
     _set_upload_postprocess_state(
         uploaded_by,
         {
@@ -2273,6 +2282,7 @@ def _mark_upload_postprocess_starting(uploaded_by: str, workflow_mode: str, rel_
             "current_rel": None,
             "stage_processed": 0,
             "stage_total": max(0, int(rel_count or 0)),
+            "share_context": dict(share_context) if isinstance(share_context, dict) else None,
         },
     )
 
@@ -2303,6 +2313,27 @@ def _request_client_ip() -> str:
         return str(request.remote_addr or "").strip()
     except Exception:
         return ""
+
+
+def _share_upload_log_context(share: Any, uploaded_by: str) -> Dict[str, Any]:
+    try:
+        share_id = int(share["id"])
+    except Exception:
+        share_id = 0
+    try:
+        share_name = str(share["share_name"] or "").strip()
+    except Exception:
+        share_name = ""
+    if not share_name:
+        try:
+            share_name = f"uploads/{str(share['folder_path'] or '').strip()}".rstrip("/")
+        except Exception:
+            share_name = ""
+    return {
+        "share_id": share_id or None,
+        "share_name": share_name or "deling",
+        "uploaded_by": _sanitize_share_visitor_name(uploaded_by or "") or "Share-bruger",
+    }
 
 
 def _request_public_base_url() -> str:
@@ -3288,6 +3319,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             "stage_total": 0,
         },
     )
+    state_context = _get_upload_postprocess_state(user).get("share_context")
+    share_context = dict(state_context) if isinstance(state_context, dict) else None
 
     aggregate: Dict[str, Any] = {
         "ok": True,
@@ -3325,7 +3358,10 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                     gather_deadline = time.time() + 0.35
 
             try:
-                log_event("upload_postprocess_start", user=user, files=len(batch), workflow_mode=workflow_mode)
+                if share_context:
+                    log_event("share_postprocess_start", **share_context, files=len(batch), workflow_mode=workflow_mode)
+                else:
+                    log_event("upload_postprocess_start", user=user, files=len(batch), workflow_mode=workflow_mode)
             except Exception:
                 pass
 
@@ -3356,8 +3392,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
 
             try:
                 log_event(
-                    "upload_postprocess_done",
-                    user=user,
+                    "share_postprocess_done" if share_context else "upload_postprocess_done",
+                    **(share_context or {"user": user}),
                     workflow_mode=workflow_mode,
                     files=result["received"] if "received" in result else None,
                     indexed=result["indexed"] if "indexed" in result else None,
@@ -3397,8 +3433,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         )
         try:
             log_event(
-                "upload_postprocess_summary_done",
-                user=user,
+                "share_postprocess_summary_done" if share_context else "upload_postprocess_summary_done",
+                **(share_context or {"user": user}),
                 workflow_mode=workflow_mode,
                 files=aggregate["received"] if "received" in aggregate else None,
                 indexed=aggregate["indexed"] if "indexed" in aggregate else None,
@@ -3426,6 +3462,14 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 "workflow_mode": workflow_mode,
             },
         )
+        try:
+            log_event(
+                "share_postprocess_failed" if share_context else "error",
+                **(share_context or {"rel_path": "upload_postprocess"}),
+                error=str(e),
+            )
+        except Exception:
+            pass
 
 
 def _tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -14112,6 +14156,7 @@ def api_share_upload(token: str):
     if _share_requires_visitor_name(share) and not uploader_name:
         return jsonify({"ok": False, "name_required": True, "error": "Navn er pÃ¥krÃ¦vet"}), 401
     uploader_label = uploader_name or "Share-bruger"
+    share_context = _share_upload_log_context(share, uploader_label)
 
     # Store physical files under internal originals root, mirroring user uploads
     target_dir = (UPLOAD_DIR / "originals" / folder_path)
@@ -14123,6 +14168,11 @@ def api_share_upload(token: str):
     files = request.files.getlist("files") or []
     if not files:
         return jsonify({"ok": False, "error": "No files"}), 400
+
+    try:
+        log_event("share_upload_start", **share_context, files=len(files), transfer="multipart")
+    except Exception:
+        pass
 
     saved = []
     errors: list[str] = []
@@ -14139,7 +14189,7 @@ def api_share_upload(token: str):
             if not _is_upload_extension_allowed(ext, allowed_upload_exts):
                 errors.append(_blocked_upload_file_error(name, ext))
                 try:
-                    log_event("share_upload_skip_blocked_file_type", filename=name, ext=ext)
+                    log_event("share_upload_skip_blocked_file_type", **share_context, filename=name, ext=ext)
                 except Exception:
                     pass
                 continue
@@ -14169,12 +14219,17 @@ def api_share_upload(token: str):
 
     # Ensure the postprocess worker runs for this uploader label
     try:
-        _ensure_upload_postprocess_running(uploaded_by)
+        _ensure_upload_postprocess_running(uploaded_by, share_context=share_context)
     except Exception as e:
         try:
-            log_event("error", error=f"share_postprocess_autostart: {e}")
+            log_event("share_postprocess_failed", **share_context, error=f"autostart: {e}")
         except Exception:
             pass
+
+    try:
+        log_event("share_upload_done", **share_context, files=len(files), saved=len(saved), errors=len(errors), transfer="multipart")
+    except Exception:
+        pass
 
     return jsonify({"ok": bool(saved) or not errors, "saved": saved, "errors": errors})
 
@@ -14211,6 +14266,9 @@ def api_share_tus_create(token: str):
     if int(share["can_upload"] or 0) != 1:
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403, _tus_headers()
 
+    uploader_label = _share_get_visitor_name(share) or "Share-bruger"
+    share_context = _share_upload_log_context(share, uploader_label)
+
     try:
         TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -14229,7 +14287,7 @@ def api_share_tus_create(token: str):
     filename_ext = Path(secure_filename(filename) or filename).suffix.lower()
     if not _is_upload_extension_allowed(filename_ext):
         try:
-            log_event("share_upload_skip_blocked_file_type", filename=filename, ext=filename_ext)
+            log_event("share_upload_skip_blocked_file_type", **share_context, filename=filename, ext=filename_ext)
         except Exception:
             pass
         return jsonify({
@@ -14268,7 +14326,6 @@ def api_share_tus_create(token: str):
     except Exception:
         last_modified_ms = 0
 
-    uploader_label = _share_get_visitor_name(share) or "Share-bruger"
     upload_meta: Dict[str, Any] = {
         "id": upload_id,
         "filename": filename,
@@ -14281,12 +14338,14 @@ def api_share_tus_create(token: str):
         "last_modified_ms": last_modified_ms,
         # Label uploaded_by with visitor name for UI chips
         "uploaded_by": uploader_label,
+        "share_id": share_context["share_id"],
+        "share_name": share_context["share_name"],
         "created_at": now_iso(),
     }
     _tus_store_meta(upload_id, upload_meta)
 
     try:
-        log_event("share_tus_created", upload_id=upload_id, filename=filename, subdir=subdir, upload_length=upload_length)
+        log_event("share_upload_start", **share_context, upload_id=upload_id, filename=filename, upload_length=upload_length, transfer="tus")
     except Exception:
         pass
 
@@ -14347,10 +14406,6 @@ def api_share_tus_file(token: str, upload_id: str):
         return jsonify({"ok": False, "error": "Invalid Upload-Offset"}), 400, _tus_headers()
 
     current_size = int(data_path.stat().st_size)
-    try:
-        log_event("share_tus_patch", upload_id=upload_id, req_offset=req_offset, current_size=current_size)
-    except Exception:
-        pass
     if req_offset != current_size:
         resp = make_response("", 409)
         for k, v in _tus_headers().items():
@@ -14377,6 +14432,11 @@ def api_share_tus_file(token: str, upload_id: str):
         subdir = str(meta.get("subdir") or "")
         filename = str(meta.get("filename") or "")
         uploaded_by = str(meta.get("uploaded_by") or f"share:{token}")
+        share_context = {
+            "share_id": meta.get("share_id") or None,
+            "share_name": str(meta.get("share_name") or "deling"),
+            "uploaded_by": _sanitize_share_visitor_name(uploaded_by) or "Share-bruger",
+        }
         try:
             last_modified_ms = int(meta.get("last_modified_ms") or 0)
         except Exception:
@@ -14400,12 +14460,12 @@ def api_share_tus_file(token: str, upload_id: str):
                 pass
             if ok:
                 try:
-                    log_event("share_tus_done", saved=1, errors=0)
+                    log_event("share_upload_done", **share_context, filename=filename, saved=1, errors=0, transfer="tus")
                 except Exception:
                     pass
             else:
                 try:
-                    log_event("error", filename=filename, error=err)
+                    log_event("share_upload_failed", **share_context, filename=filename, error=err)
                 except Exception:
                     pass
                 return jsonify({"ok": False, "error": err or "Upload finalize failed"}), 500, _tus_headers({"Upload-Offset": str(new_offset)})
@@ -14465,6 +14525,7 @@ def api_share_upload_postprocess(token: str):
         return jsonify({"ok": False, "error": "Upload ikke tilladt"}), 403
 
     uploaded_by = _share_get_visitor_name(share) or "Share-bruger"
+    share_context = _share_upload_log_context(share, uploaded_by)
     workflow_mode = upload_workflow_mode()
     if _is_upload_transfer_active(uploaded_by):
         with UPLOAD_PENDING_LOCK:
@@ -14483,6 +14544,11 @@ def api_share_upload_postprocess(token: str):
     if _is_upload_postprocess_running(uploaded_by):
         for rel in rels:
             _queue_uploaded_rel(uploaded_by, rel)
+        if rels:
+            try:
+                log_event("share_postprocess_queued", **share_context, files=len(rels), workflow_mode=workflow_mode)
+            except Exception:
+                pass
         running_state = _get_upload_postprocess_state(uploaded_by)
         with UPLOAD_PENDING_LOCK:
             pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
@@ -14513,7 +14579,7 @@ def api_share_upload_postprocess(token: str):
         })
 
     _clear_stop_all_barrier()
-    _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels))
+    _mark_upload_postprocess_starting(uploaded_by, workflow_mode, len(rels), share_context=share_context)
     threading.Thread(target=_upload_postprocess_worker, args=(uploaded_by, rels), daemon=True).start()
     with UPLOAD_PENDING_LOCK:
         pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
@@ -16798,6 +16864,51 @@ def _drain_queue_nowait(q: "queue.Queue[Any]") -> int:
     return removed
 
 
+def _active_processes_blocking_reset() -> list[str]:
+    active: list[str] = []
+    for name, thread_obj in (
+        ("scan", scan_thread),
+        ("rescan", rescan_thread),
+        ("rethumb", rethumb_thread),
+        ("HEIC-konvertering", heic_convert_thread),
+        ("RAW-konvertering", raw_convert_thread),
+        ("MOV-konvertering", mov_convert_thread),
+        ("AI-indeksering", ai_thread),
+        ("AI-beskrivelser", ai_desc_thread),
+    ):
+        if _thread_is_alive(thread_obj):
+            active.append(name)
+    if _faces_running.is_set():
+        active.append("ansigtsindeksering")
+    if _any_upload_transfer_active():
+        active.append("upload")
+    if _any_regular_upload_postprocess_running():
+        active.append("upload-efterbehandling")
+    with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
+        if DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS:
+            active.append("direkte upload-efterbehandling")
+    with PHOTOFRAME_VIDEO_PREPARE_LOCK:
+        if PHOTOFRAME_VIDEO_PREPARE_QUEUED:
+            active.append("PhotoFrame-videoklargøring")
+    return active
+
+
+def _reset_processes_running_response():
+    active = _active_processes_blocking_reset()
+    if not active:
+        return None
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "Stop alle processer og vent, til de er afsluttet, før du nulstiller.",
+                "running": active,
+            }
+        ),
+        409,
+    )
+
+
 @app.route("/api/processes/stop-all", methods=["POST"])
 def api_stop_all_processes():
     fb = _forbid_user_role_for_maintenance()
@@ -18143,6 +18254,9 @@ def api_clear():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
+    busy = _reset_processes_running_response()
+    if busy:
+        return busy
     # Do not touch PHOTO_DIR; only DB + thumbs in DATA_DIR
     result = clear_index()
     return jsonify(result), 200
@@ -18182,6 +18296,9 @@ def api_factory_reset():
     # Admin-only: full wipe of app-generated data and DB
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
+    busy = _reset_processes_running_response()
+    if busy:
+        return busy
 
     try:
         # Stop any background processing
@@ -18961,9 +19078,10 @@ def api_logs():
         after = int(request.args.get("after", "0"))
     except ValueError:
         after = 0
-    items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
-    next_id = (items[-1]["id"] if items else (LOG_BUFFER[-1]["id"] if LOG_BUFFER else after))
-    return jsonify({"items": items[:200], "next": next_id})
+    pending_items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
+    items = pending_items[:200]
+    next_id = items[-1]["id"] if items else after
+    return jsonify({"items": items, "next": next_id})
 
 
 @app.route("/api/settings/upload-destination", methods=["GET", "POST"])

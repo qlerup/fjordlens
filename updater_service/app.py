@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -30,6 +31,19 @@ LOCK = threading.RLock()
 RUNNING_PROCESS: Optional[subprocess.Popen] = None
 
 
+UPDATE_PHASE_PROGRESS = {
+    "idle": 0,
+    "preparing": 5,
+    "cleanup": 15,
+    "fetching": 30,
+    "building": 60,
+    "restarting": 85,
+    "verifying": 95,
+    "finished": 100,
+    "failed": 100,
+}
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -55,6 +69,8 @@ def default_state() -> Dict[str, Any]:
         "finished_at": "",
         "returncode": None,
         "job_id": "",
+        "phase": "idle",
+        "phase_progress": 0,
         "auto_check_enabled": bool(DEFAULT_AUTO_CHECK_ENABLED),
         "auto_check_interval_minutes": interval,
         "last_check_at": "",
@@ -144,6 +160,29 @@ def append_log(line: str) -> None:
     ensure_state_dir()
     with LOG_PATH.open("a", encoding="utf-8", errors="replace") as f:
         f.write(line.rstrip("\n") + "\n")
+
+
+def update_phase_from_log_line(line: str, current_phase: str) -> str:
+    text = str(line or "").strip().lower()
+    if not text:
+        return current_phase
+    if any(token in text for token in ("docker system prune", "docker builder prune", "cleanup docker", "rydder plads")):
+        return "cleanup"
+    if any(token in text for token in ("git fetch", "git pull", "fetching", "henter ny kode", "opdaterer kildekode")):
+        return "fetching"
+    if (
+        re.match(r"^#\d+\b", text)
+        or "docker build" in text
+        or "docker compose build" in text
+        or "building" in text
+        or "setting up " in text
+    ):
+        return "building"
+    if any(token in text for token in ("docker compose up", "recreating", "restarting", "starting container", "genstarter")):
+        return "restarting"
+    if any(token in text for token in ("healthcheck", "healthy", "verifying", "kontrollerer", "venter på")):
+        return "verifying"
+    return current_phase
 
 
 def reset_log() -> None:
@@ -273,11 +312,14 @@ def run_update_job(job_id: str, cleanup: bool, branch: str) -> None:
             "command": cmd,
             "branch": branch,
             "error": "",
+            "phase": "preparing",
+            "phase_progress": UPDATE_PHASE_PROGRESS["preparing"],
         }
     )
 
     returncode = 1
     error = ""
+    phase = "preparing"
     try:
         proc = subprocess.Popen(
             cmd,
@@ -293,6 +335,15 @@ def run_update_job(job_id: str, cleanup: bool, branch: str) -> None:
         if proc.stdout is not None:
             for line in proc.stdout:
                 append_log(line.rstrip("\n"))
+                next_phase = update_phase_from_log_line(line, phase)
+                if next_phase != phase:
+                    phase = next_phase
+                    update_state(
+                        {
+                            "phase": phase,
+                            "phase_progress": UPDATE_PHASE_PROGRESS[phase],
+                        }
+                    )
         returncode = int(proc.wait())
     except Exception as exc:
         error = str(exc)
@@ -312,6 +363,8 @@ def run_update_job(job_id: str, cleanup: bool, branch: str) -> None:
             "returncode": returncode,
             "error": error,
             "git": info,
+            "phase": "finished" if status == "success" else "failed",
+            "phase_progress": UPDATE_PHASE_PROGRESS["finished" if status == "success" else "failed"],
         }
     )
 

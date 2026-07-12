@@ -317,6 +317,16 @@
               <button id="appUpdateStartBtn" class="btn primary" type="button">Opdater</button>
             </div>
             <div id="appUpdateStatus" class="status hidden" style="margin-top:10px;"></div>
+            <div id="appUpdateProgress" class="app-update-progress hidden" aria-live="polite">
+              <div class="app-update-progress-head">
+                <span id="appUpdatePhaseLabel">Aktuel fase</span>
+                <strong id="appUpdatePhase">-</strong>
+                <span id="appUpdateProgressMeta" class="mini-label"></span>
+              </div>
+              <div id="appUpdateProgressTrack" class="app-update-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span id="appUpdateProgressBar" class="app-update-progress-bar"></span>
+              </div>
+            </div>
             <pre id="appUpdateLog" class="app-update-log hidden"></pre>
           </div>
           <div id="appUpdateChoiceModal" class="modal hidden app-update-choice-modal" role="dialog" aria-modal="true" aria-labelledby="appUpdateChoiceTitle">

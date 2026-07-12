@@ -931,7 +931,41 @@ async function loadInfo() {
   return true;
 }
 
-async function loadPhotos() {
+function captureShareGridScrollAnchor() {
+  if (!els.grid) return null;
+  const cards = Array.from(els.grid.querySelectorAll('.photo-card[data-photo-id]'));
+  const visibleCard = cards.find((card) => {
+    const rect = card.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight;
+  });
+  if (!visibleCard) return { scrollY: window.scrollY, photoId: 0, top: 0 };
+  return {
+    scrollY: window.scrollY,
+    photoId: Number(visibleCard.getAttribute('data-photo-id') || 0),
+    top: visibleCard.getBoundingClientRect().top,
+  };
+}
+
+function restoreShareGridScrollAnchor(anchor) {
+  if (!anchor) return;
+  const restore = () => {
+    const photoId = Number(anchor.photoId || 0);
+    const card = photoId > 0 && els.grid
+      ? els.grid.querySelector(`.photo-card[data-photo-id="${photoId}"]`)
+      : null;
+    const targetY = card
+      ? Math.max(0, window.scrollY + card.getBoundingClientRect().top - Number(anchor.top || 0))
+      : Math.max(0, Number(anchor.scrollY || 0));
+    window.scrollTo(0, targetY);
+  };
+  restore();
+  requestAnimationFrame(() => {
+    restore();
+    requestAnimationFrame(restore);
+  });
+}
+
+async function loadPhotos(preserveScroll = false) {
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/photos`);
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data && (data.password_required || data.name_required)) {
@@ -947,7 +981,9 @@ async function loadPhotos() {
     state.selected = new Set();
     state.selectionPulseId = 0;
   }
+  const scrollAnchor = preserveScroll ? captureShareGridScrollAnchor() : null;
   renderGrid();
+  restoreShareGridScrollAnchor(scrollAnchor);
 }
 
 async function runAuth() {
@@ -1079,7 +1115,7 @@ async function runUpload(preselectedFiles = null) {
     showStatus(`${t('upload_done')} - ${t('postprocess_start_failed')}: ${postprocessError}`, 'err');
   } else if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl`, 'err'); }
   else { showStatus(t('upload_done'), 'ok'); }
-  await loadPhotos();
+  await loadPhotos(true);
 }
 
 async function runDelete() {
@@ -1107,7 +1143,7 @@ async function runDelete() {
   state.selected = new Set();
   state.selectionPulseId = 0;
   if (state.selectMode) setSelectMode(false, { skipRender: true, clearSelection: true });
-  await loadPhotos();
+  await loadPhotos(true);
 }
 
 async function boot() {

@@ -31,6 +31,12 @@
   appUpdateCheckBtn: document.getElementById("appUpdateCheckBtn"),
   appUpdateStartBtn: document.getElementById("appUpdateStartBtn"),
   appUpdateStatus: document.getElementById("appUpdateStatus"),
+  appUpdateProgress: document.getElementById("appUpdateProgress"),
+  appUpdatePhaseLabel: document.getElementById("appUpdatePhaseLabel"),
+  appUpdatePhase: document.getElementById("appUpdatePhase"),
+  appUpdateProgressMeta: document.getElementById("appUpdateProgressMeta"),
+  appUpdateProgressTrack: document.getElementById("appUpdateProgressTrack"),
+  appUpdateProgressBar: document.getElementById("appUpdateProgressBar"),
   appUpdateLog: document.getElementById("appUpdateLog"),
   appUpdateChoiceModal: document.getElementById("appUpdateChoiceModal"),
   appUpdateChoiceTitle: document.getElementById("appUpdateChoiceTitle"),
@@ -1019,6 +1025,17 @@ const I18N = {
     app_update_current: 'Installeret',
     app_update_remote: 'Nyeste',
     app_update_state: 'Status',
+    app_update_phase_label: 'Aktuel fase',
+    app_update_phase_idle: 'Klar',
+    app_update_phase_preparing: 'Forbereder opdatering',
+    app_update_phase_cleanup: 'Rydder Docker-plads',
+    app_update_phase_fetching: 'Henter ny kode',
+    app_update_phase_building: 'Bygger containere',
+    app_update_phase_restarting: 'Genstarter tjenester',
+    app_update_phase_verifying: 'Kontrollerer tjenester',
+    app_update_phase_finished: 'Opdatering færdig',
+    app_update_phase_failed: 'Opdatering fejlede',
+    app_update_phase_unknown: 'Arbejder',
     app_update_auto_check: 'Automatisk tjek',
     app_update_interval: 'Interval (minutter)',
     app_update_save_settings: 'Gem',
@@ -1776,6 +1793,17 @@ const I18N = {
     app_update_current: 'Installed',
     app_update_remote: 'Latest',
     app_update_state: 'Status',
+    app_update_phase_label: 'Current phase',
+    app_update_phase_idle: 'Ready',
+    app_update_phase_preparing: 'Preparing update',
+    app_update_phase_cleanup: 'Cleaning Docker space',
+    app_update_phase_fetching: 'Fetching new code',
+    app_update_phase_building: 'Building containers',
+    app_update_phase_restarting: 'Restarting services',
+    app_update_phase_verifying: 'Checking services',
+    app_update_phase_finished: 'Update complete',
+    app_update_phase_failed: 'Update failed',
+    app_update_phase_unknown: 'Working',
     app_update_auto_check: 'Automatic check',
     app_update_interval: 'Interval (minutes)',
     app_update_save_settings: 'Save',
@@ -6720,6 +6748,40 @@ async function loadPhotoframeStatus() {
   }
 }
 
+function captureGalleryScrollAnchor() {
+  if (!els.grid) return null;
+  const cards = Array.from(els.grid.querySelectorAll('.photo-card[data-photo-id]'));
+  const visibleCard = cards.find((card) => {
+    const rect = card.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight;
+  });
+  if (!visibleCard) return { scrollY: window.scrollY, photoId: 0, top: 0 };
+  return {
+    scrollY: window.scrollY,
+    photoId: Number(visibleCard.getAttribute('data-photo-id') || 0),
+    top: visibleCard.getBoundingClientRect().top,
+  };
+}
+
+function restoreGalleryScrollAnchor(anchor) {
+  if (!anchor) return;
+  const restore = () => {
+    const photoId = Number(anchor.photoId || 0);
+    const card = photoId > 0 && els.grid
+      ? els.grid.querySelector(`.photo-card[data-photo-id="${photoId}"]`)
+      : null;
+    const targetY = card
+      ? Math.max(0, window.scrollY + card.getBoundingClientRect().top - Number(anchor.top || 0))
+      : Math.max(0, Number(anchor.scrollY || 0));
+    window.scrollTo(0, targetY);
+  };
+  restore();
+  requestAnimationFrame(() => {
+    restore();
+    requestAnimationFrame(restore);
+  });
+}
+
 async function loadPhotos(append = false, preserveScroll = false) {
   if (state.view === 'photoframe') {
     state.items = [];
@@ -6798,11 +6860,9 @@ async function loadPhotos(append = false, preserveScroll = false) {
   if (!append && state.view === 'mapper') {
     await prefetchMapperFolderPreviewsForCurrentPath();
   }
-  const _savedScrollY = (preserveScroll && !append) ? window.scrollY : 0;
+  const scrollAnchor = (preserveScroll && !append) ? captureGalleryScrollAnchor() : null;
   renderGrid();
-  if (_savedScrollY > 0) {
-    requestAnimationFrame(() => window.scrollTo(0, _savedScrollY));
-  }
+  restoreGalleryScrollAnchor(scrollAnchor);
 }
 
 async function loadPeople(useCache = true) {
@@ -9579,6 +9639,31 @@ function appUpdateStatusLabel(value) {
   return tr('app_update_status_unknown');
 }
 
+function appUpdatePhaseLabel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const key = `app_update_phase_${raw || 'unknown'}`;
+  const translated = tr(key);
+  return translated === key ? tr('app_update_phase_unknown') : translated;
+}
+
+function renderAppUpdateProgress(item, running) {
+  if (!els.appUpdateProgress) return;
+  const phase = String(item && item.phase ? item.phase : '').trim().toLowerCase();
+  const visible = !!running || !!phase && phase !== 'idle';
+  els.appUpdateProgress.classList.toggle('hidden', !visible);
+  if (!visible) return;
+  const progress = Math.max(0, Math.min(100, Number(item && item.phase_progress) || 0));
+  if (els.appUpdatePhaseLabel) els.appUpdatePhaseLabel.textContent = tr('app_update_phase_label');
+  if (els.appUpdatePhase) els.appUpdatePhase.textContent = appUpdatePhaseLabel(phase);
+  if (els.appUpdateProgressMeta) els.appUpdateProgressMeta.textContent = `${progress}%`;
+  if (els.appUpdateProgressBar) els.appUpdateProgressBar.style.width = `${progress}%`;
+  if (els.appUpdateProgressTrack) {
+    els.appUpdateProgressTrack.setAttribute('aria-valuenow', String(progress));
+    els.appUpdateProgressTrack.setAttribute('aria-label', appUpdatePhaseLabel(phase));
+  }
+  els.appUpdateProgress.classList.toggle('is-failed', phase === 'failed');
+}
+
 function appUpdateShortRev(value) {
   const raw = String(value || '').trim();
   if (!raw) return '-';
@@ -9786,6 +9871,7 @@ function renderAppUpdate(data = null) {
   if (els.appUpdateState) els.appUpdateState.textContent = appUpdateStatusLabel(statusForLabel);
   applyAppUpdateSettingsUi(item);
   renderAppUpdateTabBadge(item);
+  renderAppUpdateProgress(item, running);
 
   const logLines = Array.isArray(item.log) ? item.log : [];
   renderAppUpdateLog(logLines);
@@ -11257,16 +11343,23 @@ async function pollRescanStatus() {
   try {
     const res = await fetch("/api/rescan/status");
     const data = await res.json();
-    if (!data || !data.ok) return;
+    if (!data || !data.ok) {
+      throw new Error('status_unavailable');
+    }
     if (!data.running) {
       if (data.result) {
         const r = data.result;
         showStatus(`${tr('rescan_done_prefix')}: ${r.scanned}, updated: ${r.updated}, missing: ${r.missing}, errors: ${r.errors}.`, "ok");
       }
       await loadPhotos();
+      if (els.rescanBtn) els.rescanBtn.disabled = false;
       return;
     }
-  } catch {}
+  } catch {
+    showStatus(tr('rescan_error'), 'err');
+    if (els.rescanBtn) els.rescanBtn.disabled = false;
+    return;
+  }
   setTimeout(pollRescanStatus, 2000);
 }
 
@@ -11289,21 +11382,28 @@ async function rescanMetadata() {
 }
 
 // Rethumb (rebuild thumbnails)
-async function pollRethumbStatus() {
+async function pollRethumbStatus(button = els.rethumbBtn) {
   try {
     const res = await fetch("/api/rethumb/status");
     const data = await res.json();
-    if (!data || !data.ok) return;
+    if (!data || !data.ok) {
+      throw new Error('status_unavailable');
+    }
     if (!data.running) {
       if (data.result) {
         const r = data.result;
         showStatus(`${tr('rethumb_done_prefix')}: ${r.processed}, errors: ${r.errors}.`, "ok");
       }
       await loadPhotos(false, true);
+      if (button) button.disabled = false;
       return;
     }
-  } catch {}
-  setTimeout(pollRethumbStatus, 2000);
+  } catch {
+    showStatus(tr('rethumb_error'), 'err');
+    if (button) button.disabled = false;
+    return;
+  }
+  setTimeout(() => pollRethumbStatus(button), 2000);
 }
 
 async function rethumbAll() {
@@ -11317,7 +11417,7 @@ async function rethumbAll() {
       if (els.rethumbBtn) els.rethumbBtn.disabled = false;
       return;
     }
-    pollRethumbStatus();
+    pollRethumbStatus(els.rethumbBtn);
   } catch (e) {
     showStatus(tr('rethumb_error'), "err");
     if (els.rethumbBtn) els.rethumbBtn.disabled = false;
@@ -11417,36 +11517,21 @@ async function clearIndex() {
 
 // Fix only missing/outdated thumbnails
 async function fixMissingThumbs() {
+  const btn = els.fixThumbsBtn;
   try {
-    if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = true;
+    if (btn) btn.disabled = true;
     showStatus(tr('rethumb_starting'), 'ok');
     const res = await fetch('/api/rethumb/missing', { method: 'POST' });
-    if (!res.ok) {
-      showStatus(tr('rethumb_failed'), 'err');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showStatus(`${tr('rethumb_failed')} ${data && data.error ? data.error : ''}`.trim(), 'err');
+      if (btn) btn.disabled = false;
       return;
     }
-    // Reuse rethumb status polling (same thread/status variables)
-    const poll = async () => {
-      try {
-        const r = await fetch('/api/rethumb/status');
-        const d = await r.json();
-        if (r.ok && d && d.ok) {
-          if (!d.running) {
-            const processed = (d.result && d.result.processed) || 0;
-            const errors = (d.result && d.result.errors) || 0;
-            showStatus(`${tr('rethumb_done_prefix')}: ${processed}, errors: ${errors}.`, errors > 0 ? 'err' : 'ok');
-            await loadPhotos(false, true);
-            return;
-          }
-        }
-      } catch {}
-      setTimeout(poll, 1000);
-    };
-    poll();
+    pollRethumbStatus(btn);
   } catch (e) {
     showStatus(tr('rethumb_error'), 'err');
-  } finally {
-    if (els.fixThumbsBtn) els.fixThumbsBtn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 // Factory reset (DB file + all generated caches and uploads)
@@ -17099,7 +17184,7 @@ els.dupesBtn && els.dupesBtn.addEventListener('click', fetchDuplicates);
 function classifySeverity(eventName) {
   const ev = String(eventName || '').toLowerCase();
   // Errors: hard failures
-  if (ev === 'error' || ev.endsWith('_error') || ev.endsWith('_fail') || ev === 'ai_http_error') return 'err';
+  if (ev === 'error' || ev.endsWith('_error') || ev.endsWith('_fail') || ev === 'ai_http_error' || ev === 'share_upload_failed' || ev === 'share_postprocess_failed') return 'err';
   // Warnings: skipped or not critical changes
   if (ev === 'skip_unchanged' || ev === 'no_new' || ev === 'upload_skip_unsupported' || ev === 'upload_skip_blocked_file_type' || ev === 'share_upload_skip_blocked_file_type' || ev === 'missing' || ev.endsWith('_check')) return 'warn';
   // Success/info: the rest of positive events
@@ -17178,6 +17263,12 @@ async function pollLogs() {
         if (typeof it.ai_errors !== "undefined") extra += ` ai_errors=${it.ai_errors}`;
         if (typeof it.ai_desc_done !== "undefined") extra += ` ai_desc=${it.ai_desc_done}`;
         if (typeof it.ai_desc_errors !== "undefined") extra += ` ai_desc_errors=${it.ai_desc_errors}`;
+        if (it.share_name) extra += ` share=${it.share_name}`;
+        if (it.uploaded_by) extra += ` uploaded_by=${it.uploaded_by}`;
+        if (it.filename) extra += ` file=${it.filename}`;
+        if (typeof it.saved !== "undefined") extra += ` saved=${it.saved}`;
+        if (it.transfer) extra += ` transfer=${it.transfer}`;
+        if (it.workflow_mode) extra += ` workflow=${it.workflow_mode}`;
         if (it.error) extra += ` :: ${it.error}`;
         const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
         const msg = `[${fmtLogTime(it.t)}] ${label}${extra}`;

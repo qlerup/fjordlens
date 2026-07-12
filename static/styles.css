@@ -386,6 +386,46 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   justify-content: flex-start;
   flex-wrap: wrap;
 }
+.app-update-progress {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.app-update-progress.hidden { display: none; }
+.app-update-progress-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.app-update-progress-head strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-update-progress-track {
+  height: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--panel-3);
+}
+.app-update-progress-bar {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.app-update-progress.is-failed .app-update-progress-bar { background: var(--danger); }
 .app-update-settings {
   display: flex;
   align-items: center;
