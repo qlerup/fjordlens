@@ -8934,26 +8934,10 @@ async function openSharedEditModal(shareId) {
   els.sharedEditModal.classList.remove('hidden');
   els.sharedEditModal.setAttribute('aria-busy', 'true');
   if (els.sharedEditModalSave) els.sharedEditModalSave.disabled = true;
-  if (els.sharedEditFolders) {
-    els.sharedEditFolders.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_loading'))}</div>`;
-  }
-
-  try {
-    await loadSharedFolderOptions(true);
-    await refreshShareDuckdnsConfig();
-  } catch (err) {
-    if (loadToken !== Number(state.sharedEditLoadToken || 0)) return;
-    showSharedEditError((err && err.message) || tr('dns_shares_edit_load_folders_failed'));
-    els.sharedEditModal.removeAttribute('aria-busy');
-    return;
-  }
-  if (loadToken !== Number(state.sharedEditLoadToken || 0) || sid !== Number(state.sharedEditShareId || 0)) return;
   applyUiLanguage();
 
   const selectedFolders = _collectShareFoldersFromItem(item);
-  const options = Array.from(new Set([...(state.sharedFolderOptions || []), ...selectedFolders]))
-    .sort((a, b) => String(a || '').localeCompare(String(b || ''), 'da-DK'));
-  _renderSharedEditFolders(options, selectedFolders);
+  _renderSharedEditFolders(selectedFolders, selectedFolders);
 
   if (els.sharedEditNameInput) {
     const name = String(item.share_name || '').trim();
@@ -8968,16 +8952,33 @@ async function openSharedEditModal(shareId) {
 
   if (els.sharedEditPermission) els.sharedEditPermission.value = String(item.permission || 'view');
   if (els.sharedEditDuckdnsToggle) {
-    const duckdnsEnabled = !!state.shareDuckdnsConfigured;
-    els.sharedEditDuckdnsToggle.checked = duckdnsEnabled ? !!item.use_duckdns : false;
-    els.sharedEditDuckdnsToggle.disabled = !duckdnsEnabled;
-    els.sharedEditDuckdnsToggle.title = duckdnsEnabled ? '' : tr('mapper_share_duckdns_not_configured');
+    els.sharedEditDuckdnsToggle.checked = !!item.use_duckdns;
+    els.sharedEditDuckdnsToggle.disabled = true;
   }
   if (els.sharedEditPasswordToggle) els.sharedEditPasswordToggle.checked = !!item.password_enabled;
   if (els.sharedEditPasswordInput) els.sharedEditPasswordInput.value = '';
   _syncSharedEditPasswordToggle();
 
   if (els.sharedEditRequireNameToggle) els.sharedEditRequireNameToggle.checked = !!item.require_visitor_name;
+
+  const [foldersResult] = await Promise.allSettled([
+    loadSharedFolderOptions(true),
+    refreshShareDuckdnsConfig(),
+  ]);
+  if (loadToken !== Number(state.sharedEditLoadToken || 0) || sid !== Number(state.sharedEditShareId || 0)) return;
+
+  if (foldersResult.status === 'fulfilled') {
+    const options = Array.from(new Set([...(state.sharedFolderOptions || []), ...selectedFolders]))
+      .sort((a, b) => String(a || '').localeCompare(String(b || ''), 'da-DK'));
+    _renderSharedEditFolders(options, selectedFolders);
+  } else {
+    showSharedEditError((foldersResult.reason && foldersResult.reason.message) || tr('dns_shares_edit_load_folders_failed'));
+  }
+  if (els.sharedEditDuckdnsToggle) {
+    const duckdnsEnabled = !!state.shareDuckdnsConfigured;
+    els.sharedEditDuckdnsToggle.disabled = !duckdnsEnabled;
+    els.sharedEditDuckdnsToggle.title = duckdnsEnabled ? '' : tr('mapper_share_duckdns_not_configured');
+  }
   if (els.sharedEditModalSave) {
     els.sharedEditModalSave.disabled = false;
     els.sharedEditModalSave.classList.remove('loading');
