@@ -5938,6 +5938,37 @@ def _refresh_folder_previews_for_rel_paths(rel_paths: Iterable[Any]) -> list[str
     return _refresh_folder_previews_for_folders(_folder_preview_affected_keys_for_rels(rel_paths))
 
 
+def _delete_face_thumb_files(face_ids: Iterable[Any]) -> int:
+    """Remove face crop thumbnails (current and legacy naming) for deleted faces."""
+    removed = 0
+    for fid in sorted({int(f) for f in (face_ids or []) if str(f).isdigit()}):
+        candidates: list[Path] = [THUMB_DIR / f"face_{fid}.jpg"]
+        try:
+            candidates.extend(THUMB_DIR.glob(f"face_{fid}_v*.jpg"))
+        except Exception:
+            pass
+        for p in candidates:
+            try:
+                if p.exists() and p.is_file():
+                    p.unlink()
+                    removed += 1
+            except Exception:
+                continue
+    return removed
+
+
+def _delete_photoframe_prepared_copy(rel_path: str) -> int:
+    """Remove the photoframe-optimized video copy for a deleted photo, if any."""
+    try:
+        p = _photoframe_video_prepared_path(rel_path)
+        if p.exists() and p.is_file():
+            p.unlink()
+            return 1
+    except Exception:
+        pass
+    return 0
+
+
 def _delete_thumb_files_if_unreferenced(thumb_names: Iterable[Any]) -> int:
     cleaned = sorted(
         {
@@ -6084,15 +6115,27 @@ def _delete_indexed_photos_for_prefixes(rel_prefixes: Iterable[str]) -> dict:
         rels = [str(r["rel_path"]) for r in rows if r["rel_path"]]
 
         ph = ",".join(["?"] * len(photo_ids))
-        faces_removed = int(conn.execute(f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph})", photo_ids).fetchone()["c"] or 0)
+        face_ids = [int(fr["id"]) for fr in conn.execute(f"SELECT id FROM faces WHERE photo_id IN ({ph})", photo_ids).fetchall()]
+        faces_removed = len(face_ids)
         conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph})", photo_ids)
         conn.execute(f"DELETE FROM photos WHERE id IN ({ph})", photo_ids)
         conn.commit()
 
     thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
+    face_thumbs_removed = _delete_face_thumb_files(face_ids)
+    photoframe_copies_removed = 0
+    for rel in rels:
+        photoframe_copies_removed += _delete_photoframe_prepared_copy(rel)
     preview_folders = _refresh_folder_previews_for_rel_paths(rels)
 
-    return {"photos": len(photo_ids), "faces": faces_removed, "thumbs": thumbs_removed, "preview_folders": preview_folders}
+    return {
+        "photos": len(photo_ids),
+        "faces": faces_removed,
+        "thumbs": thumbs_removed,
+        "face_thumbs": face_thumbs_removed,
+        "photoframe_copies": photoframe_copies_removed,
+        "preview_folders": preview_folders,
+    }
 
 
 def _normalize_photo_rel_for_delete(rel_path: Any) -> str:
@@ -6217,29 +6260,33 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
         ]
 
         ph2 = ",".join(["?"] * len(resolved_ids))
-        faces_removed = int(
-            conn.execute(
-                f"SELECT COUNT(*) AS c FROM faces WHERE photo_id IN ({ph2})",
+        face_ids = [
+            int(fr["id"])
+            for fr in conn.execute(
+                f"SELECT id FROM faces WHERE photo_id IN ({ph2})",
                 resolved_ids,
-            ).fetchone()["c"]
-            or 0
-        )
+            ).fetchall()
+        ]
+        faces_removed = len(face_ids)
         conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph2})", resolved_ids)
         conn.execute(f"DELETE FROM photos WHERE id IN ({ph2})", resolved_ids)
         conn.commit()
 
     thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
+    face_thumbs_removed = _delete_face_thumb_files(face_ids)
 
     files_removed = 0
     deleted_keys: set[str] = set()
     for rel, metadata_json_raw in photo_file_refs:
         files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
+        files_removed += _delete_photoframe_prepared_copy(rel)
     preview_folders = _refresh_folder_previews_for_rel_paths([rel for rel, _ in photo_file_refs])
 
     return {
         "photos": len(resolved_ids),
         "faces": faces_removed,
         "thumbs": thumbs_removed,
+        "face_thumbs": face_thumbs_removed,
         "files": files_removed,
         "preview_folders": preview_folders,
     }
@@ -18757,11 +18804,13 @@ def _cleanup_orphan_thumbs(dry_run: bool = False) -> dict:
             tn = str(r["thumb_name"] or "").strip()
             if tn:
                 used.add(tn)
-        # Protect existing face thumbs
+        # Protect existing face thumbs (current versioned naming). Legacy
+        # face_<id>.jpg and stale-version files are intentionally left
+        # unprotected so cleanup can remove them.
         face_rows = conn.execute("SELECT id FROM faces").fetchall()
         for fr in face_rows:
             try:
-                used.add(f"face_{int(fr['id'])}.jpg")
+                used.add(_face_thumb_name(int(fr["id"])))
             except Exception:
                 continue
 
