@@ -12332,7 +12332,7 @@ function isProbablyIosDevice() {
 }
 
 function shouldShowUploadPrepNotice() {
-  return isProbablyIosDevice();
+  return isSmallMobile() || isProbablyIosDevice();
 }
 
 function closeIosUploadPrepModal() {
