@@ -2567,6 +2567,7 @@ let state = {
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
   sharedEditShareId: 0,
+  sharedEditLoadToken: 0,
   sharedFolderOptions: [],
   uploadWorkflowMode: 'gentle',
   uploadWorkflowBatchSize: 10,
@@ -8845,8 +8846,14 @@ function _syncSharedEditPasswordToggle() {
 
 function closeSharedEditModal() {
   if (!els.sharedEditModal) return;
+  state.sharedEditLoadToken = Number(state.sharedEditLoadToken || 0) + 1;
   els.sharedEditModal.classList.add('hidden');
+  els.sharedEditModal.removeAttribute('aria-busy');
   state.sharedEditShareId = 0;
+  if (els.sharedEditModalSave) {
+    els.sharedEditModalSave.disabled = false;
+    els.sharedEditModalSave.classList.remove('loading');
+  }
   showSharedEditError('');
 }
 
@@ -8913,18 +8920,25 @@ async function openSharedEditModal(shareId) {
   }
   showSharedEditError('');
   state.sharedEditShareId = sid;
+  const loadToken = Number(state.sharedEditLoadToken || 0) + 1;
+  state.sharedEditLoadToken = loadToken;
   els.sharedEditModal.classList.remove('hidden');
   els.sharedEditModal.setAttribute('aria-busy', 'true');
   if (els.sharedEditModalSave) els.sharedEditModalSave.disabled = true;
+  if (els.sharedEditFolders) {
+    els.sharedEditFolders.innerHTML = `<div class="mini-label">${escapeHtml(tr('dns_shares_loading'))}</div>`;
+  }
 
   try {
     await loadSharedFolderOptions(true);
+    await refreshShareDuckdnsConfig();
   } catch (err) {
+    if (loadToken !== Number(state.sharedEditLoadToken || 0)) return;
     showSharedEditError((err && err.message) || tr('dns_shares_edit_load_folders_failed'));
     els.sharedEditModal.removeAttribute('aria-busy');
     return;
   }
-  await refreshShareDuckdnsConfig();
+  if (loadToken !== Number(state.sharedEditLoadToken || 0) || sid !== Number(state.sharedEditShareId || 0)) return;
   applyUiLanguage();
 
   const selectedFolders = _collectShareFoldersFromItem(item);
