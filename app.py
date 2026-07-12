@@ -16768,6 +16768,9 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
     log_event("rethumb_missing_start")
     total = 0
     errors = 0
+    checked = 0
+    up_to_date = 0
+    source_missing = 0
     with closing(get_conn()) as conn:
         rows = conn.execute(
             "SELECT rel_path, thumb_name FROM photos"
@@ -16775,10 +16778,12 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
     for row in rows:
         if stop_event and stop_event.is_set():
             break
+        checked += 1
         rel_path = row["rel_path"]
         try:
-            p = PHOTO_DIR / rel_path if not rel_path.startswith("uploads/") else UPLOAD_DIR / rel_path[len("uploads/"):]
+            p = _disk_path_from_rel_path(rel_path)
             if not p.exists():
+                source_missing += 1
                 continue
             stat = p.stat()
             expected_ok = False
@@ -16791,6 +16796,7 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
                 except Exception:
                     expected_ok = False
             if expected_ok:
+                up_to_date += 1
                 continue
             # Need (re)thumb
             tn: Optional[str] = None
@@ -16814,8 +16820,16 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
         except Exception as e:
             errors += 1
             log_event("error", rel_path=rel_path, error=f"rethumb_missing: {e}")
-    res = {"ok": True, "processed": total, "errors": errors}
-    log_event("rethumb_missing_done", processed=total, errors=errors)
+    res = {
+        "ok": True,
+        "checked": checked,
+        "processed": total,
+        "up_to_date": up_to_date,
+        "source_missing": source_missing,
+        "errors": errors,
+        "stopped": bool(stop_event and stop_event.is_set()),
+    }
+    log_event("rethumb_missing_done", **res)
     return res
 
 

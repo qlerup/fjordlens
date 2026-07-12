@@ -10,6 +10,7 @@
   rescanBtn: document.getElementById("rescanBtn"),
   rethumbBtn: document.getElementById("rethumbBtn"),
   fixThumbsBtn: document.getElementById("fixThumbsBtn"),
+  maintenanceStatus: document.getElementById("maintenanceStatus"),
   stopAllProcessesBtn: document.getElementById("stopAllProcessesBtn"),
   clearIndexBtn: document.getElementById("clearIndexBtn"),
   factoryResetBtn: document.getElementById("factoryResetBtn"),
@@ -2862,6 +2863,14 @@ function showStatus(text, type = "ok") {
 }
 function hideStatus() {
   els.status.classList.add("hidden");
+}
+
+function showMaintenanceStatus(text, type = "ok") {
+  const target = els.maintenanceStatus || els.status;
+  if (!target) return;
+  target.textContent = String(text || '');
+  target.classList.remove("hidden", "ok", "err");
+  target.classList.add(type);
 }
 
 function fmtBytes(bytes) {
@@ -11400,7 +11409,7 @@ async function rescanMetadata() {
 }
 
 // Rethumb (rebuild thumbnails)
-async function pollRethumbStatus(button = els.rethumbBtn) {
+async function pollRethumbStatus(button = els.rethumbBtn, statusFn = showStatus) {
   try {
     const res = await fetch("/api/rethumb/status");
     const data = await res.json();
@@ -11410,14 +11419,21 @@ async function pollRethumbStatus(button = els.rethumbBtn) {
     if (!data.running) {
       if (data.result) {
         const r = data.result;
-        showStatus(`${tr('rethumb_done_prefix')}: ${r.processed}, errors: ${r.errors}.`, "ok");
+        if (Object.prototype.hasOwnProperty.call(r, 'checked')) {
+          const checked = Number(r.checked || 0);
+          const upToDate = Number(r.up_to_date || 0);
+          const sourceMissing = Number(r.source_missing || 0);
+          statusFn(`${tr('rethumb_done_prefix')}: ${r.processed}, kontrolleret: ${checked}, allerede OK: ${upToDate}, original mangler: ${sourceMissing}, errors: ${r.errors}.`, "ok");
+        } else {
+          statusFn(`${tr('rethumb_done_prefix')}: ${r.processed}, errors: ${r.errors}.`, "ok");
+        }
       }
       await loadPhotos(false, true);
       if (button) button.disabled = false;
       return;
     }
   } catch {
-    showStatus(tr('rethumb_error'), 'err');
+    statusFn(tr('rethumb_error'), 'err');
     if (button) button.disabled = false;
     return;
   }
@@ -11538,17 +11554,17 @@ async function fixMissingThumbs() {
   const btn = els.fixThumbsBtn;
   try {
     if (btn) btn.disabled = true;
-    showStatus(tr('rethumb_starting'), 'ok');
+    showMaintenanceStatus(tr('rethumb_starting'), 'ok');
     const res = await fetch('/api/rethumb/missing', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      showStatus(`${tr('rethumb_failed')} ${data && data.error ? data.error : ''}`.trim(), 'err');
+      showMaintenanceStatus(`${tr('rethumb_failed')} ${data && data.error ? data.error : ''}`.trim(), 'err');
       if (btn) btn.disabled = false;
       return;
     }
-    pollRethumbStatus(btn);
+    pollRethumbStatus(btn, showMaintenanceStatus);
   } catch (e) {
-    showStatus(tr('rethumb_error'), 'err');
+    showMaintenanceStatus(tr('rethumb_error'), 'err');
     if (btn) btn.disabled = false;
   }
 }
