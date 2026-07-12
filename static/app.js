@@ -5726,9 +5726,32 @@ function bindFolderNameMarquee(card, fullText) {
 const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
 
 function invalidateStoredFolderPreviews(folders) {
-  const list = Array.isArray(folders) ? folders : [];
+  const list = (Array.isArray(folders) ? folders : [])
+    .map((f) => String(f || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
+    .filter((f, i, a) => a.indexOf(f) === i);
   if (!list.length) return;
-  // Keep the last good preview visible; the async server refresh replaces it.
+  // Drop cached previews for the affected folders (and their subfolders) so
+  // the next render pulls the server's freshly computed previews instead of
+  // showing thumbnails of deleted photos.
+  try {
+    const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
+    let changed = false;
+    for (const folder of list) {
+      if (Object.prototype.hasOwnProperty.call(store, folder)) {
+        delete store[folder];
+        changed = true;
+      }
+      if (!folder) continue;
+      const prefix = folder + '/';
+      for (const key of Object.keys(store)) {
+        if (key.startsWith(prefix)) {
+          delete store[key];
+          changed = true;
+        }
+      }
+    }
+    if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
+  } catch {}
 }
 
 function mapperImmediateChildFolder(folderPath, parentPath) {
@@ -5762,12 +5785,19 @@ async function prefetchMapperFolderPreviewsForCurrentPath() {
     const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
     let changed = false;
     for (const folder of folders) {
+      const answered = Object.prototype.hasOwnProperty.call(items, folder);
       const urls = Array.isArray(items[folder])
         ? items[folder].map((u) => String(u || '').trim()).filter(Boolean).slice(0, 4)
         : [];
-      if (!urls.length) continue;
-      store[folder] = urls;
-      changed = true;
+      if (urls.length) {
+        store[folder] = urls;
+        changed = true;
+      } else if (answered && Object.prototype.hasOwnProperty.call(store, folder)) {
+        // Server explicitly says this folder has no previews (e.g. photos
+        // were deleted from another device) - drop the stale cached entry.
+        delete store[folder];
+        changed = true;
+      }
     }
     if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
   } catch {}
