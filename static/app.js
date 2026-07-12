@@ -9234,6 +9234,9 @@ async function saveDnsSettings() {
       return;
     }
     els.dnsDuckdnsBaseUrlInput.value = String(data.duckdns_base_url || '');
+    const effectiveBaseUrl = String(data.effective_duckdns_base_url || '').trim();
+    state.shareDuckdnsConfigured = !!effectiveBaseUrl;
+    state.shareDuckdnsEffectiveBaseUrl = effectiveBaseUrl;
     showDnsStatus(tr('dns_saved'), 'ok');
   } catch {
     showDnsStatus(tr('dns_save_failed'), 'err');
