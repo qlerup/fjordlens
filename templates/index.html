@@ -256,6 +256,7 @@
           <button class="tab-btn" data-tab="hardware">Hardware</button>
           <button class="tab-btn" data-tab="dns">DNS</button>
           <button class="tab-btn" data-tab="heic">Konvertering</button>
+          <button class="tab-btn" data-tab="video">Video</button>
           <button class="tab-btn" data-tab="shared">Delte</button>
           <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
@@ -274,6 +275,7 @@
             <option value="hardware">Hardware</option>
             <option value="dns">DNS</option>
             <option value="heic">Konvertering</option>
+            <option value="video">Video</option>
             <option value="shared">Delte</option>
             <option value="logs">Logs</option>
             <option value="users">Brugere</option>
@@ -448,6 +450,19 @@
                     </div>
                   </div>
                 </div>
+        <!-- Videoafspilning -->
+        <div class="tab-panel hidden" data-tabpanel="video">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div id="videoSettingsTitle" class="sidebar-card-title">Videoafspilning</div>
+            <p id="videoSettingsDesc" class="hint" style="margin:0 0 12px 0;">Vælg om videoer skal begynde at afspille automatisk, når de åbnes eller swipes frem.</p>
+            <label class="ai-toggle-row" for="videoAutoplayToggle">
+              <input id="videoAutoplayToggle" class="ai-toggle-input" type="checkbox" role="switch" aria-label="Afspil videoer automatisk" />
+              <span class="ai-toggle-slider" aria-hidden="true"></span>
+              <span id="videoAutoplayToggleText" class="mini-label">Afspil videoer automatisk</span>
+            </label>
+            <div id="videoSettingsStatus" class="mini-label" style="margin-top:10px;" aria-live="polite">Autoplay: —</div>
+          </div>
+        </div>
         <div class="tab-panel hidden" data-tabpanel="ai">
           <div class="sidebar-card" style="margin-bottom:12px;">
             <div id="aiPanelTitle" class="sidebar-card-title">AI</div>
@@ -808,7 +823,10 @@
   <div id="viewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;">
     <button id="viewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);">⟨</button>
     <img id="viewerImg" alt="" decoding="async" fetchpriority="high" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;" />
-    <video id="viewerVideo" controls style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
+    <video id="viewerVideo" controls playsinline webkit-playsinline preload="metadata" style="max-width:92vw;max-height:90vh;border-radius:12px;border:1px solid rgba(255,255,255,0.2);display:none;"></video>
+    <button id="viewerVideoPlayBtn" class="video-play-overlay hidden" type="button" aria-label="Afspil video" title="Afspil video">
+      <span class="video-play-overlay-icon" aria-hidden="true"></span>
+    </button>
     <button id="viewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">⟩</button>
     <button id="viewerClose" class="btn" type="button" title="Luk" aria-label="Luk" style="position:absolute;right:12px;top:12px;">×</button>
     <button id="viewerInfoMediaBtn" class="viewer-info-media-btn" type="button" title="Vis info" aria-label="Vis info">

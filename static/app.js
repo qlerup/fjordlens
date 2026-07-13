@@ -115,6 +115,11 @@
   movConvertToggle: document.getElementById("movConvertToggle"),
   movKeepToggle: document.getElementById("movKeepToggle"),
   movStatus: document.getElementById("movStatus"),
+  videoSettingsTitle: document.getElementById("videoSettingsTitle"),
+  videoSettingsDesc: document.getElementById("videoSettingsDesc"),
+  videoAutoplayToggle: document.getElementById("videoAutoplayToggle"),
+  videoAutoplayToggleText: document.getElementById("videoAutoplayToggleText"),
+  videoSettingsStatus: document.getElementById("videoSettingsStatus"),
   movBulkConvertBtn: document.getElementById("movBulkConvertBtn"),
   rawBulkConvertBtn: document.getElementById("rawBulkConvertBtn"),
   heicBulkConvertBtn: document.getElementById("heicBulkConvertBtn"),
@@ -272,6 +277,7 @@
   viewer: document.getElementById("viewer"),
   viewerImg: document.getElementById("viewerImg"),
   viewerVideo: document.getElementById("viewerVideo"),
+  viewerVideoPlayBtn: document.getElementById("viewerVideoPlayBtn"),
   viewerPrev: document.getElementById("viewerPrev"),
   viewerNext: document.getElementById("viewerNext"),
   viewerClose: document.getElementById("viewerClose"),
@@ -812,6 +818,7 @@ const I18N = {
     tab_file_types: 'Filtyper',
     tab_hardware: 'Hardware',
     tab_heic: 'Konvertering',
+    tab_video: 'Video',
     tab_dns: 'DNS',
     tab_shared: 'Delte',
     tab_logs: 'Logs',
@@ -820,6 +827,14 @@ const I18N = {
     profile_open_twofa: 'Administrer 2FA',
     tab_profile: 'Profil',
     tab_other: 'Andet',
+    video_settings_title: 'Videoafspilning',
+    video_settings_desc: 'Vælg om videoer skal begynde at afspille automatisk, når de åbnes eller swipes frem.',
+    video_autoplay_toggle: 'Afspil videoer automatisk',
+    video_autoplay_on: 'Autoplay: slået til',
+    video_autoplay_off: 'Autoplay: slået fra',
+    video_settings_load_failed: 'Kunne ikke hente videoindstillingen.',
+    video_settings_save_failed: 'Kunne ikke gemme videoindstillingen.',
+    video_play: 'Afspil video',
     upload_workflow_title: 'Upload workflow',
     upload_workflow_desc: 'Vælg hvordan upload-efterbehandling kører.',
     upload_workflow_gentle_title: 'Skånsom',
@@ -1599,6 +1614,7 @@ const I18N = {
     tab_file_types: 'File types',
     tab_hardware: 'Hardware',
     tab_heic: 'Conversion',
+    tab_video: 'Video',
     tab_dns: 'DNS',
     tab_shared: 'Shared',
     tab_logs: 'Logs',
@@ -1607,6 +1623,14 @@ const I18N = {
     profile_open_twofa: 'Manage 2FA',
     tab_profile: 'Profile',
     tab_other: 'Other',
+    video_settings_title: 'Video playback',
+    video_settings_desc: 'Choose whether videos start playing automatically when they are opened or swiped into view.',
+    video_autoplay_toggle: 'Play videos automatically',
+    video_autoplay_on: 'Autoplay: on',
+    video_autoplay_off: 'Autoplay: off',
+    video_settings_load_failed: 'Could not load the video setting.',
+    video_settings_save_failed: 'Could not save the video setting.',
+    video_play: 'Play video',
     upload_workflow_title: 'Upload workflow',
     upload_workflow_desc: 'Choose how upload post-processing runs.',
     upload_workflow_gentle_title: 'Gentle',
@@ -2370,7 +2394,7 @@ const I18N = {
 };
 
 const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'photoframe', 'personer', 'settings']);
-const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'shared', 'logs', 'users', 'profile', 'other']);
+const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'profile', 'other']);
 
 function _normalizeSettingsTab(tab) {
   const raw = String(tab || '').trim().toLowerCase();
@@ -2560,6 +2584,7 @@ let state = {
   mapperFolders: [],
   mapperSort: "date_desc",
   settingsTab: '',
+  videoAutoplay: APP_PROFILE.video_autoplay === true,
   mapperEditMode: false,
   mapperSelectedFolders: new Set(),
   mapperSelectedPhotoIds: new Set(),
@@ -6355,6 +6380,61 @@ function appendPersonCard(p) {
 // Viewer controls
 let viewerTransitionRunning = false;
 let viewerPendingStep = 0;
+let viewerVideoManualPlayRequired = false;
+let viewerVideoSourceGeneration = 0;
+
+function isViewerVideoActive() {
+  if (!els.viewer || !els.viewerVideo) return false;
+  if (els.viewer.classList.contains('hidden')) return false;
+  if (els.viewerVideo.style.display === 'none') return false;
+  const items = getViewerItems();
+  const current = items[state.selectedIndex];
+  return !!(current && current.is_video);
+}
+
+function setViewerVideoPlayOverlayVisible(visible) {
+  if (!els.viewerVideoPlayBtn) return;
+  els.viewerVideoPlayBtn.classList.toggle('hidden', !visible);
+}
+
+function syncViewerVideoPlayOverlay() {
+  const active = isViewerVideoActive();
+  const paused = !!(els.viewerVideo && (els.viewerVideo.paused || els.viewerVideo.ended));
+  const needsButton = !state.videoAutoplay || viewerVideoManualPlayRequired;
+  setViewerVideoPlayOverlayVisible(active && paused && needsButton);
+}
+
+async function playActiveViewerVideo(generation = viewerVideoSourceGeneration) {
+  if (!isViewerVideoActive() || !els.viewerVideo) return false;
+  try {
+    const result = els.viewerVideo.play();
+    if (result && typeof result.then === 'function') await result;
+    if (generation !== viewerVideoSourceGeneration) return false;
+    viewerVideoManualPlayRequired = false;
+    syncViewerVideoPlayOverlay();
+    return true;
+  } catch (_) {
+    if (generation !== viewerVideoSourceGeneration) return false;
+    viewerVideoManualPlayRequired = true;
+    syncViewerVideoPlayOverlay();
+    return false;
+  }
+}
+
+function prepareViewerVideoPlayback() {
+  const generation = ++viewerVideoSourceGeneration;
+  if (!isViewerVideoActive()) {
+    viewerVideoManualPlayRequired = false;
+    setViewerVideoPlayOverlayVisible(false);
+    return;
+  }
+  viewerVideoManualPlayRequired = !state.videoAutoplay;
+  syncViewerVideoPlayOverlay();
+  if (state.videoAutoplay) {
+    // Invoke play while the opening click still carries user activation on mobile.
+    playActiveViewerVideo(generation);
+  }
+}
 
 function cleanupViewerMediaAnimation() {
   [els.viewerImg, els.viewerVideo].forEach((node) => {
@@ -6670,10 +6750,14 @@ function openViewer(index) {
     els.viewerVideo.style.display = it.is_video ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch(_) {}
     if (it.is_video) {
+      if (it.thumb_url) els.viewerVideo.setAttribute('poster', it.thumb_url);
+      else els.viewerVideo.removeAttribute('poster');
       els.viewerVideo.src = it.original_url;
-      try { els.viewerVideo.play().catch(()=>{}); } catch(_) {}
+      try { els.viewerVideo.load(); } catch(_) {}
     } else {
       els.viewerVideo.removeAttribute('src');
+      els.viewerVideo.removeAttribute('poster');
+      try { els.viewerVideo.load(); } catch(_) {}
     }
   }
   updateViewerLandscapeClass(it);
@@ -6681,6 +6765,7 @@ function openViewer(index) {
   els.viewer.classList.remove("hidden");
   if (viewerWasHidden) els.viewer.classList.remove('viewer-controls-visible');
   document.body.classList.add('viewer-scroll-lock');
+  prepareViewerVideoPlayback();
   try {
     requestAnimationFrame(() => {
       positionViewerInfoPanel();
@@ -6756,8 +6841,16 @@ function closeViewer() {
   els.viewer.classList.add("hidden");
   els.viewer.classList.remove('viewer-landscape');
   document.body.classList.remove('viewer-scroll-lock');
+  viewerVideoSourceGeneration += 1;
+  viewerVideoManualPlayRequired = false;
+  setViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
-  if (els.viewerVideo) { try { els.viewerVideo.pause(); } catch(_) {} els.viewerVideo.removeAttribute('src'); }
+  if (els.viewerVideo) {
+    try { els.viewerVideo.pause(); } catch(_) {}
+    els.viewerVideo.removeAttribute('src');
+    els.viewerVideo.removeAttribute('poster');
+    try { els.viewerVideo.load(); } catch(_) {}
+  }
 }
 function nextViewer(step=1) {
   if (state.selectedIndex < 0) return;
@@ -12074,6 +12167,7 @@ function applyUiLanguage() {
     file_types: tr('tab_file_types'),
     hardware: tr('tab_hardware'),
     heic: tr('tab_heic'),
+    video: tr('tab_video'),
     dns: tr('tab_dns'),
     shared: tr('tab_shared'),
     logs: tr('tab_logs'),
@@ -12098,6 +12192,20 @@ function applyUiLanguage() {
 
   const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
   if (maintTitle) maintTitle.textContent = tr('maint_title');
+  if (els.videoSettingsTitle) els.videoSettingsTitle.textContent = tr('video_settings_title');
+  if (els.videoSettingsDesc) els.videoSettingsDesc.textContent = tr('video_settings_desc');
+  if (els.videoAutoplayToggleText) els.videoAutoplayToggleText.textContent = tr('video_autoplay_toggle');
+  if (els.videoAutoplayToggle) {
+    els.videoAutoplayToggle.checked = !!state.videoAutoplay;
+    els.videoAutoplayToggle.setAttribute('aria-label', tr('video_autoplay_toggle'));
+  }
+  if (els.videoSettingsStatus && els.videoSettingsStatus.dataset.tone !== 'error') {
+    els.videoSettingsStatus.textContent = tr(state.videoAutoplay ? 'video_autoplay_on' : 'video_autoplay_off');
+  }
+  if (els.viewerVideoPlayBtn) {
+    els.viewerVideoPlayBtn.setAttribute('aria-label', tr('video_play'));
+    els.viewerVideoPlayBtn.setAttribute('title', tr('video_play'));
+  }
   if (els.appUpdateTitle) els.appUpdateTitle.textContent = tr('app_update_title');
   if (els.appUpdateBranchLabel) els.appUpdateBranchLabel.textContent = tr('app_update_branch');
   if (els.appUpdateCurrentLabel) els.appUpdateCurrentLabel.textContent = tr('app_update_current');
@@ -14454,6 +14562,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     if (tab === 'file_types') {
       loadUploadFileTypeSettings();
     }
+    if (tab === 'video') {
+      loadVideoPlaybackSettings().catch(() => {});
+    }
     if (tab === 'dns') {
       loadDnsSettings();
     }
@@ -14753,6 +14864,23 @@ if (els.mapperUploadInput) {
 els.viewerClose && els.viewerClose.addEventListener("click", closeViewer);
 els.viewerPrev && els.viewerPrev.addEventListener("click", () => nextViewer(-1));
 els.viewerNext && els.viewerNext.addEventListener("click", () => nextViewer(1));
+if (els.viewerVideoPlayBtn) {
+  els.viewerVideoPlayBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    playActiveViewerVideo();
+  });
+}
+if (els.viewerVideo) {
+  els.viewerVideo.addEventListener('play', () => {
+    if (isViewerVideoActive() && !els.viewerVideo.paused) setViewerVideoPlayOverlayVisible(false);
+    else syncViewerVideoPlayOverlay();
+  });
+  els.viewerVideo.addEventListener('pause', syncViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('ended', syncViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('loadedmetadata', syncViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('error', () => setViewerVideoPlayOverlayVisible(false));
+}
 
 let viewerTouchStartX = null;
 let viewerTouchStartY = null;
@@ -14844,6 +14972,7 @@ function resetViewerTouchState() {
 function applyViewerDragTransform(dx) {
   const active = getActiveViewerMediaElement();
   if (!active) return;
+  setViewerVideoPlayOverlayVisible(false);
   const w = Math.max(1, window.innerWidth || 1);
   const ratio = Math.min(1, Math.abs(dx) / w);
   const step = dx < 0 ? 1 : -1;
@@ -14879,6 +15008,7 @@ function animateViewerDragReset() {
   window.setTimeout(() => {
     cleanupViewerMediaAnimation();
     removeViewerSwipePreview();
+    syncViewerVideoPlayOverlay();
     scheduleViewerInfoPosition();
   }, 190);
 }
@@ -14886,6 +15016,7 @@ function animateViewerDragReset() {
 function applyViewerDismissTransform(dy) {
   const active = getActiveViewerMediaElement();
   if (!active || !els.viewer) return;
+  setViewerVideoPlayOverlayVisible(false);
   const h = Math.max(1, window.innerHeight || 1);
   const ratio = Math.min(1, dy / h);
   const scale = Math.max(0.82, 1 - ratio * 0.18);
@@ -14909,6 +15040,7 @@ function animateViewerDismissReset() {
   window.setTimeout(() => {
     cleanupViewerMediaAnimation();
     if (els.viewer) els.viewer.style.transition = '';
+    syncViewerVideoPlayOverlay();
     scheduleViewerInfoPosition();
   }, 210);
 }
@@ -14983,13 +15115,26 @@ function commitViewerDragSwipe(step) {
   }, duration + 25);
 }
 
+function viewerTouchStartsInNativeVideoControls(target, touch) {
+  if (!els.viewerVideo || !target || !touch) return false;
+  if (target !== els.viewerVideo && !(target.closest && target.closest('#viewerVideo'))) return false;
+  try {
+    const rect = els.viewerVideo.getBoundingClientRect();
+    const controlBand = Math.min(96, Math.max(58, rect.height * 0.18));
+    return touch.clientY >= (rect.bottom - controlBand);
+  } catch (_) {
+    return false;
+  }
+}
+
 if (els.viewer) {
   els.viewer.addEventListener('touchstart', (e) => {
     if (!e.touches || e.touches.length !== 1) return;
     if (viewerTransitionRunning) return;
     const target = e.target;
-    if (target && (target.closest('#viewerClose, #viewerInfoMediaBtn, #viewerMenuBtn, #viewerMenu, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, .btn, a'))) return;
+    if (target && (target.closest('#viewerClose, #viewerInfoMediaBtn, #viewerMenuBtn, #viewerMenu, #viewerInfoBtn, #viewerPrev, #viewerNext, #viewerInfo, #viewerVideoPlayBtn, .btn, a'))) return;
     const t = e.touches[0];
+    if (viewerTouchStartsInNativeVideoControls(target, t)) return;
     viewerTouchStartX = t.clientX;
     viewerTouchStartY = t.clientY;
     viewerTouchStartTime = Date.now();
@@ -15961,6 +16106,59 @@ if (state.view === 'mapper') {
 applyUiLanguage();
 startAppUpdateBadgePolling();
 
+let videoSettingsRequestVersion = 0;
+let videoSettingsSavePending = false;
+
+function renderVideoPlaybackSettings(data) {
+  if (!data || data.ok === false || typeof data.autoplay !== 'boolean') return;
+  state.videoAutoplay = data.autoplay;
+  if (els.videoAutoplayToggle) els.videoAutoplayToggle.checked = data.autoplay;
+  if (els.videoSettingsStatus) {
+    delete els.videoSettingsStatus.dataset.tone;
+    els.videoSettingsStatus.textContent = tr(data.autoplay ? 'video_autoplay_on' : 'video_autoplay_off');
+  }
+  syncViewerVideoPlayOverlay();
+}
+
+async function loadVideoPlaybackSettings(options = {}) {
+  if (videoSettingsSavePending) {
+    return { ok: true, autoplay: !!state.videoAutoplay };
+  }
+  const requestVersion = ++videoSettingsRequestVersion;
+  try {
+    const response = await fetch('/api/settings/video', { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data || data.ok === false || typeof data.autoplay !== 'boolean') {
+      throw new Error((data && data.error) || 'settings_failed');
+    }
+    if (requestVersion !== videoSettingsRequestVersion) return data;
+    renderVideoPlaybackSettings(data);
+    return data;
+  } catch (error) {
+    if (requestVersion === videoSettingsRequestVersion && !options.silent && els.videoSettingsStatus) {
+      els.videoSettingsStatus.dataset.tone = 'error';
+      els.videoSettingsStatus.textContent = tr('video_settings_load_failed');
+    }
+    throw error;
+  }
+}
+
+async function saveVideoPlaybackSettings(autoplay) {
+  const requestVersion = ++videoSettingsRequestVersion;
+  const response = await fetch('/api/settings/video', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autoplay: autoplay === true }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data || data.ok === false || typeof data.autoplay !== 'boolean') {
+    throw new Error((data && data.error) || 'settings_failed');
+  }
+  if (requestVersion !== videoSettingsRequestVersion) return data;
+  renderVideoPlaybackSettings(data);
+  return data;
+}
+
 function renderHeicConversionSettings(data) {
   if (!data || !data.ok) return;
   if (els.heicConvertToggle) els.heicConvertToggle.checked = !!data.convert_on_upload;
@@ -16180,6 +16378,10 @@ setView(state.view, { syncUrl: false }).then(async () => {
     // Fallback: do not start logs if uncertain about role
     state.logsRunning = false;
   }
+  try {
+    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
+    if (role !== 'user') loadVideoPlaybackSettings({ silent: true }).catch(() => {});
+  } catch {}
   loadUploadFileTypeSettings({ silent: true }).catch(() => {});
   // Load conversion settings into toggles
   try {
@@ -16228,6 +16430,28 @@ setView(state.view, { syncUrl: false }).then(async () => {
     } catch{}
   }, 1000);
 });
+
+if (els.videoAutoplayToggle) {
+  els.videoAutoplayToggle.addEventListener('change', async () => {
+    const previous = !!state.videoAutoplay;
+    const desired = !!els.videoAutoplayToggle.checked;
+    els.videoAutoplayToggle.disabled = true;
+    videoSettingsSavePending = true;
+    try {
+      await saveVideoPlaybackSettings(desired);
+    } catch (_) {
+      state.videoAutoplay = previous;
+      els.videoAutoplayToggle.checked = previous;
+      if (els.videoSettingsStatus) {
+        els.videoSettingsStatus.dataset.tone = 'error';
+        els.videoSettingsStatus.textContent = tr('video_settings_save_failed');
+      }
+    } finally {
+      videoSettingsSavePending = false;
+      els.videoAutoplayToggle.disabled = false;
+    }
+  });
+}
 
 // Conversion settings handlers
 try {

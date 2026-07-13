@@ -2900,6 +2900,49 @@ body.viewer-scroll-lock {
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
+.video-play-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  width: 78px;
+  height: 78px;
+  min-width: 78px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(8, 12, 20, 0.72);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.video-play-overlay:hover {
+  background: rgba(38, 89, 190, 0.88);
+  border-color: rgba(255, 255, 255, 0.72);
+  transform: translate(-50%, -50%) scale(1.04);
+}
+.video-play-overlay:focus-visible {
+  outline: 3px solid rgba(96, 150, 255, 0.78);
+  outline-offset: 4px;
+}
+.video-play-overlay-icon {
+  width: 0;
+  height: 0;
+  margin-left: 6px;
+  border-top: 14px solid transparent;
+  border-bottom: 14px solid transparent;
+  border-left: 22px solid currentColor;
+}
 #viewerPrev, #viewerNext, #viewerClose, #viewerOpenOrig, #viewerMenu { position: absolute; z-index: 5; }
 #viewerInfoMediaBtn {
   position: absolute;
@@ -3614,6 +3657,11 @@ body.detail-open .detail-panel {
   }
   #viewerPrev, #viewerNext {
     display: none !important;
+  }
+  .video-play-overlay {
+    width: 74px;
+    height: 74px;
+    min-width: 74px;
   }
   #viewerClose {
     top: calc(env(safe-area-inset-top) + 10px);

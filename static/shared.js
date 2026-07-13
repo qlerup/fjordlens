@@ -34,6 +34,7 @@ const els = {
   viewer: document.getElementById('shareViewer'),
   viewerImg: document.getElementById('shareViewerImg'),
   viewerVideo: document.getElementById('shareViewerVideo'),
+  viewerVideoPlayBtn: document.getElementById('shareViewerVideoPlayBtn'),
   viewerClose: document.getElementById('shareViewerClose'),
   viewerPrev: document.getElementById('shareViewerPrev'),
   viewerNext: document.getElementById('shareViewerNext'),
@@ -84,6 +85,7 @@ const state = {
   currentPath: '', // relative to share root (e.g. "sub/child")
   visible: [],    // items filtered to currentPath
   viewerIndex: -1,
+  videoAutoplay: false,
   uploadAllowedExtensions: [],
 };
 
@@ -308,6 +310,7 @@ function t(key) {
     close: 'Luk',
     cancel: 'Annuller',
     open_view: '\u00c5bn visning',
+    video_play: 'Afspil video',
     select_photos: 'V\u00e6lg billeder',
     select_done: 'Afslut v\u00e6lg',
     select_all: 'V\u00e6lg alle',
@@ -381,6 +384,7 @@ function t(key) {
     close: 'Close',
     cancel: 'Cancel',
     open_view: 'Open view',
+    video_play: 'Play video',
     select_photos: 'Select photos',
     select_done: 'Finish selecting',
     select_all: 'Select all',
@@ -1309,6 +1313,59 @@ function navigateShareBackPath() {
 }
 
 // --- Simple viewer (popup) ---
+let shareViewerVideoManualPlayRequired = false;
+let shareViewerVideoSourceGeneration = 0;
+
+function isShareViewerVideoActive() {
+  if (!els.viewer || !els.viewerVideo || els.viewer.classList.contains('hidden')) return false;
+  if (els.viewerVideo.style.display === 'none') return false;
+  const item = state.visible[state.viewerIndex];
+  return !!(item && item.is_video);
+}
+
+function setShareViewerVideoPlayOverlayVisible(visible) {
+  if (!els.viewerVideoPlayBtn) return;
+  els.viewerVideoPlayBtn.classList.toggle('hidden', !visible);
+}
+
+function syncShareViewerVideoPlayOverlay() {
+  const paused = !!(els.viewerVideo && (els.viewerVideo.paused || els.viewerVideo.ended));
+  const needsButton = !state.videoAutoplay || shareViewerVideoManualPlayRequired;
+  setShareViewerVideoPlayOverlayVisible(isShareViewerVideoActive() && paused && needsButton);
+}
+
+async function playActiveShareViewerVideo(generation = shareViewerVideoSourceGeneration) {
+  if (!isShareViewerVideoActive() || !els.viewerVideo) return false;
+  try {
+    const result = els.viewerVideo.play();
+    if (result && typeof result.then === 'function') await result;
+    if (generation !== shareViewerVideoSourceGeneration) return false;
+    shareViewerVideoManualPlayRequired = false;
+    syncShareViewerVideoPlayOverlay();
+    return true;
+  } catch (_) {
+    if (generation !== shareViewerVideoSourceGeneration) return false;
+    shareViewerVideoManualPlayRequired = true;
+    syncShareViewerVideoPlayOverlay();
+    return false;
+  }
+}
+
+function prepareShareViewerVideoPlayback() {
+  const generation = ++shareViewerVideoSourceGeneration;
+  if (!isShareViewerVideoActive()) {
+    shareViewerVideoManualPlayRequired = false;
+    setShareViewerVideoPlayOverlayVisible(false);
+    return;
+  }
+  shareViewerVideoManualPlayRequired = !state.videoAutoplay;
+  syncShareViewerVideoPlayOverlay();
+  if (state.videoAutoplay) {
+    // Invoke play while the opening click still carries user activation on mobile.
+    playActiveShareViewerVideo(generation);
+  }
+}
+
 function openShareViewer(index) {
   if (!els.viewer || !state.visible.length) return;
   const clamp = (i) => (i + state.visible.length) % state.visible.length;
@@ -1326,10 +1383,14 @@ function openShareViewer(index) {
     els.viewerVideo.style.display = isVideo ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch {}
     if (isVideo) {
+      if (it && it.thumb_url) els.viewerVideo.setAttribute('poster', it.thumb_url);
+      else els.viewerVideo.removeAttribute('poster');
       els.viewerVideo.src = mediaUrl;
-      try { els.viewerVideo.play().catch(() => {}); } catch {}
+      try { els.viewerVideo.load(); } catch {}
     } else {
       els.viewerVideo.removeAttribute('src');
+      els.viewerVideo.removeAttribute('poster');
+      try { els.viewerVideo.load(); } catch {}
     }
   }
   if (els.viewerTitle) els.viewerTitle.textContent = String(it && it.filename || '');
@@ -1347,16 +1408,22 @@ function openShareViewer(index) {
   closeShareMoreMenu();
   closeShareViewerMenu();
   els.viewer.classList.remove('hidden');
+  prepareShareViewerVideoPlayback();
 }
 function closeShareViewer() {
   if (!els.viewer) return;
   els.viewer.classList.add('hidden');
   closeShareViewerMenu();
   cleanupShareViewerDrag();
+  shareViewerVideoSourceGeneration += 1;
+  shareViewerVideoManualPlayRequired = false;
+  setShareViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute('src');
   if (els.viewerVideo) {
     try { els.viewerVideo.pause(); } catch {}
     els.viewerVideo.removeAttribute('src');
+    els.viewerVideo.removeAttribute('poster');
+    try { els.viewerVideo.load(); } catch {}
   }
 }
 function navShareViewer(step) {
@@ -1367,6 +1434,23 @@ function navShareViewer(step) {
 if (els.viewerClose) els.viewerClose.addEventListener('click', closeShareViewer);
 if (els.viewerPrev) els.viewerPrev.addEventListener('click', () => navShareViewer(-1));
 if (els.viewerNext) els.viewerNext.addEventListener('click', () => navShareViewer(1));
+if (els.viewerVideoPlayBtn) {
+  els.viewerVideoPlayBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    playActiveShareViewerVideo();
+  });
+}
+if (els.viewerVideo) {
+  els.viewerVideo.addEventListener('play', () => {
+    if (isShareViewerVideoActive() && !els.viewerVideo.paused) setShareViewerVideoPlayOverlayVisible(false);
+    else syncShareViewerVideoPlayOverlay();
+  });
+  els.viewerVideo.addEventListener('pause', syncShareViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('ended', syncShareViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('loadedmetadata', syncShareViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('error', () => setShareViewerVideoPlayOverlayVisible(false));
+}
 if (els.viewerMenuBtn) {
   els.viewerMenuBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1453,6 +1537,7 @@ function cleanupShareViewerDrag() {
 function applyShareViewerDrag(dx, dy) {
   const active = getActiveShareViewerMedia();
   if (!active) return;
+  setShareViewerVideoPlayOverlayVisible(false);
   active.style.willChange = 'transform, opacity';
   active.style.transition = 'none';
   if (shareDragAxis === 'y') {
@@ -1483,7 +1568,10 @@ function animateShareViewerReset() {
     els.viewer.style.transition = 'background 190ms ease';
     els.viewer.style.background = SHARE_VIEWER_BG;
   }
-  window.setTimeout(cleanupShareViewerDrag, 210);
+  window.setTimeout(() => {
+    cleanupShareViewerDrag();
+    syncShareViewerVideoPlayOverlay();
+  }, 210);
 }
 
 function commitShareViewerDismiss() {
@@ -1517,12 +1605,25 @@ function commitShareViewerNav(step) {
   }, 180);
 }
 
+function shareTouchStartsInNativeVideoControls(target, touch) {
+  if (!els.viewerVideo || !target || !touch) return false;
+  if (target !== els.viewerVideo && !(target.closest && target.closest('#shareViewerVideo'))) return false;
+  try {
+    const rect = els.viewerVideo.getBoundingClientRect();
+    const controlBand = Math.min(96, Math.max(58, rect.height * 0.18));
+    return touch.clientY >= (rect.bottom - controlBand);
+  } catch (_) {
+    return false;
+  }
+}
+
 if (els.viewer) {
   els.viewer.addEventListener('touchstart', (e) => {
     if (!e.touches || e.touches.length !== 1) return;
     const target = e.target;
-    if (target && target.closest && target.closest('#shareViewerClose, #shareViewerMenuBtn, #shareViewerMenu, #shareViewerPrev, #shareViewerNext, .btn, a')) return;
+    if (target && target.closest && target.closest('#shareViewerClose, #shareViewerMenuBtn, #shareViewerMenu, #shareViewerPrev, #shareViewerNext, #shareViewerVideoPlayBtn, .btn, a')) return;
     const t = e.touches[0];
+    if (shareTouchStartsInNativeVideoControls(target, t)) return;
     shareTouchStartX = t.clientX;
     shareTouchStartY = t.clientY;
     shareTouchStartTime = Date.now();
@@ -1607,7 +1708,7 @@ function applyAuthRequirements(data = {}) {
 }
 
 async function loadInfo() {
-  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/info`);
+  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/info`, { cache: 'no-store' });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data && (data.password_required || data.name_required)) {
     applyAuthRequirements(data);
@@ -1619,6 +1720,7 @@ async function loadInfo() {
     return false;
   }
   state.info = data;
+  state.videoAutoplay = data.video_autoplay === true;
   applyShareUploadFileTypes(data);
   renderShareBlockedTypes();
   if (els.authBox) els.authBox.classList.add('hidden');
@@ -1899,6 +2001,10 @@ async function boot() {
   if (els.moreDeleteBtn) els.moreDeleteBtn.textContent = t('delete_selected');
   if (els.viewerOpenOrig) els.viewerOpenOrig.textContent = t('open_view');
   if (els.viewerDownloadBtn) els.viewerDownloadBtn.textContent = t('download');
+  if (els.viewerVideoPlayBtn) {
+    els.viewerVideoPlayBtn.setAttribute('aria-label', t('video_play'));
+    els.viewerVideoPlayBtn.setAttribute('title', t('video_play'));
+  }
   if (els.downloadModalTitle) els.downloadModalTitle.textContent = t('download_title');
   if (els.downloadModalClose) els.downloadModalClose.setAttribute('aria-label', t('close'));
   if (els.downloadPrompt) els.downloadPrompt.textContent = t('download_prompt');
@@ -2092,4 +2198,3 @@ window.addEventListener('resize', () => {
 });
 
 boot();
-

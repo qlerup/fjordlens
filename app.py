@@ -4812,6 +4812,11 @@ def raw_convert_on_upload_enabled() -> bool:
     return _get_setting_bool("raw_convert_on_upload", RAW_CONVERT_ON_UPLOAD_DEFAULT)
 
 
+def video_autoplay_enabled() -> bool:
+    """Return the global viewer autoplay preference (disabled by default)."""
+    return _get_setting_bool("video_autoplay", False)
+
+
 def mov_keep_originals_enabled() -> bool:
     # default True to keep safety unless explicitly disabled
     return _get_setting_bool("mov_keep_originals", True)
@@ -13927,6 +13932,7 @@ def index():
             "ui_language": _normalize_language((row["ui_language"] if row else None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
+            "video_autoplay": video_autoplay_enabled(),
         }
     except Exception:
         role = None
@@ -13937,6 +13943,7 @@ def index():
             "ui_language": _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": "system",
+            "video_autoplay": video_autoplay_enabled(),
         }
     return render_template(
         "index.html",
@@ -14138,7 +14145,7 @@ def api_share_info(token: str):
         share_name = folder_label
     visitor_name = _share_get_visitor_name(share)
     upload_types = _upload_file_types_settings_payload()
-    return jsonify(
+    response = jsonify(
         {
             "ok": True,
             "share_name": share_name,
@@ -14157,8 +14164,12 @@ def api_share_info(token: str):
             "upload_allowed_extensions": upload_types["allowed_extensions"],
             "upload_blocked_extensions": upload_types["blocked_extensions"],
             "upload_accept": upload_types["upload_accept"],
+            "video_autoplay": video_autoplay_enabled(),
         }
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/api/share/<token>/photos")
@@ -20224,6 +20235,33 @@ def _conversion_settings_save_error(kind: str, error: Exception):
             "error": "Kunne ikke gemme konverteringsindstillingen i databasen.",
         }
     ), 500
+
+
+@app.route("/api/settings/video", methods=["GET", "POST"])
+def api_settings_video():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+
+    if request.method == "POST":
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or not isinstance(body.get("autoplay"), bool):
+            return jsonify({"ok": False, "error": "autoplay skal være true eller false."}), 400
+        try:
+            _set_setting("video_autoplay", "1" if body["autoplay"] else "0")
+        except Exception as e:
+            try:
+                log_event("video_settings_save_failed", error=str(e))
+            except Exception:
+                pass
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Kunne ikke gemme videoindstillingen i databasen.",
+                }
+            ), 500
+
+    return jsonify({"ok": True, "autoplay": video_autoplay_enabled()})
 
 
 @app.route("/api/settings/heic", methods=["GET", "POST"])
