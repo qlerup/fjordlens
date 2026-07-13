@@ -1356,6 +1356,9 @@ function navigateShareBackPath() {
 // --- Simple viewer (popup) ---
 let shareViewerVideoManualPlayRequired = false;
 let shareViewerVideoSourceGeneration = 0;
+const shareViewerMediaPreloader = (window.FjordLensMediaPreloader && typeof window.FjordLensMediaPreloader.create === 'function')
+  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 5 })
+  : { update() {}, clear() {} };
 
 function isShareViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo || els.viewer.classList.contains('hidden')) return false;
@@ -1470,16 +1473,8 @@ function openShareViewer(index) {
   document.body.classList.add('viewer-scroll-lock');
   prepareShareViewerVideoPlayback();
 
-  // Hent nabobilleder på forhånd, så swipe/piletaster føles som i bruger-vieweren.
-  for (const neighborIndex of [state.viewerIndex - 1, state.viewerIndex + 1]) {
-    const neighbor = state.visible[clamp(neighborIndex)];
-    if (!neighbor || neighbor.is_video) continue;
-    const neighborUrl = neighbor.original_url || neighbor.view_url || neighbor.thumb_url || '';
-    if (!neighborUrl) continue;
-    const preload = new Image();
-    try { preload.decoding = 'async'; } catch {}
-    preload.src = neighborUrl;
-  }
+  // Hold de næste 10 og forrige 5 billeder/videoer klar i browserens cache.
+  shareViewerMediaPreloader.update(state.visible, state.viewerIndex);
 }
 function closeShareViewer() {
   if (!els.viewer) return;
@@ -1490,6 +1485,7 @@ function closeShareViewer() {
   cleanupShareViewerDrag();
   shareViewerVideoSourceGeneration += 1;
   shareViewerVideoManualPlayRequired = false;
+  shareViewerMediaPreloader.clear();
   setShareViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute('src');
   if (els.viewerVideo) {

@@ -6440,6 +6440,9 @@ let viewerTransitionRunning = false;
 let viewerPendingStep = 0;
 let viewerVideoManualPlayRequired = false;
 let viewerVideoSourceGeneration = 0;
+const viewerMediaPreloader = (window.FjordLensMediaPreloader && typeof window.FjordLensMediaPreloader.create === 'function')
+  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 5 })
+  : { update() {}, clear() {} };
 
 function isViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo) return false;
@@ -6830,17 +6833,8 @@ function openViewer(index) {
       positionViewerInfoTrigger();
     });
   } catch {}
-  // Preload neighbors for snappier next/prev navigation
-  try {
-    const idxs = [index - 1, index + 1];
-    for (const j of idxs) {
-      const nx = items[j];
-      if (!nx || nx.is_video || !nx.original_url) continue;
-      const pre = new Image();
-      try { pre.decoding = 'async'; } catch {}
-      pre.src = nx.original_url;
-    }
-  } catch {}
+  // Hold the next 10 and previous 5 images/videos ready in the browser cache.
+  viewerMediaPreloader.update(items, index);
   // Populate slide-out info with the current item's metadata
   try {
     const title = (it.filename || it.rel_path || "-");
@@ -6901,6 +6895,7 @@ function closeViewer() {
   document.body.classList.remove('viewer-scroll-lock');
   viewerVideoSourceGeneration += 1;
   viewerVideoManualPlayRequired = false;
+  viewerMediaPreloader.clear();
   setViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
   if (els.viewerVideo) {
