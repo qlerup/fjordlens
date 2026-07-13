@@ -2516,6 +2516,27 @@ def _recover_uploaded_rels_missing_postprocess(uploaded_by: str, limit: int = 50
         return []
 
 
+def _uploaded_by_for_rel(rel_path: str, fallback: str = "") -> str:
+    """Resolve the uploader stored on an upload stub before conversion replaces it."""
+    resolved = _sanitize_share_visitor_name(fallback or "")
+    rel = str(rel_path or "").strip()
+    if not rel:
+        return resolved
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT uploaded_by FROM photos WHERE rel_path=? LIMIT 1",
+                (rel,),
+            ).fetchone()
+        if row:
+            stored = _sanitize_share_visitor_name(row["uploaded_by"] or "")
+            if stored:
+                return stored
+    except Exception:
+        pass
+    return resolved
+
+
 def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
@@ -2582,6 +2603,11 @@ def _postprocess_uploaded_rels(
             "stage_processed": max(0, i - 1),
             "stage_total": len(rels),
         })
+        # The upload stub is the durable source of the visitor-selected name.
+        # This matters when a disk-sync worker recovers an upload after a restart:
+        # that worker has no user context, and conversion replaces the original
+        # database row with a new rel_path.
+        item_uploaded_by = _uploaded_by_for_rel(rel, user)
         disk_path = _disk_path_from_rel_path(rel)
         extl = disk_path.suffix.lower()
         needs_mov_conversion = extl == ".mov" and mov_convert_on_upload_enabled()
@@ -2733,13 +2759,6 @@ def _postprocess_uploaded_rels(
                     except Exception:
                         pass
                     heic_converted_count += 1
-                    # Remove any stub row created under the original rel (usually uploads/originals).
-                    try:
-                        with closing(get_conn()) as conn:
-                            conn.execute("DELETE FROM photos WHERE rel_path=?", (orig_rel_for_convert,))
-                            conn.commit()
-                    except Exception:
-                        pass
                     # Optionally delete originals to save space.
                     try:
                         if extl in {".heic", ".heif"}:
@@ -2782,8 +2801,18 @@ def _postprocess_uploaded_rels(
                     from_ext=conversion_from_ext,
                     to_ext=conversion_to_ext or meta.get("ext"),
                 )
-            meta["uploaded_by"] = user
+            meta["uploaded_by"] = item_uploaded_by or None
             upsert_photo(meta)
+            # Keep the upload stub until the converted row has been committed.
+            # Besides preserving uploader attribution, this also leaves a durable
+            # recovery source if metadata extraction or indexing fails.
+            if conversion_from_rel and conversion_to_rel:
+                try:
+                    with closing(get_conn()) as conn:
+                        conn.execute("DELETE FROM photos WHERE rel_path=?", (conversion_from_rel,))
+                        conn.commit()
+                except Exception:
+                    pass
             indexed_ok.append(rel)
             try:
                 log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
@@ -3856,7 +3885,7 @@ def init_db() -> None:
                 token_plain TEXT,
                 share_name TEXT,
                 folder_path TEXT NOT NULL,
-                can_download INTEGER DEFAULT 0,
+                can_download INTEGER DEFAULT 1,
                 can_upload INTEGER DEFAULT 0,
                 can_delete INTEGER DEFAULT 0,
                 require_visitor_name INTEGER DEFAULT 0,
@@ -3981,17 +4010,14 @@ def init_db() -> None:
             conn.execute("ALTER TABLE share_links ADD COLUMN share_name TEXT")
         except Exception:
             pass
-        # Download permission was introduced after upload/manage permissions.
-        # Backfill only while adding the column so an intentionally downgraded
-        # share is not re-enabled on every startup.
+        # Every share can view, select and download. Permissions only control
+        # whether visitors may also upload and delete.
         try:
             share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]  # type: ignore[index]
             if "can_download" not in share_cols:
-                conn.execute("ALTER TABLE share_links ADD COLUMN can_download INTEGER DEFAULT 0")
-                conn.execute(
-                    "UPDATE share_links SET can_download=1 WHERE COALESCE(can_upload,0)=1 OR COALESCE(can_delete,0)=1"
-                )
-                conn.commit()
+                conn.execute("ALTER TABLE share_links ADD COLUMN can_download INTEGER DEFAULT 1")
+            conn.execute("UPDATE share_links SET can_download=1 WHERE COALESCE(can_download,0)<>1")
+            conn.commit()
         except Exception:
             pass
         try:
@@ -6561,27 +6587,15 @@ def _share_is_authorized(share_row: sqlite3.Row) -> bool:
 
 
 def _share_can_download(share_row: sqlite3.Row) -> bool:
-    """Return the explicit download grant, with a legacy-schema fallback."""
-    try:
-        if "can_download" in share_row.keys():
-            return bool(int(share_row["can_download"] or 0))
-    except Exception:
-        return False
-    # Rows read from an unmigrated legacy database may not expose the new
-    # column yet. Upload/manage links historically implied file access.
-    try:
-        return bool(int(share_row["can_upload"] or 0) or int(share_row["can_delete"] or 0))
-    except Exception:
-        return False
+    """All valid shares may view, select and download their scoped files."""
+    return share_row is not None
 
 
 def _share_permission_flags(value: Any) -> Optional[tuple[str, int, int, int]]:
     """Normalize a share permission to (name, download, upload, delete)."""
     permission = str(value or "view").strip().lower()
-    if permission == "view":
-        return ("view", 0, 0, 0)
-    if permission == "download":
-        return ("download", 1, 0, 0)
+    if permission in {"view", "download"}:
+        return ("view", 1, 0, 0)
     if permission == "upload":
         return ("upload", 1, 1, 0)
     if permission in {"manage", "delete"}:
@@ -6595,8 +6609,6 @@ def _share_permission_name(can_download: Any, can_upload: Any, can_delete: Any) 
             return "manage"
         if bool(int(can_upload or 0)):
             return "upload"
-        if bool(int(can_download or 0)):
-            return "download"
     except Exception:
         pass
     return "view"
@@ -22539,7 +22551,7 @@ def api_admin_shares_list():
         if not include_inactive and not active:
             continue
 
-        can_download = bool(int(r["can_download"] or 0))
+        can_download = True
         can_upload = bool(int(r["can_upload"] or 0))
         can_delete = bool(int(r["can_delete"] or 0))
         permission = _share_permission_name(can_download, can_upload, can_delete)

@@ -1335,9 +1335,9 @@ const I18N = {
     mapper_share_expire_hours: 'Timer',
     mapper_share_permission_label: 'Adgang',
     mapper_share_perm_view: 'Se',
-    mapper_share_perm_download: 'Se og download',
-    mapper_share_perm_upload: 'Se, upload/download',
-    mapper_share_perm_manage: 'Se, upload/download og slette',
+    mapper_share_perm_download: 'Se',
+    mapper_share_perm_upload: 'Se og upload',
+    mapper_share_perm_manage: 'Se, upload og slette',
     mapper_share_duckdns_toggle: 'Brug DNS-link',
     mapper_share_duckdns_not_configured: 'DNS-link er ikke konfigureret under DNS.',
     mapper_share_password_toggle: 'Kodebeskyt link',
@@ -2131,9 +2131,9 @@ const I18N = {
     mapper_share_expire_hours: 'Hours',
     mapper_share_permission_label: 'Access',
     mapper_share_perm_view: 'View',
-    mapper_share_perm_download: 'View and download',
-    mapper_share_perm_upload: 'View, upload/download',
-    mapper_share_perm_manage: 'View, upload/download and delete',
+    mapper_share_perm_download: 'View',
+    mapper_share_perm_upload: 'View and upload',
+    mapper_share_perm_manage: 'View, upload and delete',
     mapper_share_duckdns_toggle: 'Use DNS link',
     mapper_share_duckdns_not_configured: 'DNS link is not configured in the DNS tab.',
     mapper_share_password_toggle: 'Protect link with password',
@@ -9163,7 +9163,7 @@ function renderDnsSharesList() {
       ? tr('mapper_share_perm_manage')
       : (permission === 'upload'
         ? tr('mapper_share_perm_upload')
-        : (permission === 'download' ? tr('mapper_share_perm_download') : tr('mapper_share_perm_view')));
+        : tr('mapper_share_perm_view'));
     const folder = String(item.share_name || '').trim() || `uploads/${String(item.folder_path || '')}`;
     const link = String(item.link || '');
     const linkCell = link
@@ -9393,7 +9393,10 @@ async function openSharedEditModal(shareId) {
   if (els.sharedEditExpireUnit) els.sharedEditExpireUnit.value = expiry.unit || 'days';
   _syncSharedEditNeverToggle();
 
-  if (els.sharedEditPermission) els.sharedEditPermission.value = String(item.permission || 'view');
+  if (els.sharedEditPermission) {
+    const permission = String(item.permission || 'view');
+    els.sharedEditPermission.value = permission === 'download' ? 'view' : permission;
+  }
   if (els.sharedEditDuckdnsToggle) {
     els.sharedEditDuckdnsToggle.checked = !!item.use_duckdns;
     els.sharedEditDuckdnsToggle.disabled = true;

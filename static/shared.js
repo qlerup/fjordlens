@@ -272,11 +272,11 @@ function t(key) {
     upload_pick: 'Upload',
     perms_label: 'Tilladelser',
     perms_view: 'Se',
-    perms_view_upload: 'Se og upload/download',
-    perms_view_upload_delete: 'Se, upload/download og slette',
+    perms_view_upload: 'Se og upload',
+    perms_view_upload_delete: 'Se, upload og slette',
     perms_download: 'download',
     perms_upload: 'upload',
-    perms_upload_download: 'upload/download',
+    perms_upload_download: 'upload',
     perms_delete: 'slette',
     perms_and: 'og',
     upload_run: 'Upload',
@@ -346,11 +346,11 @@ function t(key) {
     upload_pick: 'Upload',
     perms_label: 'Permissions',
     perms_view: 'View',
-    perms_view_upload: 'View and upload/download',
-    perms_view_upload_delete: 'View, upload/download and delete',
+    perms_view_upload: 'View and upload',
+    perms_view_upload_delete: 'View, upload and delete',
     perms_download: 'download',
     perms_upload: 'upload',
-    perms_upload_download: 'upload/download',
+    perms_upload_download: 'upload',
     perms_delete: 'delete',
     perms_and: 'and',
     upload_run: 'Upload',
@@ -1875,11 +1875,9 @@ async function loadInfo() {
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
     const permissionParts = [t('perms_view')];
-    if (data.can_upload && data.can_download) permissionParts.push(t('perms_upload_download'));
-    else if (data.can_download) permissionParts.push(t('perms_download'));
-    else if (data.can_upload) permissionParts.push(t('perms_upload'));
+    if (data.can_upload) permissionParts.push(t('perms_upload'));
     if (data.can_delete) permissionParts.push(t('perms_delete'));
-    // "Se, upload/download og slette" - sidste led bindes med "og"
+    // "Se, upload og slette" - sidste led bindes med "og"
     const permsText = permissionParts.length > 1
       ? `${permissionParts.slice(0, -1).join(', ')} ${t('perms_and')} ${permissionParts[permissionParts.length - 1]}`
       : permissionParts[0];

@@ -225,38 +225,34 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_share_view_cannot_download_but_download_permission_can(self):
+    def test_every_share_can_select_and_download(self):
         photo_id, source = self._add_jpeg("shared", "photo.jpg")
         source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
         source_mtime = source.stat().st_mtime_ns
         token = "view-token"
-        share_id = self._add_share(token, "shared", can_download=0)
+        self._add_share(token, "shared", can_download=0)
 
         info = self.client.get(f"/api/share/{token}/info")
         self.assertEqual(info.status_code, 200)
-        self.assertFalse(info.get_json()["can_download"])
+        self.assertTrue(info.get_json()["can_download"])
         with patch.object(fjordlens, "_sync_upload_folder_from_disk", return_value=None):
             photos = self.client.get(f"/api/share/{token}/photos")
-        self.assertIsNone(photos.get_json()["items"][0]["download_url"])
-        self.assertIsNone(photos.get_json()["items"][0]["download_converted_url"])
+        self.assertIsNotNone(photos.get_json()["items"][0]["download_url"])
+        self.assertIsNotNone(photos.get_json()["items"][0]["download_converted_url"])
         view = self.client.get(f"/api/share/{token}/view/{photo_id}")
         self.assertEqual(view.status_code, 200)
         self.assertEqual(
             self.client.get(f"/api/share/{token}/download/{photo_id}?mode=original").status_code,
-            403,
+            200,
         )
         self.assertEqual(
             self.client.post(
                 f"/api/share/{token}/download-zip",
                 json={"photo_ids": [photo_id], "mode": "original"},
             ).status_code,
-            403,
+            200,
         )
-        self.assertEqual(self.client.get(f"/api/share/{token}/original/{photo_id}").status_code, 403)
-
-        with fjordlens.closing(fjordlens.get_conn()) as conn:
-            conn.execute("UPDATE share_links SET can_download=1 WHERE id=?", (share_id,))
-            conn.commit()
+        self.assertEqual(self.client.get(f"/api/share/{token}/original/{photo_id}").status_code, 200)
         fixed = datetime(2026, 7, 13, 21, 10, 5, tzinfo=timezone.utc)
         with patch.object(fjordlens, "_download_now", return_value=fixed):
             allowed = self.client.get(
@@ -276,26 +272,26 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
         )
         self.assertEqual(batch.status_code, 200)
 
-    def test_create_update_and_admin_list_expose_download_permission(self):
+    def test_create_update_and_admin_list_include_download_for_all_permissions(self):
         (fjordlens.UPLOAD_DIR / "originals" / "shared").mkdir(parents=True, exist_ok=True)
         created = self.client.post(
             "/api/shares",
             json={
                 "share_name": "Download only",
                 "folder_paths": ["shared"],
-                "permission": "download",
+                "permission": "view",
                 "expires_value": 0,
             },
         )
         self.assertEqual(created.status_code, 200)
         payload = created.get_json()
-        self.assertEqual(payload["permission"], "download")
+        self.assertEqual(payload["permission"], "view")
         self.assertTrue(payload["can_download"])
         self.assertFalse(payload["can_upload"])
 
         listing = self.client.get("/api/admin/shares?include_inactive=1")
         item = next(row for row in listing.get_json()["items"] if row["share_name"] == "Download only")
-        self.assertEqual(item["permission"], "download")
+        self.assertEqual(item["permission"], "view")
         self.assertTrue(item["can_download"])
 
         updated = self.client.put(
@@ -311,7 +307,7 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
         self.assertTrue(updated.get_json()["can_download"])
         self.assertTrue(updated.get_json()["can_upload"])
 
-    def test_legacy_permission_migration_only_backfills_upload_and_manage(self):
+    def test_legacy_permission_migration_enables_download_for_all_shares(self):
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             conn.execute("DROP TABLE share_link_folders")
             conn.execute("DROP TABLE share_links")
@@ -354,7 +350,7 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(
             [(row["share_name"], int(row["can_download"] or 0)) for row in rows],
-            [("view", 0), ("upload", 1), ("manage", 1)],
+            [("view", 1), ("upload", 1), ("manage", 1)],
         )
 
 
