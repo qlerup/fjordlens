@@ -1279,6 +1279,7 @@ const I18N = {
     download_mobile_ready_fallback: '{count} fil(er) er klar. Browseren kan ikke åbne foto-appen her; download dem enkeltvis.',
     download_mobile_share: 'Gem i Fotos',
     download_mobile_fallback: 'Download enkeltvis',
+    download_mobile_fallback_next: 'Hent fil {current} af {total}',
     download_mobile_shared: 'Filerne blev sendt til telefonens delingsmenu.',
     download_mobile_fallback_started: 'De valgte filer downloades enkeltvis.',
     download_mobile_share_failed: 'Kunne ikke åbne telefonens delingsmenu.',
@@ -2065,6 +2066,7 @@ const I18N = {
     download_mobile_ready_fallback: '{count} file(s) are ready. This browser cannot open the photo app here; download them separately.',
     download_mobile_share: 'Save to Photos',
     download_mobile_fallback: 'Download separately',
+    download_mobile_fallback_next: 'Download file {current} of {total}',
     download_mobile_shared: 'The files were sent to the phone share sheet.',
     download_mobile_fallback_started: 'The selected files are downloading separately.',
     download_mobile_share_failed: 'Could not open the phone share sheet.',
@@ -8535,6 +8537,7 @@ function renderMapperContext(path = '') {
 }
 
 let _pendingMobileDownloadFiles = [];
+let _pendingMobileDownloadFallbackIndex = 0;
 
 function isMobileDownloadDevice() {
   try {
@@ -8565,10 +8568,24 @@ function _canShareDownloadedFiles(files) {
 
 function _clearPreparedMobileDownloads() {
   _pendingMobileDownloadFiles = [];
+  _pendingMobileDownloadFallbackIndex = 0;
   if (els.mapperDownloadMobileReady) els.mapperDownloadMobileReady.classList.add('hidden');
   if (els.mapperDownloadMobileReadyText) els.mapperDownloadMobileReadyText.textContent = '';
   if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.classList.add('hidden');
   if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.classList.add('hidden');
+}
+
+function _updateMapperMobileFallbackButton() {
+  if (!els.mapperDownloadMobileFallbackBtn) return;
+  const total = _pendingMobileDownloadFiles.length;
+  if (!total || _pendingMobileDownloadFallbackIndex >= total) {
+    els.mapperDownloadMobileFallbackBtn.disabled = true;
+    return;
+  }
+  els.mapperDownloadMobileFallbackBtn.disabled = false;
+  els.mapperDownloadMobileFallbackBtn.textContent = tr('download_mobile_fallback_next')
+    .replace('{current}', String(_pendingMobileDownloadFallbackIndex + 1))
+    .replace('{total}', String(total));
 }
 
 function updateMapperDownloadHint() {
@@ -8713,6 +8730,7 @@ function _fileFromDownloadResult(result, fallbackName, usedNames) {
 
 function _showPreparedMobileDownloads(files) {
   _pendingMobileDownloadFiles = Array.isArray(files) ? files.filter(Boolean) : [];
+  _pendingMobileDownloadFallbackIndex = 0;
   const canShare = _canShareDownloadedFiles(_pendingMobileDownloadFiles);
   if (els.mapperDownloadMobileReady) els.mapperDownloadMobileReady.classList.toggle('hidden', !_pendingMobileDownloadFiles.length);
   if (els.mapperDownloadMobileReadyText) {
@@ -8721,6 +8739,7 @@ function _showPreparedMobileDownloads(files) {
   }
   if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.classList.toggle('hidden', !canShare);
   if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.classList.toggle('hidden', !_pendingMobileDownloadFiles.length);
+  _updateMapperMobileFallbackButton();
 }
 
 async function _extractDownloadErrorMessage(res) {
@@ -8898,15 +8917,16 @@ async function sharePreparedMobileDownloads() {
 }
 
 function downloadPreparedMobileFilesIndividually() {
-  const files = _pendingMobileDownloadFiles.slice();
-  if (!files.length) return;
-  files.forEach((file, index) => {
-    window.setTimeout(() => {
-      _downloadFileFromBlob(file, String(file && file.name || `fjordlens_${index + 1}`));
-    }, index * 180);
-  });
-  showStatus(tr('download_mobile_fallback_started'), 'ok');
-  closeDownloadModal({ cancelActive: false });
+  const index = _pendingMobileDownloadFallbackIndex;
+  const file = _pendingMobileDownloadFiles[index];
+  if (!file) return;
+  _downloadFileFromBlob(file, String(file && file.name || `fjordlens_${index + 1}`));
+  _pendingMobileDownloadFallbackIndex += 1;
+  _updateMapperMobileFallbackButton();
+  if (_pendingMobileDownloadFallbackIndex >= _pendingMobileDownloadFiles.length) {
+    showStatus(tr('download_mobile_fallback_started'), 'ok');
+    closeDownloadModal({ cancelActive: false });
+  }
 }
 
 function startMapperDownloadFromModal(mode) {

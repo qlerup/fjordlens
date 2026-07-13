@@ -62,7 +62,7 @@ This repository contains two parts:
 ### Sharing and permissions
 
 - Public share links for folders
-- Share permissions (`view`, `upload`, `delete`)
+- Share permissions (`view`, `download`, `upload`, `manage`)
 - Optional password protection
 - Expiry and admin management (extend/revoke/activate/edit)
 
