@@ -14468,7 +14468,10 @@ let viewerTouchStartX = null;
 let viewerTouchStartY = null;
 let viewerTouchStartTime = 0;
 let viewerDragActive = false;
+let viewerDragAxis = null; // 'x' = bladre, 'y' = træk ned for at lukke
 let viewerDragDx = 0;
+let viewerDragDy = 0;
+let viewerDismissBg = '';
 let viewerSwipePreviewEl = null;
 let viewerSwipePreviewIndex = -1;
 
@@ -14543,7 +14546,9 @@ function resetViewerTouchState() {
   viewerTouchStartY = null;
   viewerTouchStartTime = 0;
   viewerDragActive = false;
+  viewerDragAxis = null;
   viewerDragDx = 0;
+  viewerDragDy = 0;
 }
 
 function applyViewerDragTransform(dx) {
@@ -14586,6 +14591,60 @@ function animateViewerDragReset() {
     removeViewerSwipePreview();
     scheduleViewerInfoPosition();
   }, 190);
+}
+
+function applyViewerDismissTransform(dy) {
+  const active = getActiveViewerMediaElement();
+  if (!active || !els.viewer) return;
+  const h = Math.max(1, window.innerHeight || 1);
+  const ratio = Math.min(1, dy / h);
+  const scale = Math.max(0.82, 1 - ratio * 0.18);
+  active.style.willChange = 'transform, opacity';
+  active.style.transition = 'none';
+  active.style.transform = `translateY(${Math.round(dy)}px) scale(${scale.toFixed(3)})`;
+  els.viewer.style.background = `rgba(0,0,0,${(0.85 * (1 - ratio * 0.75)).toFixed(3)})`;
+}
+
+function animateViewerDismissReset() {
+  const active = getActiveViewerMediaElement();
+  if (active) {
+    active.style.willChange = 'transform, opacity';
+    active.style.transition = 'transform 190ms ease';
+    active.style.transform = 'translateY(0) scale(1)';
+  }
+  if (els.viewer) {
+    els.viewer.style.transition = 'background 190ms ease';
+    els.viewer.style.background = viewerDismissBg || 'rgba(0,0,0,0.85)';
+  }
+  window.setTimeout(() => {
+    cleanupViewerMediaAnimation();
+    if (els.viewer) els.viewer.style.transition = '';
+    scheduleViewerInfoPosition();
+  }, 210);
+}
+
+function commitViewerDismiss() {
+  const active = getActiveViewerMediaElement();
+  const h = Math.max(1, window.innerHeight || 1);
+  viewerTransitionRunning = true;
+  if (active) {
+    active.style.willChange = 'transform, opacity';
+    active.style.transition = 'transform 200ms ease, opacity 200ms ease';
+    active.style.transform = `translateY(${h}px) scale(0.82)`;
+    active.style.opacity = '0.3';
+  }
+  if (els.viewer) {
+    els.viewer.style.transition = 'background 200ms ease';
+    els.viewer.style.background = 'rgba(0,0,0,0)';
+  }
+  window.setTimeout(() => {
+    if (els.viewer) {
+      els.viewer.style.transition = '';
+      els.viewer.style.background = viewerDismissBg || 'rgba(0,0,0,0.85)';
+    }
+    viewerTransitionRunning = false;
+    closeViewer();
+  }, 210);
 }
 
 function commitViewerDragSwipe(step) {
@@ -14645,7 +14704,9 @@ if (els.viewer) {
     viewerTouchStartY = t.clientY;
     viewerTouchStartTime = Date.now();
     viewerDragActive = false;
+    viewerDragAxis = null;
     viewerDragDx = 0;
+    viewerDragDy = 0;
   }, { passive: true });
 
   els.viewer.addEventListener('touchmove', (e) => {
@@ -14659,11 +14720,30 @@ if (els.viewer) {
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
     if (!viewerDragActive) {
-      if (absX < 8 || absX <= absY * 1.1) return;
-      viewerDragActive = true;
+      if (absX >= 8 && absX > absY * 1.1) {
+        viewerDragActive = true;
+        viewerDragAxis = 'x';
+      } else if (dy >= 8 && absY > absX * 1.1) {
+        // Swipe ned: luk vieweren. Hvis info-panelet er åbent, lukkes det i stedet.
+        if (isViewerInfoPanelOpen() && isMobileViewerLayout()) {
+          toggleViewerInfoPanel(false);
+          resetViewerTouchState();
+          return;
+        }
+        viewerDragActive = true;
+        viewerDragAxis = 'y';
+        viewerDismissBg = (els.viewer && els.viewer.style.background) || '';
+      } else {
+        return;
+      }
     }
-    viewerDragDx = dx;
-    applyViewerDragTransform(dx);
+    if (viewerDragAxis === 'y') {
+      viewerDragDy = Math.max(0, dy);
+      applyViewerDismissTransform(viewerDragDy);
+    } else {
+      viewerDragDx = dx;
+      applyViewerDragTransform(dx);
+    }
     e.preventDefault();
   }, { passive: false });
 
@@ -14675,11 +14755,22 @@ if (els.viewer) {
     }
     const changed = e.changedTouches && e.changedTouches[0];
     if (!changed) return;
-    const dx = viewerDragActive ? viewerDragDx : (changed.clientX - viewerTouchStartX);
+    const dx = (viewerDragActive && viewerDragAxis === 'x') ? viewerDragDx : (changed.clientX - viewerTouchStartX);
     const dy = changed.clientY - viewerTouchStartY;
     const dt = Date.now() - viewerTouchStartTime;
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
+    if (viewerDragActive && viewerDragAxis === 'y') {
+      const velocity = viewerDragDy / Math.max(1, dt);
+      const minDismiss = Math.max(90, Math.round((window.innerHeight || 640) * 0.12));
+      if (viewerDragDy >= minDismiss || velocity > 0.42) {
+        commitViewerDismiss();
+      } else {
+        animateViewerDismissReset();
+      }
+      resetViewerTouchState();
+      return;
+    }
     const minSwipe = Math.max(52, Math.round((window.innerWidth || 320) * 0.16));
     const isHorizontalSwipe = absX >= minSwipe && absX > absY * 1.12 && dt <= 900;
     if (isHorizontalSwipe) {
@@ -14699,7 +14790,10 @@ if (els.viewer) {
   }, { passive: true });
 
   els.viewer.addEventListener('touchcancel', () => {
-    if (viewerDragActive) animateViewerDragReset();
+    if (viewerDragActive) {
+      if (viewerDragAxis === 'y') animateViewerDismissReset();
+      else animateViewerDragReset();
+    }
     resetViewerTouchState();
   }, { passive: true });
 }
@@ -15006,6 +15100,10 @@ closeViewer = function(){
     if (viewerMenu) { viewerMenu.classList.add('hidden'); }
     cleanupViewerMediaAnimation();
     removeViewerSwipePreview();
+    if (els.viewer) {
+      els.viewer.style.transition = '';
+      els.viewer.style.background = viewerDismissBg || 'rgba(0,0,0,0.85)';
+    }
     resetViewerTouchState();
     state.viewerItems = null;
   } catch {}
