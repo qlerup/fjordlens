@@ -163,27 +163,21 @@
 
     <section id="shareGrid" class="gallery-grid"></section>
 
-    <!-- Simple viewer for shared links (popup with prev/next) -->
-    <div id="shareViewer" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;z-index:10000;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;">
-        <div id="shareViewerTitle" class="mini-label" style="color:#d7e0f1;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72vw;"></div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button id="shareViewerMenuBtn" class="btn" type="button" title="Menu" aria-label="&Aring;bn menu">...</button>
-          <button id="shareViewerClose" class="btn" style="min-width:86px;">Luk</button>
-          <div id="shareViewerMenu" class="viewer-menu hidden" style="position:absolute;right:14px;top:56px;" aria-label="Viewer menu">
-            <a id="shareViewerOpenOrig" class="btn" target="_blank" rel="noopener">&Aring;bn visning</a>
-            <button id="shareViewerDownloadBtn" class="btn hidden" type="button">Download</button>
-          </div>
-        </div>
-      </div>
-      <div id="shareViewerMediaStage" style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;">
-        <button id="shareViewerPrev" class="btn" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.85;">&lt;</button>
-        <img id="shareViewerImg" alt="" decoding="async" fetchpriority="high" style="max-width:92vw;max-height:90vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);display:none;" />
-        <video id="shareViewerVideo" controls playsinline webkit-playsinline preload="metadata" style="max-width:92vw;max-height:90vh;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);display:none;"></video>
-        <button id="shareViewerVideoPlayBtn" class="video-play-overlay hidden" type="button" aria-label="Afspil video" title="Afspil video">
-          <span class="video-play-overlay-icon" aria-hidden="true"></span>
-        </button>
-        <button id="shareViewerNext" class="btn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);opacity:.85;">&gt;</button>
+    <!-- Samme fuldskærmsviewer som i den indloggede del. -->
+    <div id="shareViewer" class="share-viewer hidden">
+      <button id="shareViewerPrev" class="btn" type="button" aria-label="Forrige">&lsaquo;</button>
+      <img id="shareViewerImg" alt="" decoding="async" fetchpriority="high" />
+      <video id="shareViewerVideo" controls playsinline webkit-playsinline preload="metadata"></video>
+      <button id="shareViewerVideoPlayBtn" class="video-play-overlay hidden" type="button" aria-label="Afspil video" title="Afspil video">
+        <span class="video-play-overlay-icon" aria-hidden="true"></span>
+      </button>
+      <button id="shareViewerNext" class="btn" type="button" aria-label="Næste">&rsaquo;</button>
+      <div id="shareViewerTitle" class="share-viewer-title" aria-live="polite"></div>
+      <button id="shareViewerMenuBtn" class="btn" type="button" title="Menu" aria-label="Åbn menu">&hellip;</button>
+      <button id="shareViewerClose" class="btn" type="button" title="Luk" aria-label="Luk">&times;</button>
+      <div id="shareViewerMenu" class="viewer-menu hidden" aria-label="Viewer menu">
+        <a id="shareViewerOpenOrig" class="btn" target="_blank" rel="noopener">Åbn visning</a>
+        <button id="shareViewerDownloadBtn" class="btn hidden" type="button">Download</button>
       </div>
     </div>
   </main>

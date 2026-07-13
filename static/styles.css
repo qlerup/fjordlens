@@ -1509,6 +1509,15 @@ body.view-kameraer .timeline-header-actions {
 .share-page .photo-card {
   content-visibility: visible;
   contain-intrinsic-size: auto;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.share-page .photo-card img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 /* Mapper view on mobile: avoid scroll-triggered repaint glitches from lazy card rendering. */
 @media (max-width: 760px) {
@@ -2900,6 +2909,84 @@ body.viewer-scroll-lock {
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
 #viewerImg, #viewerVideo { position: relative; z-index: 2; }
+.share-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.85);
+}
+#shareViewerImg,
+#shareViewerVideo {
+  position: relative;
+  z-index: 2;
+  display: none;
+  max-width: 92vw;
+  max-height: 90vh;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 12px;
+  object-fit: contain;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#shareViewerPrev,
+#shareViewerNext,
+#shareViewerClose,
+#shareViewerMenuBtn,
+#shareViewerMenu,
+.share-viewer-title {
+  position: absolute;
+  z-index: 5;
+}
+#shareViewerPrev,
+#shareViewerNext {
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.25rem;
+}
+#shareViewerPrev { left: 12px; }
+#shareViewerNext { right: 12px; }
+#shareViewerClose,
+#shareViewerMenuBtn {
+  top: 12px;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(17, 22, 33, 0.82);
+  border-color: rgba(255,255,255,0.16);
+  backdrop-filter: blur(2px);
+}
+#shareViewerClose {
+  right: 12px;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+#shareViewerMenuBtn {
+  right: 62px;
+  font-size: 1.05rem;
+}
+.share-viewer-title {
+  left: 14px;
+  top: 14px;
+  max-width: calc(100vw - 150px);
+  overflow: hidden;
+  color: #d7e0f1;
+  font-size: .78rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: .9;
+}
 .video-play-overlay {
   position: absolute;
   left: 50%;
@@ -3014,6 +3101,8 @@ body.viewer-scroll-lock {
   text-align: left;
 }
 #shareViewerMenu {
+  right: 12px;
+  top: 62px;
   width: 170px;
   background: rgba(18, 24, 36, 0.96);
   border: 1px solid var(--border);
@@ -3645,7 +3734,8 @@ body.detail-open .detail-panel {
   #viewer {
     background: #000 !important;
   }
-  #viewerImg, #viewerVideo {
+  #viewerImg, #viewerVideo,
+  #shareViewerImg, #shareViewerVideo {
     width: 100vw !important;
     height: 100vh !important;
     max-width: none !important;
@@ -3655,7 +3745,11 @@ body.detail-open .detail-panel {
     object-fit: contain;
     background: #000;
   }
-  #viewerPrev, #viewerNext {
+  #shareViewer {
+    background: #000 !important;
+  }
+  #viewerPrev, #viewerNext,
+  #shareViewerPrev, #shareViewerNext {
     display: none !important;
   }
   .video-play-overlay {
@@ -3675,6 +3769,22 @@ body.detail-open .detail-panel {
     box-shadow: none;
     backdrop-filter: blur(1px);
   }
+  #shareViewerClose,
+  #shareViewerMenuBtn {
+    top: calc(env(safe-area-inset-top) + 10px);
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border: none;
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.32);
+    box-shadow: none;
+    backdrop-filter: blur(1px);
+  }
+  #shareViewerClose { right: 10px; }
+  #shareViewerMenuBtn { right: 54px; }
+  .share-viewer-title { display: none; }
   #viewerInfoMediaBtn {
     top: calc(env(safe-area-inset-top) + 10px);
     left: 10px;
@@ -3689,7 +3799,9 @@ body.detail-open .detail-panel {
     backdrop-filter: none;
   }
   #viewerClose,
-  #viewerInfoMediaBtn {
+  #viewerInfoMediaBtn,
+  #shareViewerClose,
+  #shareViewerMenuBtn {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.25s ease;
@@ -3699,7 +3811,16 @@ body.detail-open .detail-panel {
     opacity: 1;
     pointer-events: auto;
   }
+  #shareViewer.viewer-controls-visible #shareViewerClose,
+  #shareViewer.viewer-controls-visible #shareViewerMenuBtn {
+    opacity: 1;
+    pointer-events: auto;
+  }
   #viewerMenu {
+    top: calc(env(safe-area-inset-top) + 52px);
+    right: 10px;
+  }
+  #shareViewerMenu {
     top: calc(env(safe-area-inset-top) + 52px);
     right: 10px;
   }

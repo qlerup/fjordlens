@@ -638,6 +638,15 @@ function isProbablyIosDevice() {
   }
 }
 
+function shouldReplaceNativeMediaContextMenu() {
+  if (isProbablyIosDevice()) return true;
+  try {
+    return !!(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+  } catch {
+    return false;
+  }
+}
+
 function isMobileDownloadDevice() {
   try {
     if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
@@ -1251,25 +1260,56 @@ function renderGrid() {
     card.innerHTML = `${thumb}${selectBadge}${uploaderTag}`;
     let longPressTimer = null;
     let longPressActivated = false;
-    const startLongPress = () => {
+    let longPressStartX = null;
+    let longPressStartY = null;
+    const activateLongPressSelection = () => {
       if (!canSelectFromShare() || state.selectMode || photoId <= 0) return;
+      longPressTimer = null;
+      longPressActivated = true;
+      setSelectMode(true, { skipRender: true });
+      state.selectionPulseId = photoId;
+      state.selected.add(photoId);
+      renderGrid();
+    };
+    const startLongPress = (ev) => {
+      if (!canSelectFromShare() || state.selectMode || photoId <= 0) return;
+      const touch = ev && ev.touches && ev.touches[0];
+      longPressStartX = touch ? touch.clientX : Number(ev && ev.clientX || 0);
+      longPressStartY = touch ? touch.clientY : Number(ev && ev.clientY || 0);
       longPressActivated = false;
       longPressTimer = window.setTimeout(() => {
-        longPressActivated = true;
-        setSelectMode(true, { skipRender: true });
-        state.selectionPulseId = photoId;
-        state.selected.add(photoId);
-        renderGrid();
+        activateLongPressSelection();
       }, 550);
     };
     const cancelLongPress = () => {
-      if (!longPressTimer) return;
-      window.clearTimeout(longPressTimer);
+      if (longPressTimer) window.clearTimeout(longPressTimer);
       longPressTimer = null;
+      longPressStartX = null;
+      longPressStartY = null;
+    };
+    const cancelLongPressOnMove = (ev) => {
+      if (!longPressTimer || longPressStartX === null || longPressStartY === null) return;
+      const touch = ev && ev.touches && ev.touches[0];
+      if (!touch) return;
+      if (Math.abs(touch.clientX - longPressStartX) > 10 || Math.abs(touch.clientY - longPressStartY) > 10) {
+        cancelLongPress();
+      }
     };
     card.addEventListener('mousedown', startLongPress);
     card.addEventListener('touchstart', startLongPress, { passive: true });
+    card.addEventListener('touchmove', cancelLongPressOnMove, { passive: true });
     ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((ev) => card.addEventListener(ev, cancelLongPress));
+    card.addEventListener('contextmenu', (ev) => {
+      // iOS viser ellers sin egen menu med bl.a. "Kopiér link" og "Gem".
+      if (!shouldReplaceNativeMediaContextMenu()) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancelLongPress();
+      activateLongPressSelection();
+    });
+    card.addEventListener('dragstart', (ev) => ev.preventDefault());
+    const cardImage = card.querySelector('img');
+    if (cardImage) cardImage.setAttribute('draggable', 'false');
 
     card.addEventListener('click', (ev) => {
       if (longPressActivated) {
@@ -1375,11 +1415,27 @@ function openShareViewer(index) {
   const isVideo = !!(it && it.is_video);
 
   if (els.viewerImg) {
+    els.viewerImg.setAttribute('draggable', 'false');
     els.viewerImg.style.display = isVideo ? 'none' : 'block';
-    if (!isVideo) els.viewerImg.src = mediaUrl;
-    else els.viewerImg.removeAttribute('src');
+    if (!isVideo) {
+      if (it && it.thumb_url) els.viewerImg.src = it.thumb_url;
+      else els.viewerImg.removeAttribute('src');
+      const hi = new Image();
+      try { hi.decoding = 'async'; } catch {}
+      try { hi.fetchPriority = 'high'; } catch {}
+      hi.onload = async () => {
+        try { if (hi.decode) await hi.decode().catch(() => {}); } catch {}
+        if (state.visible[state.viewerIndex] === it && els.viewerImg) {
+          els.viewerImg.src = mediaUrl;
+        }
+      };
+      hi.src = mediaUrl;
+    } else {
+      els.viewerImg.removeAttribute('src');
+    }
   }
   if (els.viewerVideo) {
+    els.viewerVideo.setAttribute('draggable', 'false');
     els.viewerVideo.style.display = isVideo ? 'block' : 'none';
     try { els.viewerVideo.pause(); } catch {}
     if (isVideo) {
@@ -1407,12 +1463,28 @@ function openShareViewer(index) {
   }
   closeShareMoreMenu();
   closeShareViewerMenu();
+  const viewerWasHidden = els.viewer.classList.contains('hidden');
   els.viewer.classList.remove('hidden');
+  if (viewerWasHidden) els.viewer.classList.remove('viewer-controls-visible');
+  document.body.classList.add('viewer-scroll-lock');
   prepareShareViewerVideoPlayback();
+
+  // Hent nabobilleder på forhånd, så swipe/piletaster føles som i bruger-vieweren.
+  for (const neighborIndex of [state.viewerIndex - 1, state.viewerIndex + 1]) {
+    const neighbor = state.visible[clamp(neighborIndex)];
+    if (!neighbor || neighbor.is_video) continue;
+    const neighborUrl = neighbor.original_url || neighbor.view_url || neighbor.thumb_url || '';
+    if (!neighborUrl) continue;
+    const preload = new Image();
+    try { preload.decoding = 'async'; } catch {}
+    preload.src = neighborUrl;
+  }
 }
 function closeShareViewer() {
   if (!els.viewer) return;
   els.viewer.classList.add('hidden');
+  els.viewer.classList.remove('viewer-controls-visible');
+  document.body.classList.remove('viewer-scroll-lock');
   closeShareViewerMenu();
   cleanupShareViewerDrag();
   shareViewerVideoSourceGeneration += 1;
@@ -1475,6 +1547,13 @@ if (els.viewer) {
       return;
     }
     if (target && target.closest && (target.closest('#shareViewerMenu') || target.closest('#shareViewerMenuBtn'))) return;
+    if (target === els.viewerImg || target === els.viewerVideo) {
+      if (window.matchMedia && window.matchMedia('(max-width: 760px)').matches) {
+        els.viewer.classList.toggle('viewer-controls-visible');
+      }
+      closeShareViewerMenu();
+      return;
+    }
     closeShareViewerMenu();
   });
 }
@@ -1504,6 +1583,27 @@ let shareTouchStartTime = 0;
 let shareDragAxis = null; // 'x' = bladre, 'y' = træk ned for at lukke
 let shareDragDx = 0;
 let shareDragDy = 0;
+let shareViewerLongPressTimer = null;
+let shareViewerLongPressActivated = false;
+
+function cancelShareViewerLongPress() {
+  if (shareViewerLongPressTimer) window.clearTimeout(shareViewerLongPressTimer);
+  shareViewerLongPressTimer = null;
+}
+
+function activateShareViewerLongPressSelection() {
+  const item = state.visible[state.viewerIndex] || null;
+  const photoId = Number(item && item.id || 0);
+  if (!canSelectFromShare() || photoId <= 0) return false;
+  cancelShareViewerLongPress();
+  shareViewerLongPressActivated = true;
+  closeShareViewer();
+  setSelectMode(true, { skipRender: true });
+  state.selectionPulseId = photoId;
+  state.selected.add(photoId);
+  renderGrid();
+  return true;
+}
 
 function getActiveShareViewerMedia() {
   if (els.viewerVideo && els.viewerVideo.style.display !== 'none') return els.viewerVideo;
@@ -1512,6 +1612,7 @@ function getActiveShareViewerMedia() {
 }
 
 function resetShareViewerTouch() {
+  cancelShareViewerLongPress();
   shareTouchStartX = null;
   shareTouchStartY = null;
   shareTouchStartTime = 0;
@@ -1630,6 +1731,11 @@ if (els.viewer) {
     shareDragAxis = null;
     shareDragDx = 0;
     shareDragDy = 0;
+    shareViewerLongPressActivated = false;
+    if (canSelectFromShare()) {
+      cancelShareViewerLongPress();
+      shareViewerLongPressTimer = window.setTimeout(activateShareViewerLongPressSelection, 550);
+    }
   }, { passive: true });
 
   els.viewer.addEventListener('touchmove', (e) => {
@@ -1641,6 +1747,7 @@ if (els.viewer) {
     const dy = t.clientY - shareTouchStartY;
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
+    if (absX > 10 || absY > 10) cancelShareViewerLongPress();
     if (!shareDragAxis) {
       if (absX >= 8 && absX > absY * 1.1) shareDragAxis = 'x';
       else if (dy >= 8 && absY > absX * 1.1) shareDragAxis = 'y';
@@ -1653,6 +1760,12 @@ if (els.viewer) {
   }, { passive: false });
 
   els.viewer.addEventListener('touchend', (e) => {
+    cancelShareViewerLongPress();
+    if (shareViewerLongPressActivated) {
+      shareViewerLongPressActivated = false;
+      resetShareViewerTouch();
+      return;
+    }
     if (shareTouchStartX === null || shareTouchStartY === null) return;
     if (els.viewer.classList.contains('hidden')) {
       resetShareViewerTouch();
@@ -1689,6 +1802,14 @@ if (els.viewer) {
     if (shareDragAxis) animateShareViewerReset();
     resetShareViewerTouch();
   }, { passive: true });
+
+  els.viewer.addEventListener('contextmenu', (e) => {
+    const target = e.target;
+    if ((target !== els.viewerImg && target !== els.viewerVideo) || !shouldReplaceNativeMediaContextMenu()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    activateShareViewerLongPressSelection();
+  });
 }
 
 function applyAuthRequirements(data = {}) {
