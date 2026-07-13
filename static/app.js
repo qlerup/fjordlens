@@ -5719,11 +5719,69 @@ function appendCardTo(item, container) {
       }
     }
   } catch {}
+  let mapperLongPressTimer = null;
+  let mapperLongPressActivated = false;
+  let mapperLongPressStartX = null;
+  let mapperLongPressStartY = null;
+  const cancelMapperLongPress = () => {
+    if (mapperLongPressTimer) window.clearTimeout(mapperLongPressTimer);
+    mapperLongPressTimer = null;
+    mapperLongPressStartX = null;
+    mapperLongPressStartY = null;
+  };
+  const activateMapperLongPress = () => {
+    const photoId = Number(item && item.id || 0);
+    if (state.view !== 'mapper' || state.mapperEditMode || photoId <= 0) return false;
+    cancelMapperLongPress();
+    mapperLongPressActivated = true;
+    if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+    state.mapperSelectedPhotoIds.add(photoId);
+    setMapperEditMode(true);
+    return true;
+  };
+  const startMapperLongPress = (ev) => {
+    if (state.view !== 'mapper' || state.mapperEditMode) return;
+    if (ev && ev.type === 'mousedown' && Number(ev.button) !== 0) return;
+    if (ev && ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay, .btn, a')) return;
+    const touch = ev && ev.touches && ev.touches[0];
+    mapperLongPressActivated = false;
+    cancelMapperLongPress();
+    mapperLongPressStartX = touch ? touch.clientX : Number(ev && ev.clientX || 0);
+    mapperLongPressStartY = touch ? touch.clientY : Number(ev && ev.clientY || 0);
+    mapperLongPressTimer = window.setTimeout(activateMapperLongPress, 550);
+  };
+  const cancelMapperLongPressOnMove = (ev) => {
+    if (!mapperLongPressTimer || mapperLongPressStartX === null || mapperLongPressStartY === null) return;
+    const point = ev && ev.touches ? ev.touches[0] : ev;
+    if (!point) return;
+    if (Math.abs(Number(point.clientX || 0) - mapperLongPressStartX) > 14 || Math.abs(Number(point.clientY || 0) - mapperLongPressStartY) > 14) {
+      cancelMapperLongPress();
+    }
+  };
+  card.addEventListener('mousedown', startMapperLongPress);
+  card.addEventListener('mousemove', cancelMapperLongPressOnMove, { passive: true });
+  card.addEventListener('touchstart', startMapperLongPress, { passive: true });
+  card.addEventListener('touchmove', cancelMapperLongPressOnMove, { passive: true });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => card.addEventListener(eventName, cancelMapperLongPress));
+  card.addEventListener('contextmenu', (ev) => {
+    if (state.view !== 'mapper' || !shouldReplaceNativeMediaContextMenu()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    cancelMapperLongPress();
+    activateMapperLongPress();
+  });
+  card.addEventListener('dragstart', (ev) => ev.preventDefault());
   card.addEventListener('pointerdown', (ev) => {
     _startMapperDragSelect(ev, card);
   });
   // Single-click opens viewer directly (unless clicking info icon or in select/edit mode)
   card.addEventListener("click", (ev) => {
+    if (mapperLongPressActivated) {
+      mapperLongPressActivated = false;
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
     // If click was on info icon, ignore (handled above)
     if (ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay')) return;
     if (_consumeMapperDragSelectClickSuppression()) {
@@ -14871,6 +14929,15 @@ if (els.viewerVideoPlayBtn) {
     playActiveViewerVideo();
   });
 }
+
+function shouldReplaceNativeMediaContextMenu() {
+  if (isProbablyIosDevice()) return true;
+  try {
+    return !!(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+  } catch {
+    return false;
+  }
+}
 if (els.viewerVideo) {
   els.viewerVideo.addEventListener('play', () => {
     if (isViewerVideoActive() && !els.viewerVideo.paused) setViewerVideoPlayOverlayVisible(false);
@@ -14892,6 +14959,37 @@ let viewerDragDy = 0;
 let viewerDismissBg = '';
 let viewerSwipePreviewEl = null;
 let viewerSwipePreviewIndex = -1;
+let viewerLongPressTimer = null;
+let viewerLongPressActivated = false;
+let viewerLongPressMouseX = null;
+let viewerLongPressMouseY = null;
+
+function cancelViewerLongPress() {
+  if (viewerLongPressTimer) window.clearTimeout(viewerLongPressTimer);
+  viewerLongPressTimer = null;
+  viewerLongPressMouseX = null;
+  viewerLongPressMouseY = null;
+}
+
+function activateViewerLongPressSelection() {
+  const items = getViewerItems();
+  const item = items[state.selectedIndex] || null;
+  const photoId = Number(item && item.id || 0);
+  if (state.view !== 'mapper' || state.mapperEditMode || photoId <= 0) return false;
+  cancelViewerLongPress();
+  viewerLongPressActivated = true;
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  state.mapperSelectedPhotoIds.add(photoId);
+  closeViewer();
+  setMapperEditMode(true);
+  return true;
+}
+
+function scheduleViewerLongPressSelection() {
+  if (state.view !== 'mapper' || state.mapperEditMode) return;
+  cancelViewerLongPress();
+  viewerLongPressTimer = window.setTimeout(activateViewerLongPressSelection, 550);
+}
 
 function getViewerTargetIndex(step) {
   const n = getViewerItems().length;
@@ -14960,6 +15058,7 @@ function ensureViewerSwipePreview(targetIndex) {
 }
 
 function resetViewerTouchState() {
+  cancelViewerLongPress();
   viewerTouchStartX = null;
   viewerTouchStartY = null;
   viewerTouchStartTime = 0;
@@ -15142,6 +15241,8 @@ if (els.viewer) {
     viewerDragAxis = null;
     viewerDragDx = 0;
     viewerDragDy = 0;
+    viewerLongPressActivated = false;
+    scheduleViewerLongPressSelection();
   }, { passive: true });
 
   els.viewer.addEventListener('touchmove', (e) => {
@@ -15154,6 +15255,7 @@ if (els.viewer) {
     const dy = t.clientY - viewerTouchStartY;
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
+    if (absX > 14 || absY > 14) cancelViewerLongPress();
     if (!viewerDragActive) {
       if (absX >= 8 && absX > absY * 1.1) {
         viewerDragActive = true;
@@ -15183,6 +15285,12 @@ if (els.viewer) {
   }, { passive: false });
 
   els.viewer.addEventListener('touchend', (e) => {
+    cancelViewerLongPress();
+    if (viewerLongPressActivated) {
+      viewerLongPressActivated = false;
+      resetViewerTouchState();
+      return;
+    }
     if (viewerTouchStartX === null || viewerTouchStartY === null) return;
     if (!els.viewer || els.viewer.classList.contains('hidden')) {
       resetViewerTouchState();
@@ -15231,6 +15339,34 @@ if (els.viewer) {
     }
     resetViewerTouchState();
   }, { passive: true });
+
+  els.viewer.addEventListener('mousedown', (e) => {
+    if (Number(e.button) !== 0 || (e.target !== els.viewerImg && e.target !== els.viewerVideo)) return;
+    viewerLongPressActivated = false;
+    scheduleViewerLongPressSelection();
+    viewerLongPressMouseX = Number(e.clientX || 0);
+    viewerLongPressMouseY = Number(e.clientY || 0);
+  });
+  els.viewer.addEventListener('mousemove', (e) => {
+    if (!viewerLongPressTimer || viewerLongPressMouseX === null || viewerLongPressMouseY === null) return;
+    if (Math.abs(Number(e.clientX || 0) - viewerLongPressMouseX) > 14 || Math.abs(Number(e.clientY || 0) - viewerLongPressMouseY) > 14) {
+      cancelViewerLongPress();
+    }
+  }, { passive: true });
+  ['mouseup', 'mouseleave'].forEach((eventName) => els.viewer.addEventListener(eventName, cancelViewerLongPress));
+  els.viewer.addEventListener('contextmenu', (e) => {
+    if ((e.target !== els.viewerImg && e.target !== els.viewerVideo) || !shouldReplaceNativeMediaContextMenu()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelViewerLongPress();
+    activateViewerLongPressSelection();
+  });
+  els.viewer.addEventListener('click', (e) => {
+    if (!viewerLongPressActivated) return;
+    viewerLongPressActivated = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
 }
 
 window.addEventListener("keydown", (e) => {

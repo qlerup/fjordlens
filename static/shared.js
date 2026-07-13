@@ -1273,6 +1273,7 @@ function renderGrid() {
     };
     const startLongPress = (ev) => {
       if (!canSelectFromShare() || state.selectMode || photoId <= 0) return;
+      if (ev && ev.type === 'mousedown' && Number(ev.button) !== 0) return;
       const touch = ev && ev.touches && ev.touches[0];
       longPressStartX = touch ? touch.clientX : Number(ev && ev.clientX || 0);
       longPressStartY = touch ? touch.clientY : Number(ev && ev.clientY || 0);
@@ -1585,10 +1586,20 @@ let shareDragDx = 0;
 let shareDragDy = 0;
 let shareViewerLongPressTimer = null;
 let shareViewerLongPressActivated = false;
+let shareViewerLongPressMouseX = null;
+let shareViewerLongPressMouseY = null;
 
 function cancelShareViewerLongPress() {
   if (shareViewerLongPressTimer) window.clearTimeout(shareViewerLongPressTimer);
   shareViewerLongPressTimer = null;
+  shareViewerLongPressMouseX = null;
+  shareViewerLongPressMouseY = null;
+}
+
+function scheduleShareViewerLongPressSelection() {
+  if (!canSelectFromShare()) return;
+  cancelShareViewerLongPress();
+  shareViewerLongPressTimer = window.setTimeout(activateShareViewerLongPressSelection, 550);
 }
 
 function activateShareViewerLongPressSelection() {
@@ -1732,10 +1743,7 @@ if (els.viewer) {
     shareDragDx = 0;
     shareDragDy = 0;
     shareViewerLongPressActivated = false;
-    if (canSelectFromShare()) {
-      cancelShareViewerLongPress();
-      shareViewerLongPressTimer = window.setTimeout(activateShareViewerLongPressSelection, 550);
-    }
+    scheduleShareViewerLongPressSelection();
   }, { passive: true });
 
   els.viewer.addEventListener('touchmove', (e) => {
@@ -1810,6 +1818,26 @@ if (els.viewer) {
     e.stopPropagation();
     activateShareViewerLongPressSelection();
   });
+  els.viewer.addEventListener('mousedown', (e) => {
+    if (Number(e.button) !== 0 || (e.target !== els.viewerImg && e.target !== els.viewerVideo)) return;
+    shareViewerLongPressActivated = false;
+    scheduleShareViewerLongPressSelection();
+    shareViewerLongPressMouseX = Number(e.clientX || 0);
+    shareViewerLongPressMouseY = Number(e.clientY || 0);
+  });
+  els.viewer.addEventListener('mousemove', (e) => {
+    if (!shareViewerLongPressTimer || shareViewerLongPressMouseX === null || shareViewerLongPressMouseY === null) return;
+    if (Math.abs(Number(e.clientX || 0) - shareViewerLongPressMouseX) > 14 || Math.abs(Number(e.clientY || 0) - shareViewerLongPressMouseY) > 14) {
+      cancelShareViewerLongPress();
+    }
+  }, { passive: true });
+  ['mouseup', 'mouseleave'].forEach((eventName) => els.viewer.addEventListener(eventName, cancelShareViewerLongPress));
+  els.viewer.addEventListener('click', (e) => {
+    if (!shareViewerLongPressActivated) return;
+    shareViewerLongPressActivated = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
 }
 
 function applyAuthRequirements(data = {}) {

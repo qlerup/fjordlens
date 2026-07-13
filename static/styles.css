@@ -1526,6 +1526,15 @@ body.view-kameraer .timeline-header-actions {
     contain-intrinsic-size: auto;
   }
 }
+body.view-mapper .photo-card,
+body.view-mapper .photo-card img {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body.view-mapper .photo-card img {
+  -webkit-user-drag: none;
+}
 .photo-card:hover {
   transform: translateY(-2px);
   border-color: rgba(91, 140, 255, 0.55);
@@ -2908,7 +2917,14 @@ body.viewer-scroll-lock {
 }
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
-#viewerImg, #viewerVideo { position: relative; z-index: 2; }
+#viewerImg, #viewerVideo {
+  position: relative;
+  z-index: 2;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 .share-viewer {
   position: fixed;
   inset: 0;
