@@ -1144,7 +1144,7 @@
   <script>
     // Fallback: load tus-js-client from CDN if local bundle is missing
     if (!(window.tus && typeof window.tus.Upload === 'function')) {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
+      document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\/script>');
     }
   </script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>

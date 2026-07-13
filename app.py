@@ -643,6 +643,11 @@ def inject_template_i18n():
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    if request.path.startswith("/api/settings/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["Vary"] = "Cookie"
     return response
 
 
@@ -4729,15 +4734,12 @@ def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def _set_setting(key: str, value: str) -> None:
-    try:
-        with closing(get_conn()) as conn:
-            conn.execute(
-                "INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, value),
-            )
-            conn.commit()
-    except Exception:
-        pass
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
 
 
 def _get_setting_bool(key: str, default: bool = False) -> bool:
@@ -19844,6 +19846,19 @@ def api_settings_dns_effective():
     )
 
 
+def _conversion_settings_save_error(kind: str, error: Exception):
+    try:
+        log_event("conversion_settings_save_failed", conversion_type=kind, error=str(error))
+    except Exception:
+        pass
+    return jsonify(
+        {
+            "ok": False,
+            "error": "Kunne ikke gemme konverteringsindstillingen i databasen.",
+        }
+    ), 500
+
+
 @app.route("/api/settings/heic", methods=["GET", "POST"])
 def api_settings_heic():
     fb = _forbid_user_role_for_maintenance()
@@ -19854,10 +19869,13 @@ def api_settings_heic():
         body = request.get_json(silent=True) or {}
         conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
-        if conv is not None:
-            _set_setting("heic_convert_on_upload", "1" if bool(conv) else "0")
-        if keep is not None:
-            _set_setting("heic_keep_originals", "1" if bool(keep) else "0")
+        try:
+            if conv is not None:
+                _set_setting("heic_convert_on_upload", "1" if bool(conv) else "0")
+            if keep is not None:
+                _set_setting("heic_keep_originals", "1" if bool(keep) else "0")
+        except Exception as e:
+            return _conversion_settings_save_error("heic", e)
 
     return jsonify(
         {
@@ -19879,10 +19897,13 @@ def api_settings_raw():
         body = request.get_json(silent=True) or {}
         conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
-        if conv is not None:
-            _set_setting("raw_convert_on_upload", "1" if bool(conv) else "0")
-        if keep is not None:
-            _set_setting("raw_keep_originals", "1" if bool(keep) else "0")
+        try:
+            if conv is not None:
+                _set_setting("raw_convert_on_upload", "1" if bool(conv) else "0")
+            if keep is not None:
+                _set_setting("raw_keep_originals", "1" if bool(keep) else "0")
+        except Exception as e:
+            return _conversion_settings_save_error("raw", e)
 
     return jsonify(
         {
@@ -19904,10 +19925,13 @@ def api_settings_mov():
         body = request.get_json(silent=True) or {}
         conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
-        if conv is not None:
-            _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
-        if keep is not None:
-            _set_setting("mov_keep_originals", "1" if bool(keep) else "0")
+        try:
+            if conv is not None:
+                _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
+            if keep is not None:
+                _set_setting("mov_keep_originals", "1" if bool(keep) else "0")
+        except Exception as e:
+            return _conversion_settings_save_error("mov", e)
 
     return jsonify(
         {

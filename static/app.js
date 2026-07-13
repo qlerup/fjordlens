@@ -11752,14 +11752,7 @@ function applyUiLanguage() {
     });
   }
   if (els.mapperSortSelect) {
-    const descOpt = els.mapperSortSelect.querySelector('option[value="date_desc"]');
-    const ascOpt = els.mapperSortSelect.querySelector('option[value="date_asc"]');
-    if (descOpt) descOpt.textContent = tr('sort_date_desc');
-    if (ascOpt) ascOpt.textContent = tr('sort_date_asc');
-  }
-  
-
-  if (els.mapperSortSelect) {
+    const mapperSortMode = _normalizeMapperSort(state.mapperSort);
     const descOpt = els.mapperSortSelect.querySelector('option[value="date_desc"]');
     const ascOpt = els.mapperSortSelect.querySelector('option[value="date_asc"]');
     if (descOpt) descOpt.textContent = tr('sort_date_desc');
@@ -15746,10 +15739,14 @@ async function loadConversionSettings(type = null) {
   await Promise.all(types.map(async (itemType) => {
     const cfg = conversionTypeConfig(itemType);
     try {
-      const r = await fetch(cfg.settingsUrl);
+      const r = await fetch(cfg.settingsUrl, { cache: 'no-store' });
       const d = await r.json();
+      if (!r.ok || !d || d.ok === false) throw new Error((d && d.error) || 'settings_failed');
       cfg.render(d);
-    } catch {}
+    } catch {
+      const statusEl = itemType === 'raw' ? els.rawStatus : (itemType === 'mov' ? els.movStatus : els.heicStatus);
+      if (statusEl) statusEl.textContent = `${cfg.label}: kunne ikke hente indstillinger`;
+    }
   }));
 }
 
@@ -15760,6 +15757,11 @@ async function saveConversionSettings(type, body) {
   if (!r.ok || !d || d.ok === false) throw new Error((d && d.error) || 'settings_failed');
   cfg.render(d);
   return d;
+}
+
+function handleConversionSettingsSaveError(type) {
+  showStatus('Kunne ikke gemme konverteringsindstillingen', 'err');
+  loadConversionSettings(type).catch(()=>{});
 }
 
 function updateConversionScopeModalText() {
@@ -15935,44 +15937,47 @@ try {
   if (els.heicConvertToggle) els.heicConvertToggle.addEventListener('change', async ()=>{
     try {
       if (els.heicConvertToggle.checked) {
+        await saveConversionSettings('heic', { convert_on_upload: true });
         openConversionScopeModal('heic');
       } else {
         await saveConversionSettings('heic', { convert_on_upload: false });
       }
-    } catch { loadConversionSettings('heic').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('heic'); }
   });
   if (els.heicKeepToggle) els.heicKeepToggle.addEventListener('change', async ()=>{
     try {
       await saveConversionSettings('heic', { keep_originals: !!els.heicKeepToggle.checked });
-    } catch { loadConversionSettings('heic').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('heic'); }
   });
   if (els.rawConvertToggle) els.rawConvertToggle.addEventListener('change', async ()=>{
     try {
       if (els.rawConvertToggle.checked) {
+        await saveConversionSettings('raw', { convert_on_upload: true });
         openConversionScopeModal('raw');
       } else {
         await saveConversionSettings('raw', { convert_on_upload: false });
       }
-    } catch { loadConversionSettings('raw').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('raw'); }
   });
   if (els.rawKeepToggle) els.rawKeepToggle.addEventListener('change', async ()=>{
     try {
       await saveConversionSettings('raw', { keep_originals: !!els.rawKeepToggle.checked });
-    } catch { loadConversionSettings('raw').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('raw'); }
   });
   if (els.movConvertToggle) els.movConvertToggle.addEventListener('change', async ()=>{
     try {
       if (els.movConvertToggle.checked) {
+        await saveConversionSettings('mov', { convert_on_upload: true });
         openConversionScopeModal('mov');
       } else {
         await saveConversionSettings('mov', { convert_on_upload: false });
       }
-    } catch { loadConversionSettings('mov').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('mov'); }
   });
   if (els.movKeepToggle) els.movKeepToggle.addEventListener('change', async ()=>{
     try {
       await saveConversionSettings('mov', { keep_originals: !!els.movKeepToggle.checked });
-    } catch { loadConversionSettings('mov').catch(()=>{}); }
+    } catch { handleConversionSettingsSaveError('mov'); }
   });
   if (els.conversionScopeModalClose) els.conversionScopeModalClose.addEventListener('click', ()=> closeConversionScopeModal({ restore: true }));
   if (els.conversionScopeModalCancel) els.conversionScopeModalCancel.addEventListener('click', ()=> closeConversionScopeModal({ restore: true }));
