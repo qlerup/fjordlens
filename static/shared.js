@@ -21,12 +21,14 @@ const els = {
   uploadLabel: document.getElementById('uploadLabel'),
   fileInput: document.getElementById('shareFileInput'),
   uploadBtn: document.getElementById('uploadBtn'),
+  downloadBtn: document.getElementById('shareDownloadBtn'),
   deleteBtn: document.getElementById('deleteBtn'),
   moreBtn: document.getElementById('shareMoreBtn'),
   moreMenu: document.getElementById('shareMoreMenu'),
   moreSelectBtn: document.getElementById('shareMenuSelectBtn'),
   moreSelectAllBtn: document.getElementById('shareMenuSelectAllBtn'),
   moreClearBtn: document.getElementById('shareMenuClearBtn'),
+  moreDownloadBtn: document.getElementById('shareMenuDownloadBtn'),
   moreDeleteBtn: document.getElementById('shareMenuDeleteBtn'),
   grid: document.getElementById('shareGrid'),
   viewer: document.getElementById('shareViewer'),
@@ -39,6 +41,30 @@ const els = {
   viewerMenuBtn: document.getElementById('shareViewerMenuBtn'),
   viewerMenu: document.getElementById('shareViewerMenu'),
   viewerOpenOrig: document.getElementById('shareViewerOpenOrig'),
+  viewerDownloadBtn: document.getElementById('shareViewerDownloadBtn'),
+  downloadModal: document.getElementById('shareDownloadModal'),
+  downloadModalTitle: document.getElementById('shareDownloadModalTitle'),
+  downloadModalClose: document.getElementById('shareDownloadModalClose'),
+  downloadOptions: document.getElementById('shareDownloadOptions'),
+  downloadPrompt: document.getElementById('shareDownloadPrompt'),
+  downloadDateLegend: document.getElementById('shareDownloadDateLegend'),
+  downloadDateOriginal: document.getElementById('shareDownloadDateOriginal'),
+  downloadDateOriginalTitle: document.getElementById('shareDownloadDateOriginalTitle'),
+  downloadDateOriginalDesc: document.getElementById('shareDownloadDateOriginalDesc'),
+  downloadDateToday: document.getElementById('shareDownloadDateToday'),
+  downloadDateTodayTitle: document.getElementById('shareDownloadDateTodayTitle'),
+  downloadDateTodayDesc: document.getElementById('shareDownloadDateTodayDesc'),
+  downloadConvertedBtn: document.getElementById('shareDownloadConvertedBtn'),
+  downloadOriginalBtn: document.getElementById('shareDownloadOriginalBtn'),
+  downloadPackagingHint: document.getElementById('shareDownloadPackagingHint'),
+  downloadPreparing: document.getElementById('shareDownloadPreparing'),
+  downloadPreparingText: document.getElementById('shareDownloadPreparingText'),
+  downloadCancelBtn: document.getElementById('shareDownloadCancelBtn'),
+  downloadReady: document.getElementById('shareDownloadReady'),
+  downloadReadyText: document.getElementById('shareDownloadReadyText'),
+  downloadNativeBtn: document.getElementById('shareDownloadNativeBtn'),
+  downloadFallbackBtn: document.getElementById('shareDownloadFallbackBtn'),
+  downloadReadyClose: document.getElementById('shareDownloadReadyClose'),
   uploadPrepModal: document.getElementById('shareUploadPrepModal'),
   uploadPrepClose: document.getElementById('shareUploadPrepClose'),
   uploadPrepCancel: document.getElementById('shareUploadPrepCancel'),
@@ -76,6 +102,11 @@ let uploadProgressHideTimer = null;
 let lastResizeIsMobile = isMobileShareView();
 let pendingShareFilePicker = null;
 let shareUploadTransferHeartbeatTimer = null;
+let pendingShareDownloadIds = [];
+let preparedShareDownloadFiles = [];
+let shareDownloadFallbackIndex = 0;
+let shareDownloadController = null;
+let shareDownloadBusy = false;
 
 async function setShareUploadTransferState(active) {
   try {
@@ -220,7 +251,7 @@ function isMobileShareView() {
 }
 
 function openSharedItem(item) {
-  const url = item && (item.original_url || item.download_url);
+  const url = item && (item.original_url || item.view_url || item.thumb_url);
   if (url) window.open(url, '_blank', 'noopener');
 }
 
@@ -241,7 +272,44 @@ function t(key) {
     perms_view: 'Se',
     perms_view_upload: 'Se og upload',
     perms_view_upload_delete: 'Se, upload og slet',
+    perms_download: 'download',
+    perms_upload: 'upload',
+    perms_delete: 'slet',
     upload_run: 'Upload',
+    download: 'Download',
+    download_selected: 'Download valgte',
+    download_title: 'Download',
+    download_prompt: 'V\u00e6lg hvad der skal hentes:',
+    download_converted: 'Download konverterede',
+    download_original: 'Download originale',
+    download_date_legend: 'Dato p\u00e5 gemte billeder',
+    download_date_original_title: 'Bevar original optagelsesdato',
+    download_date_original_desc: 'Billedet placeres ved den dato, hvor det blev taget.',
+    download_date_today_title: 'Brug dags dato',
+    download_date_today_desc: 'Billedet placeres blandt de nyeste billeder i fotoappen.',
+    download_zip_hint: 'Ved flere valg pakkes de som ZIP.',
+    download_mobile_hint: 'P\u00e5 mobil pakkes billederne aldrig som ZIP.',
+    download_preparing: 'Forbereder download...',
+    download_preparing_item: 'Forbereder {current} af {total}...',
+    download_receiving: 'Henter fil... {pct}%',
+    download_ready_native: 'Billederne er klar. Tryk p\u00e5 \u201cGem i Fotos\u201d, og v\u00e6lg Fotos eller Gem billeder i telefonens delingsmenu.',
+    download_ready_fallback: 'Din browser kan ikke sende filer direkte til fotoappen. Hent dem enkeltvis herfra. Direkte deling til Fotos kr\u00e6ver en underst\u00f8ttet browser og HTTPS.',
+    download_native: 'Gem i Fotos',
+    download_fallback_next: 'Hent billede {current} af {total}',
+    download_done: 'Download klar',
+    download_shared: 'Billederne blev sendt til telefonens delingsmenu.',
+    download_cancelled: 'Download annulleret',
+    download_failed: 'Download fejlede',
+    download_not_allowed: 'Download er ikke tilladt for dette link.',
+    download_none: 'Ingen billeder valgt',
+    download_share_cancelled: 'Deling blev annulleret.',
+    close: 'Luk',
+    cancel: 'Annuller',
+    open_view: '\u00c5bn visning',
+    select_photos: 'V\u00e6lg billeder',
+    select_done: 'Afslut v\u00e6lg',
+    select_all: 'V\u00e6lg alle',
+    clear_selected: 'Fjern valgte',
     delete_selected: 'Slet valgte',
     no_files: 'Ingen filer valgt',
     upload_done: 'Upload fuldf\u00f8rt',
@@ -275,7 +343,44 @@ function t(key) {
     perms_view: 'View',
     perms_view_upload: 'View and upload',
     perms_view_upload_delete: 'View, upload and delete',
+    perms_download: 'download',
+    perms_upload: 'upload',
+    perms_delete: 'delete',
     upload_run: 'Upload',
+    download: 'Download',
+    download_selected: 'Download selected',
+    download_title: 'Download',
+    download_prompt: 'Choose what to download:',
+    download_converted: 'Download converted',
+    download_original: 'Download originals',
+    download_date_legend: 'Date on saved photos',
+    download_date_original_title: 'Keep original capture date',
+    download_date_original_desc: 'The photo is placed at the date when it was taken.',
+    download_date_today_title: 'Use today\u2019s date',
+    download_date_today_desc: 'The photo is placed among the newest photos in the photo app.',
+    download_zip_hint: 'Multiple selections are packaged as a ZIP.',
+    download_mobile_hint: 'On mobile, photos are never packaged as a ZIP.',
+    download_preparing: 'Preparing download...',
+    download_preparing_item: 'Preparing {current} of {total}...',
+    download_receiving: 'Receiving file... {pct}%',
+    download_ready_native: 'The files are ready. Tap \u201cSave to Photos\u201d and choose Photos or Save Images in the phone\u2019s share menu.',
+    download_ready_fallback: 'Your browser cannot send files directly to the photo app. Download them individually here. Direct sharing to Photos requires a supported browser and HTTPS.',
+    download_native: 'Save to Photos',
+    download_fallback_next: 'Download photo {current} of {total}',
+    download_done: 'Download ready',
+    download_shared: 'The files were sent to the phone\u2019s share menu.',
+    download_cancelled: 'Download cancelled',
+    download_failed: 'Download failed',
+    download_not_allowed: 'Downloads are not allowed for this link.',
+    download_none: 'No photos selected',
+    download_share_cancelled: 'Sharing was cancelled.',
+    close: 'Close',
+    cancel: 'Cancel',
+    open_view: 'Open view',
+    select_photos: 'Select photos',
+    select_done: 'Finish selecting',
+    select_all: 'Select all',
+    clear_selected: 'Clear selection',
     delete_selected: 'Delete selected',
     no_files: 'No files selected',
     upload_done: 'Upload completed',
@@ -391,6 +496,14 @@ function canDeleteFromShare() {
   return !!(state.info && state.info.can_delete);
 }
 
+function canDownloadFromShare() {
+  return !!(state.info && state.info.can_download);
+}
+
+function canSelectFromShare() {
+  return canDownloadFromShare() || canDeleteFromShare();
+}
+
 function closeShareMoreMenu() {
   if (!els.moreMenu) return;
   els.moreMenu.classList.remove('open');
@@ -438,7 +551,7 @@ function toggleShareViewerMenu() {
 }
 
 function setSelectMode(enabled, opts = {}) {
-  const on = !!enabled && canDeleteFromShare();
+  const on = !!enabled && canSelectFromShare();
   state.selectMode = on;
   if (!on || opts.clearSelection) {
     state.selected = new Set();
@@ -459,7 +572,15 @@ function syncSelectionToVisible() {
 
 function updateDeleteButton() {
   const canDelete = canDeleteFromShare();
+  const canDownload = canDownloadFromShare();
+  const canSelect = canSelectFromShare();
   const count = state.selected.size;
+  if (els.downloadBtn) {
+    const showDownload = canDownload && state.selectMode;
+    els.downloadBtn.style.display = showDownload ? '' : 'none';
+    els.downloadBtn.disabled = count === 0;
+    els.downloadBtn.textContent = count > 0 ? `${t('download')} (${count})` : t('download');
+  }
   if (els.deleteBtn) {
     const showDelete = canDelete && state.selectMode;
     els.deleteBtn.style.display = showDelete ? '' : 'none';
@@ -467,19 +588,27 @@ function updateDeleteButton() {
     els.deleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
   }
   if (els.moreBtn) {
-    els.moreBtn.style.display = canDelete ? '' : 'none';
+    els.moreBtn.style.display = canSelect ? '' : 'none';
   }
   if (els.moreSelectBtn) {
-    els.moreSelectBtn.textContent = state.selectMode ? 'Afslut v\u00e6lg' : 'V\u00e6lg billeder';
+    els.moreSelectBtn.textContent = state.selectMode ? t('select_done') : t('select_photos');
   }
   if (els.moreSelectAllBtn) {
     const hasVisible = Array.isArray(state.visible) && state.visible.length > 0;
-    els.moreSelectAllBtn.disabled = !(canDelete && state.selectMode && hasVisible);
+    els.moreSelectAllBtn.disabled = !(canSelect && state.selectMode && hasVisible);
   }
   if (els.moreClearBtn) {
-    els.moreClearBtn.disabled = !(canDelete && state.selectMode && count > 0);
+    els.moreClearBtn.disabled = !(canSelect && state.selectMode && count > 0);
+  }
+  if (els.moreDownloadBtn) {
+    els.moreDownloadBtn.style.display = canDownload ? '' : 'none';
+    els.moreDownloadBtn.disabled = !(canDownload && state.selectMode && count > 0);
+    els.moreDownloadBtn.textContent = count > 0
+      ? `${t('download_selected')} (${count})`
+      : t('download_selected');
   }
   if (els.moreDeleteBtn) {
+    els.moreDeleteBtn.style.display = canDelete ? '' : 'none';
     els.moreDeleteBtn.disabled = !(canDelete && state.selectMode && count > 0);
     els.moreDeleteBtn.textContent = count > 0 ? `${t('delete_selected')} (${count})` : t('delete_selected');
   }
@@ -498,6 +627,385 @@ function isProbablyIosDevice() {
     return /iPad|iPhone|iPod/.test(ua) || (platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1);
   } catch {
     return false;
+  }
+}
+
+function isMobileDownloadDevice() {
+  try {
+    if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+      if (navigator.userAgentData.mobile) return true;
+    }
+    const ua = String(navigator.userAgent || '');
+    if (/Android|webOS|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(ua)) return true;
+    if (isProbablyIosDevice()) return true;
+    return isMobileShareView() && Number(navigator.maxTouchPoints || 0) > 0;
+  } catch {
+    return isMobileShareView();
+  }
+}
+
+function normalizeShareDownloadIds(values) {
+  const ids = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((raw) => {
+    const id = Number(raw || 0);
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  });
+  return ids;
+}
+
+function selectedShareDownloadDateMode() {
+  return (els.downloadDateToday && els.downloadDateToday.checked) ? 'today' : 'original';
+}
+
+function setShareDownloadStage(stage) {
+  if (els.downloadOptions) els.downloadOptions.classList.toggle('hidden', stage !== 'options');
+  if (els.downloadPreparing) els.downloadPreparing.classList.toggle('hidden', stage !== 'preparing');
+  if (els.downloadReady) els.downloadReady.classList.toggle('hidden', stage !== 'ready');
+}
+
+function setShareDownloadPreparingText(text) {
+  if (els.downloadPreparingText) els.downloadPreparingText.textContent = String(text || t('download_preparing'));
+}
+
+function updateShareDownloadFallbackButton() {
+  if (!els.downloadFallbackBtn) return;
+  const total = preparedShareDownloadFiles.length;
+  const current = Math.min(total, shareDownloadFallbackIndex + 1);
+  if (!total || shareDownloadFallbackIndex >= total) {
+    els.downloadFallbackBtn.classList.add('hidden');
+    els.downloadFallbackBtn.disabled = true;
+    return;
+  }
+  els.downloadFallbackBtn.disabled = false;
+  els.downloadFallbackBtn.textContent = t('download_fallback_next')
+    .replace('{current}', String(current))
+    .replace('{total}', String(total));
+}
+
+function resetShareDownloadModalState() {
+  preparedShareDownloadFiles = [];
+  shareDownloadFallbackIndex = 0;
+  if (els.downloadDateOriginal) els.downloadDateOriginal.checked = true;
+  if (els.downloadDateToday) els.downloadDateToday.checked = false;
+  if (els.downloadNativeBtn) {
+    els.downloadNativeBtn.classList.add('hidden');
+    els.downloadNativeBtn.disabled = false;
+  }
+  if (els.downloadFallbackBtn) {
+    els.downloadFallbackBtn.classList.add('hidden');
+    els.downloadFallbackBtn.disabled = true;
+  }
+  if (els.downloadReadyText) els.downloadReadyText.textContent = '';
+  setShareDownloadPreparingText(t('download_preparing'));
+  setShareDownloadStage('options');
+}
+
+function openShareDownloadModal(ids) {
+  if (!canDownloadFromShare()) {
+    showStatus(t('download_not_allowed'), 'err');
+    return;
+  }
+  const normalized = normalizeShareDownloadIds(ids);
+  if (!normalized.length) {
+    showStatus(t('download_none'), 'err');
+    return;
+  }
+  if (!els.downloadModal || shareDownloadBusy) return;
+  pendingShareDownloadIds = normalized;
+  resetShareDownloadModalState();
+  if (els.downloadPackagingHint) {
+    els.downloadPackagingHint.textContent = t(isMobileDownloadDevice() ? 'download_mobile_hint' : 'download_zip_hint');
+  }
+  els.downloadModal.classList.remove('hidden');
+  try { els.downloadConvertedBtn && els.downloadConvertedBtn.focus({ preventScroll: true }); } catch {}
+}
+
+function closeShareDownloadModal(options = {}) {
+  const shouldAbort = options.abort !== false;
+  if (shouldAbort && shareDownloadController) {
+    try { shareDownloadController.abort(); } catch {}
+  }
+  if (els.downloadModal) els.downloadModal.classList.add('hidden');
+  pendingShareDownloadIds = [];
+  preparedShareDownloadFiles = [];
+  shareDownloadFallbackIndex = 0;
+  if (!shareDownloadBusy) shareDownloadController = null;
+}
+
+function extractShareDownloadFilename(disposition, fallbackName) {
+  const raw = String(disposition || '').trim();
+  if (!raw) return String(fallbackName || 'download.bin');
+  const encoded = raw.match(/filename\*=([^;]+)/i);
+  if (encoded && encoded[1]) {
+    let value = String(encoded[1]).trim().replace(/^UTF-8''/i, '').replace(/^"(.*)"$/, '$1');
+    try { value = decodeURIComponent(value); } catch {}
+    if (value) return value;
+  }
+  const plain = raw.match(/filename="?([^";]+)"?/i);
+  return (plain && plain[1]) ? String(plain[1]).trim() : String(fallbackName || 'download.bin');
+}
+
+function uniqueShareDownloadFilename(filename, usedNames) {
+  const cleaned = String(filename || 'download.bin').replace(/\\/g, '/').split('/').pop() || 'download.bin';
+  const dot = cleaned.lastIndexOf('.');
+  const stem = dot > 0 ? cleaned.slice(0, dot) : cleaned;
+  const suffix = dot > 0 ? cleaned.slice(dot) : '';
+  let candidate = cleaned;
+  let index = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${stem}_${index}${suffix}`;
+    index += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function shareDownloadLastModified(res, dateMode) {
+  try {
+    const values = [
+      res.headers.get('X-FjordLens-Captured-At'),
+      res.headers.get('last-modified'),
+    ];
+    for (const value of values) {
+      const parsed = Date.parse(String(value || ''));
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  } catch {}
+  return Date.now();
+}
+
+function makePreparedShareDownloadFile(blob, filename, type, lastModified) {
+  if (typeof File === 'function') {
+    return new File([blob], filename, { type, lastModified });
+  }
+  const fallback = new Blob([blob], { type });
+  try { Object.defineProperty(fallback, 'name', { value: filename, configurable: true }); } catch {}
+  try { Object.defineProperty(fallback, 'lastModified', { value: lastModified, configurable: true }); } catch {}
+  return fallback;
+}
+
+function downloadShareBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = String(filename || 'download.bin');
+  document.body.appendChild(anchor);
+  anchor.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+    anchor.remove();
+  }, 1500);
+}
+
+async function extractShareDownloadError(res) {
+  const fallback = `${t('download_failed')} (HTTP ${Number(res && res.status || 0) || '?'})`;
+  if (!res) return fallback;
+  try {
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      const payload = await res.json().catch(() => null);
+      return String((payload && (payload.error || payload.message)) || fallback);
+    }
+    return String((await res.text().catch(() => '')) || '').trim() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchShareDownloadBlob(url, options, onProgress) {
+  const res = await fetch(url, options);
+  if (!res.ok) return { ok: false, res };
+  const totalRaw = Number(res.headers.get('content-length') || 0);
+  const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : 0;
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const blob = await res.blob();
+    if (typeof onProgress === 'function') onProgress(blob.size, total || blob.size, 100);
+    return { ok: true, res, blob };
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (!chunk.value || !chunk.value.byteLength) continue;
+    chunks.push(chunk.value);
+    received += chunk.value.byteLength;
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : null;
+    if (typeof onProgress === 'function') onProgress(received, total, pct);
+  }
+  const blob = new Blob(chunks, { type: res.headers.get('content-type') || 'application/octet-stream' });
+  if (typeof onProgress === 'function') onProgress(received, total || received, 100);
+  return { ok: true, res, blob };
+}
+
+function shareSingleDownloadUrl(photoId, mode, dateMode) {
+  const token = encodeURIComponent(state.token);
+  const id = encodeURIComponent(String(photoId));
+  const params = new URLSearchParams({ mode, date_mode: dateMode });
+  return `/api/share/${token}/download/${id}?${params.toString()}`;
+}
+
+function canNativeSharePreparedFiles(files) {
+  if (!Array.isArray(files) || !files.length) return false;
+  if (window.isSecureContext !== true) return false;
+  if (!navigator || typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false;
+  try { return !!navigator.canShare({ files }); } catch { return false; }
+}
+
+function showPreparedShareDownloads() {
+  const nativeReady = canNativeSharePreparedFiles(preparedShareDownloadFiles);
+  setShareDownloadStage('ready');
+  if (els.downloadReadyText) {
+    els.downloadReadyText.textContent = t(nativeReady ? 'download_ready_native' : 'download_ready_fallback');
+  }
+  if (els.downloadNativeBtn) {
+    els.downloadNativeBtn.classList.toggle('hidden', !nativeReady);
+    els.downloadNativeBtn.disabled = !nativeReady;
+  }
+  if (els.downloadFallbackBtn) {
+    els.downloadFallbackBtn.classList.toggle('hidden', nativeReady);
+  }
+  updateShareDownloadFallbackButton();
+  if (!nativeReady && els.downloadFallbackBtn) els.downloadFallbackBtn.classList.remove('hidden');
+}
+
+async function startShareDownload(modeValue) {
+  if (!canDownloadFromShare()) {
+    showStatus(t('download_not_allowed'), 'err');
+    closeShareDownloadModal();
+    return;
+  }
+  const ids = normalizeShareDownloadIds(pendingShareDownloadIds);
+  if (!ids.length) {
+    showStatus(t('download_none'), 'err');
+    return;
+  }
+  if (shareDownloadBusy) return;
+  const mode = String(modeValue || '').toLowerCase() === 'original' ? 'original' : 'converted';
+  const dateMode = selectedShareDownloadDateMode();
+  const mobile = isMobileDownloadDevice();
+  shareDownloadBusy = true;
+  shareDownloadController = new AbortController();
+  setShareDownloadStage('preparing');
+  setShareDownloadPreparingText(t('download_preparing'));
+
+  try {
+    if (mobile) {
+      const files = [];
+      const usedNames = new Set();
+      for (let index = 0; index < ids.length; index += 1) {
+        const current = index + 1;
+        const prefix = t('download_preparing_item')
+          .replace('{current}', String(current))
+          .replace('{total}', String(ids.length));
+        setShareDownloadPreparingText(prefix);
+        const result = await fetchShareDownloadBlob(
+          shareSingleDownloadUrl(ids[index], mode, dateMode),
+          { method: 'GET', cache: 'no-store', signal: shareDownloadController.signal },
+          (_received, _total, pct) => {
+            if (pct == null) return;
+            setShareDownloadPreparingText(`${prefix} ${pct}%`);
+          },
+        );
+        if (!result.ok) throw new Error(await extractShareDownloadError(result.res));
+        const fallbackName = `photo_${ids[index]}`;
+        const rawName = extractShareDownloadFilename(result.res.headers.get('content-disposition'), fallbackName);
+        const filename = uniqueShareDownloadFilename(rawName, usedNames);
+        const type = result.blob.type || result.res.headers.get('content-type') || 'application/octet-stream';
+        files.push(makePreparedShareDownloadFile(
+          result.blob,
+          filename,
+          type,
+          shareDownloadLastModified(result.res, dateMode),
+        ));
+      }
+      preparedShareDownloadFiles = files;
+      shareDownloadFallbackIndex = 0;
+      showPreparedShareDownloads();
+      return;
+    }
+
+    const isSingle = ids.length === 1;
+    const url = isSingle
+      ? shareSingleDownloadUrl(ids[0], mode, dateMode)
+      : `/api/share/${encodeURIComponent(state.token)}/download-zip`;
+    const options = isSingle
+      ? { method: 'GET', cache: 'no-store', signal: shareDownloadController.signal }
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photo_ids: ids, mode, date_mode: dateMode }),
+          signal: shareDownloadController.signal,
+        };
+    const result = await fetchShareDownloadBlob(url, options, (_received, _total, pct) => {
+      if (pct == null) return;
+      setShareDownloadPreparingText(t('download_receiving').replace('{pct}', String(pct)));
+    });
+    if (!result.ok) throw new Error(await extractShareDownloadError(result.res));
+    const fallbackName = isSingle ? `photo_${ids[0]}` : `fjordlens_download_${ids.length}.zip`;
+    const filename = extractShareDownloadFilename(result.res.headers.get('content-disposition'), fallbackName);
+    downloadShareBlob(result.blob, filename);
+    closeShareDownloadModal({ abort: false });
+    showStatus(`${t('download_done')}: ${filename}`, 'ok');
+  } catch (err) {
+    const aborted = !!(err && (err.name === 'AbortError' || String(err.message || '').toLowerCase().includes('aborted')));
+    if (aborted) {
+      showStatus(t('download_cancelled'), 'ok');
+    } else {
+      setShareDownloadStage('options');
+      showStatus(`${t('download_failed')}${err && err.message ? `: ${String(err.message)}` : ''}`, 'err');
+    }
+  } finally {
+    shareDownloadBusy = false;
+    shareDownloadController = null;
+  }
+}
+
+async function sharePreparedDownloadsNatively() {
+  const files = preparedShareDownloadFiles.slice();
+  if (!canNativeSharePreparedFiles(files)) {
+    showPreparedShareDownloads();
+    return;
+  }
+  if (els.downloadNativeBtn) els.downloadNativeBtn.disabled = true;
+  try {
+    // Keep this call before the first await: Web Share requires fresh user activation.
+    const shareResult = navigator.share({ files });
+    await shareResult;
+    closeShareDownloadModal({ abort: false });
+    showStatus(t('download_shared'), 'ok');
+  } catch (err) {
+    const cancelled = !!(err && err.name === 'AbortError');
+    if (cancelled) {
+      if (els.downloadReadyText) els.downloadReadyText.textContent = t('download_share_cancelled');
+    } else {
+      if (els.downloadReadyText) els.downloadReadyText.textContent = t('download_ready_fallback');
+      if (els.downloadNativeBtn) els.downloadNativeBtn.classList.add('hidden');
+      if (els.downloadFallbackBtn) els.downloadFallbackBtn.classList.remove('hidden');
+      updateShareDownloadFallbackButton();
+    }
+  } finally {
+    if (els.downloadNativeBtn) els.downloadNativeBtn.disabled = false;
+  }
+}
+
+function downloadNextPreparedShareFile() {
+  const index = shareDownloadFallbackIndex;
+  const file = preparedShareDownloadFiles[index];
+  if (!file) {
+    updateShareDownloadFallbackButton();
+    return;
+  }
+  downloadShareBlob(file, file.name || `photo_${index + 1}`);
+  shareDownloadFallbackIndex += 1;
+  updateShareDownloadFallbackButton();
+  if (shareDownloadFallbackIndex >= preparedShareDownloadFiles.length) {
+    if (els.downloadReadyText) els.downloadReadyText.textContent = t('download_done');
+    showStatus(t('download_done'), 'ok');
   }
 }
 
@@ -607,7 +1115,7 @@ function renderGrid() {
       incCount(child);
       try {
         const prev = byFolder.get(child);
-        const url = String(it.thumb_url || it.view_url || it.original_url || it.download_url || '');
+        const url = String(it.thumb_url || it.view_url || it.original_url || '');
         if (url && prev.length < 4) prev.push(url);
       } catch {}
     }
@@ -729,14 +1237,14 @@ function renderGrid() {
     const thumb = item.thumb_url
       ? `<div class="card-thumb"><img loading="auto" decoding="async" src="${item.thumb_url}" alt=""></div>`
       : '<div class="card-thumb placeholder">No thumbnail</div>';
-    const selectBadge = canDeleteFromShare() ? `<span class="photo-select-badge">${isSelected ? '&#10003;' : ''}</span>` : '';
+    const selectBadge = canSelectFromShare() ? `<span class="photo-select-badge">${isSelected ? '&#10003;' : ''}</span>` : '';
     const uploader = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
     const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">${uploader}</div>` : '';
     card.innerHTML = `${thumb}${selectBadge}${uploaderTag}`;
     let longPressTimer = null;
     let longPressActivated = false;
     const startLongPress = () => {
-      if (!canDeleteFromShare() || state.selectMode || photoId <= 0) return;
+      if (!canSelectFromShare() || state.selectMode || photoId <= 0) return;
       longPressActivated = false;
       longPressTimer = window.setTimeout(() => {
         longPressActivated = true;
@@ -762,7 +1270,7 @@ function renderGrid() {
         ev.stopPropagation();
         return;
       }
-      if (state.selectMode && canDeleteFromShare()) {
+      if (state.selectMode && canSelectFromShare()) {
         if (photoId > 0) {
           if (state.selected.has(photoId)) {
             state.selected.delete(photoId);
@@ -802,7 +1310,7 @@ function openShareViewer(index) {
   const clamp = (i) => (i + state.visible.length) % state.visible.length;
   state.viewerIndex = clamp(index);
   const it = state.visible[state.viewerIndex];
-  const mediaUrl = it && (it.original_url || it.view_url || it.download_url || it.thumb_url) || '';
+  const mediaUrl = it && (it.original_url || it.view_url || it.thumb_url) || '';
   const isVideo = !!(it && it.is_video);
 
   if (els.viewerImg) {
@@ -822,8 +1330,15 @@ function openShareViewer(index) {
   }
   if (els.viewerTitle) els.viewerTitle.textContent = String(it && it.filename || '');
   if (els.viewerOpenOrig) {
-    const dl = (it && (it.download_url || it.original_url || mediaUrl)) || '';
-    els.viewerOpenOrig.href = dl;
+    if (mediaUrl) els.viewerOpenOrig.href = mediaUrl;
+    else els.viewerOpenOrig.removeAttribute('href');
+    els.viewerOpenOrig.textContent = t('open_view');
+  }
+  if (els.viewerDownloadBtn) {
+    const canDownload = canDownloadFromShare() && Number(it && it.id || 0) > 0;
+    els.viewerDownloadBtn.classList.toggle('hidden', !canDownload);
+    els.viewerDownloadBtn.disabled = !canDownload;
+    els.viewerDownloadBtn.textContent = t('download');
   }
   closeShareMoreMenu();
   closeShareViewerMenu();
@@ -855,6 +1370,15 @@ if (els.viewerMenuBtn) {
     toggleShareViewerMenu();
   });
 }
+if (els.viewerDownloadBtn) {
+  els.viewerDownloadBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closeShareViewerMenu();
+    const item = state.visible[state.viewerIndex] || null;
+    openShareDownloadModal([Number(item && item.id || 0)]);
+  });
+}
 if (els.viewer) {
   els.viewer.addEventListener('click', (e) => {
     const target = e.target;
@@ -867,6 +1391,10 @@ if (els.viewer) {
   });
 }
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && els.downloadModal && !els.downloadModal.classList.contains('hidden')) {
+    closeShareDownloadModal();
+    return;
+  }
   const viewerOpen = !!(els.viewer && !els.viewer.classList.contains('hidden'));
   if (!viewerOpen) {
     if (e.key === 'Escape') {
@@ -1091,8 +1619,11 @@ async function loadInfo() {
   renderShareBlockedTypes();
   if (els.authBox) els.authBox.classList.add('hidden');
   if (els.meta) {
-    const perms = data.can_delete ? 'view+upload+delete' : (data.can_upload ? 'view+upload' : 'view');
-    const permsText = data.can_delete ? t('perms_view_upload_delete') : (data.can_upload ? t('perms_view_upload') : t('perms_view'));
+    const permissionParts = [t('perms_view')];
+    if (data.can_download) permissionParts.push(t('perms_download'));
+    if (data.can_upload) permissionParts.push(t('perms_upload'));
+    if (data.can_delete) permissionParts.push(t('perms_delete'));
+    const permsText = permissionParts.join(', ');
     const folderNames = Array.isArray(data.folder_paths) ? data.folder_paths.map(p => String(p||'').split('/').filter(Boolean).pop() || '').filter(Boolean) : [];
     const baseTitle = (folderNames.length === 1)
       ? folderNames[0]
@@ -1101,10 +1632,14 @@ async function loadInfo() {
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';
-  if (!data.can_delete) {
+  if (!canSelectFromShare()) {
     state.selectMode = false;
     state.selected = new Set();
     state.selectionPulseId = 0;
+  }
+  if (!canDownloadFromShare()) {
+    if (els.viewerDownloadBtn) els.viewerDownloadBtn.classList.add('hidden');
+    if (els.downloadModal && !els.downloadModal.classList.contains('hidden')) closeShareDownloadModal();
   }
   updateDeleteButton();
   return true;
@@ -1332,6 +1867,7 @@ async function boot() {
   state.selectionPulseId = 0;
   closeShareMoreMenu();
   closeShareViewerMenu();
+  closeShareDownloadModal();
   closeUploadWarningModal();
   clearUploadProgressHideTimer();
   setShareUploadStatusVisible(false, 'ok');
@@ -1346,11 +1882,28 @@ async function boot() {
   if (els.authBtn) els.authBtn.textContent = t('auth_continue');
   if (els.uploadLabel) els.uploadLabel.textContent = t('upload_pick');
   // No separate upload button; auto-start on file pick
+  if (els.downloadBtn) els.downloadBtn.textContent = t('download');
   if (els.deleteBtn) els.deleteBtn.textContent = t('delete_selected');
-  if (els.moreSelectBtn) els.moreSelectBtn.textContent = 'V\u00e6lg billeder';
-  if (els.moreSelectAllBtn) els.moreSelectAllBtn.textContent = 'V\u00e6lg alle';
-  if (els.moreClearBtn) els.moreClearBtn.textContent = 'Fjern valgte';
+  if (els.moreSelectBtn) els.moreSelectBtn.textContent = t('select_photos');
+  if (els.moreSelectAllBtn) els.moreSelectAllBtn.textContent = t('select_all');
+  if (els.moreClearBtn) els.moreClearBtn.textContent = t('clear_selected');
+  if (els.moreDownloadBtn) els.moreDownloadBtn.textContent = t('download_selected');
   if (els.moreDeleteBtn) els.moreDeleteBtn.textContent = t('delete_selected');
+  if (els.viewerOpenOrig) els.viewerOpenOrig.textContent = t('open_view');
+  if (els.viewerDownloadBtn) els.viewerDownloadBtn.textContent = t('download');
+  if (els.downloadModalTitle) els.downloadModalTitle.textContent = t('download_title');
+  if (els.downloadModalClose) els.downloadModalClose.setAttribute('aria-label', t('close'));
+  if (els.downloadPrompt) els.downloadPrompt.textContent = t('download_prompt');
+  if (els.downloadDateLegend) els.downloadDateLegend.textContent = t('download_date_legend');
+  if (els.downloadDateOriginalTitle) els.downloadDateOriginalTitle.textContent = t('download_date_original_title');
+  if (els.downloadDateOriginalDesc) els.downloadDateOriginalDesc.textContent = t('download_date_original_desc');
+  if (els.downloadDateTodayTitle) els.downloadDateTodayTitle.textContent = t('download_date_today_title');
+  if (els.downloadDateTodayDesc) els.downloadDateTodayDesc.textContent = t('download_date_today_desc');
+  if (els.downloadConvertedBtn) els.downloadConvertedBtn.textContent = t('download_converted');
+  if (els.downloadOriginalBtn) els.downloadOriginalBtn.textContent = t('download_original');
+  if (els.downloadCancelBtn) els.downloadCancelBtn.textContent = t('cancel');
+  if (els.downloadNativeBtn) els.downloadNativeBtn.textContent = t('download_native');
+  if (els.downloadReadyClose) els.downloadReadyClose.textContent = t('close');
 
   const ok = await loadInfo();
   if (!ok) return;
@@ -1400,6 +1953,11 @@ if (els.fileInput) {
   });
 }
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
+if (els.downloadBtn) {
+  els.downloadBtn.addEventListener('click', () => {
+    openShareDownloadModal(Array.from(state.selected || []));
+  });
+}
 if (els.pathBackTop) {
   els.pathBackTop.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1429,7 +1987,7 @@ if (els.moreSelectBtn) {
 }
 if (els.moreSelectAllBtn) {
   els.moreSelectAllBtn.addEventListener('click', () => {
-    if (!state.selectMode || !canDeleteFromShare()) return;
+    if (!state.selectMode || !canSelectFromShare()) return;
     state.selected = new Set((state.visible || []).map((it) => Number(it && it.id || 0)).filter((id) => id > 0));
     state.selectionPulseId = 0;
     renderGrid();
@@ -1444,10 +2002,45 @@ if (els.moreClearBtn) {
     closeShareMoreMenu();
   });
 }
+if (els.moreDownloadBtn) {
+  els.moreDownloadBtn.addEventListener('click', () => {
+    closeShareMoreMenu();
+    openShareDownloadModal(Array.from(state.selected || []));
+  });
+}
 if (els.moreDeleteBtn) {
   els.moreDeleteBtn.addEventListener('click', async () => {
     closeShareMoreMenu();
     await runDelete();
+  });
+}
+if (els.downloadModalClose) {
+  els.downloadModalClose.addEventListener('click', () => closeShareDownloadModal());
+}
+if (els.downloadCancelBtn) {
+  els.downloadCancelBtn.addEventListener('click', () => closeShareDownloadModal());
+}
+if (els.downloadReadyClose) {
+  els.downloadReadyClose.addEventListener('click', () => closeShareDownloadModal());
+}
+if (els.downloadConvertedBtn) {
+  els.downloadConvertedBtn.addEventListener('click', () => startShareDownload('converted'));
+}
+if (els.downloadOriginalBtn) {
+  els.downloadOriginalBtn.addEventListener('click', () => startShareDownload('original'));
+}
+if (els.downloadNativeBtn) {
+  els.downloadNativeBtn.addEventListener('click', sharePreparedDownloadsNatively);
+}
+if (els.downloadFallbackBtn) {
+  els.downloadFallbackBtn.addEventListener('click', downloadNextPreparedShareFile);
+}
+if (els.downloadModal) {
+  els.downloadModal.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target === els.downloadModal || (target && target.classList && target.classList.contains('modal-backdrop'))) {
+      closeShareDownloadModal();
+    }
   });
 }
 if (els.uploadPrepClose) {

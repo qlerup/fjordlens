@@ -31,12 +31,14 @@
           <span id="uploadLabel">V&aelig;lg filer</span>
         </button>
         <input id="shareFileInput" type="file" accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef,.mp4,.m4v,.mov,.avi,.mkv,.webm,.3gp" multiple style="display:none;" />
+        <button id="shareDownloadBtn" class="btn primary" type="button" style="display:none;" disabled>Download</button>
         <button id="deleteBtn" class="btn danger" style="display:none;" disabled>Slet valgte</button>
         <button id="shareMoreBtn" class="btn" type="button" style="display:none;" title="Flere" aria-label="Flere">&#8942;</button>
         <div id="shareMoreMenu" class="mapper-header-menu" aria-label="Share menu">
           <button id="shareMenuSelectBtn" class="mapper-header-menu-item" type="button">V&aelig;lg billeder</button>
           <button id="shareMenuSelectAllBtn" class="mapper-header-menu-item" type="button">V&aelig;lg alle</button>
           <button id="shareMenuClearBtn" class="mapper-header-menu-item" type="button">Fjern valgte</button>
+          <button id="shareMenuDownloadBtn" class="mapper-header-menu-item" type="button" style="display:none;">Download valgte</button>
           <button id="shareMenuDeleteBtn" class="mapper-header-menu-item" type="button">Slet valgte</button>
         </div>
       </div>
@@ -90,6 +92,57 @@
       </div>
     </div>
 
+    <div id="shareDownloadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareDownloadModalTitle">
+      <div class="modal-backdrop"></div>
+      <div class="modal-dialog" style="max-width:500px;">
+        <div class="modal-header">
+          <h3 id="shareDownloadModalTitle">Download</h3>
+          <button id="shareDownloadModalClose" class="btn ghost" type="button" aria-label="Luk">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="shareDownloadOptions">
+            <p id="shareDownloadPrompt">V&aelig;lg hvad der skal hentes:</p>
+            <fieldset style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;display:grid;gap:10px;">
+              <legend id="shareDownloadDateLegend" style="padding:0 5px;">Dato p&aring; gemte billeder</legend>
+              <label class="ai-toggle-row" for="shareDownloadDateOriginal" style="align-items:flex-start;">
+                <input id="shareDownloadDateOriginal" type="radio" name="shareDownloadDateMode" value="original" checked />
+                <span class="mini-label">
+                  <strong id="shareDownloadDateOriginalTitle">Bevar original optagelsesdato</strong><br />
+                  <span id="shareDownloadDateOriginalDesc">Billedet placeres ved den dato, hvor det blev taget.</span>
+                </span>
+              </label>
+              <label class="ai-toggle-row" for="shareDownloadDateToday" style="align-items:flex-start;">
+                <input id="shareDownloadDateToday" type="radio" name="shareDownloadDateMode" value="today" />
+                <span class="mini-label">
+                  <strong id="shareDownloadDateTodayTitle">Brug dags dato</strong><br />
+                  <span id="shareDownloadDateTodayDesc">Billedet placeres blandt de nyeste billeder i fotoappen.</span>
+                </span>
+              </label>
+            </fieldset>
+            <div class="toolbar" style="gap:8px;flex-wrap:wrap;">
+              <button id="shareDownloadConvertedBtn" class="btn primary" type="button">Download konverterede</button>
+              <button id="shareDownloadOriginalBtn" class="btn" type="button">Download originale</button>
+            </div>
+            <p id="shareDownloadPackagingHint" class="mini-label" style="margin-top:8px;opacity:.8;">Ved flere valg pakkes de som ZIP.</p>
+          </div>
+          <div id="shareDownloadPreparing" class="hidden" aria-live="polite">
+            <p id="shareDownloadPreparingText" style="margin:4px 0 12px;">Forbereder download...</p>
+            <div class="actions" style="justify-content:flex-end;">
+              <button id="shareDownloadCancelBtn" class="btn" type="button">Annuller</button>
+            </div>
+          </div>
+          <div id="shareDownloadReady" class="hidden" aria-live="polite">
+            <p id="shareDownloadReadyText" style="margin:4px 0 12px;"></p>
+            <div class="actions" style="justify-content:flex-end;gap:8px;flex-wrap:wrap;">
+              <button id="shareDownloadFallbackBtn" class="btn hidden" type="button"></button>
+              <button id="shareDownloadNativeBtn" class="btn primary hidden" type="button">Gem i Fotos</button>
+              <button id="shareDownloadReadyClose" class="btn" type="button">Luk</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <section id="shareAuthBox" class="sidebar-card hidden" style="max-width:520px;margin:20px auto;">
       <div class="sidebar-card-title" id="authTitle">Adgang kr&aelig;ves</div>
       <div class="form-row" id="authNameWrap">
@@ -118,7 +171,8 @@
           <button id="shareViewerMenuBtn" class="btn" type="button" title="Menu" aria-label="&Aring;bn menu">...</button>
           <button id="shareViewerClose" class="btn" style="min-width:86px;">Luk</button>
           <div id="shareViewerMenu" class="viewer-menu hidden" style="position:absolute;right:14px;top:56px;" aria-label="Viewer menu">
-            <a id="shareViewerOpenOrig" class="btn" target="_blank" rel="noopener">&Aring;bn original</a>
+            <a id="shareViewerOpenOrig" class="btn" target="_blank" rel="noopener">&Aring;bn visning</a>
+            <button id="shareViewerDownloadBtn" class="btn hidden" type="button">Download</button>
           </div>
         </div>
       </div>

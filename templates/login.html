@@ -14,6 +14,32 @@
 {% block body %}
   {% set en = (ui_lang == 'en') %}
   <div class="center-screen">
+    {% if force_password_change %}
+    <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login_change_password', next=request.args.get('next')) if request.args.get('next') else url_for('login_change_password') }}">
+      <div class="login-title">
+        <span>{{ 'Choose a new password' if en else 'Vælg ny adgangskode' }}</span>
+      </div>
+      <div class="ok">{{ 'First sign-in: Choose your own password to continue.' if en else 'Første login: Vælg din egen adgangskode for at fortsætte.' }}</div>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <input type="hidden" name="username" value="{{ fpc_username }}">
+      <input type="hidden" name="current_password" value="{{ fpc_current }}">
+      <div class="form-row reveal-wrap">
+        <label for="newPassword">{{ 'New password' if en else 'Ny adgangskode' }}</label>
+        <input id="newPassword" name="new_password" type="password" autocomplete="new-password" minlength="6" required autofocus style="padding-right:42px;">
+        <button id="loginReveal" type="button" class="reveal-btn" aria-label="{{ 'Show password' if en else 'Vis adgangskode' }}">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c4.5 0 8.4 2.9 10 7-1.6 4.1-5.5 7-10 7s-8.4-2.9-10-7c1.6-4.1 5.5-7 10-7zm0 2c-3.3 0-6.3 2.1-7.6 5 1.3 2.9 4.3 5 7.6 5s6.3-2.1 7.6-5c-1.3-2.9-4.3-5-7.6-5zm0 2.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>
+        </button>
+      </div>
+      <div class="form-row">
+        <label for="newPassword2">{{ 'Repeat new password' if en else 'Gentag ny adgangskode' }}</label>
+        <input id="newPassword2" name="new_password2" type="password" autocomplete="new-password" minlength="6" required>
+      </div>
+      <div class="actions">
+        <div style="color:var(--muted); font-size:0.85rem;">{{ fpc_username }}</div>
+        <button class="btn primary" type="submit">{{ 'Save and sign in' if en else 'Gem og log ind' }}</button>
+      </div>
+    </form>
+    {% else %}
     <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}">
       <div class="login-title">
         <span>{{ 'Sign in to FjordLens' if en else 'Log ind på FjordLens' }}</span>
@@ -36,15 +62,24 @@
         <button class="btn primary" type="submit">{{ 'Sign in' if en else 'Log ind' }}</button>
       </div>
     </form>
+    {% endif %}
   </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function(){
-  const pw=document.getElementById('password');
+  const pw=document.getElementById('password')||document.getElementById('newPassword');
   const btn=document.getElementById('loginReveal');
   const form=document.getElementById('loginForm');
   if(btn){ btn.addEventListener('click',()=>{ if(!pw) return; pw.type = (pw.type==='password')?'text':'password'; pw.focus({preventScroll:true}); }); }
+  const np=document.getElementById('newPassword');
+  const np2=document.getElementById('newPassword2');
+  if(np && np2){
+    const mismatchText={{ ('The new passwords do not match' if ui_lang == 'en' else 'De nye adgangskoder matcher ikke')|tojson }};
+    const sync=()=>{ np2.setCustomValidity(np.value===np2.value?'':mismatchText); };
+    np.addEventListener('input',sync);
+    np2.addEventListener('input',sync);
+  }
   if(form){ form.addEventListener('submit',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} }); }
   const homeUrl={{ url_for('index')|tojson }};
   const sessionUrl={{ url_for('api_auth_session')|tojson }};

@@ -184,18 +184,42 @@
       <!-- Download modal -->
       <div id="mapperDownloadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mapperDownloadModalTitle">
         <div class="modal-backdrop"></div>
-        <div class="modal-dialog" style="max-width:460px;">
+        <div class="modal-dialog download-modal-dialog" style="max-width:500px;">
           <div class="modal-header">
             <h3 id="mapperDownloadModalTitle">Download</h3>
             <button id="mapperDownloadModalClose" class="btn ghost" aria-label="Luk">✕</button>
           </div>
           <div class="modal-body">
-            <p>Vælg hvad der skal hentes:</p>
-            <div class="toolbar" style="gap:8px;flex-wrap:wrap;">
+            <p id="mapperDownloadQuestion">Vælg hvad der skal hentes:</p>
+            <fieldset class="download-date-options">
+              <legend id="mapperDownloadDateLegend">Dato på de gemte billeder</legend>
+              <label class="download-date-option" for="downloadDateOriginal">
+                <input id="downloadDateOriginal" type="radio" name="mapperDownloadDateMode" value="original" checked>
+                <span>
+                  <strong id="downloadDateOriginalTitle">Bevar original dato</strong>
+                  <small id="downloadDateOriginalHelp">Billedets optagelsesdato bevares.</small>
+                </span>
+              </label>
+              <label class="download-date-option" for="downloadDateToday">
+                <input id="downloadDateToday" type="radio" name="mapperDownloadDateMode" value="today">
+                <span>
+                  <strong id="downloadDateTodayTitle">Brug dags dato</strong>
+                  <small id="downloadDateTodayHelp">Billedet vises blandt de nyeste i din foto-app.</small>
+                </span>
+              </label>
+            </fieldset>
+            <div class="toolbar download-format-actions">
               <button id="downloadConvertedBtn" class="btn primary">Download konverterede</button>
               <button id="downloadOriginalBtn" class="btn">Download originale</button>
             </div>
-            <p class="mini-label" style="margin-top:8px;opacity:.8;">Ved flere valg pakkes de som ZIP.</p>
+            <p id="mapperDownloadHint" class="mini-label download-hint">Ved flere valg pakkes de som ZIP.</p>
+            <div id="mapperDownloadMobileReady" class="download-mobile-ready hidden" aria-live="polite">
+              <p id="mapperDownloadMobileReadyText" class="mini-label"></p>
+              <div class="toolbar download-mobile-actions">
+                <button id="mapperDownloadMobileShareBtn" class="btn primary hidden" type="button">Gem i Fotos</button>
+                <button id="mapperDownloadMobileFallbackBtn" class="btn hidden" type="button">Download enkeltvis</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -946,8 +970,9 @@
         <label id="mapperSharePermissionLabel" for="mapperSharePermission">Adgang</label>
         <select id="mapperSharePermission" class="select">
           <option value="view">Se</option>
-          <option value="upload">Se og uploade</option>
-          <option value="manage">Se, uploade og slette</option>
+          <option value="download">Se og downloade</option>
+          <option value="upload">Se, downloade og uploade</option>
+          <option value="manage">Se, downloade, uploade og slette</option>
         </select>
       </div>
       <label class="toolbar" for="mapperShareDuckdnsToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">
@@ -1027,8 +1052,9 @@
         <label id="sharedEditPermissionLabel" for="sharedEditPermission">Adgang</label>
         <select id="sharedEditPermission" class="select">
           <option value="view">Se</option>
-          <option value="upload">Se og uploade</option>
-          <option value="manage">Se, uploade og slette</option>
+          <option value="download">Se og downloade</option>
+          <option value="upload">Se, downloade og uploade</option>
+          <option value="manage">Se, downloade, uploade og slette</option>
         </select>
       </div>
       <label class="toolbar" for="sharedEditDuckdnsToggle" style="justify-content:flex-start;margin:8px 0 4px;gap:10px;">

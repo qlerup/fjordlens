@@ -15,7 +15,7 @@ import zipfile
 import unicodedata
 import math
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
@@ -322,6 +322,9 @@ LOGOS_MAIN_DIR = LOGOS_DIR / "logos"
 TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
     LANG_DA: {
         "login_invalid_credentials": "Forkert brugernavn eller adgangskode",
+        "login_password_change_intro": "Første login: Vælg din egen adgangskode for at fortsætte",
+        "login_password_too_short": "Adgangskoden skal være mindst 6 tegn",
+        "login_password_change_failed": "Kunne ikke skifte adgangskoden",
         "setup_invalid_token": "Forkert setup-token",
         "setup_fill_fields": "Udfyld felterne",
         "setup_password_mismatch": "Adgangskoder matcher ikke",
@@ -336,6 +339,9 @@ TEMPLATE_I18N: Dict[str, Dict[str, str]] = {
     },
     LANG_EN: {
         "login_invalid_credentials": "Invalid username or password",
+        "login_password_change_intro": "First sign-in: Choose your own password to continue",
+        "login_password_too_short": "The password must be at least 6 characters",
+        "login_password_change_failed": "Could not change the password",
         "setup_invalid_token": "Invalid setup token",
         "setup_fill_fields": "Please fill in all required fields",
         "setup_password_mismatch": "Passwords do not match",
@@ -3850,6 +3856,7 @@ def init_db() -> None:
                 token_plain TEXT,
                 share_name TEXT,
                 folder_path TEXT NOT NULL,
+                can_download INTEGER DEFAULT 0,
                 can_upload INTEGER DEFAULT 0,
                 can_delete INTEGER DEFAULT 0,
                 require_visitor_name INTEGER DEFAULT 0,
@@ -3972,6 +3979,19 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE share_links ADD COLUMN share_name TEXT")
+        except Exception:
+            pass
+        # Download permission was introduced after upload/manage permissions.
+        # Backfill only while adding the column so an intentionally downgraded
+        # share is not re-enabled on every startup.
+        try:
+            share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]  # type: ignore[index]
+            if "can_download" not in share_cols:
+                conn.execute("ALTER TABLE share_links ADD COLUMN can_download INTEGER DEFAULT 0")
+                conn.execute(
+                    "UPDATE share_links SET can_download=1 WHERE COALESCE(can_upload,0)=1 OR COALESCE(can_delete,0)=1"
+                )
+                conn.commit()
         except Exception:
             pass
         try:
@@ -4604,6 +4624,7 @@ def enforce_login_for_app():
     # Allow login/setup and selected public endpoints without auth
     open_endpoints = {
         "login",
+        "login_change_password",
         "verify_2fa",
         "setup",
         "hub_login",
@@ -4627,6 +4648,8 @@ def enforce_login_for_app():
         "api_share_thumb",
         "api_share_viewable",
         "api_share_original",
+        "api_share_photo_download",
+        "api_share_photos_download_zip",
         "api_share_auth",
         "api_share_upload",
         # Share-link TUS endpoints must bypass normal login
@@ -6530,6 +6553,48 @@ def _share_is_authorized(share_row: sqlite3.Row) -> bool:
     if _share_requires_visitor_name(share_row) and not _share_get_visitor_name(share_row):
         return False
     return True
+
+
+def _share_can_download(share_row: sqlite3.Row) -> bool:
+    """Return the explicit download grant, with a legacy-schema fallback."""
+    try:
+        if "can_download" in share_row.keys():
+            return bool(int(share_row["can_download"] or 0))
+    except Exception:
+        return False
+    # Rows read from an unmigrated legacy database may not expose the new
+    # column yet. Upload/manage links historically implied file access.
+    try:
+        return bool(int(share_row["can_upload"] or 0) or int(share_row["can_delete"] or 0))
+    except Exception:
+        return False
+
+
+def _share_permission_flags(value: Any) -> Optional[tuple[str, int, int, int]]:
+    """Normalize a share permission to (name, download, upload, delete)."""
+    permission = str(value or "view").strip().lower()
+    if permission == "view":
+        return ("view", 0, 0, 0)
+    if permission == "download":
+        return ("download", 1, 0, 0)
+    if permission == "upload":
+        return ("upload", 1, 1, 0)
+    if permission in {"manage", "delete"}:
+        return ("manage", 1, 1, 1)
+    return None
+
+
+def _share_permission_name(can_download: Any, can_upload: Any, can_delete: Any) -> str:
+    try:
+        if bool(int(can_delete or 0)):
+            return "manage"
+        if bool(int(can_upload or 0)):
+            return "upload"
+        if bool(int(can_download or 0)):
+            return "download"
+    except Exception:
+        pass
+    return "view"
 
 
 def _normalize_share_base_url(raw: str) -> Optional[str]:
@@ -11987,13 +12052,28 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     return d
 
 
-def _row_to_share_public(row: sqlite3.Row, token: str) -> Dict[str, Any]:
+def _row_to_share_public(row: sqlite3.Row, token: str, *, can_download: bool = False) -> Dict[str, Any]:
     d = row_to_public(row)
     pid = int(d.get("id") or 0)
     if pid > 0:
         d["thumb_url"] = url_for("api_share_thumb", token=token, photo_id=pid)
         d["original_url"] = url_for("api_share_viewable", token=token, photo_id=pid)
-        d["download_url"] = url_for("api_share_original", token=token, photo_id=pid)
+        if can_download:
+            d["download_url"] = url_for(
+                "api_share_photo_download",
+                token=token,
+                photo_id=pid,
+                mode="original",
+            )
+            d["download_converted_url"] = url_for(
+                "api_share_photo_download",
+                token=token,
+                photo_id=pid,
+                mode="converted",
+            )
+        else:
+            d["download_url"] = None
+            d["download_converted_url"] = None
     return d
 
 
@@ -13963,16 +14043,10 @@ def api_create_share():
         else:
             share_name = f"{len(folder_paths)} mapper"
 
-    perm = str(body.get("permission") or "view").strip().lower()
-    can_upload = 0
-    can_delete = 0
-    if perm == "upload":
-        can_upload = 1
-    elif perm in {"manage", "delete"}:
-        can_upload = 1
-        can_delete = 1
-    elif perm != "view":
+    permission_flags = _share_permission_flags(body.get("permission"))
+    if permission_flags is None:
         return jsonify({"ok": False, "error": "Ugyldig rettighed"}), 400
+    perm, can_download, can_upload, can_delete = permission_flags
 
     expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
     if expires_error:
@@ -13995,14 +14069,15 @@ def api_create_share():
     with closing(get_conn()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_upload, can_delete, require_visitor_name, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_download, can_upload, can_delete, require_visitor_name, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 token_hash,
                 token,
                 share_name,
                 primary_folder_path,
+                int(can_download),
                 int(can_upload),
                 int(can_delete),
                 1 if require_visitor_name else 0,
@@ -14033,6 +14108,7 @@ def api_create_share():
             "folder_path": primary_folder_path,
             "folder_paths": folder_paths,
             "permission": perm,
+            "can_download": bool(can_download),
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
             "require_visitor_name": bool(require_visitor_name),
@@ -14071,6 +14147,7 @@ def api_share_info(token: str):
             "folder_count": len(folder_paths),
             "folder_labels": [f"uploads/{fp}" for fp in folder_paths],
             "folder_label": folder_label,
+            "can_download": _share_can_download(share),
             "can_upload": bool(int(share["can_upload"] or 0)),
             "can_delete": bool(int(share["can_delete"] or 0)),
             "require_visitor_name": _share_requires_visitor_name(share),
@@ -14121,7 +14198,8 @@ def api_share_photos(token: str):
         ).fetchall()
 
     rows = _dedupe_upload_storage_rows(rows)
-    items = [_row_to_share_public(r, token) for r in rows]
+    can_download = _share_can_download(share)
+    items = [_row_to_share_public(r, token, can_download=can_download) for r in rows]
     return jsonify({"ok": True, "items": items})
 
 
@@ -14142,6 +14220,8 @@ def api_share_original(token: str, photo_id: int):
     share = _load_share_from_token(token)
     if not share or not _share_is_authorized(share):
         return ("Forbidden", 403)
+    if not _share_can_download(share):
+        return ("Forbidden", 403)
     with closing(get_conn()) as conn:
         row = _get_share_scoped_photo_row(conn, share, photo_id)
     if not row:
@@ -14151,6 +14231,63 @@ def api_share_original(token: str, photo_id: int):
     if safe_rel.startswith("uploads/"):
         return send_from_directory(str(UPLOAD_DIR), safe_rel[len("uploads/"):])
     return ("Forbidden", 403)
+
+
+@app.route("/api/share/<token>/download/<int:photo_id>")
+def api_share_photo_download(token: str, photo_id: int):
+    share = _load_share_from_token(token, touch=True)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    if not _share_can_download(share):
+        return ("Forbidden", 403)
+    try:
+        mode, date_mode = _normalize_download_options(
+            request.args.get("mode"),
+            request.args.get("date_mode"),
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    with closing(get_conn()) as conn:
+        row = _get_share_scoped_photo_row(conn, share, photo_id)
+    if not row:
+        return ("Not found", 404)
+    try:
+        return _send_photo_download(row, mode, date_mode)
+    except Exception as exc:
+        log_event("share_download_error", rel_path=str(row["rel_path"] or ""), error=str(exc))
+        return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
+
+
+@app.route("/api/share/<token>/download-zip", methods=["POST"])
+def api_share_photos_download_zip(token: str):
+    share = _load_share_from_token(token, touch=True)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    if not _share_can_download(share):
+        return ("Forbidden", 403)
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("photo_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
+    ids = [int(photo_id) for photo_id in raw_ids if str(photo_id).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
+    try:
+        mode, date_mode = _normalize_download_options(body.get("mode"), body.get("date_mode"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    rows: list[sqlite3.Row] = []
+    with closing(get_conn()) as conn:
+        for photo_id in ids:
+            row = _get_share_scoped_photo_row(conn, share, photo_id)
+            if row is not None:
+                rows.append(row)
+    try:
+        return _send_photos_download_zip(rows, mode, date_mode)
+    except Exception as exc:
+        log_event("share_download_zip_error", error=str(exc))
+        return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
 
 
 @app.route("/api/share/<token>/view/<int:photo_id>")
@@ -19036,13 +19173,282 @@ def _resolve_download_path(src: Path, rel_path: str, mode: str) -> Path:
     return ensure_viewable_copy(src, rel)
 
 
+DOWNLOAD_MODES = {"converted", "original"}
+DOWNLOAD_DATE_MODES = {"original", "today"}
+
+
+def _download_now() -> datetime:
+    """Local, timezone-aware time used for newly dated download copies."""
+    return datetime.now().astimezone().replace(microsecond=0)
+
+
+def _normalize_download_options(mode: Any, date_mode: Any) -> tuple[str, str]:
+    normalized_mode = str(mode or "converted").strip().lower()
+    normalized_date_mode = str(date_mode or "original").strip().lower()
+    if normalized_mode not in DOWNLOAD_MODES:
+        raise ValueError("Ugyldig downloadtype")
+    if normalized_date_mode not in DOWNLOAD_DATE_MODES:
+        raise ValueError("Ugyldigt datovalg")
+    return normalized_mode, normalized_date_mode
+
+
+def _download_timezone_offset(when: datetime) -> str:
+    raw = when.strftime("%z")
+    if len(raw) == 5:
+        return f"{raw[:3]}:{raw[3:]}"
+    return raw or "+00:00"
+
+
+def _stamp_jpeg_download_date(path: Path, when: datetime) -> None:
+    """Replace only common EXIF dates without recompressing JPEG pixels."""
+    exif_data = piexif.load(str(path))
+    exif_ifd = exif_data.setdefault("Exif", {})
+    zeroth_ifd = exif_data.setdefault("0th", {})
+    stamp = when.strftime("%Y:%m:%d %H:%M:%S").encode("ascii")
+    offset = _download_timezone_offset(when).encode("ascii")
+    zeroth_ifd[piexif.ImageIFD.DateTime] = stamp
+    exif_ifd[piexif.ExifIFD.DateTimeOriginal] = stamp
+    exif_ifd[piexif.ExifIFD.DateTimeDigitized] = stamp
+    exif_ifd[piexif.ExifIFD.OffsetTime] = offset
+    exif_ifd[piexif.ExifIFD.OffsetTimeOriginal] = offset
+    exif_ifd[piexif.ExifIFD.OffsetTimeDigitized] = offset
+    piexif.insert(piexif.dump(exif_data), str(path))
+
+
+def _stamp_download_date_with_exiftool(path: Path, when: datetime) -> None:
+    exiftool = shutil.which("exiftool")
+    if not exiftool:
+        raise RuntimeError("ExifTool er ikke installeret")
+
+    local_stamp = when.strftime("%Y:%m:%d %H:%M:%S")
+    local_iso = when.isoformat(timespec="seconds")
+    offset = _download_timezone_offset(when)
+    suffix = path.suffix.lower()
+    cmd = [exiftool, "-overwrite_original"]
+    if suffix in VIDEO_EXTS:
+        utc_stamp = when.astimezone(timezone.utc).strftime("%Y:%m:%d %H:%M:%S")
+        cmd.extend(
+            [
+                "-api",
+                "QuickTimeUTC=1",
+                f"-QuickTime:CreateDate={utc_stamp}",
+                f"-QuickTime:ModifyDate={utc_stamp}",
+                f"-QuickTime:TrackCreateDate={utc_stamp}",
+                f"-QuickTime:TrackModifyDate={utc_stamp}",
+                f"-QuickTime:MediaCreateDate={utc_stamp}",
+                f"-QuickTime:MediaModifyDate={utc_stamp}",
+                f"-Keys:CreationDate={local_iso}",
+            ]
+        )
+    else:
+        cmd.extend(
+            [
+                f"-EXIF:DateTimeOriginal={local_stamp}",
+                f"-EXIF:CreateDate={local_stamp}",
+                f"-EXIF:ModifyDate={local_stamp}",
+                f"-EXIF:OffsetTimeOriginal={offset}",
+                f"-EXIF:OffsetTimeDigitized={offset}",
+                f"-EXIF:OffsetTime={offset}",
+                f"-XMP-exif:DateTimeOriginal={local_iso}",
+                f"-XMP-xmp:CreateDate={local_iso}",
+                f"-XMP-xmp:ModifyDate={local_iso}",
+            ]
+        )
+    cmd.extend([f"-FileModifyDate={local_iso}", str(path)])
+    subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
+
+
+def _stamp_download_copy(path: Path, when: datetime) -> None:
+    """Stamp a disposable copy, never the indexed source file."""
+    stamped = False
+    if path.suffix.lower() in {".jpg", ".jpeg"}:
+        try:
+            _stamp_jpeg_download_date(path, when)
+            stamped = True
+        except Exception:
+            stamped = False
+    if not stamped:
+        _stamp_download_date_with_exiftool(path, when)
+    ts = when.timestamp()
+    os.utime(path, (ts, ts))
+
+
+def _make_today_download_copy(src: Path, when: datetime) -> tuple[Path, Path]:
+    temp_dir = Path(tempfile.mkdtemp(prefix="fjordlens-download-"))
+    dst = temp_dir / src.name
+    try:
+        shutil.copy2(src, dst)
+        _stamp_download_copy(dst, when)
+        return dst, temp_dir
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+def _download_rel_and_path(row: sqlite3.Row, mode: str) -> tuple[str, Path]:
+    rel = str(row["rel_path"] or "").replace("..", "").lstrip("/")
+    if not rel:
+        raise FileNotFoundError("Missing rel_path")
+    src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
+    return rel, _resolve_download_path(src, rel, mode)
+
+
+def _row_capture_header(row: sqlite3.Row, path: Path, when: Optional[datetime] = None) -> str:
+    if when is not None:
+        return when.isoformat(timespec="seconds")
+    try:
+        value = str(row["captured_at"] or "").strip().replace("\r", "").replace("\n", "")
+    except Exception:
+        value = ""
+    if value:
+        return value[:80]
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+    except Exception:
+        return ""
+
+
+def _mark_download_response(response, captured_at: str = ""):
+    response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Vary"] = "Cookie"
+    if captured_at:
+        response.headers["X-FjordLens-Captured-At"] = captured_at
+    return response
+
+
+def _send_photo_download(row: sqlite3.Row, mode: str, date_mode: str):
+    _, use_path = _download_rel_and_path(row, mode)
+    if not use_path.exists() or not use_path.is_file():
+        return ("Not found", 404)
+
+    cleanup_dir: Optional[Path] = None
+    download_path = use_path
+    stamped_at: Optional[datetime] = None
+    try:
+        if date_mode == "today":
+            stamped_at = _download_now()
+            download_path, cleanup_dir = _make_today_download_copy(use_path, stamped_at)
+        try:
+            response = send_file(
+                str(download_path),
+                as_attachment=True,
+                download_name=use_path.name,
+            )
+        except TypeError:
+            response = send_file(str(download_path), as_attachment=True)
+        _mark_download_response(response, _row_capture_header(row, use_path, stamped_at))
+        if cleanup_dir is not None:
+            response.call_on_close(lambda p=cleanup_dir: shutil.rmtree(p, ignore_errors=True))
+        return response
+    except Exception:
+        if cleanup_dir is not None:
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+        raise
+
+
+def _unique_archive_name(name: str, used: set[str]) -> str:
+    candidate = Path(str(name or "download.bin")).name or "download.bin"
+    if candidate not in used:
+        used.add(candidate)
+        return candidate
+    stem = Path(candidate).stem
+    suffix = Path(candidate).suffix
+    index = 2
+    while f"{stem}_{index}{suffix}" in used:
+        index += 1
+    candidate = f"{stem}_{index}{suffix}"
+    used.add(candidate)
+    return candidate
+
+
+def _send_photos_download_zip(rows: Iterable[sqlite3.Row], mode: str, date_mode: str):
+    resolved: list[tuple[sqlite3.Row, Path]] = []
+    for row in rows:
+        try:
+            _, use_path = _download_rel_and_path(row, mode)
+            if use_path.exists() and use_path.is_file():
+                resolved.append((row, use_path))
+        except Exception:
+            continue
+    if not resolved:
+        return ("Not found", 404)
+
+    stamped_at = _download_now() if date_mode == "today" else None
+    tmp = tempfile.TemporaryFile()
+    written = 0
+    try:
+        with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            used: set[str] = set()
+            for row, use_path in resolved:
+                archive_name = _unique_archive_name(use_path.name, used)
+                write_path = use_path
+                cleanup_dir: Optional[Path] = None
+                try:
+                    if stamped_at is not None:
+                        write_path, cleanup_dir = _make_today_download_copy(use_path, stamped_at)
+                    zf.write(write_path, arcname=archive_name)
+                    written += 1
+                finally:
+                    if cleanup_dir is not None:
+                        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        if written <= 0:
+            tmp.close()
+            return ("Not found", 404)
+        tmp.seek(0)
+        filename = f"fjordlens_download_{written}.zip"
+        try:
+            response = send_file(
+                tmp,
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name=filename,
+            )
+        except TypeError:
+            tmp.seek(0)
+            response = send_file(tmp, mimetype="application/zip", as_attachment=True)
+        header = _row_capture_header(resolved[0][0], resolved[0][1], stamped_at)
+        _mark_download_response(response, header)
+        response.call_on_close(tmp.close)
+        return response
+    except Exception:
+        tmp.close()
+        raise
+
+
+def _photo_rows_for_ids(ids: Iterable[int]) -> list[sqlite3.Row]:
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for value in ids:
+        photo_id = int(value)
+        if photo_id > 0 and photo_id not in seen:
+            seen.add(photo_id)
+            ordered_ids.append(photo_id)
+    if not ordered_ids:
+        return []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM photos WHERE id IN ({','.join(['?'] * len(ordered_ids))})",
+            tuple(ordered_ids),
+        ).fetchall()
+    by_id = {int(row["id"]): row for row in rows}
+    return [by_id[photo_id] for photo_id in ordered_ids if photo_id in by_id]
+
+
 @app.route("/api/photos/download/<int:photo_id>")
 def api_photo_download(photo_id: int):
     """Download a single photo as attachment.
     Query param mode=converted|original. Converted prefers a browser-friendly copy
     if available, otherwise falls back to the original.
     """
-    mode = str(request.args.get("mode") or "converted").strip().lower()
+    try:
+        mode, date_mode = _normalize_download_options(
+            request.args.get("mode"),
+            request.args.get("date_mode"),
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
@@ -19051,80 +19457,41 @@ def api_photo_download(photo_id: int):
     if not rel or not _is_rel_path_allowed_for_current_user(rel):
         return ("Forbidden", 403)
 
-    # Resolve physical file path
-    src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
-    use_path = _resolve_download_path(src, rel, mode)
-    if not use_path.exists():
-        return ("Not found", 404)
-
-    filename = use_path.name
     try:
-        return send_file(str(use_path), as_attachment=True, download_name=filename)
-    except TypeError:
-        return send_file(str(use_path), as_attachment=True)
+        return _send_photo_download(row, mode, date_mode)
+    except Exception as exc:
+        log_event("download_error", rel_path=rel, error=str(exc))
+        return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
 
 
 @app.route("/api/photos/download-zip", methods=["POST"])
 def api_photos_download_zip():
     """Zip and download multiple photos.
-    Body: { photo_ids: [int], mode: 'converted'|'original' }
+    Body: { photo_ids: [int], mode: 'converted'|'original',
+            date_mode: 'original'|'today' }
     """
     body = request.get_json(silent=True) or {}
     raw_ids = body.get("photo_ids")
-    mode = str(body.get("mode") or "converted").strip().lower()
+    try:
+        mode, date_mode = _normalize_download_options(body.get("mode"), body.get("date_mode"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     if not isinstance(raw_ids, list) or not raw_ids:
         return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
     ids = [int(pid) for pid in raw_ids if str(pid).isdigit()]
     if not ids:
         return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
 
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM photos WHERE id IN ({','.join(['?']*len(ids))})",
-            tuple(ids),
-        ).fetchall()
-
-    files = []  # list[(Path, name)]
-    for r in rows:
-        try:
-            rel = str(r["rel_path"] or "").replace("..", "").lstrip("/")
-            if not rel or not _is_rel_path_allowed_for_current_user(rel):
-                continue
-            src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
-            use_path = _resolve_download_path(src, rel, mode)
-            if not use_path.exists():
-                continue
-            files.append((use_path, use_path.name))
-        except Exception:
-            continue
-    if not files:
-        return ("Not found", 404)
-
-    import tempfile, zipfile
-    tmp = tempfile.TemporaryFile()
-    with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        used = set()
-        for p, name in files:
-            base = name
-            if base in used:
-                stem = Path(base).stem
-                suff = Path(base).suffix
-                i = 2
-                while f"{stem}_{i}{suff}" in used:
-                    i += 1
-                base = f"{stem}_{i}{suff}"
-            used.add(base)
-            try:
-                zf.write(p, arcname=base)
-            except Exception:
-                continue
+    rows = [
+        row
+        for row in _photo_rows_for_ids(ids)
+        if _is_rel_path_allowed_for_current_user(str(row["rel_path"] or ""))
+    ]
     try:
-        tmp.seek(0)
-        fname = f"fjordlens_download_{len(files)}.zip"
-        return send_file(tmp, mimetype="application/zip", as_attachment=True, download_name=fname)
-    except TypeError:
-        tmp.seek(0)
-        return send_file(tmp, mimetype="application/zip", as_attachment=True)
+        return _send_photos_download_zip(rows, mode, date_mode)
+    except Exception as exc:
+        log_event("download_zip_error", error=str(exc))
+        return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
 
 
 @app.route("/api/debug/sample")
@@ -21164,6 +21531,11 @@ def login():
             password = request.form.get("password") or ""
             hub_user = _hub_authenticate(username, password)
             if hub_user:
+                if hub_user.get("must_change_password"):
+                    # Første login efter oprettelse: brugeren skal selv vælge en ny adgangskode
+                    _log_login_attempt(username, None, None, True, "login_password", "password_change_required")
+                    return _no_store_response(make_response(render_template(
+                        "login.html", force_password_change=True, fpc_username=username, fpc_current=password)))
                 local_user = _ensure_managed_local_user(hub_user)
                 return _complete_managed_login(local_user, username, "fjordhub_ok", request.args.get("next"))
             _log_login_attempt(username, None, None, False, "login_failed", "fjordhub_invalid")
@@ -21217,6 +21589,39 @@ def login():
         return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
     created = True if (request.args.get("created") in ("1", "true", "True")) else False
     return _no_store_response(make_response(render_template("login.html", created=created)))
+
+
+@app.route("/login/change-password", methods=["POST"])
+def login_change_password():
+    """Tvungent kodeskift ved første login for FjordHub-styrede brugere."""
+    ensure_runtime_bootstrap()
+    if not _fjordhub_managed():
+        return _no_store_response(redirect(url_for("login")))
+    if current_user.is_authenticated:
+        return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
+    username = (request.form.get("username") or "").strip()
+    current_password = request.form.get("current_password") or ""
+    new_password = request.form.get("new_password") or ""
+    new_password2 = request.form.get("new_password2") or ""
+    if not username or not current_password:
+        return _no_store_response(redirect(url_for("login")))
+
+    def _fpc_response(error_text: str):
+        return _no_store_response(make_response(render_template(
+            "login.html", force_password_change=True, fpc_username=username,
+            fpc_current=current_password, error=error_text)))
+
+    if new_password != new_password2:
+        return _fpc_response(_ui_text("setup_password_mismatch"))
+    if len(new_password) < 6:
+        return _fpc_response(_ui_text("login_password_too_short"))
+    result = _hub_change_password(username, current_password, new_password)
+    hub_user = result.get("user") if result.get("ok") and isinstance(result.get("user"), dict) else None
+    if not hub_user:
+        _log_login_attempt(username, None, None, False, "login_failed", "fjordhub_password_change_failed")
+        return _fpc_response(str(result.get("error") or _ui_text("login_password_change_failed")))
+    local_user = _ensure_managed_local_user(hub_user)
+    return _complete_managed_login(local_user, username, "fjordhub_password_changed", request.args.get("next"))
 
 
 @app.route("/logout")
@@ -21637,6 +22042,13 @@ def _hub_authenticate(username: str, password: str) -> Optional[dict]:
     return user if result.get("ok") and isinstance(user, dict) else None
 
 
+def _hub_change_password(username: str, current_password: str, new_password: str) -> dict:
+    return _hub_api(
+        "/api/hub/apps/change-password",
+        {"username": username, "current_password": current_password, "new_password": new_password},
+    )
+
+
 def _hub_list_users() -> list[dict]:
     result = _hub_api("/api/hub/apps/users", {}, method="GET")
     return result.get("items", []) if result.get("ok") and isinstance(result.get("items"), list) else []
@@ -22055,7 +22467,7 @@ def api_admin_shares_list():
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-             SELECT s.id, s.share_name, s.folder_path, s.can_upload, s.can_delete, s.password_hash,
+             SELECT s.id, s.share_name, s.folder_path, s.can_download, s.can_upload, s.can_delete, s.password_hash,
                  s.token_plain, s.link_use_duckdns, s.require_visitor_name,
                    s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
                    u.username AS created_by_username
@@ -22089,13 +22501,10 @@ def api_admin_shares_list():
         if not include_inactive and not active:
             continue
 
+        can_download = bool(int(r["can_download"] or 0))
         can_upload = bool(int(r["can_upload"] or 0))
         can_delete = bool(int(r["can_delete"] or 0))
-        permission = "view"
-        if can_upload and can_delete:
-            permission = "manage"
-        elif can_upload:
-            permission = "upload"
+        permission = _share_permission_name(can_download, can_upload, can_delete)
 
         share_id = int(r["id"])
         folder_paths = list(folders_by_share.get(share_id, []))
@@ -22120,6 +22529,7 @@ def api_admin_shares_list():
                 "folder_paths": folder_paths,
                 "folder_count": len(folder_paths),
                 "permission": permission,
+                "can_download": can_download,
                 "can_upload": can_upload,
                 "can_delete": can_delete,
                 "require_visitor_name": bool(int(r["require_visitor_name"] or 0)),
@@ -22256,16 +22666,10 @@ def api_admin_shares_update(share_id: int):
         else:
             share_name = f"{len(folder_paths)} mapper"
 
-    perm = str(body.get("permission") or "view").strip().lower()
-    can_upload = 0
-    can_delete = 0
-    if perm == "upload":
-        can_upload = 1
-    elif perm in {"manage", "delete"}:
-        can_upload = 1
-        can_delete = 1
-    elif perm != "view":
+    permission_flags = _share_permission_flags(body.get("permission"))
+    if permission_flags is None:
         return jsonify({"ok": False, "error": "Ugyldig rettighed"}), 400
+    perm, can_download, can_upload, can_delete = permission_flags
 
     expires_at, expires_error = _share_expires_at_from_body(body, default_value=7, default_unit="days")
     if expires_error:
@@ -22305,6 +22709,7 @@ def api_admin_shares_update(share_id: int):
             UPDATE share_links
                SET share_name=?,
                    folder_path=?,
+                   can_download=?,
                    can_upload=?,
                    can_delete=?,
                    require_visitor_name=?,
@@ -22316,6 +22721,7 @@ def api_admin_shares_update(share_id: int):
             (
                 share_name,
                 primary_folder_path,
+                int(can_download),
                 int(can_upload),
                 int(can_delete),
                 1 if require_visitor_name else 0,
@@ -22341,6 +22747,7 @@ def api_admin_shares_update(share_id: int):
             "folder_path": folder_paths[0],
             "folder_paths": folder_paths,
             "permission": perm,
+            "can_download": bool(can_download),
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
             "require_visitor_name": bool(require_visitor_name),

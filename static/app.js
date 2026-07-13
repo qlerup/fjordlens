@@ -140,7 +140,21 @@
   mapperSelectAllBtn: document.getElementById("mapperSelectAllBtn"),
   mapperClearBtn: document.getElementById("mapperClearBtn"),
   mapperDownloadModal: document.getElementById('mapperDownloadModal'),
+  mapperDownloadModalTitle: document.getElementById('mapperDownloadModalTitle'),
   mapperDownloadModalClose: document.getElementById('mapperDownloadModalClose'),
+  mapperDownloadQuestion: document.getElementById('mapperDownloadQuestion'),
+  mapperDownloadDateLegend: document.getElementById('mapperDownloadDateLegend'),
+  downloadDateOriginal: document.getElementById('downloadDateOriginal'),
+  downloadDateOriginalTitle: document.getElementById('downloadDateOriginalTitle'),
+  downloadDateOriginalHelp: document.getElementById('downloadDateOriginalHelp'),
+  downloadDateToday: document.getElementById('downloadDateToday'),
+  downloadDateTodayTitle: document.getElementById('downloadDateTodayTitle'),
+  downloadDateTodayHelp: document.getElementById('downloadDateTodayHelp'),
+  mapperDownloadHint: document.getElementById('mapperDownloadHint'),
+  mapperDownloadMobileReady: document.getElementById('mapperDownloadMobileReady'),
+  mapperDownloadMobileReadyText: document.getElementById('mapperDownloadMobileReadyText'),
+  mapperDownloadMobileShareBtn: document.getElementById('mapperDownloadMobileShareBtn'),
+  mapperDownloadMobileFallbackBtn: document.getElementById('mapperDownloadMobileFallbackBtn'),
   downloadConvertedBtn: document.getElementById('downloadConvertedBtn'),
   downloadOriginalBtn: document.getElementById('downloadOriginalBtn'),
   mapperCancelBtn: document.getElementById("mapperCancelBtn"),
@@ -1252,9 +1266,26 @@ const I18N = {
     mapper_download: 'Download',
     mapper_download_converted: 'Download konverterede',
     mapper_download_original: 'Download originale',
+    download_modal_title: 'Download',
+    download_modal_question: 'Vælg hvad der skal hentes:',
+    download_date_legend: 'Dato på de gemte billeder',
+    download_date_original_title: 'Bevar original dato',
+    download_date_original_help: 'Billedets optagelsesdato bevares.',
+    download_date_today_title: 'Brug dags dato',
+    download_date_today_help: 'Billedet vises blandt de nyeste i din foto-app.',
+    download_hint_zip: 'Ved flere valg pakkes de som ZIP.',
+    download_hint_mobile: 'På telefonen klargøres alle valgte filer enkeltvis – aldrig som ZIP.',
+    download_mobile_ready_share: '{count} fil(er) er klar. Tryk “Gem i Fotos” for at åbne telefonens delingsmenu.',
+    download_mobile_ready_fallback: '{count} fil(er) er klar. Browseren kan ikke åbne foto-appen her; download dem enkeltvis.',
+    download_mobile_share: 'Gem i Fotos',
+    download_mobile_fallback: 'Download enkeltvis',
+    download_mobile_shared: 'Filerne blev sendt til telefonens delingsmenu.',
+    download_mobile_fallback_started: 'De valgte filer downloades enkeltvis.',
+    download_mobile_share_failed: 'Kunne ikke åbne telefonens delingsmenu.',
     download_status_ready: 'Download: Klar',
     download_status_preparing: 'Download: Forbereder...',
     download_status_fetching_one: 'Downloader billede...',
+    download_status_fetching_many: 'Klargør billede {current} af {total}...',
     download_status_zipping: 'Pakker ZIP på server...',
     download_status_receiving: 'Henter fil... {pct}%',
     download_status_done: 'Download klar',
@@ -1288,8 +1319,9 @@ const I18N = {
     mapper_share_expire_hours: 'Timer',
     mapper_share_permission_label: 'Adgang',
     mapper_share_perm_view: 'Se',
-    mapper_share_perm_upload: 'Se og uploade',
-    mapper_share_perm_manage: 'Se, uploade og slette',
+    mapper_share_perm_download: 'Se og downloade',
+    mapper_share_perm_upload: 'Se, downloade og uploade',
+    mapper_share_perm_manage: 'Se, downloade, uploade og slette',
     mapper_share_duckdns_toggle: 'Brug DNS-link',
     mapper_share_duckdns_not_configured: 'DNS-link er ikke konfigureret under DNS.',
     mapper_share_password_toggle: 'Kodebeskyt link',
@@ -2020,9 +2052,26 @@ const I18N = {
     mapper_download: 'Download',
     mapper_download_converted: 'Download converted',
     mapper_download_original: 'Download originals',
+    download_modal_title: 'Download',
+    download_modal_question: 'Choose what to download:',
+    download_date_legend: 'Date on saved photos',
+    download_date_original_title: 'Keep original date',
+    download_date_original_help: 'Keep the photo capture date.',
+    download_date_today_title: 'Use today’s date',
+    download_date_today_help: 'The photo appears among the newest in your photo app.',
+    download_hint_zip: 'Multiple selections are packaged as a ZIP.',
+    download_hint_mobile: 'On phones, every selected file is prepared separately – never as a ZIP.',
+    download_mobile_ready_share: '{count} file(s) are ready. Tap “Save to Photos” to open the phone share sheet.',
+    download_mobile_ready_fallback: '{count} file(s) are ready. This browser cannot open the photo app here; download them separately.',
+    download_mobile_share: 'Save to Photos',
+    download_mobile_fallback: 'Download separately',
+    download_mobile_shared: 'The files were sent to the phone share sheet.',
+    download_mobile_fallback_started: 'The selected files are downloading separately.',
+    download_mobile_share_failed: 'Could not open the phone share sheet.',
     download_status_ready: 'Download: Ready',
     download_status_preparing: 'Download: Preparing...',
     download_status_fetching_one: 'Downloading image...',
+    download_status_fetching_many: 'Preparing image {current} of {total}...',
     download_status_zipping: 'Creating ZIP on server...',
     download_status_receiving: 'Receiving file... {pct}%',
     download_status_done: 'Download complete',
@@ -2056,8 +2105,9 @@ const I18N = {
     mapper_share_expire_hours: 'Hours',
     mapper_share_permission_label: 'Access',
     mapper_share_perm_view: 'View',
-    mapper_share_perm_upload: 'View and upload',
-    mapper_share_perm_manage: 'View, upload and delete',
+    mapper_share_perm_download: 'View and download',
+    mapper_share_perm_upload: 'View, download and upload',
+    mapper_share_perm_manage: 'View, download, upload and delete',
     mapper_share_duckdns_toggle: 'Use DNS link',
     mapper_share_duckdns_not_configured: 'DNS link is not configured in the DNS tab.',
     mapper_share_password_toggle: 'Protect link with password',
@@ -8484,11 +8534,69 @@ function renderMapperContext(path = '') {
   renderMapperTree();
 }
 
+let _pendingMobileDownloadFiles = [];
+
+function isMobileDownloadDevice() {
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.mobile === true) return true;
+    const ua = String(navigator.userAgent || '');
+    const platform = String(navigator.platform || '');
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+    if (platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1) return true;
+    return !!window.matchMedia('(pointer: coarse) and (max-width: 1024px)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function getMapperDownloadDateMode() {
+  return (els.downloadDateToday && els.downloadDateToday.checked) ? 'today' : 'original';
+}
+
+function _canShareDownloadedFiles(files) {
+  const list = Array.isArray(files) ? files.filter(Boolean) : [];
+  if (!list.length || !window.isSecureContext || typeof navigator.share !== 'function') return false;
+  try {
+    return typeof navigator.canShare !== 'function' || navigator.canShare({ files: list });
+  } catch {
+    return false;
+  }
+}
+
+function _clearPreparedMobileDownloads() {
+  _pendingMobileDownloadFiles = [];
+  if (els.mapperDownloadMobileReady) els.mapperDownloadMobileReady.classList.add('hidden');
+  if (els.mapperDownloadMobileReadyText) els.mapperDownloadMobileReadyText.textContent = '';
+  if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.classList.add('hidden');
+  if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.classList.add('hidden');
+}
+
+function updateMapperDownloadHint() {
+  if (!els.mapperDownloadHint) return;
+  els.mapperDownloadHint.textContent = tr(isMobileDownloadDevice() ? 'download_hint_mobile' : 'download_hint_zip');
+}
+
+function _setMapperDownloadControlsBusy(busy) {
+  const disabled = !!busy;
+  [els.downloadConvertedBtn, els.downloadOriginalBtn, els.downloadDateOriginal, els.downloadDateToday].forEach((node) => {
+    if (node) node.disabled = disabled;
+  });
+}
+
 function openDownloadModal(){
   if (!els.mapperDownloadModal) return;
+  _clearPreparedMobileDownloads();
+  updateMapperDownloadHint();
   els.mapperDownloadModal.classList.remove('hidden');
 }
-function closeDownloadModal(){ if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden'); }
+function closeDownloadModal(options = {}) {
+  if (options.cancelActive !== false && _downloadInProgress && isMobileDownloadDevice()) {
+    cancelActiveMapperDownload();
+  }
+  _clearPreparedMobileDownloads();
+  _setMapperDownloadControlsBusy(false);
+  if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden');
+}
 
 let _downloadStatusTimer = null;
 let _activeDownloadController = null;
@@ -8552,6 +8660,69 @@ function _downloadFileFromBlob(blob, filename) {
   }, 1000);
 }
 
+function _uniqueDownloadFilename(filename, usedNames) {
+  const clean = String(filename || 'download.bin').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'download.bin';
+  const key = clean.toLocaleLowerCase();
+  if (!usedNames.has(key)) {
+    usedNames.add(key);
+    return clean;
+  }
+  const dot = clean.lastIndexOf('.');
+  const base = dot > 0 ? clean.slice(0, dot) : clean;
+  const ext = dot > 0 ? clean.slice(dot) : '';
+  let index = 2;
+  let candidate = `${base}_${index}${ext}`;
+  while (usedNames.has(candidate.toLocaleLowerCase())) {
+    index += 1;
+    candidate = `${base}_${index}${ext}`;
+  }
+  usedNames.add(candidate.toLocaleLowerCase());
+  return candidate;
+}
+
+function _downloadResponseTimestamp(headers) {
+  const values = [
+    headers && headers.get && headers.get('X-FjordLens-Captured-At'),
+    headers && headers.get && headers.get('Last-Modified'),
+  ];
+  for (const value of values) {
+    const parsed = Date.parse(String(value || ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function _fileFromDownloadResult(result, fallbackName, usedNames) {
+  const filename = _uniqueDownloadFilename(
+    _extractFilenameFromDisposition(result.res.headers.get('content-disposition'), fallbackName),
+    usedNames,
+  );
+  const type = String(result.blob.type || result.res.headers.get('content-type') || 'application/octet-stream');
+  const lastModified = _downloadResponseTimestamp(result.res.headers);
+  try {
+    return new File([result.blob], filename, { type, lastModified });
+  } catch {
+    const fallback = new Blob([result.blob], { type });
+    try {
+      Object.defineProperty(fallback, 'name', { value: filename, configurable: true });
+      Object.defineProperty(fallback, 'lastModified', { value: lastModified, configurable: true });
+    } catch {}
+    return fallback;
+  }
+}
+
+function _showPreparedMobileDownloads(files) {
+  _pendingMobileDownloadFiles = Array.isArray(files) ? files.filter(Boolean) : [];
+  const canShare = _canShareDownloadedFiles(_pendingMobileDownloadFiles);
+  if (els.mapperDownloadMobileReady) els.mapperDownloadMobileReady.classList.toggle('hidden', !_pendingMobileDownloadFiles.length);
+  if (els.mapperDownloadMobileReadyText) {
+    els.mapperDownloadMobileReadyText.textContent = tr(canShare ? 'download_mobile_ready_share' : 'download_mobile_ready_fallback')
+      .replace('{count}', String(_pendingMobileDownloadFiles.length));
+  }
+  if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.classList.toggle('hidden', !canShare);
+  if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.classList.toggle('hidden', !_pendingMobileDownloadFiles.length);
+}
+
 async function _extractDownloadErrorMessage(res) {
   const fallback = `${tr('download_status_failed')} (HTTP ${Number(res && res.status || 0) || '?'})`;
   if (!res) return fallback;
@@ -8608,21 +8779,61 @@ async function runMapperDownload(mode){
   try { if (_downloadStatusTimer) clearTimeout(_downloadStatusTimer); } catch {}
   _downloadInProgress = true;
   _activeDownloadController = new AbortController();
+  const normalizedMode = String(mode || '').toLowerCase() === 'original' ? 'original' : 'converted';
+  const dateMode = getMapperDownloadDateMode();
+  const useMobileFlow = isMobileDownloadDevice();
   const isSingle = ids.length === 1;
   const fallbackName = isSingle ? `photo_${ids[0]}` : `fjordlens_download_${ids.length}.zip`;
+  _clearPreparedMobileDownloads();
+  _setMapperDownloadControlsBusy(true);
   showDownloadTopStatusMessage(tr('download_status_preparing'));
   setDownloadTopStatusIndeterminate(true);
   setDownloadTopStatusCancelable(true);
   try {
+    if (useMobileFlow) {
+      const files = [];
+      const usedNames = new Set();
+      for (let index = 0; index < ids.length; index += 1) {
+        const photoId = ids[index];
+        const stepLabel = tr('download_status_fetching_many')
+          .replace('{current}', String(index + 1))
+          .replace('{total}', String(ids.length));
+        showDownloadTopStatusMessage(stepLabel);
+        const url = `/api/photos/download/${encodeURIComponent(photoId)}?mode=${encodeURIComponent(normalizedMode)}&date_mode=${encodeURIComponent(dateMode)}`;
+        const result = await _fetchBlobWithProgress(
+          url,
+          { method: 'GET', cache: 'no-store', signal: _activeDownloadController.signal },
+          (received, total, pct, hasPct) => {
+            if (hasPct && pct != null) {
+              const overall = Math.max(0, Math.min(100, Math.round(((index + (pct / 100)) / ids.length) * 100)));
+              setDownloadTopStatusIndeterminate(false);
+              showDownloadTopStatusMessage(`${stepLabel} ${pct}%`, overall);
+            } else {
+              showDownloadTopStatusMessage(`${stepLabel} (${_formatByteSize(received)})`);
+            }
+          },
+        );
+        if (!result.ok) {
+          throw new Error(await _extractDownloadErrorMessage(result.res));
+        }
+        files.push(_fileFromDownloadResult(result, `photo_${photoId}`, usedNames));
+      }
+      _showPreparedMobileDownloads(files);
+      setDownloadTopStatusIndeterminate(false);
+      showDownloadTopStatusMessage(`${tr('download_status_done')}: ${files.length}`, 100);
+      _scheduleDownloadStatusHide();
+      return;
+    }
+
     const url = isSingle
-      ? `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(mode)}`
+      ? `/api/photos/download/${encodeURIComponent(ids[0])}?mode=${encodeURIComponent(normalizedMode)}&date_mode=${encodeURIComponent(dateMode)}`
       : '/api/photos/download-zip';
     const init = isSingle
-      ? { method: 'GET', signal: _activeDownloadController.signal }
+      ? { method: 'GET', cache: 'no-store', signal: _activeDownloadController.signal }
       : {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ photo_ids: ids, mode }),
+          body: JSON.stringify({ photo_ids: ids, mode: normalizedMode, date_mode: dateMode }),
           signal: _activeDownloadController.signal,
         };
     showDownloadTopStatusMessage(tr(isSingle ? 'download_status_fetching_one' : 'download_status_zipping'));
@@ -8665,8 +8876,42 @@ async function runMapperDownload(mode){
   } finally {
     _downloadInProgress = false;
     _activeDownloadController = null;
+    _setMapperDownloadControlsBusy(false);
     setDownloadTopStatusCancelable(false);
   }
+}
+
+async function sharePreparedMobileDownloads() {
+  const files = _pendingMobileDownloadFiles.slice();
+  if (!_canShareDownloadedFiles(files)) {
+    showStatus(tr('download_mobile_share_failed'), 'err');
+    return;
+  }
+  try {
+    await navigator.share({ files, title: 'FjordLens' });
+    showStatus(tr('download_mobile_shared'), 'ok');
+    closeDownloadModal({ cancelActive: false });
+  } catch (err) {
+    const cancelled = !!(err && (err.name === 'AbortError' || String(err.message || '').toLowerCase().includes('cancel')));
+    if (!cancelled) showStatus(tr('download_mobile_share_failed'), 'err');
+  }
+}
+
+function downloadPreparedMobileFilesIndividually() {
+  const files = _pendingMobileDownloadFiles.slice();
+  if (!files.length) return;
+  files.forEach((file, index) => {
+    window.setTimeout(() => {
+      _downloadFileFromBlob(file, String(file && file.name || `fjordlens_${index + 1}`));
+    }, index * 180);
+  });
+  showStatus(tr('download_mobile_fallback_started'), 'ok');
+  closeDownloadModal({ cancelActive: false });
+}
+
+function startMapperDownloadFromModal(mode) {
+  if (!isMobileDownloadDevice()) closeDownloadModal({ cancelActive: false });
+  runMapperDownload(mode);
 }
 
 function showDnsStatus(message, kind = 'ok') {
@@ -8745,7 +8990,9 @@ function renderDnsSharesList() {
     const permission = String(item.permission || 'view');
     const permissionLabel = permission === 'manage'
       ? tr('mapper_share_perm_manage')
-      : (permission === 'upload' ? tr('mapper_share_perm_upload') : tr('mapper_share_perm_view'));
+      : (permission === 'upload'
+        ? tr('mapper_share_perm_upload')
+        : (permission === 'download' ? tr('mapper_share_perm_download') : tr('mapper_share_perm_view')));
     const folder = String(item.share_name || '').trim() || `uploads/${String(item.folder_path || '')}`;
     const link = String(item.link || '');
     const linkCell = link
@@ -11941,9 +12188,11 @@ function applyUiLanguage() {
   }
   if (els.sharedEditPermission) {
     const viewOpt = els.sharedEditPermission.querySelector('option[value="view"]');
+    const downloadOpt = els.sharedEditPermission.querySelector('option[value="download"]');
     const uploadOpt = els.sharedEditPermission.querySelector('option[value="upload"]');
     const manageOpt = els.sharedEditPermission.querySelector('option[value="manage"]');
     if (viewOpt) viewOpt.textContent = tr('mapper_share_perm_view');
+    if (downloadOpt) downloadOpt.textContent = tr('mapper_share_perm_download');
     if (uploadOpt) uploadOpt.textContent = tr('mapper_share_perm_upload');
     if (manageOpt) manageOpt.textContent = tr('mapper_share_perm_manage');
   }
@@ -11963,6 +12212,23 @@ function applyUiLanguage() {
   if (logsLabel) logsLabel.textContent = tr('logs_label');
   if (els.logsStart) els.logsStart.textContent = state.logsRunning ? tr('btn_stop') : tr('btn_start');
   if (els.mainLogsClear) els.mainLogsClear.textContent = tr('btn_clear');
+
+  if (els.mapperDownloadModalTitle) els.mapperDownloadModalTitle.textContent = tr('download_modal_title');
+  if (els.mapperDownloadModalClose) {
+    els.mapperDownloadModalClose.title = tr('scan_modal_close');
+    els.mapperDownloadModalClose.setAttribute('aria-label', tr('scan_modal_close'));
+  }
+  if (els.mapperDownloadQuestion) els.mapperDownloadQuestion.textContent = tr('download_modal_question');
+  if (els.mapperDownloadDateLegend) els.mapperDownloadDateLegend.textContent = tr('download_date_legend');
+  if (els.downloadDateOriginalTitle) els.downloadDateOriginalTitle.textContent = tr('download_date_original_title');
+  if (els.downloadDateOriginalHelp) els.downloadDateOriginalHelp.textContent = tr('download_date_original_help');
+  if (els.downloadDateTodayTitle) els.downloadDateTodayTitle.textContent = tr('download_date_today_title');
+  if (els.downloadDateTodayHelp) els.downloadDateTodayHelp.textContent = tr('download_date_today_help');
+  if (els.downloadConvertedBtn) els.downloadConvertedBtn.textContent = tr('mapper_download_converted');
+  if (els.downloadOriginalBtn) els.downloadOriginalBtn.textContent = tr('mapper_download_original');
+  if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.textContent = tr('download_mobile_share');
+  if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.textContent = tr('download_mobile_fallback');
+  updateMapperDownloadHint();
 
   const profileModalTitle = document.querySelector('#profileModal h3');
   if (profileModalTitle) profileModalTitle.textContent = tr('profile_title');
@@ -12004,9 +12270,11 @@ function applyUiLanguage() {
   }
   if (els.mapperSharePermission) {
     const viewOpt = els.mapperSharePermission.querySelector('option[value="view"]');
+    const downloadOpt = els.mapperSharePermission.querySelector('option[value="download"]');
     const uploadOpt = els.mapperSharePermission.querySelector('option[value="upload"]');
     const manageOpt = els.mapperSharePermission.querySelector('option[value="manage"]');
     if (viewOpt) viewOpt.textContent = tr('mapper_share_perm_view');
+    if (downloadOpt) downloadOpt.textContent = tr('mapper_share_perm_download');
     if (uploadOpt) uploadOpt.textContent = tr('mapper_share_perm_upload');
     if (manageOpt) manageOpt.textContent = tr('mapper_share_perm_manage');
   }
@@ -14368,8 +14636,17 @@ els.mapperSelectAllBtn && els.mapperSelectAllBtn.addEventListener('click', mappe
 els.mapperClearBtn && els.mapperClearBtn.addEventListener('click', mapperClearSelection);
 els.mapperDownloadBtn && els.mapperDownloadBtn.addEventListener('click', openDownloadModal);
 els.mapperDownloadModalClose && els.mapperDownloadModalClose.addEventListener('click', closeDownloadModal);
-els.downloadConvertedBtn && els.downloadConvertedBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('converted'); });
-els.downloadOriginalBtn && els.downloadOriginalBtn.addEventListener('click', ()=>{ closeDownloadModal(); runMapperDownload('original'); });
+els.downloadConvertedBtn && els.downloadConvertedBtn.addEventListener('click', ()=>{ startMapperDownloadFromModal('converted'); });
+els.downloadOriginalBtn && els.downloadOriginalBtn.addEventListener('click', ()=>{ startMapperDownloadFromModal('original'); });
+els.mapperDownloadMobileShareBtn && els.mapperDownloadMobileShareBtn.addEventListener('click', sharePreparedMobileDownloads);
+els.mapperDownloadMobileFallbackBtn && els.mapperDownloadMobileFallbackBtn.addEventListener('click', downloadPreparedMobileFilesIndividually);
+[els.downloadDateOriginal, els.downloadDateToday].forEach((input) => {
+  if (!input) return;
+  input.addEventListener('change', () => {
+    _clearPreparedMobileDownloads();
+    updateMapperDownloadHint();
+  });
+});
 if (els.downloadTopStatusCancel) {
   els.downloadTopStatusCancel.addEventListener('click', (e) => {
     e.preventDefault();

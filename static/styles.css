@@ -3195,6 +3195,90 @@ body.detail-open .detail-panel {
   opacity: 1;
 }
 
+.download-date-options {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+.download-date-options legend {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: .9rem;
+}
+.download-date-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.download-date-option:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.download-date-option input {
+  flex: 0 0 auto;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+.download-date-option span {
+  display: grid;
+  gap: 2px;
+}
+.download-date-option strong {
+  color: var(--text);
+  font-size: .93rem;
+}
+.download-date-option small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+.download-format-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.download-format-actions .btn {
+  flex: 1 1 190px;
+}
+.download-hint {
+  margin: 9px 0 0;
+  opacity: .82;
+  line-height: 1.4;
+}
+.download-mobile-ready {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.download-mobile-ready p {
+  margin: 0 0 9px;
+  line-height: 1.4;
+}
+.download-mobile-actions .btn {
+  flex: 1 1 180px;
+}
+
+@media (max-width: 760px) {
+  .download-modal-dialog .modal-body {
+    max-height: calc(100dvh - 100px);
+    overflow-y: auto;
+  }
+  .download-format-actions,
+  .download-mobile-actions {
+    align-items: stretch;
+  }
+  .download-format-actions .btn,
+  .download-mobile-actions .btn {
+    flex-basis: 100%;
+    width: 100%;
+  }
+}
+
 .ios-upload-prep-dialog {
   width: min(520px, calc(100vw - 24px)) !important;
 }
