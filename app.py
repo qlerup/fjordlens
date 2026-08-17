@@ -65,6 +65,7 @@ CONVERT_DIR = DATA_DIR / "converted"
 _UPLOAD_DIR_ENV = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_DIR")
 UPLOAD_DIR = Path(_UPLOAD_DIR_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
+CONVERSION_WORK_DIR = Path(os.environ.get("CONVERSION_WORK_DIR", str(DATA_DIR / "conversion_work"))).resolve()
 DB_PATH = DATA_DIR / "fjordlens.db"
 INSTALL_STATE_PATH = DATA_DIR / "fjordlens.install.json"
 INSTALL_STATE_LOCK = threading.Lock()
@@ -523,6 +524,34 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
         try:
             if tmp.exists():
                 tmp.unlink()
+        except Exception:
+            pass
+
+
+def _convert_on_local_storage(src: Path, dst: Path, converter: Callable[[Path, Path], None]) -> None:
+    """Stage source and output locally, then publish the completed file to storage."""
+    CONVERSION_WORK_DIR.mkdir(parents=True, exist_ok=True)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="fjordlens-convert-", dir=str(CONVERSION_WORK_DIR)) as work_dir:
+        work_root = Path(work_dir)
+        local_src = work_root / f"source{src.suffix.lower()}"
+        local_dst = work_root / f"output{dst.suffix.lower()}"
+        shutil.copy2(src, local_src)
+        converter(local_src, local_dst)
+        if not local_dst.exists() or local_dst.stat().st_size <= 0:
+            raise RuntimeError("local conversion produced empty output")
+        _publish_local_file(local_dst, dst)
+
+
+def _publish_local_file(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    publish_tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.publish{dst.suffix}")
+    try:
+        shutil.copy2(src, publish_tmp)
+        os.replace(publish_tmp, dst)
+    finally:
+        try:
+            publish_tmp.unlink(missing_ok=True)
         except Exception:
             pass
 try:
@@ -2068,6 +2097,7 @@ def ensure_dirs() -> None:
     CONVERT_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    CONVERSION_WORK_DIR.mkdir(parents=True, exist_ok=True)
     PHOTOFRAME_UPDATE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     try:
         # Canonical upload subfolders used by the app
@@ -2704,26 +2734,28 @@ def _postprocess_uploaded_rels(
                                 break
                             j += 1
                     if extl in {".heic", ".heif"}:
-                        with Image.open(disk_path) as himg:
-                            try:
-                                himg = ImageOps.exif_transpose(himg)
-                            except Exception:
-                                pass
-                            rgb = himg.convert("RGB")
-                            exif_bytes = None
-                            try:
-                                exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
-                            except Exception:
+                        def _convert_heic(local_src: Path, local_dst: Path) -> None:
+                            with Image.open(local_src) as himg:
+                                try:
+                                    himg = ImageOps.exif_transpose(himg)
+                                except Exception:
+                                    pass
+                                rgb = himg.convert("RGB")
                                 exif_bytes = None
-                            save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
-                            if exif_bytes:
-                                save_kwargs["exif"] = exif_bytes
-                            rgb.save(new_path, **save_kwargs)
+                                try:
+                                    exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                                except Exception:
+                                    exif_bytes = None
+                                save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                                if exif_bytes:
+                                    save_kwargs["exif"] = exif_bytes
+                                rgb.save(local_dst, **save_kwargs)
+
+                        _convert_on_local_storage(disk_path, new_path, _convert_heic)
                     elif extl in RAW_EXTS:
-                        # RAW â†’ JPEG via rawpy with ffmpeg fallback
-                        _raw_to_jpeg(disk_path, new_path)
+                        _convert_on_local_storage(disk_path, new_path, _raw_to_jpeg)
                     else:
-                        _mov_to_mp4(disk_path, new_path)
+                        _convert_on_local_storage(disk_path, new_path, _mov_to_mp4)
                     # Preserve timestamps
                     try:
                         st = disk_path.stat()
@@ -2786,8 +2818,15 @@ def _postprocess_uploaded_rels(
                         else:
                             keep = mov_keep_originals_enabled()
                             delete_event = "mov_original_deleted"
-                        if not keep:
-                            orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
+                        orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
+                        orig_rel_normalized = str(orig_rel_for_convert).replace("\\", "/")
+                        if keep and orig_rel_normalized.startswith("uploads/"):
+                            final_orig_path = UPLOAD_DIR / orig_rel_normalized[len("uploads/"):]
+                            if orig_path != final_orig_path:
+                                _publish_local_file(orig_path, final_orig_path)
+                                orig_path.unlink(missing_ok=True)
+                                log_event("original_published", rel_path=orig_rel_for_convert)
+                        elif not keep:
                             orig_path.unlink(missing_ok=True)
                             log_event(delete_event, rel_path=orig_rel_for_convert)
                     except Exception:
@@ -3690,20 +3729,31 @@ def _commit_uploaded_file(
     stem = Path(name).stem
     suffix = Path(name).suffix
     i = 1
-    while target.exists():
+    should_stage_conversion = (
+        str(rel_prefix or "").replace("\\", "/").startswith("uploads/originals/")
+        and _upload_extension_needs_conversion(ext)
+    )
+    while target.exists() or (
+        should_stage_conversion
+        and _staged_upload_path(
+            f"{rel_prefix}{f'{subdir}/' if subdir else ''}{target.name}"
+        ).exists()
+    ):
         target = target_dir / f"{stem}_{i}{suffix}"
         i += 1
 
-    shutil.move(str(source_path), str(target))
+    rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
+    rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
+    committed_path = _staged_upload_path(rel) if should_stage_conversion else target
+    committed_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source_path), str(committed_path))
     try:
         if last_modified_ms:
             ts = float(last_modified_ms) / 1000.0
-            os.utime(target, (ts, ts))
+            os.utime(committed_path, (ts, ts))
     except Exception:
         pass
 
-    rel_leaf = f"{subdir}/{target.name}" if subdir else target.name
-    rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
     try:
         _queue_uploaded_rel(uploaded_by, rel)
     except Exception as e:
@@ -3720,7 +3770,7 @@ def _commit_uploaded_file(
                 pass
 
     # Make file visible in UI immediately; all heavy work comes from postprocess.
-    _upsert_uploaded_stub(rel, target, uploaded_by)
+    _upsert_uploaded_stub(rel, committed_path, uploaded_by)
     return (True, target.name, None)
 
 
@@ -5340,6 +5390,24 @@ def _is_upload_extension_allowed(ext: Any, allowed_exts: Optional[set[str]] = No
     return clean in allowed
 
 
+def _upload_extension_needs_conversion(ext: Any) -> bool:
+    clean = _normalize_upload_extension(ext)
+    if clean in {".heic", ".heif"}:
+        return heic_convert_on_upload_enabled()
+    if clean == ".mov":
+        return mov_convert_on_upload_enabled()
+    if clean in RAW_EXTS:
+        return raw_convert_on_upload_enabled()
+    return False
+
+
+def _staged_upload_path(rel_path: str) -> Path:
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+    leaf = rel[len("uploads/"):] if rel.startswith("uploads/") else rel
+    safe_parts = [part for part in Path(leaf).parts if part not in {"", ".", ".."}]
+    return CONVERSION_WORK_DIR / "pending" / Path(*safe_parts)
+
+
 def _blocked_upload_file_error(filename: str, ext: Any = None) -> str:
     clean = _normalize_upload_extension(ext if ext is not None else filename)
     label = clean or "uden filtype"
@@ -5354,6 +5422,9 @@ def library_source_enabled() -> bool:
 def _disk_path_from_rel_path(rel_path: str) -> Path:
     rel = str(rel_path or "")
     if rel.startswith("uploads/"):
+        staged = _staged_upload_path(rel)
+        if staged.exists():
+            return staged
         leaf = rel.split("/", 1)[1] if "/" in rel else ""
         return UPLOAD_DIR / leaf
     return PHOTO_DIR / rel

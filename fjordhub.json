@@ -80,7 +80,7 @@
           "label": "Data-mappe (database, cache, hemmeligheder)",
           "type": "path",
           "default": "/opt/fjordlens-data/appdata",
-          "hint": "Absolut sti på serveren. Bør ligge på lokal disk."
+          "hint": "Absolut sti på serveren. Skal ligge på lokal disk; uploadkonvertering bruger denne placering som arbejdsområde før færdige filer flyttes til upload-lageret."
         },
         {
           "key": "UPLOADS_HOST_DIR",

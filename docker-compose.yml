@@ -21,6 +21,7 @@ services:
       DATA_DIR: /data
       UPLOAD_DIR: /uploads
       THUMB_DIR: /thumbs
+      CONVERSION_WORK_DIR: /data/conversion_work
       AI_URL: http://fjordlens-ai:8000
       AI_DESC_MODEL: ${AI_DESC_MODEL:-qwen}
       AI_DESC_REQUEST_TIMEOUT_SEC: ${AI_DESC_REQUEST_TIMEOUT_SEC:-120}
