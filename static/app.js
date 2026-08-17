@@ -7698,7 +7698,7 @@ function uploadEtaLabel(uploadedBytes) {
   const rate = Math.max(0, Number(uploadUiState.transferRateBps || 0));
   const sampleCount = Array.isArray(uploadUiState.transferSamples) ? uploadUiState.transferSamples.length : 0;
   const estimateAgeMs = Math.max(0, now - Number(uploadUiState.transferStartedAt || now));
-  if (rate < 1024 || sampleCount < 2 || estimateAgeMs < 2500) return 'tid tilbage: beregner...';
+  if (rate < 1024 || sampleCount < 2 || estimateAgeMs < 2500) return 'tid tilbage:\u00A0beregner...';
   let etaSeconds = remaining / rate;
   const previousEta = Math.max(0, Number(uploadUiState.transferEtaSeconds || 0));
   const previousAt = Number(uploadUiState.transferLastEtaAt || 0);
@@ -7711,7 +7711,7 @@ function uploadEtaLabel(uploadedBytes) {
   }
   uploadUiState.transferEtaSeconds = etaSeconds;
   uploadUiState.transferLastEtaAt = now;
-  return `tid tilbage: ${formatUploadEta(etaSeconds)}`;
+  return `tid tilbage:\u00A0${formatUploadEta(etaSeconds)}`;
 }
 
 function setUploadStopButtonState() {
@@ -7803,7 +7803,7 @@ function renderUploadMonitor() {
           : uploadUiState.currentPhaseLabel;
         const topLabel = isPostprocess
           ? `${phaseLabel} · ${stageTxt} · ${activePct}%`
-          : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%${etaTxt ? ` · ${etaTxt.replace('tid tilbage: ', '')}` : ''}`;
+          : `Uploader · ${visibleProcessed}/${uploadUiState.totalFiles} · ${activePct}%${etaTxt ? ` · ${etaTxt.replace(/^tid tilbage:\s*/i, '')}` : ''}`;
         els.uploadTopStatus.classList.remove('hidden');
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
@@ -7958,8 +7958,8 @@ function addUploadMonitorItem(name, ok, detail = '', key = null, progressPct = n
   li.className = 'upload-monitor-item';
   const safeName = String(name || '').trim() || '(ukendt fil)';
   const itemKey = String(key || _uploadItemKey(safeName));
-  const statusClass = ok ? 'ok' : 'err';
-  const statusText = ok ? 'OK' : 'Fejl';
+  const statusClass = ok === null ? 'work' : (ok ? 'ok' : 'err');
+  const statusText = ok === null ? 'Arbejder…' : (ok ? 'OK' : 'Fejl');
   li.innerHTML = `
     <div class="upload-monitor-item-top">
       <span class="upload-monitor-item-name" title="${escapeHtml(safeName)}">${escapeHtml(safeName)}</span>
