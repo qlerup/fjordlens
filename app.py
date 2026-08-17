@@ -5427,6 +5427,46 @@ def _staged_upload_path(rel_path: str) -> Path:
     return CONVERSION_WORK_DIR / "pending" / Path(*safe_parts)
 
 
+def _cleanup_staged_upload_folders(subdirs: list[str]) -> Dict[str, int]:
+    cleaned = [_normalize_upload_subdir(value) for value in (subdirs or []) if str(value or "").strip()]
+    removed_files = 0
+    removed_queue_items = 0
+    pending_root = (CONVERSION_WORK_DIR / "pending").resolve()
+    for subdir in cleaned:
+        for rel_prefix in ("uploads/originals", "uploads/converted", "uploads"):
+            target = _staged_upload_path(f"{rel_prefix}/{subdir}").resolve()
+            try:
+                target.relative_to(pending_root)
+            except Exception:
+                continue
+            if target.exists() and target.is_dir():
+                try:
+                    removed_files += sum(1 for path in target.rglob("*") if path.is_file())
+                    shutil.rmtree(target)
+                except Exception:
+                    pass
+
+    rel_prefixes = [
+        f"{storage_prefix}/{subdir}"
+        for subdir in cleaned
+        for storage_prefix in ("uploads/originals", "uploads/converted", "uploads")
+    ]
+    with UPLOAD_PENDING_LOCK:
+        for user, rels in list(UPLOAD_PENDING_BY_USER.items()):
+            kept: list[str] = []
+            for rel in rels or []:
+                normalized = str(rel or "").replace("\\", "/").rstrip("/")
+                if any(normalized == prefix or normalized.startswith(prefix + "/") for prefix in rel_prefixes):
+                    removed_queue_items += 1
+                else:
+                    kept.append(rel)
+            if kept:
+                UPLOAD_PENDING_BY_USER[user] = kept
+            else:
+                UPLOAD_PENDING_BY_USER.pop(user, None)
+    return {"files": removed_files, "queue_items": removed_queue_items}
+
+
 def _blocked_upload_file_error(filename: str, ext: Any = None) -> str:
     clean = _normalize_upload_extension(ext if ext is not None else filename)
     label = clean or "uden filtype"
@@ -19962,6 +20002,7 @@ def api_settings_upload_folder_delete():
 
     # Purge index rows for folders we deleted and for stale DB-only folders that no longer exist on disk.
     cleanup_folders = sorted(set(deleted + missing), key=lambda x: (x.count("/"), x.lower()))
+    staged_cleanup = _cleanup_staged_upload_folders(cleanup_folders)
     rel_prefixes = [f"{rel_prefix}{d}" if rel_prefix else d for d in cleanup_folders]
     if destination == UPLOAD_DEST_UPLOADS:
         rel_prefixes.extend([f"uploads/converted/{d}" for d in cleanup_folders])
@@ -19984,6 +20025,8 @@ def api_settings_upload_folder_delete():
     payload["removed_photos"] = removed.get("photos", 0)
     payload["removed_faces"] = removed.get("faces", 0)
     payload["removed_thumbs"] = removed.get("thumbs", 0)
+    payload["removed_staged_files"] = staged_cleanup.get("files", 0)
+    payload["removed_pending_queue_items"] = staged_cleanup.get("queue_items", 0)
     payload["preview_folders"] = sorted(
         set((removed.get("preview_folders") or []) + [k for folder in cleanup_folders for k in _folder_preview_ancestor_keys(folder)] + cleanup_folders),
         key=lambda x: (str(x).count("/"), str(x).lower()),

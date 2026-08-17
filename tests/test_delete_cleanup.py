@@ -26,12 +26,16 @@ class DeleteCleanupTests(unittest.TestCase):
             "UPLOAD_DIR": fjordlens.UPLOAD_DIR,
             "THUMB_DIR": fjordlens.THUMB_DIR,
             "CONVERT_DIR": fjordlens.CONVERT_DIR,
+            "CONVERSION_WORK_DIR": fjordlens.CONVERSION_WORK_DIR,
         }
         fjordlens.DB_PATH = root / "fjordlens.db"
         fjordlens.PHOTO_DIR = self.originals
         fjordlens.UPLOAD_DIR = self.uploads
         fjordlens.THUMB_DIR = self.thumbs
         fjordlens.CONVERT_DIR = self.converted
+        fjordlens.CONVERSION_WORK_DIR = root / "conversion_work"
+        with fjordlens.UPLOAD_PENDING_LOCK:
+            fjordlens.UPLOAD_PENDING_BY_USER.clear()
         fjordlens.init_db()
 
     def tearDown(self):
@@ -123,6 +127,30 @@ class DeleteCleanupTests(unittest.TestCase):
         self.assertTrue(thumb_path.exists(), "referenced photo thumb must survive cleanup")
         self.assertFalse(legacy.exists(), "legacy face thumb should be cleaned up")
         self.assertFalse(stale_version.exists(), "stale-version face thumb should be cleaned up")
+
+    def test_folder_cleanup_removes_local_staging_and_matching_queue_entries(self):
+        staged_deleted = fjordlens._staged_upload_path("uploads/originals/Bryllup (2026)/clip.mov")
+        staged_kept = fjordlens._staged_upload_path("uploads/originals/Anden mappe/keep.mov")
+        staged_deleted.parent.mkdir(parents=True, exist_ok=True)
+        staged_kept.parent.mkdir(parents=True, exist_ok=True)
+        staged_deleted.write_bytes(b"delete")
+        staged_kept.write_bytes(b"keep")
+        with fjordlens.UPLOAD_PENDING_LOCK:
+            fjordlens.UPLOAD_PENDING_BY_USER["Anna"] = [
+                "uploads/originals/Bryllup (2026)/clip.mov",
+                "uploads/originals/Anden mappe/keep.mov",
+            ]
+
+        result = fjordlens._cleanup_staged_upload_folders(["Bryllup (2026)"])
+
+        self.assertEqual(result, {"files": 1, "queue_items": 1})
+        self.assertFalse(staged_deleted.exists())
+        self.assertTrue(staged_kept.exists())
+        with fjordlens.UPLOAD_PENDING_LOCK:
+            self.assertEqual(
+                fjordlens.UPLOAD_PENDING_BY_USER["Anna"],
+                ["uploads/originals/Anden mappe/keep.mov"],
+            )
 
 
 if __name__ == "__main__":
