@@ -211,6 +211,13 @@
   viWeather: document.getElementById("viWeather"),
   viWeatherBtn: document.getElementById("viWeatherBtn"),
   detailUploader: document.getElementById("detailUploader"),
+  editUploaderBtn: document.getElementById("editUploaderBtn"),
+  uploaderEditWrap: document.getElementById("uploaderEditWrap"),
+  uploaderInput: document.getElementById("uploaderInput"),
+  uploaderSaveBtn: document.getElementById("uploaderSaveBtn"),
+  uploaderCancelBtn: document.getElementById("uploaderCancelBtn"),
+  viUploader: document.getElementById("viUploader"),
+  viEditUploaderBtn: document.getElementById("viEditUploaderBtn"),
   detailAiCaption: document.getElementById("detailAiCaption"),
   detailAiTags: document.getElementById("detailAiTags"),
   similarBtn: document.getElementById("similarBtn"),
@@ -1565,6 +1572,8 @@ const I18N = {
     update_error: 'Fejl ved opdatering',
     gps_update_failed: 'Kunne ikke opdatere GPS',
     gps_updated: 'GPS opdateret',
+    uploader_update_failed: 'Kunne ikke opdatere uploader',
+    uploader_updated: 'Uploader opdateret',
     weather_fetching: 'Henter vejr...',
     weather_fetch_failed: 'Vejret kan ikke hentes',
     weather_ready_to_fetch: 'Klar til hentning',
@@ -2361,6 +2370,8 @@ const I18N = {
     update_error: 'Update error',
     gps_update_failed: 'Could not update GPS',
     gps_updated: 'GPS updated',
+    uploader_update_failed: 'Could not update uploader',
+    uploader_updated: 'Uploader updated',
     weather_fetching: 'Fetching weather...',
     weather_fetch_failed: 'Weather could not be fetched',
     weather_ready_to_fetch: 'Ready to fetch',
@@ -5079,6 +5090,7 @@ function setDetail(item) {
   try {
     const uploadedBy = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
     if (els.detailUploader) els.detailUploader.textContent = uploadedBy || '-';
+    if (els.uploaderInput) els.uploaderInput.value = uploadedBy;
   } catch {}
   if (item.gps_lat != null && item.gps_lon != null) {
     els.detailGps.textContent = `${Number(item.gps_lat).toFixed(5)}, ${Number(item.gps_lon).toFixed(5)}`;
@@ -14058,6 +14070,66 @@ if (els.dateSaveBtn) {
   });
 }
 
+// Uploader (uploaded_by) edit interactions — admin only
+if (els.editUploaderBtn) {
+  els.editUploaderBtn.addEventListener('click', () => {
+    if (els.uploaderEditWrap) {
+      els.uploaderEditWrap.classList.remove('hidden');
+      els.uploaderEditWrap.classList.add('floating');
+      try {
+        const r = els.editUploaderBtn.getBoundingClientRect();
+        const w = Math.min(420, Math.max(300, window.innerWidth - 24));
+        let left = r.right - w;
+        const margin = 12;
+        if (left < margin) left = margin;
+        if (left + w > window.innerWidth - margin) left = window.innerWidth - margin - w;
+        els.uploaderEditWrap.style.width = w + 'px';
+        els.uploaderEditWrap.style.left = left + 'px';
+        els.uploaderEditWrap.style.top = (r.bottom + 8) + 'px';
+        els.uploaderEditWrap.style.zIndex = '100000';
+      } catch {}
+      try { els.uploaderInput && els.uploaderInput.focus(); } catch {}
+    }
+    try {
+      const row = els.editUploaderBtn.closest('.detail-row');
+      if (row) row.classList.add('popover-open');
+    } catch {}
+  });
+}
+if (els.uploaderCancelBtn) {
+  els.uploaderCancelBtn.addEventListener('click', () => {
+    if (els.uploaderEditWrap) { els.uploaderEditWrap.classList.add('hidden'); els.uploaderEditWrap.classList.remove('floating'); els.uploaderEditWrap.style.left=''; els.uploaderEditWrap.style.top=''; }
+    try {
+      const row = els.editUploaderBtn.closest('.detail-row');
+      if (row) row.classList.remove('popover-open');
+    } catch {}
+  });
+}
+if (els.uploaderSaveBtn) {
+  els.uploaderSaveBtn.addEventListener('click', async () => {
+    if (!state.selectedId || !els.uploaderInput) return;
+    const v = els.uploaderInput.value;
+    try {
+      const res = await fetch(`/api/photos/${state.selectedId}/uploader`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ uploaded_by: v })});
+      const data = await res.json();
+      if (!res.ok || !data.ok) { showStatus(data.error || tr('uploader_update_failed'), 'err'); return; }
+      const item = data.item;
+      const idx = state.items.findIndex(i => i.id === item.id);
+      if (idx >= 0) state.items[idx] = item;
+      showStatus(tr('uploader_updated'), 'ok');
+      renderGrid();
+      setDetail(item);
+      if (els.uploaderEditWrap) { els.uploaderEditWrap.classList.add('hidden'); els.uploaderEditWrap.classList.remove('floating'); els.uploaderEditWrap.style.left=''; els.uploaderEditWrap.style.top=''; }
+      try {
+        const row = els.editUploaderBtn.closest('.detail-row');
+        if (row) row.classList.remove('popover-open');
+      } catch {}
+    } catch (e) {
+      showStatus(tr('update_error'), 'err');
+    }
+  });
+}
+
 function selectedWeatherItem() {
   const sid = Number(state.selectedId || 0);
   if (!sid) return null;
@@ -15699,6 +15771,9 @@ const viEditGpsBtn = document.getElementById('viEditGpsBtn');
 if (viEditGpsBtn) {
   viEditGpsBtn.addEventListener('click', ()=>{ try { closeViewer(); } catch{}; try { els.editGpsBtn && els.editGpsBtn.click(); } catch{} });
 }
+if (els.viEditUploaderBtn) {
+  els.viEditUploaderBtn.addEventListener('click', ()=>{ try { closeViewer(); } catch{}; try { els.editUploaderBtn && els.editUploaderBtn.click(); } catch{} });
+}
 
 // Viewer actions: favorite + similar
 const viFavoriteBtn = document.getElementById('viFavoriteBtn');
@@ -16483,6 +16558,10 @@ async function startExistingConversion(type, btn = null) {
       if (settingsBtn) settingsBtn.style.display = 'none';
       document.querySelectorAll('.mobile-nav-item[data-view="settings"]').forEach(el=>{ el.style.display = 'none'; });
       if (state.view === 'settings') state.view = 'timeline';
+    }
+    if (role === 'admin') {
+      if (els.editUploaderBtn) els.editUploaderBtn.classList.remove('hidden');
+      if (els.viEditUploaderBtn) els.viEditUploaderBtn.classList.remove('hidden');
     }
   } catch {}
 })();

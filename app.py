@@ -18864,6 +18864,29 @@ def api_update_gps(photo_id: int):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/photos/<int:photo_id>/uploader", methods=["POST"])
+@login_required
+def api_update_uploader(photo_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    try:
+        data = request.get_json(silent=True) or {}
+        uploaded_by = _sanitize_share_visitor_name(data.get("uploaded_by") or "")
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id FROM photos WHERE id=?", (photo_id,)).fetchone()
+            if not row:
+                return jsonify({"ok": False, "error": "Not found"}), 404
+            conn.execute(
+                "UPDATE photos SET uploaded_by=? WHERE id=?",
+                (uploaded_by or None, photo_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        return jsonify({"ok": True, "item": row_to_public(row)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/photos/<int:photo_id>/favorite", methods=["POST"])
 def api_toggle_favorite(photo_id: int):
     with closing(get_conn()) as conn:

@@ -777,7 +777,19 @@
                 <button id="detailWeatherBtn" class="icon-btn tiny" title="Hent vejr">↻</button>
               </div>
             </div>
-            <div class="detail-row"><span>Uploadet af</span><strong id="detailUploader">-</strong></div>
+            <div class="detail-row"><span>Uploadet af</span>
+              <div class="detail-val">
+                <strong id="detailUploader">-</strong>
+                <button id="editUploaderBtn" class="icon-btn tiny hidden" title="Rediger uploader">✎</button>
+              </div>
+              <div id="uploaderEditWrap" class="date-popover hidden">
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <input id="uploaderInput" type="text" class="input-number" style="flex:1; min-width: 220px;" placeholder="Navn" maxlength="80" />
+                  <button id="uploaderSaveBtn" class="btn small primary">Gem</button>
+                  <button id="uploaderCancelBtn" class="btn small">Luk</button>
+                </div>
+              </div>
+            </div>
           <div class="detail-row detail-row-multiline"><span>AI beskrivelse</span><strong id="detailAiCaption">-</strong></div>
           <div class="detail-row detail-row-multiline"><span>AI tags</span><strong id="detailAiTags">-</strong></div>
         </div>
@@ -874,7 +886,12 @@
               <button id="viWeatherBtn" class="icon-btn tiny" title="Hent vejr">↻</button>
             </div>
           </div>
-          <div class="detail-row"><span>Uploadet af</span><strong id="viUploader">—</strong></div>
+          <div class="detail-row"><span>Uploadet af</span>
+            <div class="detail-val">
+              <strong id="viUploader">—</strong>
+              <button id="viEditUploaderBtn" class="icon-btn tiny hidden" title="Rediger uploader">✎</button>
+            </div>
+          </div>
           <div class="detail-row detail-row-multiline"><span>AI beskrivelse</span><strong id="viCaption">—</strong></div>
           <div class="detail-row detail-row-multiline"><span>AI tags</span><strong id="viTags">—</strong></div>
         </div>
