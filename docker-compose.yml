@@ -14,7 +14,7 @@ services:
       --threads 8
       --bind 0.0.0.0:8080
       --timeout 120 --graceful-timeout 30 --keep-alive 5
-      --max-requests 1000 --max-requests-jitter 100
+      --max-requests ${GUNICORN_MAX_REQUESTS:-0} --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-0}
       --access-logfile - --log-level ${GUNICORN_LOG_LEVEL:-info}
     environment:
       PHOTO_DIR: /photos

@@ -2268,6 +2268,7 @@ def _ensure_upload_postprocess_running(
         UPLOAD_POSTPROCESS_BY_USER[user] = st
 
     rels = _pop_uploaded_rels(user)
+    rels = _merge_recovered_uploaded_rels(user, rels)
     if not rels:
         _set_upload_postprocess_state(
             user,
@@ -2544,6 +2545,24 @@ def _recover_uploaded_rels_missing_postprocess(uploaded_by: str, limit: int = 50
         return rels
     except Exception:
         return []
+
+
+def _merge_recovered_uploaded_rels(uploaded_by: str, rel_paths: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for rel in list(rel_paths or []) + _recover_uploaded_rels_missing_postprocess(uploaded_by, limit=20000):
+        key = str(rel or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(key)
+    recovered_count = max(0, len(merged) - len({str(rel or "").strip() for rel in (rel_paths or []) if str(rel or "").strip()}))
+    if recovered_count:
+        try:
+            log_event("upload_postprocess_recovered", uploaded_by=uploaded_by, files=recovered_count, total=len(merged))
+        except Exception:
+            pass
+    return merged
 
 
 def _uploaded_by_for_rel(rel_path: str, fallback: str = "") -> str:
@@ -14868,8 +14887,7 @@ def api_share_upload_postprocess(token: str):
             "process_status": running_state.get("process_status") if isinstance(running_state, dict) else None,
         })
 
-    if not rels:
-        rels = _recover_uploaded_rels_missing_postprocess(uploaded_by)
+    rels = _merge_recovered_uploaded_rels(uploaded_by, rels)
 
     if not rels:
         state = _get_upload_postprocess_state(uploaded_by)
@@ -21510,8 +21528,7 @@ def api_upload_postprocess():
             pending_count = len(UPLOAD_PENDING_BY_USER.get((uploaded_by or "").strip() or "__unknown__", []))
         return jsonify({"ok": True, "started": False, "running": True, "pending": pending_count, "workflow_mode": running_mode or workflow_mode, "process_status": (running_state.get("process_status") if isinstance(running_state, dict) else None)})
 
-    if not rels:
-        rels = _recover_uploaded_rels_missing_postprocess(uploaded_by)
+    rels = _merge_recovered_uploaded_rels(uploaded_by, rels)
 
     if not rels:
         state = _get_upload_postprocess_state(uploaded_by)

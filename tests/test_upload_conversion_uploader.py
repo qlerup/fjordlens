@@ -30,6 +30,8 @@ class UploadConversionUploaderTests(unittest.TestCase):
         fjordlens.DATA_DIR.mkdir(parents=True, exist_ok=True)
         fjordlens.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         fjordlens.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        with fjordlens.UPLOAD_PENDING_LOCK:
+            fjordlens.UPLOAD_PENDING_BY_USER.clear()
         fjordlens.init_db()
 
     def tearDown(self):
@@ -208,6 +210,21 @@ class UploadConversionUploaderTests(unittest.TestCase):
             b"converted video",
         )
         self.assertFalse(fjordlens._staged_upload_path(rel).exists())
+
+    def test_recovery_merges_database_stubs_with_surviving_memory_queue(self):
+        first = fjordlens.UPLOAD_DIR / "originals" / "first.jpeg"
+        second = fjordlens.UPLOAD_DIR / "originals" / "second.jpeg"
+        first.parent.mkdir(parents=True, exist_ok=True)
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        first_rel = "uploads/originals/first.jpeg"
+        second_rel = "uploads/originals/second.jpeg"
+        fjordlens._upsert_uploaded_stub(first_rel, first, "Anna")
+        fjordlens._upsert_uploaded_stub(second_rel, second, "Anna")
+
+        merged = fjordlens._merge_recovered_uploaded_rels("Anna", [second_rel])
+
+        self.assertEqual(merged, [second_rel, first_rel])
 
 
 if __name__ == "__main__":
