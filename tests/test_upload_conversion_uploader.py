@@ -107,6 +107,30 @@ class UploadConversionUploaderTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["uploaded_by"], "Anna")
 
+    def test_disk_sync_does_not_claim_system_uploaded_file_after_queue_handoff(self):
+        source = fjordlens.UPLOAD_DIR / "camera.jpg"
+        source.write_bytes(b"uploaded through FjordLens")
+        rel = "uploads/camera.jpg"
+        fjordlens._upsert_uploaded_stub(rel, source, "Anna")
+
+        with fjordlens.UPLOAD_PENDING_LOCK:
+            fjordlens.UPLOAD_PENDING_BY_USER.clear()
+
+        with (
+            patch.object(fjordlens, "UPLOAD_FOLDER_SYNC_SETTLE_SEC", 0),
+            patch.object(fjordlens, "UPLOAD_FOLDER_SYNC_TTL_SEC", 0),
+            patch.object(fjordlens, "_start_direct_upload_postprocess") as start_direct,
+        ):
+            result = fjordlens._sync_upload_folder_from_disk(
+                "",
+                recursive=False,
+                queue_postprocess=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["postprocess_queued"], 0)
+        start_direct.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11508,7 +11508,7 @@ def _existing_photo_rows_for_rels(rel_paths: list[str]) -> dict[str, sqlite3.Row
             chunk = cleaned[i : i + 500]
             placeholders = ",".join(["?"] * len(chunk))
             rows = conn.execute(
-                f"SELECT rel_path, modified_fs, file_size, thumb_name, checksum_sha256 FROM photos WHERE rel_path IN ({placeholders})",
+                f"SELECT rel_path, modified_fs, file_size, thumb_name, checksum_sha256, uploaded_by FROM photos WHERE rel_path IN ({placeholders})",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -11867,6 +11867,9 @@ def _sync_upload_folder_from_disk(
             if rel in pending_upload_rels or rel in direct_active_rels:
                 pending_uploads += 1
                 continue
+            if prev and str(prev["uploaded_by"] or "").strip():
+                unchanged += 1
+                continue
             if not _photo_row_needs_disk_sync(prev, stat):
                 unchanged += 1
                 if _upload_rel_needs_postprocess_conversion(rel):
@@ -11880,7 +11883,7 @@ def _sync_upload_folder_from_disk(
         postprocess_queued_count = 0
         if queue_postprocess:
             postprocess_candidates = discovered_rels + postprocess_rels
-            if _start_direct_upload_postprocess(postprocess_candidates):
+            if postprocess_candidates and _start_direct_upload_postprocess(postprocess_candidates):
                 postprocess_queued_count = len(set(postprocess_candidates))
 
         try:
