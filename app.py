@@ -5890,10 +5890,14 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
             except Exception:
                 continue
             thumb_name = str(r["thumb_name"] or "").strip()
-            if not thumb_name or not (THUMB_DIR / thumb_name).exists():
-                continue
+            has_real_thumb = bool(thumb_name) and (THUMB_DIR / thumb_name).exists()
             pub = row_to_public(r)
-            url = pub.get("thumb_url")
+            if has_real_thumb:
+                url = pub.get("thumb_url")
+            else:
+                # Fallback keeps Mapper folder previews visible while background
+                # postprocess catches up and generates real thumbnails.
+                url = pub.get("view_url") or pub.get("original_url") or pub.get("download_url")
         except Exception:
             url = None
         if not url or url in seen:
@@ -6101,7 +6105,9 @@ def _folder_preview_urls_are_current(folder_key: str, urls: Any) -> bool:
         return False
     thumb_names = [_folder_preview_thumb_name_from_url(u) for u in clean]
     if any(not tn for tn in thumb_names):
-        return False
+        # Backward/compat mode: allow non-thumb preview URLs (view/original/download)
+        # to remain valid so folder previews do not vanish when thumbs are missing.
+        return True
     if any(not (THUMB_DIR / tn).exists() for tn in thumb_names):
         return False
     placeholders = ",".join(["?"] * len(set(thumb_names)))
