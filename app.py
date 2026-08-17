@@ -2650,6 +2650,15 @@ def _postprocess_uploaded_rels(
         # Optional: convert HEIC/HEIF/RAW to JPEG and MOV to MP4.
         try:
             if needs_conversion and disk_path.exists():
+                try:
+                    log_event(
+                        "convert_start",
+                        rel_path=orig_rel_for_convert,
+                        ext=extl,
+                        workflow_mode=mode,
+                    )
+                except Exception:
+                    pass
                 # Announce explicit converting phase in UI
                 _emit_progress({
                     "phase": "converting",
@@ -2755,7 +2764,14 @@ def _postprocess_uploaded_rels(
                             event_name = "raw_converted"
                         else:
                             event_name = "mov_converted"
-                        log_event(event_name, rel_path=rel)
+                        log_event(
+                            event_name,
+                            rel_path=rel,
+                            from_rel=orig_rel_for_convert,
+                            from_ext=extl,
+                            to_ext=conversion_to_ext,
+                            workflow_mode=mode,
+                        )
                     except Exception:
                         pass
                     heic_converted_count += 1
@@ -2792,6 +2808,10 @@ def _postprocess_uploaded_rels(
             _pause_between_items()
             continue
         try:
+            try:
+                log_event("metadata_extract_start", rel_path=rel, workflow_mode=mode)
+            except Exception:
+                pass
             meta = extract_metadata(disk_path, rel, generate_thumb=False)
             if conversion_from_rel and conversion_to_rel:
                 _attach_conversion_metadata(
@@ -2816,6 +2836,10 @@ def _postprocess_uploaded_rels(
             indexed_ok.append(rel)
             try:
                 log_event("upload_indexed", rel_path=rel, width=meta.get("width"), height=meta.get("height"), has_gps=bool(meta.get("gps_lat") and meta.get("gps_lon")))
+            except Exception:
+                pass
+            try:
+                log_event("metadata_extract_done", rel_path=rel, workflow_mode=mode)
             except Exception:
                 pass
             # Emit progress after finishing this item
@@ -17384,6 +17408,10 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
 
 def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
     try:
+        try:
+            log_event("ai_embed_start", rel_path=rel_path, source="upload")
+        except Exception:
+            pass
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, embedding_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
@@ -17545,6 +17573,10 @@ def _describe_missing_photos(stop_event=None, include_existing: bool = False) ->
 
 def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
     try:
+        try:
+            log_event("ai_desc_start", rel_path=rel_path, source="upload")
+        except Exception:
+            pass
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, ai_desc_tags, ai_desc_caption FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
@@ -21217,11 +21249,24 @@ def api_upload_tus_file(upload_id: str):
                 pass
             if ok:
                 try:
+                    try:
+                        saved_path = str((target_dir / saved_name)) if saved_name else None
+                    except Exception:
+                        saved_path = None
+                    log_event(
+                        "upload_saved",
+                        filename=filename,
+                        saved_name=saved_name,
+                        path=saved_path,
+                        transfer="tus",
+                    )
+                    log_event("upload_file_done", filename=filename, transfer="tus", status="ok")
                     log_event("upload_done", saved=1, errors=0)
                 except Exception:
                     pass
             else:
                 try:
+                    log_event("upload_file_done", filename=filename, transfer="tus", status="error", error=err)
                     log_event("error", filename=filename, error=err)
                 except Exception:
                     pass
@@ -21309,6 +21354,10 @@ def api_upload():
             name = secure_filename(f.filename or "")
             if not name:
                 continue
+            try:
+                log_event("upload_file_start", filename=name, transfer="multipart", destination=destination, subdir=subdir)
+            except Exception:
+                pass
             ext = Path(name).suffix.lower()
             if not _is_upload_extension_allowed(ext, allowed_upload_exts):
                 errors.append(_blocked_upload_file_error(name, ext))
@@ -21333,8 +21382,12 @@ def api_upload():
                 saved.append(saved_name)
                 try: log_event("upload_saved", filename=name, saved_name=saved_name, path=str(target_dir / saved_name))
                 except Exception: pass
+                try: log_event("upload_file_done", filename=name, transfer="multipart", status="ok")
+                except Exception: pass
             else:
                 errors.append(err or f"Commit failed: {name}")
+                try: log_event("upload_file_done", filename=name, transfer="multipart", status="error", error=err)
+                except Exception: pass
                 try:
                     if tmp_path and tmp_path.exists():
                         tmp_path.unlink(missing_ok=True)
@@ -21342,6 +21395,8 @@ def api_upload():
                     pass
         except Exception as e:
             errors.append(str(e))
+            try: log_event("upload_file_done", filename=(f.filename if f else None), transfer="multipart", status="error", error=str(e))
+            except Exception: pass
             try: log_event("error", filename=(f.filename if f else None), error=str(e))
             except Exception: pass
             try:

@@ -18148,6 +18148,9 @@ async function pollLogs() {
       for (const it of data.items) {
         let extra = "";
         if (it.rel_path) extra += ` :: ${it.rel_path}`;
+        if (it.from_rel) extra += ` from=${it.from_rel}`;
+        if (it.from_ext) extra += ` from_ext=${it.from_ext}`;
+        if (it.to_ext) extra += ` to_ext=${it.to_ext}`;
         if (it.from_path) extra += ` ← ${it.from_path}`;
         if (typeof it.distance !== "undefined") extra += ` [d=${it.distance}]`;
         if (typeof it.scanned !== "undefined") extra += ` scanned=${it.scanned}`;
