@@ -5890,15 +5890,10 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
             except Exception:
                 continue
             thumb_name = str(r["thumb_name"] or "").strip()
-            if thumb_name and not (THUMB_DIR / thumb_name).exists():
+            if not thumb_name or not (THUMB_DIR / thumb_name).exists():
                 continue
             pub = row_to_public(r)
-            url = (
-                pub.get("thumb_url")
-                or pub.get("view_url")
-                or pub.get("original_url")
-                or pub.get("download_url")
-            )
+            url = pub.get("thumb_url")
         except Exception:
             url = None
         if not url or url in seen:
@@ -6029,6 +6024,45 @@ def api_folder_previews_set():
         )
         conn.commit()
     return jsonify({"ok": True, "folder": folder, "previews": urls, "updated_at": now})
+
+
+@app.route("/api/folder-previews/refresh", methods=["POST"])
+@login_required
+def api_folder_previews_refresh():
+    data = request.get_json(silent=True) or {}
+    folder = _normalize_folder_preview_key(data.get("folder"))
+    if folder is None or folder == "":
+        return jsonify({"ok": False, "error": "invalid_folder"}), 400
+    if not _is_rel_visible_for_current_user(f"uploads/{folder}"):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    try:
+        _sync_upload_folder_from_disk(folder, recursive=True, max_files=UPLOAD_FOLDER_SYNC_MAX_FILES)
+    except Exception:
+        pass
+    _ensure_folder_previews_table()
+    with closing(get_conn()) as conn:
+        conn.execute("DELETE FROM folder_previews WHERE folder_path=?", (folder,))
+        conn.commit()
+        prefixes = [f"uploads/{folder}", f"uploads/originals/{folder}", f"uploads/converted/{folder}"]
+        where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
+        rows = conn.execute(
+            f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
+            prefixes,
+        ).fetchall()
+    generated = 0
+    for row in _dedupe_upload_storage_rows(rows):
+        thumb_name = str(row["thumb_name"] or "").strip()
+        if thumb_name and (THUMB_DIR / thumb_name).exists():
+            continue
+        try:
+            _rebuild_thumbnail_for_row(row)
+            generated += 1
+        except Exception:
+            continue
+        if generated >= 4:
+            break
+    previews = _compute_and_store_folder_previews(folder)
+    return jsonify({"ok": True, "folder": folder, "previews": previews, "count": len(previews), "generated": generated})
 
 
 def _folder_preview_thumb_name_from_url(value: Any) -> str:
@@ -18909,6 +18943,56 @@ def api_photo_detail(photo_id: int):
     if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "Not found"}), 404
     return jsonify({"ok": True, "item": row_to_public(row)})
+
+
+def _rebuild_thumbnail_for_row(row: sqlite3.Row) -> str:
+    photo_id = int(row["id"])
+    rel_path = str(row["rel_path"] or "").strip()
+    source = _disk_path_from_rel_path(rel_path)
+    if not source.exists() or not source.is_file():
+        raise FileNotFoundError("Kildefilen findes ikke")
+    stat = source.stat()
+    if source.suffix.lower() in VIDEO_EXTS:
+        thumb_name = _make_video_thumb(source, rel_path, stat.st_mtime, stat.st_size)
+    else:
+        with Image.open(source) as image:
+            try:
+                image = ImageOps.exif_transpose(image)
+            except Exception:
+                pass
+            thumb_name = make_thumb(image, rel_path, stat.st_mtime, stat.st_size, force=True)
+    if not thumb_name:
+        raise RuntimeError("Thumbnail kunne ikke oprettes")
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE id=?",
+            (thumb_name, now_iso(), photo_id),
+        )
+        conn.commit()
+    return thumb_name
+
+
+@app.route("/api/photos/<int:photo_id>/thumbnail", methods=["POST"])
+@login_required
+def api_photo_thumbnail_rebuild(photo_id: int):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row or not _is_rel_path_allowed_for_current_user(row["rel_path"]):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    rel_path = str(row["rel_path"] or "").strip()
+    try:
+        _rebuild_thumbnail_for_row(row)
+        with closing(get_conn()) as conn:
+            updated = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        preview_folders = _refresh_folder_previews_for_rel_paths([rel_path])
+        log_event("rethumb_single_ok", rel_path=rel_path, photo_id=photo_id)
+        item = row_to_public(updated) if updated else {"id": photo_id}
+        if item.get("thumb_url"):
+            item["thumb_url"] = f"{item['thumb_url']}?v={int(time.time())}"
+        return jsonify({"ok": True, "item": item, "preview_folders": preview_folders})
+    except Exception as e:
+        log_event("error", rel_path=rel_path, error=f"rethumb_single: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/photos/<int:photo_id>/weather", methods=["POST"])

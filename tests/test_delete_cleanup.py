@@ -152,6 +152,27 @@ class DeleteCleanupTests(unittest.TestCase):
                 ["uploads/originals/Anden mappe/keep.mov"],
             )
 
+    def test_rebuild_single_thumbnail_updates_photo_row(self):
+        rel = "uploads/originals/album/missing-thumb.jpg"
+        source = self.uploads / "originals" / "album" / "missing-thumb.jpg"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (80, 60), color="blue").save(source, format="JPEG")
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            cursor = conn.execute(
+                "INSERT INTO photos(rel_path, filename, thumb_name) VALUES(?, ?, NULL)",
+                (rel, source.name),
+            )
+            photo_id = int(cursor.lastrowid)
+            conn.commit()
+            row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+
+        thumb_name = fjordlens._rebuild_thumbnail_for_row(row)
+
+        self.assertTrue((self.thumbs / thumb_name).exists())
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            updated = conn.execute("SELECT thumb_name FROM photos WHERE id=?", (photo_id,)).fetchone()
+        self.assertEqual(updated["thumb_name"], thumb_name)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,6 +139,7 @@
   mapperHeaderSortOldestAction: document.getElementById("mapperHeaderSortOldestAction"),
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperHeaderRenameAction: document.getElementById("mapperHeaderRenameAction"),
+  mapperHeaderRefreshPreviewsAction: document.getElementById("mapperHeaderRefreshPreviewsAction"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
@@ -224,6 +225,7 @@
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
+  detailRethumbBtn: document.getElementById("detailRethumbBtn"),
   // logs
   logsBox: document.getElementById("liveLogs"),
   logsStart: document.getElementById("logsStart"),
@@ -1271,6 +1273,13 @@ const I18N = {
     mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Opret mappe',
     mapper_menu_rename: 'Omd\u00f8b mappe',
+    mapper_menu_refresh_previews: 'Find nye previews',
+    mapper_refresh_previews_select_one: 'V\u00e6lg pr\u00e6cis \u00e9n mappe.',
+    mapper_refresh_previews_success: 'Mappepreviews opdateret',
+    mapper_refresh_previews_failed: 'Kunne ikke finde mappepreviews',
+    detail_rethumb_title: 'Genskab thumbnail',
+    detail_rethumb_success: 'Thumbnail genskabt',
+    detail_rethumb_failed: 'Thumbnail kunne ikke genskabes',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
     mapper_rename_modal_title: 'Omd\u00f8b mappe',
@@ -2069,6 +2078,13 @@ const I18N = {
     mapper_menu_upload: 'Upload',
     mapper_menu_create: 'Create folder',
     mapper_menu_rename: 'Rename folder',
+    mapper_menu_refresh_previews: 'Find new previews',
+    mapper_refresh_previews_select_one: 'Select exactly one folder.',
+    mapper_refresh_previews_success: 'Folder previews updated',
+    mapper_refresh_previews_failed: 'Could not find folder previews',
+    detail_rethumb_title: 'Rebuild thumbnail',
+    detail_rethumb_success: 'Thumbnail rebuilt',
+    detail_rethumb_failed: 'Thumbnail could not be rebuilt',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
     mapper_rename_modal_title: 'Rename folder',
@@ -5050,6 +5066,7 @@ function setDetail(item) {
   if (!item) {
     els.detailEmpty.classList.remove("hidden");
     els.detailContent.classList.add("hidden");
+    if (els.detailRethumbBtn) els.detailRethumbBtn.classList.add('hidden');
     return;
   }
 
@@ -5062,6 +5079,12 @@ function setDetail(item) {
   } else {
     els.detailThumb.removeAttribute("src");
     els.detailThumb.style.display = "none";
+  }
+  if (els.detailRethumbBtn) {
+    els.detailRethumbBtn.classList.toggle('hidden', !!item.thumb_url);
+    els.detailRethumbBtn.disabled = false;
+    els.detailRethumbBtn.title = tr('detail_rethumb_title');
+    els.detailRethumbBtn.setAttribute('aria-label', tr('detail_rethumb_title'));
   }
 
   els.detailName.textContent = item.filename || "-";
@@ -8653,6 +8676,14 @@ function renderMapperContext(path = '') {
     } else {
       els.mapperHeaderRenameAction.title = canRename ? tr('mapper_menu_rename') : tr('mapper_rename_root_block');
     }
+  }
+  if (els.mapperHeaderRefreshPreviewsAction) {
+    const canRefresh = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0;
+    els.mapperHeaderRefreshPreviewsAction.textContent = tr('mapper_menu_refresh_previews');
+    els.mapperHeaderRefreshPreviewsAction.disabled = !canRefresh;
+    els.mapperHeaderRefreshPreviewsAction.title = canRefresh
+      ? tr('mapper_menu_refresh_previews')
+      : tr('mapper_refresh_previews_select_one');
   }
   if (els.mapperDeleteBtn) {
     const show = !!state.mapperEditMode;
@@ -13233,6 +13264,63 @@ if (els.mapperHeaderRenameAction) {
     }
     openMapperRenameModal(current);
     closeMapperHeaderMenu();
+  });
+}
+if (els.mapperHeaderRefreshPreviewsAction) {
+  els.mapperHeaderRefreshPreviewsAction.addEventListener('click', async () => {
+    const selected = Array.from(state.mapperSelectedFolders || []);
+    if (!state.mapperEditMode || selected.length !== 1 || (state.mapperSelectedPhotoIds && state.mapperSelectedPhotoIds.size > 0)) {
+      showStatus(tr('mapper_refresh_previews_select_one'), 'err');
+      closeMapperHeaderMenu();
+      return;
+    }
+    const folder = selected[0];
+    const button = els.mapperHeaderRefreshPreviewsAction;
+    button.disabled = true;
+    button.classList.add('loading');
+    closeMapperHeaderMenu();
+    try {
+      const res = await fetch('/api/folder-previews/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || tr('mapper_refresh_previews_failed'));
+      invalidateStoredFolderPreviews([folder]);
+      await prefetchMapperFolderPreviewsForCurrentPath();
+      renderGrid();
+      showStatus(`${tr('mapper_refresh_previews_success')}: ${Number(data.count || 0)}`, 'ok');
+    } catch (error) {
+      showStatus(String((error && error.message) || tr('mapper_refresh_previews_failed')), 'err');
+    } finally {
+      button.classList.remove('loading');
+      renderMapperContext(state.mapperPath || '');
+    }
+  });
+}
+
+if (els.detailRethumbBtn) {
+  els.detailRethumbBtn.addEventListener('click', async () => {
+    const id = Number(state.selectedId || 0);
+    if (!id) return;
+    els.detailRethumbBtn.disabled = true;
+    els.detailRethumbBtn.classList.add('loading');
+    try {
+      const res = await fetch(`/api/photos/${encodeURIComponent(id)}/thumbnail`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.item) throw new Error(data.error || tr('detail_rethumb_failed'));
+      const index = state.items.findIndex((item) => Number(item.id) === id);
+      if (index >= 0) state.items[index] = { ...state.items[index], ...data.item };
+      invalidateStoredFolderPreviews(data.preview_folders || []);
+      setDetail(index >= 0 ? state.items[index] : data.item);
+      renderGrid();
+      showStatus(tr('detail_rethumb_success'), 'ok');
+    } catch (error) {
+      showStatus(String((error && error.message) || tr('detail_rethumb_failed')), 'err');
+      els.detailRethumbBtn.disabled = false;
+      els.detailRethumbBtn.classList.remove('loading');
+    }
   });
 }
 if (els.search) {
