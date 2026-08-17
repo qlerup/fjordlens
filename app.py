@@ -18709,6 +18709,7 @@ def api_factory_reset():
         converted = _safe_rmtree_contents(CONVERT_DIR)
         uploads = _safe_rmtree_contents(UPLOAD_DIR)
         tus_tmp = _safe_rmtree_contents(TUS_TMP_DIR)
+        conversion_work = _safe_rmtree_contents(CONVERSION_WORK_DIR)
 
         # Step 3: Clear non-user content tables (shares, geo cache)
         geo_deleted = 0
@@ -18788,6 +18789,8 @@ def api_factory_reset():
                 "uploads_dirs": uploads.get("dirs", 0),
                 "tus_tmp_files": tus_tmp.get("files", 0),
                 "tus_tmp_dirs": tus_tmp.get("dirs", 0),
+                "conversion_work_files": conversion_work.get("files", 0),
+                "conversion_work_dirs": conversion_work.get("dirs", 0),
                 "geo_rows": geo_deleted,
                 "weather_rows": weather_deleted,
                 "place_geocode_rows": place_geocode_deleted,
