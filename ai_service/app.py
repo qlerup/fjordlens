@@ -1282,6 +1282,157 @@ def expand_query(payload: QueryIn):
         raise HTTPException(status_code=500, detail=f"expand_query_failed: {exc}")
 
 
+class MomentEntryIn(BaseModel):
+    date: Optional[str] = None
+    time: Optional[str] = None
+    place: Optional[str] = None
+    caption: Optional[str] = None
+    tags: Optional[List[str]] = None
+    favorite: Optional[bool] = None
+
+
+class MomentNarrateIn(BaseModel):
+    kind: Optional[str] = None
+    title_hint: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    primary_place: Optional[str] = None
+    language: Optional[str] = None
+    entries: List[MomentEntryIn] = []
+
+
+def _qwen_narrate_moment(payload: "MomentNarrateIn") -> Dict[str, Any]:
+    """Text-only Qwen call: reads already-stored per-photo metadata (dates, places, AI
+    captions/tags) and writes a short title + a handful of narrative slideshow lines.
+    No image tensors involved — this is a cheap, pure-text prompt.
+    """
+    _qwen_abort_event.clear()
+    model_obj, processor_obj = _ensure_qwen_model_loaded()
+
+    lang = (str(payload.language or "da").strip().lower() or "da")
+    if lang not in {"da", "en"}:
+        lang = "da"
+
+    lines = []
+    for e in (payload.entries or [])[:40]:
+        bits = [b for b in [e.date, e.time, e.place] if b]
+        head = ", ".join(bits) if bits else "(ukendt tidspunkt)"
+        desc_bits = []
+        if e.caption:
+            desc_bits.append(f'"{e.caption}"')
+        if e.tags:
+            desc_bits.append("tags: " + ", ".join(e.tags[:8]))
+        if e.favorite:
+            desc_bits.append("favorit")
+        line = head + (": " + " | ".join(desc_bits) if desc_bits else "")
+        lines.append(line)
+    entries_text = "\n".join(lines) if lines else "(ingen detaljer)"
+
+    kind_label = "et årsoverblik" if payload.kind == "year_review" else "en rejse/begivenhed"
+    context_bits = [f"Type: {kind_label}"]
+    if payload.start_date or payload.end_date:
+        context_bits.append(f"Periode: {payload.start_date or '?'} til {payload.end_date or '?'}")
+    if payload.primary_place:
+        context_bits.append(f"Sted: {payload.primary_place}")
+    context_text = "\n".join(context_bits)
+
+    if lang == "da":
+        sys_prompt = (
+            "Du skriver korte, varme mindebogs-tekster til et diasshow af familiebilleder, ud fra "
+            "metadata (datoer, steder, korte billedbeskrivelser) — du ser IKKE selve billederne. "
+            "Returner KUN gyldig JSON med felterne 'title' (kort titel, maks 6 ord), "
+            "'subtitle' (én kort introlinje) og 'cards' (liste af 4-8 meget korte danske sætninger, "
+            "hver maks ca. 8 ord, i kronologisk rækkefølge, som kan vises som tekstplancher mellem billederne). "
+            "Skriv i nutid eller datid, personligt og varmt, ingen klichéer, ingen forklaringer uden om JSON'en. "
+            'Eksempel: {"title":"Sommer ved havet","subtitle":"En uge i juli 2014",'
+            '"cards":["Første morgen med sand mellem tæerne","Isen smeltede hurtigere end vi kunne spise"]}'
+        )
+    else:
+        sys_prompt = (
+            "You write short, warm memory-book text for a family photo slideshow, based on metadata "
+            "(dates, places, short image captions) — you do NOT see the images themselves. "
+            "Return ONLY valid JSON with fields 'title' (short, max 6 words), 'subtitle' (one short intro line), "
+            "and 'cards' (a list of 4-8 very short sentences, max ~8 words each, in chronological order, "
+            "to be shown as text cards between the photos). Warm and personal tone, no clichés, JSON only."
+        )
+
+    user_text = f"{context_text}\nForslag til titel: {payload.title_hint or ''}\n\nBilleder:\n{entries_text}"
+
+    prompt_text = sys_prompt + "\n\n" + user_text
+    if hasattr(processor_obj, "apply_chat_template"):
+        try:
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_text},
+            ]
+            prompt_text = processor_obj.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            prompt_text = sys_prompt + "\n\n" + user_text
+
+    inputs = processor_obj(text=[prompt_text], return_tensors="pt")
+    device = _qwen_input_device(model_obj)
+    for key, value in list(inputs.items()):
+        if hasattr(value, "to"):
+            try:
+                inputs[key] = value.to(device)
+            except Exception:
+                pass
+
+    with torch.no_grad():
+        output_ids = model_obj.generate(
+            **inputs,
+            max_new_tokens=min(max(160, QWEN_VL_MAX_NEW_TOKENS), 384),
+            do_sample=False,
+        )
+
+    prompt_len = 0
+    try:
+        in_ids = inputs.get("input_ids")
+        if in_ids is not None and hasattr(in_ids, "shape"):
+            prompt_len = int(in_ids.shape[-1])
+    except Exception:
+        prompt_len = 0
+
+    decode_ids = output_ids
+    try:
+        if prompt_len > 0 and hasattr(output_ids, "shape") and int(output_ids.shape[-1]) > prompt_len:
+            decode_ids = output_ids[:, prompt_len:]
+    except Exception:
+        decode_ids = output_ids
+
+    raw_text = ""
+    try:
+        decoded = processor_obj.batch_decode(decode_ids, skip_special_tokens=True)
+        if decoded:
+            raw_text = str(decoded[0] or "").strip()
+    except Exception:
+        raw_text = ""
+
+    parsed = _extract_first_json_object(raw_text) or {}
+    title = _clean_qwen_text(parsed.get("title") or "")
+    subtitle = _clean_qwen_text(parsed.get("subtitle") or "")
+    cards_raw = parsed.get("cards") or []
+    cards = [_clean_qwen_text(c) for c in cards_raw if _clean_qwen_text(c)] if isinstance(cards_raw, list) else []
+    return {"title": title, "subtitle": subtitle, "cards": cards, "raw": raw_text}
+
+
+@app.post("/moments/narrate")
+def moments_narrate(payload: MomentNarrateIn):
+    try:
+        out = _qwen_narrate_moment(payload)
+        return {
+            "ok": True,
+            "title": out.get("title") or "",
+            "subtitle": out.get("subtitle") or "",
+            "cards": out.get("cards") or [],
+            "model": QWEN_VL_MODEL,
+            "device": _qwen_runtime_device,
+            "quantization": _qwen_quantization,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"moments_narrate_failed: {exc}")
+
+
 @app.post("/qwen/unload")
 def qwen_unload():
     changed = _unload_qwen_model()

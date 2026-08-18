@@ -140,6 +140,14 @@
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperHeaderRenameAction: document.getElementById("mapperHeaderRenameAction"),
   mapperHeaderRefreshPreviewsAction: document.getElementById("mapperHeaderRefreshPreviewsAction"),
+  momentPlayerOverlay: document.getElementById("momentPlayerOverlay"),
+  momentPlayerProgress: document.getElementById("momentPlayerProgress"),
+  momentPlayerCloseBtn: document.getElementById("momentPlayerCloseBtn"),
+  momentPlayerStage: document.getElementById("momentPlayerStage"),
+  momentPlayerPrevZone: document.getElementById("momentPlayerPrevZone"),
+  momentPlayerNextZone: document.getElementById("momentPlayerNextZone"),
+  momentPlayerFooterTitle: document.getElementById("momentPlayerFooterTitle"),
+  momentPlayerVideoBtn: document.getElementById("momentPlayerVideoBtn"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
   mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
@@ -1280,6 +1288,34 @@ const I18N = {
     detail_rethumb_title: 'Genskab thumbnail',
     detail_rethumb_success: 'Thumbnail genskabt',
     detail_rethumb_failed: 'Thumbnail kunne ikke genskabes',
+    nav_momenter: '🧳 Momenter',
+    view_momenter_title: 'Momenter',
+    view_momenter_sub: 'Automatisk fundne rejser og årsoverblik',
+    momenter_find_new: 'Find nye momenter',
+    momenter_finding: 'Leder efter momenter...',
+    momenter_find_done: 'Fandt {n} nye momenter',
+    momenter_find_failed: 'Kunne ikke finde momenter',
+    momenter_suggested_heading: 'Forslag',
+    momenter_saved_heading: 'Gemte momenter',
+    momenter_empty: 'Ingen momenter endnu. Tryk «Find nye momenter» for at lede efter rejser og årsoverblik.',
+    momenter_empty_suggested: 'Ingen nye forslag lige nu.',
+    momenter_accept: 'Gem',
+    momenter_dismiss: 'Afvis',
+    momenter_play: 'Afspil',
+    momenter_delete: 'Slet',
+    momenter_rename_prompt: 'Titel på momentet',
+    momenter_accept_failed: 'Kunne ikke gemme momentet',
+    momenter_dismiss_failed: 'Kunne ikke afvise momentet',
+    momenter_delete_confirm: 'Slet dette moment?',
+    momenter_delete_failed: 'Kunne ikke slette momentet',
+    momenter_load_failed: 'Kunne ikke hente momenter',
+    momenter_kind_trip: 'Rejse',
+    momenter_kind_year_review: 'Årsoverblik',
+    momenter_make_video: '🎬 Lav video',
+    momenter_video_queued: 'Videoen bliver lavet...',
+    momenter_video_done: 'Video klar',
+    momenter_video_failed: 'Video kunne ikke laves',
+    momenter_video_download: 'Download video',
     mapper_create_modal_title: 'Opret mappe',
     mapper_create_pending: 'Opretter...',
     mapper_rename_modal_title: 'Omd\u00f8b mappe',
@@ -2085,6 +2121,34 @@ const I18N = {
     detail_rethumb_title: 'Rebuild thumbnail',
     detail_rethumb_success: 'Thumbnail rebuilt',
     detail_rethumb_failed: 'Thumbnail could not be rebuilt',
+    nav_momenter: '🧳 Moments',
+    view_momenter_title: 'Moments',
+    view_momenter_sub: 'Automatically detected trips and year reviews',
+    momenter_find_new: 'Find new moments',
+    momenter_finding: 'Looking for moments...',
+    momenter_find_done: 'Found {n} new moments',
+    momenter_find_failed: 'Could not find moments',
+    momenter_suggested_heading: 'Suggestions',
+    momenter_saved_heading: 'Saved moments',
+    momenter_empty: 'No moments yet. Press "Find new moments" to look for trips and year reviews.',
+    momenter_empty_suggested: 'No new suggestions right now.',
+    momenter_accept: 'Save',
+    momenter_dismiss: 'Dismiss',
+    momenter_play: 'Play',
+    momenter_delete: 'Delete',
+    momenter_rename_prompt: 'Title for this moment',
+    momenter_accept_failed: 'Could not save the moment',
+    momenter_dismiss_failed: 'Could not dismiss the moment',
+    momenter_delete_confirm: 'Delete this moment?',
+    momenter_delete_failed: 'Could not delete the moment',
+    momenter_load_failed: 'Could not load moments',
+    momenter_kind_trip: 'Trip',
+    momenter_kind_year_review: 'Year review',
+    momenter_make_video: '🎬 Make video',
+    momenter_video_queued: 'Building the video...',
+    momenter_video_done: 'Video ready',
+    momenter_video_failed: 'Video could not be built',
+    momenter_video_download: 'Download video',
     mapper_create_modal_title: 'Create folder',
     mapper_create_pending: 'Creating...',
     mapper_rename_modal_title: 'Rename folder',
@@ -2420,7 +2484,7 @@ const I18N = {
   },
 };
 
-const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'photoframe', 'personer', 'settings']);
+const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'momenter', 'photoframe', 'personer', 'settings']);
 const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'profile', 'other']);
 
 function _normalizeSettingsTab(tab) {
@@ -2568,6 +2632,7 @@ function navLabels() {
     kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
     // Remove subtitle for mapper view
     mapper: [tr('view_mapper_title'), ''],
+    momenter: [tr('view_momenter_title'), tr('view_momenter_sub')],
     photoframe: [tr('view_photoframe_title'), tr('view_photoframe_sub')],
     personer: [tr('view_personer_title'), tr('view_personer_sub')],
     settings: [tr('view_settings_title'), tr('view_settings_sub')],
@@ -2668,6 +2733,11 @@ let state = {
   photoframeLatestVersion: '',
   photoframeLatestVersionAt: '',
   photoframePreviewHiddenById: {},
+  momentsSuggested: [],
+  momentsSaved: [],
+  momentsLoading: false,
+  momentsDetecting: false,
+  momentPlayer: null,
   shareDuckdnsConfigured: false,
   shareDuckdnsEffectiveBaseUrl: '',
   sharedLinks: [],
@@ -3544,6 +3614,426 @@ function syncPhotoframePreviewHeights() {
     preview.style.minHeight = targetCss;
     preview.style.maxHeight = targetCss;
   });
+}
+
+function _momentDateRangeLabel(m) {
+  const parseYMD = (s) => {
+    const parts = String(s || '').split('-').map(Number);
+    if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  };
+  const start = parseYMD(m && m.start_date);
+  const end = parseYMD(m && m.end_date);
+  if (!start) return '';
+  const fmtOne = (d) => d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!end || start.getTime() === end.getTime()) return fmtOne(start);
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const fmtShort = (d) => d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' });
+  return sameYear ? `${fmtShort(start)} – ${fmtOne(end)}` : `${fmtOne(start)} – ${fmtOne(end)}`;
+}
+
+function _momentCardHtml(m, mode) {
+  const coverUrl = (m.cover && (m.cover.thumb_url || m.cover.original_url)) || '';
+  const kindLabel = m.kind === 'year_review' ? tr('momenter_kind_year_review') : tr('momenter_kind_trip');
+  const dateLabel = _momentDateRangeLabel(m);
+  const count = Number(m.photo_count || 0);
+  const countLabel = `${count} ${count === 1 ? 'element' : 'elementer'}`;
+  const actionsHtml = mode === 'suggested'
+    ? `<button class="btn small" type="button" data-moment-action="accept">${escapeHtml(tr('momenter_accept'))}</button>
+       <button class="btn small ghost" type="button" data-moment-action="dismiss">${escapeHtml(tr('momenter_dismiss'))}</button>`
+    : `<button class="btn small primary" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>
+       <button class="btn small ghost" type="button" data-moment-action="delete">${escapeHtml(tr('momenter_delete'))}</button>`;
+  return `
+    <article class="moment-card" data-moment-id="${Number(m.id || 0)}">
+      <div class="moment-card-cover"${coverUrl ? ` style="background-image:url('${escapeHtml(coverUrl)}')"` : ''}>
+        <span class="moment-card-kind">${escapeHtml(kindLabel)}</span>
+      </div>
+      <div class="moment-card-body">
+        <h4 class="moment-card-title">${escapeHtml(m.title || '')}</h4>
+        <div class="moment-card-meta">
+          <span>${escapeHtml(dateLabel)}</span>
+          <span>${escapeHtml(countLabel)}</span>
+        </div>
+        <div class="moment-card-actions">${actionsHtml}</div>
+      </div>
+    </article>`;
+}
+
+function renderMomentsPanel() {
+  if (!els.grid) return;
+  const suggested = Array.isArray(state.momentsSuggested) ? state.momentsSuggested : [];
+  const saved = Array.isArray(state.momentsSaved) ? state.momentsSaved : [];
+
+  const suggestedHtml = suggested.map((m) => _momentCardHtml(m, 'suggested')).join('');
+  const savedHtml = saved.map((m) => _momentCardHtml(m, 'saved')).join('');
+
+  els.grid.innerHTML = `
+    <div class="moments-panel">
+      <div class="moments-panel-header">
+        <button id="momentsFindNewBtn" class="btn" type="button">${escapeHtml(tr('momenter_find_new'))}</button>
+        <span id="momentsFindStatus" class="mini-label"></span>
+      </div>
+      ${(suggested.length || saved.length) ? '' : `<div class="moments-empty">${escapeHtml(tr('momenter_empty'))}</div>`}
+      ${suggested.length ? `
+        <h3 class="moments-section-heading">${escapeHtml(tr('momenter_suggested_heading'))}</h3>
+        <div class="moments-grid">${suggestedHtml}</div>
+      ` : ''}
+      ${saved.length ? `
+        <h3 class="moments-section-heading">${escapeHtml(tr('momenter_saved_heading'))}</h3>
+        <div class="moments-grid">${savedHtml}</div>
+      ` : ''}
+    </div>
+  `;
+
+  const findBtn = document.getElementById('momentsFindNewBtn');
+  if (findBtn) {
+    findBtn.disabled = !!state.momentsDetecting;
+    findBtn.addEventListener('click', startMomentDetection);
+  }
+  const statusEl = document.getElementById('momentsFindStatus');
+  if (statusEl && state.momentsDetecting) statusEl.textContent = tr('momenter_finding');
+
+  els.grid.querySelectorAll('.moment-card').forEach((card) => {
+    const id = Number(card.dataset.momentId || 0);
+    if (!id) return;
+    card.querySelectorAll('[data-moment-action]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.momentAction;
+        if (action === 'accept') acceptMoment(id);
+        else if (action === 'dismiss') dismissMoment(id);
+        else if (action === 'play') playMoment(id);
+        else if (action === 'delete') deleteMoment(id);
+      });
+    });
+    card.addEventListener('click', () => {
+      const isSaved = (state.momentsSaved || []).some((m) => Number(m.id) === id);
+      if (isSaved) playMoment(id);
+    });
+  });
+}
+
+async function loadMoments() {
+  state.momentsLoading = true;
+  try {
+    const res = await fetch('/api/moments');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      state.momentsSuggested = Array.isArray(data.suggested) ? data.suggested : [];
+      state.momentsSaved = Array.isArray(data.saved) ? data.saved : [];
+    } else {
+      showStatus(tr('momenter_load_failed'), 'err');
+    }
+  } catch {
+    showStatus(tr('momenter_load_failed'), 'err');
+  } finally {
+    state.momentsLoading = false;
+  }
+  if (state.view === 'momenter') renderGrid();
+}
+
+async function startMomentDetection() {
+  if (state.momentsDetecting) return;
+  state.momentsDetecting = true;
+  renderGrid();
+  try {
+    const res = await fetch('/api/moments/detect', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_find_failed'));
+    await pollMomentDetection();
+  } catch (error) {
+    state.momentsDetecting = false;
+    showStatus(String((error && error.message) || tr('momenter_find_failed')), 'err');
+    renderGrid();
+  }
+}
+
+async function pollMomentDetection() {
+  const poll = async () => {
+    try {
+      const res = await fetch('/api/moments/detect/status');
+      const data = await res.json().catch(() => ({}));
+      if (data && data.running) {
+        setTimeout(poll, 1500);
+        return;
+      }
+      state.momentsDetecting = false;
+      const result = data && data.result;
+      if (result && result.ok) {
+        showStatus(tr('momenter_find_done').replace('{n}', String(result.created || 0)), 'ok');
+      } else {
+        showStatus((result && result.error) || tr('momenter_find_failed'), 'err');
+      }
+      await loadMoments();
+    } catch {
+      state.momentsDetecting = false;
+      showStatus(tr('momenter_find_failed'), 'err');
+      renderGrid();
+    }
+  };
+  await poll();
+}
+
+async function acceptMoment(id) {
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/accept`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_accept_failed'));
+    await loadMoments();
+  } catch (error) {
+    showStatus(String((error && error.message) || tr('momenter_accept_failed')), 'err');
+  }
+}
+
+async function dismissMoment(id) {
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_dismiss_failed'));
+    await loadMoments();
+  } catch (error) {
+    showStatus(String((error && error.message) || tr('momenter_dismiss_failed')), 'err');
+  }
+}
+
+async function deleteMoment(id) {
+  if (!window.confirm(tr('momenter_delete_confirm'))) return;
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_delete_failed'));
+    await loadMoments();
+  } catch (error) {
+    showStatus(String((error && error.message) || tr('momenter_delete_failed')), 'err');
+  }
+}
+
+// --- Moments slideshow player ---
+
+const MOMENT_PHOTO_DWELL_MS = 4500;
+const MOMENT_TEXT_DWELL_MS = 2800;
+const MOMENT_VIDEO_MAX_MS = 7000;
+
+async function playMoment(id) {
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.item) throw new Error(data.error || tr('momenter_load_failed'));
+    const item = data.item;
+    const script = Array.isArray(item.script) ? item.script : [];
+    if (!script.length) {
+      showStatus(tr('momenter_load_failed'), 'err');
+      return;
+    }
+    state.momentPlayer = {
+      id,
+      title: item.title || '',
+      photos: item.photos || {},
+      script,
+      index: 0,
+      timer: null,
+    };
+    _momentPlayerOpen();
+  } catch (error) {
+    showStatus(String((error && error.message) || tr('momenter_load_failed')), 'err');
+  }
+}
+
+function _momentPlayerOpen() {
+  if (!els.momentPlayerOverlay) return;
+  els.momentPlayerOverlay.classList.remove('hidden');
+  document.body.classList.add('moment-player-open');
+  if (els.momentPlayerFooterTitle) els.momentPlayerFooterTitle.textContent = (state.momentPlayer && state.momentPlayer.title) || '';
+  if (els.momentPlayerVideoBtn) {
+    els.momentPlayerVideoBtn.classList.remove('hidden');
+    els.momentPlayerVideoBtn.textContent = tr('momenter_make_video');
+    els.momentPlayerVideoBtn.disabled = false;
+  }
+  _momentPlayerBuildProgress();
+  _momentPlayerRenderSlide(0);
+}
+
+function _momentPlayerBuildProgress() {
+  if (!els.momentPlayerProgress) return;
+  const p = state.momentPlayer;
+  const n = p && Array.isArray(p.script) ? p.script.length : 0;
+  let html = '';
+  for (let i = 0; i < n; i++) html += '<div class="moment-player-progress-seg" data-index="' + i + '"><i></i></div>';
+  els.momentPlayerProgress.innerHTML = html;
+}
+
+function _momentPlayerClearTimer() {
+  const p = state.momentPlayer;
+  if (p && p.timer) {
+    clearTimeout(p.timer);
+    p.timer = null;
+  }
+}
+
+function _momentPlayerUpdateProgressUi(index) {
+  if (!els.momentPlayerProgress) return;
+  const segs = els.momentPlayerProgress.querySelectorAll('.moment-player-progress-seg');
+  segs.forEach((seg, i) => {
+    seg.classList.toggle('done', i < index);
+    seg.classList.toggle('active', i === index);
+    seg.classList.remove('run');
+  });
+}
+
+function _momentPlayerRunProgressBar(index, durationMs) {
+  if (!els.momentPlayerProgress) return;
+  const seg = els.momentPlayerProgress.querySelector(`.moment-player-progress-seg[data-index="${index}"] i`);
+  if (!seg) return;
+  seg.style.transitionDuration = '0ms';
+  seg.style.width = '0%';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const activeSeg = seg.closest('.moment-player-progress-seg');
+      if (activeSeg) activeSeg.classList.add('run');
+      seg.style.transitionDuration = `${Math.max(200, durationMs)}ms`;
+      seg.style.width = '100%';
+    });
+  });
+}
+
+function _momentPlayerRenderSlide(index) {
+  const p = state.momentPlayer;
+  if (!p) return;
+  _momentPlayerClearTimer();
+  if (index < 0) index = 0;
+  if (index >= p.script.length) {
+    _momentPlayerClose();
+    return;
+  }
+  p.index = index;
+  const item = p.script[index];
+  const stage = els.momentPlayerStage;
+  if (!stage) return;
+  stage.innerHTML = '';
+  _momentPlayerUpdateProgressUi(index);
+
+  let dwell = MOMENT_PHOTO_DWELL_MS;
+
+  if (item.type === 'text') {
+    dwell = MOMENT_TEXT_DWELL_MS;
+    const wrap = document.createElement('div');
+    wrap.className = 'moment-slide moment-slide-text';
+    const card = document.createElement('div');
+    card.className = 'moment-text-card';
+    card.textContent = item.text || '';
+    wrap.appendChild(card);
+    stage.appendChild(wrap);
+  } else {
+    const photo = p.photos[String(item.photo_id)] || {};
+    if (item.type === 'video' && photo.original_url) {
+      dwell = MOMENT_VIDEO_MAX_MS;
+      const wrap = document.createElement('div');
+      wrap.className = 'moment-slide moment-slide-video';
+      const video = document.createElement('video');
+      video.src = photo.original_url;
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.addEventListener('ended', () => _momentPlayerAdvance(1));
+      wrap.appendChild(video);
+      stage.appendChild(wrap);
+    } else {
+      const variant = 'kb-' + (1 + Math.floor(Math.random() * 4));
+      const wrap = document.createElement('div');
+      wrap.className = `moment-slide moment-slide-photo ${variant}`;
+      const img = document.createElement('img');
+      img.src = photo.thumb_url || photo.original_url || '';
+      img.alt = '';
+      wrap.appendChild(img);
+      stage.appendChild(wrap);
+    }
+  }
+
+  _momentPlayerRunProgressBar(index, dwell);
+  p.timer = setTimeout(() => _momentPlayerAdvance(1), dwell);
+}
+
+function _momentPlayerAdvance(delta) {
+  const p = state.momentPlayer;
+  if (!p) return;
+  _momentPlayerRenderSlide(p.index + delta);
+}
+
+function _momentPlayerClose() {
+  _momentPlayerClearTimer();
+  if (els.momentPlayerOverlay) els.momentPlayerOverlay.classList.add('hidden');
+  document.body.classList.remove('moment-player-open');
+  if (els.momentPlayerStage) els.momentPlayerStage.innerHTML = '';
+  state.momentPlayer = null;
+}
+
+if (els.momentPlayerCloseBtn) {
+  els.momentPlayerCloseBtn.addEventListener('click', () => _momentPlayerClose());
+}
+if (els.momentPlayerPrevZone) {
+  els.momentPlayerPrevZone.addEventListener('click', () => _momentPlayerAdvance(-1));
+}
+if (els.momentPlayerNextZone) {
+  els.momentPlayerNextZone.addEventListener('click', () => _momentPlayerAdvance(1));
+}
+document.addEventListener('keydown', (e) => {
+  if (!state.momentPlayer) return;
+  if (e.key === 'Escape') _momentPlayerClose();
+  else if (e.key === 'ArrowRight') _momentPlayerAdvance(1);
+  else if (e.key === 'ArrowLeft') _momentPlayerAdvance(-1);
+});
+if (els.momentPlayerVideoBtn) {
+  els.momentPlayerVideoBtn.addEventListener('click', () => {
+    if (state.momentPlayer && state.momentPlayer.id) startMomentVideoRender(state.momentPlayer.id);
+  });
+}
+
+async function startMomentVideoRender(id) {
+  if (!els.momentPlayerVideoBtn) return;
+  els.momentPlayerVideoBtn.disabled = true;
+  els.momentPlayerVideoBtn.textContent = tr('momenter_video_queued');
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/render-video`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_video_failed'));
+    _momentVideoPoll(id);
+  } catch (error) {
+    showStatus(String((error && error.message) || tr('momenter_video_failed')), 'err');
+    els.momentPlayerVideoBtn.disabled = false;
+    els.momentPlayerVideoBtn.textContent = tr('momenter_make_video');
+  }
+}
+
+function _momentVideoPoll(id) {
+  const poll = async () => {
+    if (!state.momentPlayer || state.momentPlayer.id !== id) return;
+    try {
+      const res = await fetch(`/api/moments/${encodeURIComponent(id)}/render-video/status`);
+      const data = await res.json().catch(() => ({}));
+      const status = data && data.video_status;
+      if (status === 'running' || status === 'queued') {
+        setTimeout(poll, 2000);
+        return;
+      }
+      if (!els.momentPlayerVideoBtn) return;
+      if (status === 'done' && data.video_url) {
+        els.momentPlayerVideoBtn.disabled = false;
+        els.momentPlayerVideoBtn.textContent = tr('momenter_video_download');
+        els.momentPlayerVideoBtn.onclick = () => window.open(data.video_url, '_blank');
+        showStatus(tr('momenter_video_done'), 'ok');
+      } else {
+        els.momentPlayerVideoBtn.disabled = false;
+        els.momentPlayerVideoBtn.textContent = tr('momenter_make_video');
+        showStatus((data && data.video_error) || tr('momenter_video_failed'), 'err');
+      }
+    } catch {
+      if (els.momentPlayerVideoBtn) {
+        els.momentPlayerVideoBtn.disabled = false;
+        els.momentPlayerVideoBtn.textContent = tr('momenter_make_video');
+      }
+    }
+  };
+  poll();
 }
 
 function renderPhotoframePanel() {
@@ -5470,6 +5960,20 @@ function renderGrid() {
     renderStats();
     return;
   }
+  // Handle Moments (Momenter) view: custom cards, not the photo/folder grid
+  if (state.view === "momenter") {
+    if (els.searchShell) els.searchShell.style.display = 'none';
+    if (els.sort) els.sort.style.display = 'none';
+    els.grid.classList.remove('timeline-wrap');
+    els.grid.classList.remove('gallery-grid');
+    renderMomentsPanel();
+    hideEmpty();
+    setDetail(null);
+    renderStats();
+    return;
+  }
+  if (els.searchShell) els.searchShell.style.display = '';
+  if (els.sort) els.sort.style.display = '';
   // Handle Places (Steder) view: show map with clusters
   if (state.view === "steder") {
     if (els.placesMapWrap) els.placesMapWrap.classList.remove("hidden");
@@ -12156,6 +12660,7 @@ async function setView(view, opts = {}) {
   document.body.classList.toggle("view-kameraer", nextView === "kameraer");
   document.body.classList.toggle("view-personer", nextView === "personer");
   document.body.classList.toggle("view-mapper", nextView === "mapper");
+  document.body.classList.toggle("view-momenter", nextView === "momenter");
   document.body.classList.toggle("view-photoframe", nextView === "photoframe");
   placeGlobalSearchSortForView();
   // Toggle compact Settings layout on small viewports
@@ -12192,6 +12697,9 @@ async function setView(view, opts = {}) {
   } else if (nextView === 'personer') {
     state.personView = { mode: 'list', personId: null, personName: null };
     await loadPeople();
+  } else if (nextView === 'momenter') {
+    state.items = [];
+    await loadMoments();
   } else {
     if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''));
     await loadPhotos();
@@ -12241,6 +12749,7 @@ function applyUiLanguage() {
     steder: tr('nav_places'),
     kameraer: tr('nav_cameras'),
     mapper: tr('nav_folders'),
+    momenter: tr('nav_momenter'),
     photoframe: tr('nav_photoframe'),
     personer: tr('nav_people'),
     settings: tr('nav_settings'),
