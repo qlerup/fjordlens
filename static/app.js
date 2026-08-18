@@ -5895,6 +5895,17 @@ function bindFolderNameMarquee(card, fullText) {
 
 const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
 
+function buildFolderPreviewsQuery(folders) {
+  const qs = new URLSearchParams();
+  qs.set('folders_format', 'multi');
+  for (const folder of (Array.isArray(folders) ? folders : [])) {
+    const key = String(folder || '').trim();
+    if (!key) continue;
+    qs.append('folders', key);
+  }
+  return qs.toString();
+}
+
 function invalidateStoredFolderPreviews(folders) {
   const list = (Array.isArray(folders) ? folders : [])
     .map((f) => String(f || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
@@ -5949,7 +5960,9 @@ async function prefetchMapperFolderPreviewsForCurrentPath() {
   const folders = Array.from(childSet.values()).sort((a, b) => a.localeCompare(b, 'da-DK'));
   if (!folders.length) return;
   try {
-    const res = await fetch(`/api/folder-previews?folders=${encodeURIComponent(folders.join(','))}`);
+    const query = buildFolderPreviewsQuery(folders);
+    if (!query) return;
+    const res = await fetch(`/api/folder-previews?${query}`);
     const data = await res.json().catch(() => ({}));
     const items = data && data.items && typeof data.items === 'object' ? data.items : {};
     const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
@@ -6123,7 +6136,8 @@ function appendFolderCard(folder, arr, opts = {}) {
   // After initial render, try to load persisted selection from server; else persist our pick
   (async () => {
     try {
-      const res = await fetch(`/api/folder-previews?folders=${encodeURIComponent(folder)}`);
+      const query = buildFolderPreviewsQuery([folder]);
+      const res = await fetch(`/api/folder-previews?${query}`);
       const data = await res.json();
       const saved = data && data.items ? data.items[folder] : null;
       const variantForCount = (count) => (count === 1 ? 'v1' : (count === 2 ? 'v2' : 'v4'));

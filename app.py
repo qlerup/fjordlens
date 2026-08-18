@@ -5945,10 +5945,15 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
 @app.route("/api/folder-previews", methods=["GET"])
 def api_folder_previews_get():
     _ensure_folder_previews_table()
-    folders_raw = str(request.args.get("folders") or "").strip()
-    if not folders_raw:
-        return jsonify({"ok": True, "items": {}})
-    keys_in = [p for p in (folders_raw.split(",") if folders_raw else [])]
+    keys_in: list[str] = []
+    folders_format = str(request.args.get("folders_format") or "").strip().lower()
+    if folders_format == "multi":
+        keys_in = [str(v or "") for v in request.args.getlist("folders")]
+    else:
+        # Backward compatibility with the old CSV query format.
+        folders_raw = str(request.args.get("folders") or "").strip()
+        if folders_raw:
+            keys_in = [p for p in folders_raw.split(",")]
     if not keys_in:
         return jsonify({"ok": True, "items": {}})
     keys: list[str] = []

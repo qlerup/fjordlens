@@ -41,6 +41,13 @@ class RethumbMissingTests(unittest.TestCase):
         Image.new("RGB", (80, 60), color=color).save(path, format="JPEG")
         return path
 
+    def _create_upload_photo(self, rel_tail: str, color: str) -> tuple[Path, str]:
+        rel_path = f"uploads/originals/{rel_tail}"
+        path = self.uploads / "originals" / rel_tail
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (80, 60), color=color).save(path, format="JPEG")
+        return path, rel_path
+
     def test_generates_only_missing_thumbnail_and_reports_scan_counts(self):
         missing_path = self._create_photo("missing.jpg", "red")
         complete_path = self._create_photo("complete.jpg", "blue")
@@ -74,6 +81,39 @@ class RethumbMissingTests(unittest.TestCase):
             ).fetchone()
         self.assertTrue(row["thumb_name"])
         self.assertTrue((self.thumbs / row["thumb_name"]).is_file())
+
+    def test_folder_previews_get_supports_folder_name_with_comma(self):
+        _, rel_path = self._create_upload_photo(
+            "Knuthenborg (2026) (Charlotte, Nicolai, Frederik, Natacha)/img.jpg",
+            "green",
+        )
+        source = self.uploads / "originals" / "Knuthenborg (2026) (Charlotte, Nicolai, Frederik, Natacha)" / "img.jpg"
+        stat = source.stat()
+        with Image.open(source) as image:
+            thumb_name = fjordlens.make_thumb(
+                image,
+                rel_path,
+                stat.st_mtime,
+                stat.st_size,
+            )
+
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO photos(rel_path, filename, thumb_name) VALUES(?, ?, ?)",
+                (rel_path, source.name, thumb_name),
+            )
+            conn.commit()
+
+        folder_name = "Knuthenborg (2026) (Charlotte, Nicolai, Frederik, Natacha)"
+        with fjordlens.app.test_request_context(
+            "/api/folder-previews",
+            query_string={"folders_format": "multi", "folders": [folder_name]},
+        ):
+            res = fjordlens.api_folder_previews_get()
+        data = res.get_json() or {}
+        self.assertTrue(data.get("ok"))
+        self.assertIn(folder_name, (data.get("items") or {}))
+        self.assertTrue((data.get("items") or {}).get(folder_name))
 
 
 if __name__ == "__main__":
