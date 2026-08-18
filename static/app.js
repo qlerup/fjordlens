@@ -1303,6 +1303,7 @@ const I18N = {
     momenter_accept: 'Gem',
     momenter_dismiss: 'Afvis',
     momenter_play: 'Afspil',
+    momenter_opening: 'Åbner...',
     momenter_delete: 'Slet',
     momenter_rename_prompt: 'Titel på momentet',
     momenter_accept_failed: 'Kunne ikke gemme momentet',
@@ -2137,6 +2138,7 @@ const I18N = {
     momenter_accept: 'Save',
     momenter_dismiss: 'Dismiss',
     momenter_play: 'Play',
+    momenter_opening: 'Opening...',
     momenter_delete: 'Delete',
     momenter_rename_prompt: 'Title for this moment',
     momenter_accept_failed: 'Could not save the moment',
@@ -3832,6 +3834,15 @@ const MOMENT_TEXT_DWELL_MS = 2800;
 const MOMENT_VIDEO_MAX_MS = 7000;
 
 async function playMoment(id) {
+  // Loading the moment can involve a first-time, synchronous Qwen text call on the
+  // server (slow if the AI model was idle and needs to reload) — show that something
+  // is happening instead of leaving the button looking dead while it waits.
+  const btn = document.querySelector(`.moment-card[data-moment-id="${id}"] [data-moment-action="play"]`);
+  const originalLabel = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = tr('momenter_opening');
+  }
   try {
     const res = await fetch(`/api/moments/${encodeURIComponent(id)}`);
     const data = await res.json().catch(() => ({}));
@@ -3853,6 +3864,11 @@ async function playMoment(id) {
     _momentPlayerOpen();
   } catch (error) {
     showStatus(String((error && error.message) || tr('momenter_load_failed')), 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
   }
 }
 

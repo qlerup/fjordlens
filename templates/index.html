@@ -1197,6 +1197,18 @@
       </div>
     </div>
   </div>
+  <!-- Moments slideshow player -->
+  <div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Moment-afspiller">
+    <div class="moment-player-progress" id="momentPlayerProgress"></div>
+    <button class="moment-player-close" id="momentPlayerCloseBtn" type="button" aria-label="Luk">&times;</button>
+    <div class="moment-player-stage" id="momentPlayerStage"></div>
+    <div class="moment-player-zone prev" id="momentPlayerPrevZone" aria-hidden="true"></div>
+    <div class="moment-player-zone next" id="momentPlayerNextZone" aria-hidden="true"></div>
+    <div class="moment-player-footer">
+      <div class="moment-player-title" id="momentPlayerFooterTitle"></div>
+      <button class="btn moment-player-video-btn hidden" id="momentPlayerVideoBtn" type="button">🎬 Lav video</button>
+    </div>
+  </div>
   <!-- Bootstrap data (avoids inline JS parse issues) -->
   <div id="bootstrapData"
        data-profile='{{ (user_profile or {})|tojson }}'
@@ -1287,19 +1299,6 @@
       <button class="btn" id="dupeCompareCancel">Annuller</button>
       <button class="btn primary" id="dupeCompareMerge">Flet (auto) — slet duplikat</button>
     </div>
-  </div>
-</div>
-
-<!-- Moments slideshow player -->
-<div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Moment-afspiller">
-  <div class="moment-player-progress" id="momentPlayerProgress"></div>
-  <button class="moment-player-close" id="momentPlayerCloseBtn" type="button" aria-label="Luk">&times;</button>
-  <div class="moment-player-stage" id="momentPlayerStage"></div>
-  <div class="moment-player-zone prev" id="momentPlayerPrevZone" aria-hidden="true"></div>
-  <div class="moment-player-zone next" id="momentPlayerNextZone" aria-hidden="true"></div>
-  <div class="moment-player-footer">
-    <div class="moment-player-title" id="momentPlayerFooterTitle"></div>
-    <button class="btn moment-player-video-btn hidden" id="momentPlayerVideoBtn" type="button">🎬 Lav video</button>
   </div>
 </div>
 </body>
