@@ -28,6 +28,7 @@ class MomentDetectionTests(unittest.TestCase):
             "MOMENT_MIN_PHOTOS": fjordlens.MOMENT_MIN_PHOTOS,
             "MOMENT_MIN_SPAN_HOURS": fjordlens.MOMENT_MIN_SPAN_HOURS,
             "MOMENT_GAP_HOURS": fjordlens.MOMENT_GAP_HOURS,
+            "MOMENT_MAX_SLIDES": fjordlens.MOMENT_MAX_SLIDES,
         }
         fjordlens.DB_PATH = root / "fjordlens.db"
         fjordlens.PHOTO_DIR = self.originals
@@ -37,6 +38,7 @@ class MomentDetectionTests(unittest.TestCase):
         fjordlens.MOMENT_MIN_PHOTOS = 3
         fjordlens.MOMENT_MIN_SPAN_HOURS = 1.0
         fjordlens.MOMENT_GAP_HOURS = 12.0
+        fjordlens.MOMENT_MAX_SLIDES = 10
         fjordlens.init_db()
 
     def tearDown(self):
@@ -72,6 +74,7 @@ class MomentDetectionTests(unittest.TestCase):
         self.assertEqual(stats["rejected_too_few"], 0)
         self.assertEqual(stats["rejected_too_short"], 0)
         self.assertEqual(stats["rejected_home_only"], 0)
+        self.assertEqual(stats["rejected_already_covered"], 0)
 
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             rows = conn.execute("SELECT * FROM moments ORDER BY start_date ASC").fetchall()
@@ -107,7 +110,32 @@ class MomentDetectionTests(unittest.TestCase):
         second = fjordlens._detect_moment_candidates()
         self.assertEqual(first["created"], 1)
         self.assertEqual(second["created"], 0)
-        self.assertEqual(second["rejected_too_few"], 1, "photos from the first run should now be excluded as already-claimed")
+        self.assertEqual(second["rejected_already_covered"], 1, "the same date range should now be excluded as already covered")
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            count = conn.execute("SELECT COUNT(*) AS c FROM moments").fetchone()["c"]
+        self.assertEqual(count, 1)
+
+    def test_large_trip_is_curated_not_dumped_whole(self):
+        # MOMENT_MAX_SLIDES is patched to 10 in setUp; insert a single big cluster of 30.
+        base = datetime(2024, 7, 10, 9, 0, 0)
+        for i in range(30):
+            dt = base + timedelta(hours=i)
+            favorite = 1 if i % 6 == 0 else 0  # a handful of favorites sprinkled in
+            self._insert_photo(f"uploads/originals/big_{i:02d}.jpg", dt.isoformat(timespec="seconds"), favorite=favorite)
+
+        stats = fjordlens._detect_moment_candidates()
+        self.assertEqual(stats["created"], 1)
+
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            row = conn.execute("SELECT * FROM moments").fetchone()
+        photo_ids = fjordlens.json.loads(row["photo_ids_json"])
+        self.assertEqual(len(photo_ids), 10, "moment should be curated down to MOMENT_MAX_SLIDES, not all 30 photos")
+
+        # Re-running detection should not spawn a second moment from the 20 leftover,
+        # un-picked photos of the same trip.
+        second = fjordlens._detect_moment_candidates()
+        self.assertEqual(second["created"], 0)
+        self.assertEqual(second["rejected_already_covered"], 1)
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             count = conn.execute("SELECT COUNT(*) AS c FROM moments").fetchone()["c"]
         self.assertEqual(count, 1)

@@ -6299,21 +6299,18 @@ def _moment_pick_representative_rows(rows: list[sqlite3.Row], max_count: int) ->
     return sorted(combined, key=lambda r: _moment_row_dt(r) or datetime.min)
 
 
-def _existing_moment_photo_ids(statuses: tuple[str, ...] = ("suggested", "saved", "dismissed")) -> set[int]:
+def _existing_trip_date_ranges(statuses: tuple[str, ...] = ("suggested", "saved", "dismissed")) -> list[tuple[str, str]]:
     placeholders = ",".join(["?"] * len(statuses))
     with closing(get_conn()) as conn:
         rows = conn.execute(
-            f"SELECT photo_ids_json FROM moments WHERE status IN ({placeholders})",
+            f"SELECT start_date, end_date FROM moments WHERE kind='trip' AND status IN ({placeholders})",
             statuses,
         ).fetchall()
-    out: set[int] = set()
-    for r in rows:
-        try:
-            for pid in json.loads(r["photo_ids_json"] or "[]"):
-                out.add(int(pid))
-        except Exception:
-            continue
-    return out
+    return [(r["start_date"], r["end_date"]) for r in rows if r["start_date"] and r["end_date"]]
+
+
+def _date_ranges_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
+    return a_start <= b_end and b_start <= a_end
 
 
 def _insert_moment(
@@ -6354,6 +6351,7 @@ def _detect_moment_candidates() -> Dict[str, int]:
     stats: Dict[str, int] = {
         "scanned": 0, "dated": 0, "segments": 0, "created": 0,
         "rejected_too_few": 0, "rejected_too_short": 0, "rejected_home_only": 0,
+        "rejected_already_covered": 0,
     }
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -6375,7 +6373,7 @@ def _detect_moment_candidates() -> Dict[str, int]:
         return stats
 
     home_place = _moment_home_place([r for _, r in timed])
-    already_used = _existing_moment_photo_ids()
+    existing_ranges = _existing_trip_date_ranges()
 
     segments: list[list[tuple[datetime, sqlite3.Row]]] = []
     current: list[tuple[datetime, sqlite3.Row]] = []
@@ -6395,8 +6393,17 @@ def _detect_moment_candidates() -> Dict[str, int]:
     stats["segments"] = len(segments)
 
     for seg in segments:
-        photo_ids = [int(r["id"]) for _, r in seg if int(r["id"]) not in already_used]
-        if len(photo_ids) < MOMENT_MIN_PHOTOS:
+        seg_start_date = seg[0][0].date().isoformat()
+        seg_end_date = seg[-1][0].date().isoformat()
+        if any(_date_ranges_overlap(seg_start_date, seg_end_date, es, ee) for es, ee in existing_ranges):
+            # This time window is already covered by a suggested/saved/dismissed trip —
+            # avoids re-suggesting the same trip's leftover photos as a near-duplicate
+            # moment on the next "Find nye momenter" run.
+            stats["rejected_already_covered"] += 1
+            continue
+
+        seg_rows = [r for _, r in seg]
+        if len(seg_rows) < MOMENT_MIN_PHOTOS:
             stats["rejected_too_few"] += 1
             continue
         span_hours = (seg[-1][0] - seg[0][0]).total_seconds() / 3600.0
@@ -6404,7 +6411,7 @@ def _detect_moment_candidates() -> Dict[str, int]:
             stats["rejected_too_short"] += 1
             continue
 
-        gps_rows = [r for _, r in seg]
+        gps_rows = seg_rows
         gps_covered = sum(1 for r in gps_rows if str(r["gps_name"] or "").strip())
         place_counts: Dict[str, int] = {}
         for r in gps_rows:
@@ -6417,8 +6424,14 @@ def _detect_moment_candidates() -> Dict[str, int]:
             continue
         primary_place = max(place_counts.items(), key=lambda kv: kv[1])[0] if place_counts else None
 
-        favorite_rows = [r for _, r in seg if r["favorite"]]
-        cover_row = favorite_rows[len(favorite_rows) // 2][1] if favorite_rows else seg[len(seg) // 2][1]
+        # A long trip can easily hold hundreds/thousands of photos — curate down to a
+        # manageable highlight set (same cap+heuristic as the year-review) instead of
+        # letting the moment balloon to "every photo in the folder".
+        picked_rows = _moment_pick_representative_rows(seg_rows, MOMENT_MAX_SLIDES)
+        photo_ids = sorted(int(r["id"]) for r in picked_rows)
+
+        favorite_picked = [r for r in picked_rows if r["favorite"]]
+        cover_row = favorite_picked[len(favorite_picked) // 2] if favorite_picked else picked_rows[len(picked_rows) // 2]
 
         start_dt, end_dt = seg[0][0], seg[-1][0]
         month_da = _DA_MONTHS[start_dt.month - 1] if 1 <= start_dt.month <= 12 else ""
@@ -6434,7 +6447,8 @@ def _detect_moment_candidates() -> Dict[str, int]:
             photo_ids=photo_ids,
         )
         stats["created"] += 1
-        already_used.update(photo_ids)
+        # Also guards against two segments within this same run claiming overlapping dates.
+        existing_ranges.append((seg_start_date, seg_end_date))
     return stats
 
 
