@@ -14655,25 +14655,55 @@ els.toggleRawBtn.addEventListener("click", () => {
 els.favoriteBtn.addEventListener("click", toggleFavorite);
 
 // Date edit interactions
+// Small floating popovers (date/uploader edit) are anchored via position:fixed with
+// viewport coordinates computed in JS — but .detail-panel animates with `transform`,
+// which per the CSS spec makes it the containing block for any position:fixed
+// descendant. That silently broke the coordinates (popover renders offset by the
+// panel's own position and gets clipped by its overflow:auto). Reparenting to
+// document.body while open — same technique already used for the GPS editor —
+// escapes that transformed ancestor so the fixed positioning works as intended.
+const _floatingPopoverOrigin = new WeakMap();
+
+function openFloatingPopover(wrapEl, anchorBtn) {
+  if (!wrapEl || !anchorBtn) return;
+  if (!_floatingPopoverOrigin.has(wrapEl)) {
+    _floatingPopoverOrigin.set(wrapEl, { parent: wrapEl.parentElement, next: wrapEl.nextElementSibling });
+  }
+  try { document.body.appendChild(wrapEl); } catch {}
+  wrapEl.classList.remove('hidden');
+  wrapEl.classList.add('floating');
+  try {
+    const r = anchorBtn.getBoundingClientRect();
+    const w = Math.min(420, Math.max(300, window.innerWidth - 24));
+    let left = r.right - w;
+    const margin = 12;
+    if (left < margin) left = margin;
+    if (left + w > window.innerWidth - margin) left = window.innerWidth - margin - w;
+    wrapEl.style.width = w + 'px';
+    wrapEl.style.left = left + 'px';
+    wrapEl.style.top = (r.bottom + 8) + 'px';
+    wrapEl.style.zIndex = '100000';
+  } catch {}
+}
+
+function closeFloatingPopover(wrapEl) {
+  if (!wrapEl) return;
+  wrapEl.classList.add('hidden');
+  wrapEl.classList.remove('floating');
+  wrapEl.style.left = '';
+  wrapEl.style.top = '';
+  const origin = _floatingPopoverOrigin.get(wrapEl);
+  if (origin && origin.parent) {
+    try {
+      if (origin.next && origin.next.parentElement === origin.parent) origin.parent.insertBefore(wrapEl, origin.next);
+      else origin.parent.appendChild(wrapEl);
+    } catch {}
+  }
+}
+
 if (els.editDateBtn) {
   els.editDateBtn.addEventListener('click', () => {
-    if (els.dateEditWrap) {
-      els.dateEditWrap.classList.remove('hidden');
-      els.dateEditWrap.classList.add('floating');
-      // Position under the pencil button (viewport coordinates)
-      try {
-        const r = els.editDateBtn.getBoundingClientRect();
-        const w = Math.min(420, Math.max(300, window.innerWidth - 24));
-        let left = r.right - w;
-        const margin = 12;
-        if (left < margin) left = margin;
-        if (left + w > window.innerWidth - margin) left = window.innerWidth - margin - w;
-        els.dateEditWrap.style.width = w + 'px';
-        els.dateEditWrap.style.left = left + 'px';
-        els.dateEditWrap.style.top = (r.bottom + 8) + 'px';
-        els.dateEditWrap.style.zIndex = '100000';
-      } catch {}
-    }
+    openFloatingPopover(els.dateEditWrap, els.editDateBtn);
     try {
       const row = els.editDateBtn.closest('.detail-row');
       if (row) row.classList.add('popover-open');
@@ -14682,7 +14712,7 @@ if (els.editDateBtn) {
 }
 if (els.dateCancelBtn) {
   els.dateCancelBtn.addEventListener('click', () => {
-    if (els.dateEditWrap) { els.dateEditWrap.classList.add('hidden'); els.dateEditWrap.classList.remove('floating'); els.dateEditWrap.style.left=''; els.dateEditWrap.style.top=''; }
+    closeFloatingPopover(els.dateEditWrap);
     try {
       const row = els.editDateBtn.closest('.detail-row');
       if (row) row.classList.remove('popover-open');
@@ -14704,7 +14734,7 @@ if (els.dateSaveBtn) {
       showStatus(tr('date_updated'), 'ok');
       renderGrid();
       setDetail(item);
-      if (els.dateEditWrap) { els.dateEditWrap.classList.add('hidden'); els.dateEditWrap.classList.remove('floating'); els.dateEditWrap.style.left=''; els.dateEditWrap.style.top=''; }
+      closeFloatingPopover(els.dateEditWrap);
       try {
         const row = els.editDateBtn.closest('.detail-row');
         if (row) row.classList.remove('popover-open');
@@ -14718,23 +14748,8 @@ if (els.dateSaveBtn) {
 // Uploader (uploaded_by) edit interactions — admin only
 if (els.editUploaderBtn) {
   els.editUploaderBtn.addEventListener('click', () => {
-    if (els.uploaderEditWrap) {
-      els.uploaderEditWrap.classList.remove('hidden');
-      els.uploaderEditWrap.classList.add('floating');
-      try {
-        const r = els.editUploaderBtn.getBoundingClientRect();
-        const w = Math.min(420, Math.max(300, window.innerWidth - 24));
-        let left = r.right - w;
-        const margin = 12;
-        if (left < margin) left = margin;
-        if (left + w > window.innerWidth - margin) left = window.innerWidth - margin - w;
-        els.uploaderEditWrap.style.width = w + 'px';
-        els.uploaderEditWrap.style.left = left + 'px';
-        els.uploaderEditWrap.style.top = (r.bottom + 8) + 'px';
-        els.uploaderEditWrap.style.zIndex = '100000';
-      } catch {}
-      try { els.uploaderInput && els.uploaderInput.focus(); } catch {}
-    }
+    openFloatingPopover(els.uploaderEditWrap, els.editUploaderBtn);
+    try { els.uploaderInput && els.uploaderInput.focus(); } catch {}
     try {
       const row = els.editUploaderBtn.closest('.detail-row');
       if (row) row.classList.add('popover-open');
@@ -14743,7 +14758,7 @@ if (els.editUploaderBtn) {
 }
 if (els.uploaderCancelBtn) {
   els.uploaderCancelBtn.addEventListener('click', () => {
-    if (els.uploaderEditWrap) { els.uploaderEditWrap.classList.add('hidden'); els.uploaderEditWrap.classList.remove('floating'); els.uploaderEditWrap.style.left=''; els.uploaderEditWrap.style.top=''; }
+    closeFloatingPopover(els.uploaderEditWrap);
     try {
       const row = els.editUploaderBtn.closest('.detail-row');
       if (row) row.classList.remove('popover-open');
@@ -14764,7 +14779,7 @@ if (els.uploaderSaveBtn) {
       showStatus(tr('uploader_updated'), 'ok');
       renderGrid();
       setDetail(item);
-      if (els.uploaderEditWrap) { els.uploaderEditWrap.classList.add('hidden'); els.uploaderEditWrap.classList.remove('floating'); els.uploaderEditWrap.style.left=''; els.uploaderEditWrap.style.top=''; }
+      closeFloatingPopover(els.uploaderEditWrap);
       try {
         const row = els.editUploaderBtn.closest('.detail-row');
         if (row) row.classList.remove('popover-open');
