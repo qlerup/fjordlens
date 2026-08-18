@@ -10634,6 +10634,17 @@ def _gps_to_deg(value: Any) -> Optional[float]:
         return None
 
 
+def _exif_ifd_enum_member(name: str) -> Any:
+    # Pillow's ExifTags.IFD enum names the GPS sub-IFD "GPSInfo", not "GPS" — a mismatch
+    # that made every get_ifd(IFD.GPS) call below raise AttributeError, silently swallowed
+    # by the surrounding try/except. Resolve defensively so this keeps working even if a
+    # future/older Pillow spells it differently.
+    ifd = getattr(ExifTags, "IFD", None)
+    if ifd is None:
+        return None
+    return getattr(ifd, name, None) or getattr(ifd, "GPS" if name == "GPSInfo" else name, None)
+
+
 def parse_exif(img: Image.Image) -> Dict[str, Any]:
     exif_map: Dict[str, Any] = {}
     try:
@@ -10643,8 +10654,9 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
     if not exif:
         # last resort: try GPS IFD if available in Pillow
         try:
-            if hasattr(img, "getexif") and hasattr(ExifTags, "IFD"):
-                gps_ifd = img.getexif().get_ifd(getattr(ExifTags, "IFD").GPS)  # type: ignore[attr-defined]
+            gps_ifd_id = _exif_ifd_enum_member("GPSInfo")
+            if hasattr(img, "getexif") and gps_ifd_id is not None:
+                gps_ifd = img.getexif().get_ifd(gps_ifd_id)
                 if gps_ifd:
                     exif_map["GPSInfo"] = {ExifTags.GPSTAGS.get(k, str(k)): v for k, v in gps_ifd.items()}
                     # derive lat/lon
@@ -10664,6 +10676,12 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
 
     for tag_id, value in exif.items():
         tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
+        # In modern Pillow, exif.items() only yields the 0th IFD: the "ExifOffset" and
+        # "GPSInfo" entries here are plain integer offsets into the file, not resolved
+        # sub-IFD dicts. Their actual contents (DateTimeOriginal, LensModel, ISO, GPS
+        # coordinates, ...) are pulled in explicitly below via get_ifd() instead.
+        if tag_name in ("ExifOffset", "GPSInfo") and not isinstance(value, dict):
+            continue
         try:
             if tag_name == "GPSInfo" and isinstance(value, dict):
                 gps = {}
@@ -10678,18 +10696,33 @@ def parse_exif(img: Image.Image) -> Dict[str, Any]:
         except Exception:
             exif_map[tag_name] = str(value)
 
-    # If GPSInfo not present, try direct GPS IFD
-    if "GPSInfo" not in exif_map:
+    # Pull in the Exif sub-IFD — this is where DateTimeOriginal, LensModel, ISO,
+    # FNumber, FocalLength and ExposureTime actually live; the top-level loop above
+    # never sees them (only the "ExifOffset" pointer to this sub-IFD).
+    try:
+        exif_ifd_id = _exif_ifd_enum_member("Exif")
+        if exif_ifd_id is not None:
+            exif_ifd = exif.get_ifd(exif_ifd_id)
+            for k, v in (exif_ifd or {}).items():
+                tag_name = ExifTags.TAGS.get(k, str(k))
+                if tag_name not in exif_map:
+                    exif_map[tag_name] = v
+    except Exception:
+        pass
+
+    # If GPSInfo not present as a resolved dict, pull it from the GPS sub-IFD directly.
+    if not isinstance(exif_map.get("GPSInfo"), dict):
         try:
-            if hasattr(ExifTags, "IFD"):
-                gps_ifd = exif.get_ifd(getattr(ExifTags, "IFD").GPS)  # type: ignore[attr-defined]
+            gps_ifd_id = _exif_ifd_enum_member("GPSInfo")
+            if gps_ifd_id is not None:
+                gps_ifd = exif.get_ifd(gps_ifd_id)
                 if gps_ifd:
                     exif_map["GPSInfo"] = {ExifTags.GPSTAGS.get(k, str(k)): v for k, v in gps_ifd.items()}
         except Exception:
             pass
 
     # Pillow sometimes stores GPSInfo values without expanding GPSTAGS
-    if "GPSInfo" in exif_map and isinstance(exif_map["GPSInfo"], dict):
+    if isinstance(exif_map.get("GPSInfo"), dict):
         gps = exif_map["GPSInfo"]
         lat = _gps_to_deg(gps.get("GPSLatitude"))
         lon = _gps_to_deg(gps.get("GPSLongitude"))
