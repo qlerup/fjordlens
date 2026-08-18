@@ -64,8 +64,14 @@ class MomentDetectionTests(unittest.TestCase):
             dt = base_b + timedelta(hours=i)
             self._insert_photo(f"uploads/originals/b_{i}.jpg", dt.isoformat(timespec="seconds"))
 
-        created = fjordlens._detect_moment_candidates()
-        self.assertEqual(created, 2)
+        stats = fjordlens._detect_moment_candidates()
+        self.assertEqual(stats["created"], 2)
+        self.assertEqual(stats["scanned"], 8)
+        self.assertEqual(stats["dated"], 8)
+        self.assertEqual(stats["segments"], 2)
+        self.assertEqual(stats["rejected_too_few"], 0)
+        self.assertEqual(stats["rejected_too_short"], 0)
+        self.assertEqual(stats["rejected_home_only"], 0)
 
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             rows = conn.execute("SELECT * FROM moments ORDER BY start_date ASC").fetchall()
@@ -84,8 +90,9 @@ class MomentDetectionTests(unittest.TestCase):
             dt = base + timedelta(hours=i)
             self._insert_photo(f"uploads/originals/x_{i}.jpg", dt.isoformat(timespec="seconds"))
 
-        created = fjordlens._detect_moment_candidates()
-        self.assertEqual(created, 0)
+        stats = fjordlens._detect_moment_candidates()
+        self.assertEqual(stats["created"], 0)
+        self.assertEqual(stats["rejected_too_few"], 1)
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             count = conn.execute("SELECT COUNT(*) AS c FROM moments").fetchone()["c"]
         self.assertEqual(count, 0)
@@ -98,8 +105,9 @@ class MomentDetectionTests(unittest.TestCase):
 
         first = fjordlens._detect_moment_candidates()
         second = fjordlens._detect_moment_candidates()
-        self.assertEqual(first, 1)
-        self.assertEqual(second, 0)
+        self.assertEqual(first["created"], 1)
+        self.assertEqual(second["created"], 0)
+        self.assertEqual(second["rejected_too_few"], 1, "photos from the first run should now be excluded as already-claimed")
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             count = conn.execute("SELECT COUNT(*) AS c FROM moments").fetchone()["c"]
         self.assertEqual(count, 1)

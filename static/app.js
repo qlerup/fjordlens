@@ -1295,6 +1295,7 @@ const I18N = {
     momenter_finding: 'Leder efter momenter...',
     momenter_find_done: 'Fandt {n} nye momenter',
     momenter_find_failed: 'Kunne ikke finde momenter',
+    momenter_find_zero_debug: 'Fandt 0 nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} tidsklynger — ingen opfyldte kravene ({minPhotos}+ billeder over mindst {minSpan} timer). Afvist: {tooFew} for få billeder, {tooShort} for kort periode, {homeOnly} kun ét sted.',
     momenter_suggested_heading: 'Forslag',
     momenter_saved_heading: 'Gemte momenter',
     momenter_empty: 'Ingen momenter endnu. Tryk «Find nye momenter» for at lede efter rejser og årsoverblik.',
@@ -2128,6 +2129,7 @@ const I18N = {
     momenter_finding: 'Looking for moments...',
     momenter_find_done: 'Found {n} new moments',
     momenter_find_failed: 'Could not find moments',
+    momenter_find_zero_debug: 'Found 0 new moments. Scanned {scanned} photos ({dated} dated) into {segments} time clusters — none met the requirements ({minPhotos}+ photos over at least {minSpan} hours). Rejected: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} single-place only.',
     momenter_suggested_heading: 'Suggestions',
     momenter_saved_heading: 'Saved moments',
     momenter_empty: 'No moments yet. Press "Find new moments" to look for trips and year reviews.',
@@ -3760,7 +3762,22 @@ async function pollMomentDetection() {
       state.momentsDetecting = false;
       const result = data && data.result;
       if (result && result.ok) {
-        showStatus(tr('momenter_find_done').replace('{n}', String(result.created || 0)), 'ok');
+        const created = Number(result.created || 0);
+        if (created === 0 && result.debug) {
+          const d = result.debug;
+          const msg = tr('momenter_find_zero_debug')
+            .replace('{scanned}', String(d.scanned || 0))
+            .replace('{dated}', String(d.dated || 0))
+            .replace('{segments}', String(d.segments || 0))
+            .replace('{minPhotos}', String(d.min_photos || 0))
+            .replace('{minSpan}', String(d.min_span_hours || 0))
+            .replace('{tooFew}', String(d.rejected_too_few || 0))
+            .replace('{tooShort}', String(d.rejected_too_short || 0))
+            .replace('{homeOnly}', String(d.rejected_home_only || 0));
+          showStatus(msg, 'err');
+        } else {
+          showStatus(tr('momenter_find_done').replace('{n}', String(created)), 'ok');
+        }
       } else {
         showStatus((result && result.error) || tr('momenter_find_failed'), 'err');
       }

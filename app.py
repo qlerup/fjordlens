@@ -6345,8 +6345,16 @@ def _insert_moment(
         return int(cur.lastrowid)
 
 
-def _detect_moment_candidates() -> int:
-    """Scan the library for date/place-gapped clusters ("trips") and insert suggested moments."""
+def _detect_moment_candidates() -> Dict[str, int]:
+    """Scan the library for date/place-gapped clusters ("trips") and insert suggested moments.
+
+    Returns diagnostic counters (not just a count) so a zero-result run can explain itself
+    in the UI instead of silently doing nothing.
+    """
+    stats: Dict[str, int] = {
+        "scanned": 0, "dated": 0, "segments": 0, "created": 0,
+        "rejected_too_few": 0, "rejected_too_short": 0, "rejected_home_only": 0,
+    }
     with closing(get_conn()) as conn:
         rows = conn.execute(
             "SELECT id, rel_path, captured_at, modified_fs, created_fs, gps_name, favorite "
@@ -6354,6 +6362,7 @@ def _detect_moment_candidates() -> int:
             "ORDER BY COALESCE(captured_at, modified_fs, created_fs) ASC"
         ).fetchall()
     rows = _dedupe_upload_storage_rows(rows)
+    stats["scanned"] = len(rows)
 
     timed: list[tuple[datetime, sqlite3.Row]] = []
     for r in rows:
@@ -6361,8 +6370,9 @@ def _detect_moment_candidates() -> int:
         if dt is not None:
             timed.append((dt, r))
     timed.sort(key=lambda t: t[0])
+    stats["dated"] = len(timed)
     if not timed:
-        return 0
+        return stats
 
     home_place = _moment_home_place([r for _, r in timed])
     already_used = _existing_moment_photo_ids()
@@ -6382,14 +6392,16 @@ def _detect_moment_candidates() -> int:
         current.append((dt, r))
     if current:
         segments.append(current)
+    stats["segments"] = len(segments)
 
-    created = 0
     for seg in segments:
         photo_ids = [int(r["id"]) for _, r in seg if int(r["id"]) not in already_used]
         if len(photo_ids) < MOMENT_MIN_PHOTOS:
+            stats["rejected_too_few"] += 1
             continue
         span_hours = (seg[-1][0] - seg[0][0]).total_seconds() / 3600.0
         if span_hours < MOMENT_MIN_SPAN_HOURS:
+            stats["rejected_too_short"] += 1
             continue
 
         gps_rows = [r for _, r in seg]
@@ -6401,6 +6413,7 @@ def _detect_moment_candidates() -> int:
                 place_counts[name] = place_counts.get(name, 0) + 1
         if home_place and gps_covered >= max(1, int(len(gps_rows) * 0.3)) and not place_counts:
             # Segment has enough GPS coverage to judge, but every reading is the home place — skip.
+            stats["rejected_home_only"] += 1
             continue
         primary_place = max(place_counts.items(), key=lambda kv: kv[1])[0] if place_counts else None
 
@@ -6420,9 +6433,9 @@ def _detect_moment_candidates() -> int:
             cover_photo_id=int(cover_row["id"]),
             photo_ids=photo_ids,
         )
-        created += 1
+        stats["created"] += 1
         already_used.update(photo_ids)
-    return created
+    return stats
 
 
 def _detect_year_review_candidates() -> int:
@@ -6599,13 +6612,22 @@ last_moment_detect_result: Optional[Dict[str, Any]] = None
 
 def _run_moment_detection() -> Dict[str, Any]:
     try:
-        trips = _detect_moment_candidates()
+        trip_stats = _detect_moment_candidates()
         years = _detect_year_review_candidates()
-        res: Dict[str, Any] = {"ok": True, "created": trips + years, "trips": trips, "year_reviews": years}
+        debug: Dict[str, Any] = dict(trip_stats)
+        debug["min_photos"] = MOMENT_MIN_PHOTOS
+        debug["min_span_hours"] = MOMENT_MIN_SPAN_HOURS
+        res: Dict[str, Any] = {
+            "ok": True,
+            "created": trip_stats["created"] + years,
+            "trips": trip_stats["created"],
+            "year_reviews": years,
+            "debug": debug,
+        }
     except Exception as e:
         res = {"ok": False, "error": str(e)}
     try:
-        log_event("moments_detect_done", **{k: v for k, v in res.items() if k != "ok"})
+        log_event("moments_detect_done", **{k: v for k, v in res.items() if k not in {"ok", "debug"}})
     except Exception:
         pass
     return res
