@@ -73,5 +73,49 @@ class ExifSubIfdExtractionTests(unittest.TestCase):
         self.assertAlmostEqual(meta["gps_lon"], 12.5667, places=3)
 
 
+class RecoverFromOriginalTests(unittest.TestCase):
+    """Regression coverage for recovering metadata from the un-converted original
+    (uploads/originals/<sub>) when the converted copy (uploads/converted/<sub>) is
+    missing it — the previous "sibling" fallback only ever looked in the SAME folder
+    as the converted file (originals/ and converted/ are different top-level folders),
+    so it never actually found anything for this app's own upload layout."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.uploads = root / "uploads"
+        (self.uploads / "originals" / "album").mkdir(parents=True)
+        (self.uploads / "converted" / "album").mkdir(parents=True)
+        self._previous_upload_dir = fjordlens.UPLOAD_DIR
+        self._previous_geocode_enable = fjordlens.GEOCODE_ENABLE
+        fjordlens.UPLOAD_DIR = self.uploads
+        fjordlens.GEOCODE_ENABLE = False
+
+        # Original carries full EXIF; converted copy carries none (simulates a
+        # conversion step that dropped/never embedded metadata).
+        self.original_path = self.uploads / "originals" / "album" / "photo.jpg"
+        Image.new("RGB", (40, 30), color="green").save(self.original_path, format="JPEG", exif=_build_exif_bytes())
+        self.converted_path = self.uploads / "converted" / "album" / "photo.jpg"
+        Image.new("RGB", (40, 30), color="green").save(self.converted_path, format="JPEG")
+
+    def tearDown(self):
+        fjordlens.UPLOAD_DIR = self._previous_upload_dir
+        fjordlens.GEOCODE_ENABLE = self._previous_geocode_enable
+        self.tempdir.cleanup()
+
+    def test_finds_original_in_sibling_originals_folder(self):
+        candidates = fjordlens._uploads_original_candidates("uploads/converted/album/photo.jpg")
+        self.assertIn(self.original_path, candidates)
+
+    def test_extract_metadata_recovers_date_gps_lens_from_original(self):
+        meta = fjordlens.extract_metadata(
+            self.converted_path, "uploads/converted/album/photo.jpg", generate_thumb=False
+        )
+        self.assertEqual(meta.get("captured_at"), "2023-07-15T10:30:00")
+        self.assertEqual(meta.get("lens_model"), "TestLens")
+        self.assertAlmostEqual(meta.get("gps_lat"), 55.6667, places=3)
+        self.assertAlmostEqual(meta.get("gps_lon"), 12.5667, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()

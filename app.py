@@ -10779,7 +10779,10 @@ def extract_exif_via_heif(path: Path) -> Dict[str, Any]:
         out["camera_model"] = mdl.decode() if isinstance(mdl, bytes) else mdl
         out["lens_model"] = lmd.decode() if isinstance(lmd, bytes) else lmd
         # Exposure
-        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings) or _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.PhotographicSensitivity)
+        # piexif only exposes the EXIF 2.2 tag name (ISOSpeedRatings); it's the same
+        # underlying tag (0x8827) EXIF 2.3 renamed to PhotographicSensitivity, which
+        # piexif.ExifIFD doesn't define — referencing it raised AttributeError here.
+        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings)
         out["f_number"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FNumber))
         out["focal_length"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FocalLength))
         et = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ExposureTime)
@@ -10870,7 +10873,10 @@ def extract_exif_via_piexif_file(path: Path) -> Dict[str, Any]:
         out["camera_make"] = mke.decode() if isinstance(mke, bytes) else mke
         out["camera_model"] = mdl.decode() if isinstance(mdl, bytes) else mdl
         out["lens_model"] = lmd.decode() if isinstance(lmd, bytes) else lmd
-        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings) or _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.PhotographicSensitivity)
+        # piexif only exposes the EXIF 2.2 tag name (ISOSpeedRatings); it's the same
+        # underlying tag (0x8827) EXIF 2.3 renamed to PhotographicSensitivity, which
+        # piexif.ExifIFD doesn't define — referencing it raised AttributeError here.
+        out["iso"] = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ISOSpeedRatings)
         out["f_number"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FNumber))
         out["focal_length"] = _rational_to_float(_piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.FocalLength))
         et = _piexif_get_first(exif_dict, "Exif", piexif.ExifIFD.ExposureTime)
@@ -11061,6 +11067,117 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
         return path
 
 
+def extract_video_metadata_via_exiftool(path: Path) -> Dict[str, Any]:
+    """Read creation date + GPS from a video's container metadata (QuickTime atoms,
+    MP4 boxes) — Pillow/piexif only understand JPEG-style EXIF, not video containers."""
+    out: Dict[str, Any] = {}
+    exiftool_bin = shutil.which("exiftool")
+    if not exiftool_bin:
+        return out
+    try:
+        result = subprocess.run(
+            [
+                exiftool_bin, "-j", "-n",
+                "-DateTimeOriginal", "-CreateDate", "-MediaCreateDate",
+                "-GPSLatitude", "-GPSLongitude",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        rows = json.loads(result.stdout or "[]")
+        if not rows:
+            return out
+        tags = rows[0]
+        for key in ("DateTimeOriginal", "CreateDate", "MediaCreateDate"):
+            raw = tags.get(key)
+            if not raw:
+                continue
+            for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    out["captured_at"] = datetime.strptime(str(raw), fmt).isoformat(timespec="seconds")
+                    break
+                except ValueError:
+                    continue
+            if out.get("captured_at"):
+                break
+        lat = tags.get("GPSLatitude")
+        lon = tags.get("GPSLongitude")
+        if isinstance(lat, (int, float)):
+            out["gps_lat"] = float(lat)
+        if isinstance(lon, (int, float)):
+            out["gps_lon"] = float(lon)
+    except Exception as e:
+        log_event("error", rel_path=str(path), error=f"exiftool_video: {e}")
+    return out
+
+
+def _uploads_original_candidates(rel_path: str) -> list[Path]:
+    """For a file under uploads/converted/<sub>/<name>.<ext>, return existing candidate
+    original files under uploads/originals/<sub>/<name>.<any supported ext> — the
+    deterministic pairing this app's own upload/convert flow already uses (originals/
+    and converted/ are separate top-level folders with mirrored subpaths), rather than
+    guessing via same-folder-different-extension (which never matches, since the
+    original isn't in the converted/ folder at all)."""
+    rel_norm = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if not rel_norm.startswith("uploads/converted/"):
+        return []
+    sub = rel_norm[len("uploads/converted/"):]
+    stem = Path(sub).stem
+    subdir = str(Path(sub).parent).replace("\\", "/")
+    base_dir = UPLOAD_DIR / "originals" / (subdir if subdir not in {"", "."} else "")
+    candidates: list[Path] = []
+    seen_ext: set[str] = set()
+    for ext in SUPPORTED_EXTS:
+        for variant in (ext.lower(), ext.upper()):
+            if variant in seen_ext:
+                continue
+            seen_ext.add(variant)
+            cand = base_dir / f"{stem}{variant}"
+            if cand.exists() and cand.is_file():
+                candidates.append(cand)
+    return candidates
+
+
+def _exif_from_any_source(path: Path) -> Dict[str, Any]:
+    """Best-effort metadata extraction from an arbitrary file, normalized to the same
+    field names extract_metadata() uses — dispatches by extension so it works whether
+    the recovered original turns out to be a HEIC photo, a RAW file, or a MOV video."""
+    ext = path.suffix.lower()
+    try:
+        if ext in {".heic", ".heif"}:
+            return extract_exif_via_heif(path)
+        if ext in VIDEO_EXTS:
+            return extract_video_metadata_via_exiftool(path)
+        if ext in RAW_EXTS:
+            out = extract_exif_via_piexif_file(path)
+            if out:
+                return out
+        with Image.open(path) as img:
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+            exif_map = parse_exif(img)
+        result: Dict[str, Any] = {
+            "camera_make": exif_map.get("Make"),
+            "camera_model": exif_map.get("Model"),
+            "lens_model": exif_map.get("LensModel"),
+            "iso": exif_map.get("ISOSpeedRatings") or exif_map.get("PhotographicSensitivity"),
+            "focal_length": _rational_to_float(exif_map.get("FocalLength")),
+            "f_number": _rational_to_float(exif_map.get("FNumber")),
+            "exposure_time": str(exif_map.get("ExposureTime")) if exif_map.get("ExposureTime") is not None else None,
+            "gps_lat": exif_map.get("_gps_lat"),
+            "gps_lon": exif_map.get("_gps_lon"),
+        }
+        if exif_map.get("DateTimeOriginal") or exif_map.get("DateTimeDigitized") or exif_map.get("DateTime"):
+            result["captured_at"] = parse_captured_at(exif_map, path.stat().st_mtime)
+        return result
+    except Exception:
+        return {}
+
+
 def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) -> Dict[str, Any]:
     stat = path.stat()
     metadata: Dict[str, Any] = {
@@ -11089,7 +11206,19 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     # Determine if file is a video (no EXIF parsing via Pillow)
     is_video = metadata["ext"] in VIDEO_EXTS
     if is_video:
-        # Minimal fields for videos
+        # Videos carry creation date/GPS in container-level metadata (QuickTime atoms,
+        # MP4 boxes), not JPEG-style EXIF — Pillow/piexif can't read it, so ask exiftool.
+        try:
+            video_meta = extract_video_metadata_via_exiftool(path)
+        except Exception:
+            video_meta = {}
+        if video_meta.get("captured_at"):
+            metadata["captured_at"] = video_meta["captured_at"]
+        if video_meta.get("gps_lat") is not None:
+            metadata["gps_lat"] = video_meta["gps_lat"]
+        if video_meta.get("gps_lon") is not None:
+            metadata["gps_lon"] = video_meta["gps_lon"]
+        # Fall back to file mtime only when exiftool found nothing usable.
         metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
         # Attempt to make a thumbnail from first frame
         if generate_thumb:
@@ -11145,7 +11274,13 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                         pass
                     metadata["width"], metadata["height"] = img.size
                     exif_map = parse_exif(img)
-                    metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
+                    if exif_map.get("DateTimeOriginal") or exif_map.get("DateTimeDigitized") or exif_map.get("DateTime"):
+                        # Only assign here when a real EXIF date tag was found — leave it
+                        # unset otherwise so the jpg/exifread fallback and original-file
+                        # enrichment below get a real chance instead of being blocked by
+                        # an early, wrong mtime fallback. The very end of this function
+                        # applies the mtime fallback if nothing better turned up.
+                        metadata["captured_at"] = parse_captured_at(exif_map, stat.st_mtime)
                     metadata["camera_make"] = exif_map.get("Make")
                     metadata["camera_model"] = exif_map.get("Model")
                     metadata["lens_model"] = exif_map.get("LensModel")
@@ -11214,9 +11349,39 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     except Exception as e:
         log_event("error", rel_path=rel_path, error=f"geocode_outer: {e}")
 
-    # If critical EXIF is missing (common when HEIC was re-encoded as JPG without metadata),
-    # try to enrich from a sibling HEIC/HEIF with same basename â€” but ONLY if the images
-    # are visually the same (verified via perceptual hash distance threshold).
+    # Recover metadata from the un-converted original, if this file is a converted copy
+    # and the original is still on disk — deterministic (this app's own
+    # uploads/originals <-> uploads/converted pairing), so unlike the same-folder
+    # sibling search below, no visual-similarity verification is needed here.
+    try:
+        needs_recovery = (
+            not metadata.get("captured_at")
+            or (not metadata.get("gps_lat") and not metadata.get("gps_lon"))
+            or not metadata.get("lens_model")
+        )
+        if needs_recovery:
+            for cand in _uploads_original_candidates(rel_path):
+                extra = _exif_from_any_source(cand)
+                if not extra:
+                    continue
+                filled: list[str] = []
+                for k in (
+                    "captured_at", "camera_make", "camera_model", "lens_model",
+                    "iso", "focal_length", "f_number", "exposure_time", "gps_lat", "gps_lon",
+                ):
+                    if metadata.get(k) in (None, "") and extra.get(k) is not None:
+                        metadata[k] = extra[k]
+                        filled.append(k)
+                if filled:
+                    log_event("enrich_from_original", rel_path=rel_path, from_path=str(cand), fields=",".join(filled))
+                    break
+    except Exception as e:
+        log_event("error", rel_path=rel_path, error=f"enrich_from_original: {e}")
+
+    # If critical EXIF is still missing (e.g. a library-scanned file outside the
+    # uploads/originals <-> uploads/converted convention above), try to enrich from
+    # a sibling HEIC/HEIF with same basename in the SAME folder — but ONLY if the
+    # images are visually the same (verified via perceptual hash distance threshold).
     try:
         if (not metadata.get("gps_lat") and not metadata.get("gps_lon")) or (not metadata.get("lens_model")):
             # Consider any sibling with the same basename but different extension (supported types)
@@ -11281,6 +11446,12 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                         continue
     except Exception:
         pass
+
+    # Last resort: nothing above found a real capture date, so use the file's own
+    # modified time (kept deliberately deferred to here, instead of assigned upfront,
+    # so it never blocks the enrichment steps above from filling in the real date).
+    if not metadata.get("captured_at"):
+        metadata["captured_at"] = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
 
     metadata["checksum_sha256"] = sha256_file(path)
     metadata["phash"] = phash
