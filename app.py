@@ -15707,6 +15707,16 @@ def api_share_photos(token: str):
             "error": "Adgang krÃ¦ves",
         }), 401
 
+    try:
+        offset = max(0, int(request.args.get("offset", "0") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", "10") or 10)))
+    except (TypeError, ValueError):
+        limit = 10
+    current_path = _normalize_folder_acl_path(request.args.get("path") or "")
+
     with closing(get_conn()) as conn:
         folder_paths = _share_folder_paths(conn, share)
     for fp in folder_paths:
@@ -15731,9 +15741,58 @@ def api_share_photos(token: str):
         ).fetchall()
 
     rows = _dedupe_upload_storage_rows(rows)
+    root = folder_paths[0] if len(folder_paths) == 1 else ""
+
+    def logical_folder(rel_path: str) -> str:
+        rel = str(rel_path or "").replace("\\", "/")
+        for prefix in ("uploads/originals/", "uploads/converted/", "uploads/"):
+            if rel.startswith(prefix):
+                rel = rel[len(prefix):]
+                break
+        return str(Path(rel).parent).replace("\\", "/").strip(".").strip("/")
+
+    def relative_folder(folder: str) -> str:
+        if root and folder == root:
+            return ""
+        if root and folder.startswith(root + "/"):
+            return folder[len(root) + 1:]
+        return folder
+
+    direct_rows: list[sqlite3.Row] = []
+    folders: dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        rel_folder = relative_folder(logical_folder(str(row["rel_path"] or "")))
+        if rel_folder == current_path:
+            direct_rows.append(row)
+            continue
+        prefix = current_path + "/" if current_path else ""
+        if not rel_folder.startswith(prefix):
+            continue
+        rest = rel_folder[len(prefix):]
+        segment = rest.split("/", 1)[0] if rest else ""
+        if not segment:
+            continue
+        child_path = f"{current_path}/{segment}" if current_path else segment
+        entry = folders.setdefault(child_path, {"path": child_path, "count": 0, "previews": []})
+        entry["count"] += 1
+        if len(entry["previews"]) < 4:
+            entry["previews"].append(url_for("api_share_thumb", token=token, photo_id=int(row["id"])))
+
+    total = len(direct_rows)
+    page_rows = direct_rows[offset:offset + limit]
     can_download = _share_can_download(share)
-    items = [_row_to_share_public(r, token, can_download=can_download) for r in rows]
-    return jsonify({"ok": True, "items": items})
+    items = [_row_to_share_public(r, token, can_download=can_download) for r in page_rows]
+    next_offset = offset + len(items)
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "folders": sorted(folders.values(), key=lambda item: str(item["path"]).lower()),
+        "path": current_path,
+        "offset": offset,
+        "next_offset": next_offset,
+        "total": total,
+        "has_more": next_offset < total,
+    })
 
 
 @app.route("/api/share/<token>/thumb/<int:photo_id>")

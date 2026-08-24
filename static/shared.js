@@ -78,6 +78,12 @@ const state = {
   token: String(window.SHARE_TOKEN || ''),
   info: null,
   items: [],
+  folders: [],
+  photosOffset: 0,
+  photosTotal: 0,
+  photosHasMore: false,
+  photosLoading: false,
+  ghostCapacity: 0,
   selected: new Set(),
   selectionPulseId: 0,
   auth: { passwordRequired: false, nameRequired: false },
@@ -88,6 +94,9 @@ const state = {
   videoAutoplay: false,
   uploadAllowedExtensions: [],
 };
+
+let shareLoadObserver = null;
+let shareGhostChunkObserver = null;
 
 const uploadProgress = {
   active: false,
@@ -1137,6 +1146,12 @@ function renderGrid() {
       } catch {}
     }
   }
+  for (const folder of (state.folders || [])) {
+    const path = String(folder && folder.path || '');
+    if (!path) continue;
+    byFolder.set(path, Array.isArray(folder.previews) ? folder.previews.slice(0, 4) : []);
+    folderCounts.set(path, Number(folder.count || 0));
+  }
 
   // Render
   els.grid.innerHTML = '';
@@ -1233,10 +1248,10 @@ function renderGrid() {
         card.addEventListener('mouseover', onEnter, { passive: true });
       }
     } catch {}
-    card.addEventListener('click', () => {
+    card.addEventListener('click', async () => {
       if (state.selectMode) return;
       state.currentPath = fk;
-      renderGrid();
+      await loadPhotos(false);
     });
     els.grid.appendChild(card);
   }
@@ -1339,8 +1354,135 @@ function renderGrid() {
     });
     els.grid.appendChild(card);
   });
+  appendShareGhostSlots(state.items.length, state.ghostCapacity);
+  setupShareGhostLoading();
   updateDeleteButton();
   state.selectionPulseId = 0;
+}
+
+function estimateShareColumns() {
+  try {
+    const style = getComputedStyle(els.grid);
+    const tracks = String(style.gridTemplateColumns || '').split(/\s+/).filter((value) => parseFloat(value) > 0);
+    return Math.max(1, tracks.length || (window.innerWidth <= 760 ? 2 : 6));
+  } catch {
+    return window.innerWidth <= 760 ? 2 : 6;
+  }
+}
+
+function appendShareGhostSlots(fromIndex, toIndex) {
+  if (!els.grid) return;
+  const fragment = document.createDocumentFragment();
+  for (let index = fromIndex; index < toIndex; index += 1) {
+    const ghost = document.createElement('article');
+    ghost.className = 'photo-card mapper-ghost-card share-ghost-card';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.dataset.shareIndex = String(index);
+    ghost.innerHTML = '<div class="card-thumb mapper-ghost-thumb"></div>';
+    fragment.appendChild(ghost);
+  }
+  els.grid.appendChild(fragment);
+}
+
+function syncShareCardSelection(card, photoId) {
+  const selected = state.selectMode && state.selected.has(photoId);
+  card.classList.toggle('selected', selected);
+  const badge = card.querySelector('.photo-select-badge');
+  if (badge) badge.innerHTML = selected ? '&#10003;' : '';
+  updateDeleteButton();
+}
+
+function createHydratedShareCard(item, index) {
+  const photoId = Number(item && item.id || 0);
+  const card = document.createElement('article');
+  card.className = `photo-card${state.selectMode && state.selected.has(photoId) ? ' selected' : ''}`;
+  card.dataset.shareIndex = String(index);
+  if (photoId > 0) card.dataset.photoId = String(photoId);
+  const thumb = item.thumb_url
+    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt=""></div>`
+    : '<div class="card-thumb placeholder">No thumbnail</div>';
+  const badge = canSelectFromShare() ? '<span class="photo-select-badge"></span>' : '';
+  const uploader = String(item && item.uploaded_by || '').trim();
+  const uploaderTag = uploader ? `<div class="uploader-badge">${uploader}</div>` : '';
+  card.innerHTML = `${thumb}${badge}${uploaderTag}`;
+  syncShareCardSelection(card, photoId);
+
+  let longPress = null;
+  let longPressActivated = false;
+  const cancelLongPress = () => { if (longPress) clearTimeout(longPress); longPress = null; };
+  const startLongPress = () => {
+    if (!canSelectFromShare() || state.selectMode || photoId <= 0) return;
+    cancelLongPress();
+    longPressActivated = false;
+    longPress = window.setTimeout(() => {
+      longPressActivated = true;
+      state.selectMode = true;
+      state.selected.add(photoId);
+      syncShareCardSelection(card, photoId);
+    }, 550);
+  };
+  card.addEventListener('touchstart', startLongPress, { passive: true });
+  card.addEventListener('mousedown', startLongPress);
+  ['touchmove', 'touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach((name) => card.addEventListener(name, cancelLongPress, { passive: true }));
+  card.addEventListener('click', (event) => {
+    if (longPressActivated) {
+      longPressActivated = false;
+      event.preventDefault();
+      return;
+    }
+    if (state.selectMode && canSelectFromShare()) {
+      if (state.selected.has(photoId)) state.selected.delete(photoId); else state.selected.add(photoId);
+      syncShareCardSelection(card, photoId);
+      event.preventDefault();
+      return;
+    }
+    openShareViewer(index);
+  });
+  return card;
+}
+
+function hydrateShareItems(startIndex, items) {
+  if (!els.grid) return;
+  items.forEach((item, offset) => {
+    const index = startIndex + offset;
+    const ghost = els.grid.querySelector(`.share-ghost-card[data-share-index="${index}"]`);
+    if (ghost) ghost.replaceWith(createHydratedShareCard(item, index));
+  });
+  state.visible = state.items.slice();
+}
+
+function expandShareGhostChunk() {
+  const cols = estimateShareColumns();
+  const next = Math.min(state.photosTotal, state.ghostCapacity + (cols * 50));
+  if (next <= state.ghostCapacity) return;
+  appendShareGhostSlots(state.ghostCapacity, next);
+  state.ghostCapacity = next;
+  setupShareGhostLoading();
+}
+
+function setupShareGhostLoading() {
+  try { if (shareLoadObserver) shareLoadObserver.disconnect(); } catch {}
+  try { if (shareGhostChunkObserver) shareGhostChunkObserver.disconnect(); } catch {}
+  if (!els.grid) return;
+  const cols = estimateShareColumns();
+  const firstGhost = els.grid.querySelector(`.share-ghost-card[data-share-index="${state.items.length}"]`);
+  if (firstGhost && state.photosHasMore && 'IntersectionObserver' in window) {
+    const cardWidth = firstGhost.getBoundingClientRect().width || 180;
+    shareLoadObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(false, true);
+    }, { rootMargin: `${Math.ceil(cardWidth * 5)}px 0px` });
+    shareLoadObserver.observe(firstGhost);
+  }
+  if (state.ghostCapacity < state.photosTotal && 'IntersectionObserver' in window) {
+    const triggerIndex = Math.max(0, state.ghostCapacity - (cols * 40));
+    const trigger = els.grid.querySelector(`[data-share-index="${triggerIndex}"]`);
+    if (trigger) {
+      shareGhostChunkObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) expandShareGhostChunk();
+      });
+      shareGhostChunkObserver.observe(trigger);
+    }
+  }
 }
 
 function navigateShareBackPath() {
@@ -1350,7 +1492,7 @@ function navigateShareBackPath() {
   const parts = current.split('/').filter(Boolean);
   parts.pop();
   state.currentPath = parts.join('/');
-  renderGrid();
+  loadPhotos(false);
 }
 
 // --- Simple viewer (popup) ---
@@ -1932,25 +2074,49 @@ function restoreShareGridScrollAnchor(anchor) {
   });
 }
 
-async function loadPhotos(preserveScroll = false) {
-  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/photos`);
+async function loadPhotos(preserveScroll = false, append = false) {
+  if (state.photosLoading) return;
+  state.photosLoading = true;
+  const cols = estimateShareColumns();
+  const params = new URLSearchParams({
+    path: state.currentPath || '',
+    offset: String(append ? state.photosOffset : 0),
+    limit: String(cols * 5),
+  });
+  const startIndex = append ? state.items.length : 0;
+  const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/photos?${params.toString()}`);
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data && (data.password_required || data.name_required)) {
     applyAuthRequirements(data);
-    return;
+    state.photosLoading = false;
+    return false;
   }
   if (!res.ok || !data || !data.ok) {
     showStatus((data && data.error) || 'Share error', 'err');
-    return;
+    state.photosLoading = false;
+    return false;
   }
-  state.items = data.items || [];
+  const incoming = Array.isArray(data.items) ? data.items : [];
+  state.items = append ? state.items.concat(incoming) : incoming;
+  state.folders = Array.isArray(data.folders) ? data.folders : state.folders;
+  state.photosOffset = Number(data.next_offset || state.items.length);
+  state.photosTotal = Math.max(state.items.length, Number(data.total || 0));
+  state.photosHasMore = !!data.has_more;
+  state.photosLoading = false;
   if (!state.selectMode) {
     state.selected = new Set();
     state.selectionPulseId = 0;
   }
+  if (append) {
+    hydrateShareItems(startIndex, incoming);
+    setupShareGhostLoading();
+    return true;
+  }
+  state.ghostCapacity = Math.min(state.photosTotal, cols * 50);
   const scrollAnchor = preserveScroll ? captureShareGridScrollAnchor() : null;
   renderGrid();
   restoreShareGridScrollAnchor(scrollAnchor);
+  return true;
 }
 
 async function runAuth() {
@@ -2243,8 +2409,12 @@ if (els.moreSelectBtn) {
   });
 }
 if (els.moreSelectAllBtn) {
-  els.moreSelectAllBtn.addEventListener('click', () => {
+  els.moreSelectAllBtn.addEventListener('click', async () => {
     if (!state.selectMode || !canSelectFromShare()) return;
+    while (state.photosHasMore) {
+      const loaded = await loadPhotos(false, true);
+      if (!loaded) break;
+    }
     state.selected = new Set((state.visible || []).map((it) => Number(it && it.id || 0)).filter((id) => id > 0));
     state.selectionPulseId = 0;
     renderGrid();

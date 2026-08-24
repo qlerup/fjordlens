@@ -1530,6 +1530,12 @@ body.view-kameraer .timeline-header-actions {
     background: color-mix(in srgb, var(--panel-2) 82%, var(--border));
   }
 }
+@media (max-width: 760px) {
+  .share-page .mapper-ghost-thumb {
+    animation: none;
+    background: color-mix(in srgb, var(--panel-2) 82%, var(--border));
+  }
+}
 body.view-mapper .photo-card,
 body.view-mapper .photo-card img {
   -webkit-touch-callout: none;

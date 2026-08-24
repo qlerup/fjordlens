@@ -272,6 +272,27 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
         )
         self.assertEqual(batch.status_code, 200)
 
+    def test_share_photos_are_paged_and_include_folder_summaries(self):
+        for index in range(3):
+            self._add_jpeg("shared", f"photo-{index}.jpg")
+        self._add_jpeg("shared/child", "nested.jpg")
+        token = "paged-share-token"
+        self._add_share(token, "shared", can_download=1)
+
+        with patch.object(fjordlens, "_sync_upload_folder_from_disk", return_value=None):
+            first = self.client.get(f"/api/share/{token}/photos?limit=2&offset=0&path=")
+            second = self.client.get(f"/api/share/{token}/photos?limit=2&offset=2&path=")
+
+        self.assertEqual(first.status_code, 200)
+        first_data = first.get_json()
+        self.assertEqual(len(first_data["items"]), 2)
+        self.assertEqual(first_data["total"], 3)
+        self.assertTrue(first_data["has_more"])
+        self.assertEqual(first_data["folders"][0]["path"], "child")
+        self.assertEqual(first_data["folders"][0]["count"], 1)
+        self.assertEqual(len(second.get_json()["items"]), 1)
+        self.assertFalse(second.get_json()["has_more"])
+
     def test_create_update_and_admin_list_include_download_for_all_permissions(self):
         (fjordlens.UPLOAD_DIR / "originals" / "shared").mkdir(parents=True, exist_ok=True)
         created = self.client.post(
