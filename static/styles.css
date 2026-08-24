@@ -3315,6 +3315,12 @@ body.detail-open .detail-panel {
 .raw-meta .log-err { color: #f87171; }
 .raw-meta .log-info { color: var(--muted); }
 
+.log-browser {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 12px;
+}
 .log-category-tabs {
   display: flex;
   gap: 6px;
@@ -3339,7 +3345,7 @@ body.detail-open .detail-panel {
 .log-list {
   display: grid;
   gap: 7px;
-  min-height: 180px;
+  min-height: 96px;
 }
 .log-list-row {
   display: grid;
@@ -3377,12 +3383,13 @@ body.detail-open .detail-panel {
 .log-list-empty {
   display: grid;
   place-items: center;
-  min-height: 180px;
+  min-height: 96px;
   border: 1px dashed var(--border);
   border-radius: 9px;
   color: var(--muted);
 }
 .log-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 0 2px; }
+.log-pagination.hidden { display: none; }
 
 @media (max-width: 760px) {
   .log-list-row { grid-template-columns: 1fr; gap: 7px; }

@@ -1103,6 +1103,13 @@ def log_event(event: str, **data: Any) -> None:
         pass
 
 
+def _audit_actor() -> str:
+    try:
+        return str(getattr(current_user, "username", "") or "").strip() or "system"
+    except Exception:
+        return "system"
+
+
 # --- AI helpers (CLIP service) ---
 _AI_HEALTH_CACHE_TTL_SEC = 2.0
 _ai_health_cache_lock = threading.Lock()
@@ -16246,6 +16253,13 @@ def api_share_delete(token: str):
         return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
 
     removed = _delete_indexed_photos_by_ids(allowed_ids)
+    log_event(
+        "share_photos_deleted",
+        actor=_audit_actor(),
+        share_name=share["share_name"],
+        photo_ids=allowed_ids,
+        removed_photos=removed.get("photos", 0),
+    )
     return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed_ids})
 
 
@@ -20373,6 +20387,11 @@ def api_update_captured_at(photo_id: int):
             return jsonify({"ok": False, "error": "Invalid date format"}), 400
         iso = dt.isoformat(timespec="seconds")
         with closing(get_conn()) as conn:
+            previous = conn.execute(
+                "SELECT rel_path, captured_at FROM photos WHERE id=?", (photo_id,)
+            ).fetchone()
+            if not previous:
+                return jsonify({"ok": False, "error": "Not found"}), 404
             # Update DB
             conn.execute("UPDATE photos SET captured_at=? WHERE id=?", (iso, photo_id))
             _clear_photo_weather_metadata(conn, photo_id)
@@ -20395,6 +20414,10 @@ def api_update_captured_at(photo_id: int):
         _refresh_photo_weather_if_possible(photo_id, force=False)
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        log_event(
+            "captured_at_updated", actor=_audit_actor(), photo_id=photo_id,
+            rel_path=previous["rel_path"], old_value=previous["captured_at"], new_value=iso,
+        )
         return jsonify({"ok": True, "item": row_to_public(row)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -20420,7 +20443,11 @@ def api_update_gps(photo_id: int):
         name = ", ".join([x for x in [city, country] if x]) if (country or city) else None
         with closing(get_conn()) as conn:
             # Update columns + metadata_json.geo
-            row0 = conn.execute("SELECT metadata_json FROM photos WHERE id=?", (photo_id,)).fetchone()
+            row0 = conn.execute(
+                "SELECT rel_path, gps_lat, gps_lon, metadata_json FROM photos WHERE id=?", (photo_id,)
+            ).fetchone()
+            if not row0:
+                return jsonify({"ok": False, "error": "Not found"}), 404
             mj = {}
             try:
                 mj = json.loads(row0["metadata_json"]) if row0 and row0["metadata_json"] else {}
@@ -20440,6 +20467,10 @@ def api_update_gps(photo_id: int):
         _refresh_photo_weather_if_possible(photo_id, force=False)
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        log_event(
+            "gps_updated", actor=_audit_actor(), photo_id=photo_id, rel_path=row0["rel_path"],
+            old_lat=row0["gps_lat"], old_lon=row0["gps_lon"], new_lat=lat_f, new_lon=lon_f,
+        )
         return jsonify({"ok": True, "item": row_to_public(row)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -20454,8 +20485,10 @@ def api_update_uploader(photo_id: int):
         data = request.get_json(silent=True) or {}
         uploaded_by = _sanitize_share_visitor_name(data.get("uploaded_by") or "")
         with closing(get_conn()) as conn:
-            row = conn.execute("SELECT id FROM photos WHERE id=?", (photo_id,)).fetchone()
-            if not row:
+            previous = conn.execute(
+                "SELECT id, rel_path, uploaded_by FROM photos WHERE id=?", (photo_id,)
+            ).fetchone()
+            if not previous:
                 return jsonify({"ok": False, "error": "Not found"}), 404
             conn.execute(
                 "UPDATE photos SET uploaded_by=? WHERE id=?",
@@ -20463,6 +20496,10 @@ def api_update_uploader(photo_id: int):
             )
             conn.commit()
             row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        log_event(
+            "uploader_updated", actor=_audit_actor(), photo_id=photo_id,
+            rel_path=previous["rel_path"], old_value=previous["uploaded_by"], new_value=uploaded_by or None,
+        )
         return jsonify({"ok": True, "item": row_to_public(row)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -20471,12 +20508,16 @@ def api_update_uploader(photo_id: int):
 @app.route("/api/photos/<int:photo_id>/favorite", methods=["POST"])
 def api_toggle_favorite(photo_id: int):
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT favorite FROM photos WHERE id = ?", (photo_id,)).fetchone()
+        row = conn.execute("SELECT favorite, rel_path FROM photos WHERE id = ?", (photo_id,)).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "Not found"}), 404
         new_val = 0 if int(row["favorite"] or 0) else 1
         conn.execute("UPDATE photos SET favorite = ? WHERE id = ?", (new_val, photo_id))
         conn.commit()
+    log_event(
+        "favorite_updated", actor=_audit_actor(), photo_id=photo_id,
+        rel_path=row["rel_path"], old_value=bool(row["favorite"]), new_value=bool(new_val),
+    )
     return jsonify({"ok": True, "favorite": bool(new_val)})
 
 
@@ -20492,6 +20533,7 @@ def api_delete_photos():
         if not ids:
             return jsonify({"ok": False, "error": "Ingen billeder valgt"}), 400
         allowed: list[int] = []
+        allowed_paths: list[str] = []
         with closing(get_conn()) as conn:
             ph = ",".join(["?"] * len(ids))
             rows = conn.execute(f"SELECT id, rel_path FROM photos WHERE id IN ({ph})", ids).fetchall()
@@ -20500,9 +20542,15 @@ def api_delete_photos():
                 # Require edit permission on the containing folder
                 if _perm_allows(_current_user_folder_permission_for_rel(rel, conn), "edit"):
                     allowed.append(int(r[0]))
+                    allowed_paths.append(rel)
         if not allowed:
             return jsonify({"ok": False, "error": "Ingen slette-adgang"}), 403
         removed = _delete_indexed_photos_by_ids(allowed)
+        log_event(
+            "photos_deleted", actor=_audit_actor(), photo_ids=allowed, paths=allowed_paths,
+            removed_photos=removed.get("photos", 0), removed_faces=removed.get("faces", 0),
+            removed_thumbs=removed.get("thumbs", 0),
+        )
         return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed, "preview_folders": removed.get("preview_folders") or []})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -21288,6 +21336,7 @@ def api_settings_upload_folder():
         pass
     payload = _upload_settings_payload(destination)
     payload["created"] = new_subdir
+    log_event("folder_created", actor=_audit_actor(), path=new_subdir, destination=destination)
     return jsonify(payload)
 
 
@@ -21447,6 +21496,11 @@ def api_settings_upload_folder_delete():
     payload["preview_folders"] = sorted(
         set((removed.get("preview_folders") or []) + [k for folder in cleanup_folders for k in _folder_preview_ancestor_keys(folder)] + cleanup_folders),
         key=lambda x: (str(x).count("/"), str(x).lower()),
+    )
+    log_event(
+        "folders_deleted", actor=_audit_actor(), paths=deleted, missing=missing,
+        removed_photos=payload["removed_photos"], removed_faces=payload["removed_faces"],
+        removed_thumbs=payload["removed_thumbs"],
     )
     return jsonify(payload)
 
@@ -21791,6 +21845,11 @@ def api_settings_upload_folder_rename():
     payload["new_path"] = new_subdir
     payload["photos_renamed"] = int(db_stats.get("photos_renamed", 0))
     payload["photos_conflicts_removed"] = int(db_stats.get("photos_conflicts_removed", 0))
+    log_event(
+        "folder_renamed", actor=_audit_actor(), old_path=old_subdir, new_path=new_subdir,
+        photos_renamed=payload["photos_renamed"],
+        conflicts_removed=payload["photos_conflicts_removed"],
+    )
     return jsonify(payload)
 
 

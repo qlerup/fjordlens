@@ -18929,18 +18929,18 @@ function classifySeverity(eventName) {
   // Warnings: skipped or not critical changes
   if (ev === 'skip_unchanged' || ev === 'no_new' || ev === 'upload_skip_unsupported' || ev === 'upload_skip_blocked_file_type' || ev === 'share_upload_skip_blocked_file_type' || ev === 'missing' || ev.endsWith('_check')) return 'warn';
   // Success/info: the rest of positive events
-  if (ev.endsWith('_done') || ev.endsWith('_saved') || ev.endsWith('_ok') || ev === 'indexed' || ev === 'faces_detect' || ev === 'faces_index_done' || ev === 'face_saved' || ev === 'upload_indexed' || ev === 'rethumb_ok') return 'ok';
+  if (ev.endsWith('_done') || ev.endsWith('_saved') || ev.endsWith('_ok') || ev.endsWith('_created') || ev.endsWith('_renamed') || ev.endsWith('_deleted') || ev.endsWith('_updated') || ev === 'indexed' || ev === 'faces_detect' || ev === 'faces_index_done' || ev === 'face_saved' || ev === 'upload_indexed' || ev === 'rethumb_ok') return 'ok';
   return 'info';
 }
 
 const LOG_PAGE_SIZE = 20;
-const LOG_CATEGORIES = ['all', 'upload', 'conversion', 'metadata', 'thumbnails', 'faces', 'ai', 'errors', 'other'];
+const LOG_CATEGORIES = ['all', 'upload', 'conversion', 'changes', 'metadata', 'thumbnails', 'faces', 'ai', 'errors', 'other'];
 
 function logCategoryLabels() {
   const en = String(state.uiLanguage || '').toLowerCase().startsWith('en');
   return en
-    ? { all: 'All', upload: 'Uploads', conversion: 'Conversions', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Faces', ai: 'AI', errors: 'Errors', other: 'Other' }
-    : { all: 'Alle', upload: 'Uploads', conversion: 'Konverteringer', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Ansigter', ai: 'AI', errors: 'Fejl', other: 'Andet' };
+    ? { all: 'All', upload: 'Uploads', conversion: 'Conversions', changes: 'Changes', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Faces', ai: 'AI', errors: 'Errors', other: 'Other' }
+    : { all: 'Alle', upload: 'Uploads', conversion: 'Konverteringer', changes: 'Ændringer', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Ansigter', ai: 'AI', errors: 'Fejl', other: 'Andet' };
 }
 
 function categoriesForLog(item) {
@@ -18948,6 +18948,7 @@ function categoriesForLog(item) {
   const categories = new Set();
   if (eventName.includes('upload') || eventName.includes('tus')) categories.add('upload');
   if (eventName.includes('convert') || eventName.includes('heic') || eventName.includes('raw_') || eventName.includes('mov_')) categories.add('conversion');
+  if (eventName.includes('renamed') || eventName.includes('deleted') || eventName.includes('created') || eventName.includes('updated')) categories.add('changes');
   if (eventName.includes('metadata') || eventName.includes('index') || eventName.includes('scan')) categories.add('metadata');
   if (eventName.includes('thumb') || eventName.includes('preview')) categories.add('thumbnails');
   if (eventName.includes('face') || eventName.includes('person')) categories.add('faces');
@@ -19018,6 +19019,7 @@ function renderLogList() {
     }
   }
   if (els.logPageInfo) els.logPageInfo.textContent = `${isEnglish ? 'Page' : 'Side'} ${state.logPage} ${isEnglish ? 'of' : 'af'} ${pageCount}`;
+  if (els.logPagination) els.logPagination.classList.toggle('hidden', pageCount <= 1);
   if (els.logPrevPage) els.logPrevPage.textContent = isEnglish ? 'Previous' : 'Forrige';
   if (els.logNextPage) els.logNextPage.textContent = isEnglish ? 'Next' : 'Næste';
   if (els.logPrevPage) els.logPrevPage.disabled = state.logPage <= 1;
@@ -19029,9 +19031,27 @@ function appendLogItem(item, extra, level) {
     ...item,
     _extra: String(extra || '').replace(/^\s*::\s*/, '') || '-',
     _level: level,
-    _label: (item.event === 'skip_unchanged' || item.event === 'no_new') ? 'no new' : item.event,
+    _label: humanizeLogEvent(item.event),
   });
   if (state.logItems.length > 1000) state.logItems.splice(0, state.logItems.length - 1000);
+}
+
+function humanizeLogEvent(eventName) {
+  const key = String(eventName || '').trim().toLowerCase();
+  const labels = {
+    folder_created: 'Mappe oprettet',
+    folder_renamed: 'Mappe omdøbt',
+    folders_deleted: 'Mapper slettet',
+    photos_deleted: 'Filer slettet',
+    captured_at_updated: 'Dato ændret',
+    gps_updated: 'GPS ændret',
+    uploader_updated: 'Uploader ændret',
+    favorite_updated: 'Favorit ændret',
+    share_photos_deleted: 'Delte filer slettet',
+  };
+  if (labels[key]) return labels[key];
+  if (key === 'skip_unchanged' || key === 'no_new') return 'Ingen ændringer';
+  return key.replaceAll('_', ' ') || '-';
 }
 
 function fmtLogTime(ts) {
@@ -19069,6 +19089,13 @@ async function pollLogs() {
       for (const it of data.items) {
         let extra = "";
         if (it.rel_path) extra += ` :: ${it.rel_path}`;
+        if (it.actor) extra += ` · af ${it.actor}`;
+        if (it.path) extra += ` · ${it.path}`;
+        if (Array.isArray(it.paths) && it.paths.length) extra += ` · ${it.paths.join(', ')}`;
+        if (it.old_path && it.new_path) extra += ` · ${it.old_path} → ${it.new_path}`;
+        if (typeof it.old_value !== "undefined" || typeof it.new_value !== "undefined") extra += ` · ${it.old_value ?? '-'} → ${it.new_value ?? '-'}`;
+        if (typeof it.new_lat !== "undefined" && typeof it.new_lon !== "undefined") extra += ` · GPS ${it.new_lat}, ${it.new_lon}`;
+        if (typeof it.removed_photos !== "undefined") extra += ` · ${it.removed_photos} filer`;
         if (it.from_rel) extra += ` from=${it.from_rel}`;
         if (it.from_ext) extra += ` from_ext=${it.from_ext}`;
         if (it.to_ext) extra += ` to_ext=${it.to_ext}`;
@@ -19139,5 +19166,6 @@ els.logNextPage && els.logNextPage.addEventListener('click', () => {
   state.logPage = Number(state.logPage || 1) + 1;
   renderLogList();
 });
+renderLogList();
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
