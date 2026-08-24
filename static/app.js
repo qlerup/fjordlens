@@ -230,6 +230,7 @@
   detailAiCaption: document.getElementById("detailAiCaption"),
   detailAiTags: document.getElementById("detailAiTags"),
   similarBtn: document.getElementById("similarBtn"),
+  detailReprocessBtn: document.getElementById("detailReprocessBtn"),
   rawMeta: document.getElementById("rawMeta"),
   toggleRawBtn: document.getElementById("toggleRawBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
@@ -1648,6 +1649,14 @@ const I18N = {
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
     similar_distance_find: 'Find',
+    detail_reprocess: 'Kør efterflow',
+    detail_reprocess_title: 'Kør hele efter-upload-flowet igen',
+    detail_reprocess_starting: 'Efterbehandling startet…',
+    detail_reprocess_running: 'Efterbehandler: {phase}',
+    detail_reprocess_queued: 'I kø som nr. {position}',
+    detail_reprocess_waiting: 'Venter på aktiv efterbehandling…',
+    detail_reprocess_done: 'Efterbehandlingen er færdig.',
+    detail_reprocess_failed: 'Efterbehandlingen fejlede.',
     raw_meta_show: 'Vis rå metadata (JSON)',
     raw_meta_hide: 'Skjul rå metadata (JSON)',
   },
@@ -2483,6 +2492,14 @@ const I18N = {
     similar_dhash_label: 'dHash',
     similar_ahash_label: 'aHash',
     similar_distance_find: 'Find',
+    detail_reprocess: 'Run post-processing',
+    detail_reprocess_title: 'Run the complete post-upload workflow again',
+    detail_reprocess_starting: 'Post-processing started…',
+    detail_reprocess_running: 'Post-processing: {phase}',
+    detail_reprocess_queued: 'Queued at position {position}',
+    detail_reprocess_waiting: 'Waiting for active post-processing…',
+    detail_reprocess_done: 'Post-processing completed.',
+    detail_reprocess_failed: 'Post-processing failed.',
     raw_meta_show: 'Show raw metadata (JSON)',
     raw_meta_hide: 'Hide raw metadata (JSON)',
   },
@@ -2927,11 +2944,8 @@ function renderMapperTree() {
     link.type = 'button';
     link.textContent = node.name;
     link.addEventListener('click', async () => {
-      state.mapperPath = path;
-      state.folder = path || null;
-      _expandMapperAncestors(path);
-      renderMapperContext(path);
-      await loadMapperTools(path);
+      const targetPath = beginMapperPathNavigation(path);
+      await loadMapperTools(targetPath);
       await loadPhotos();
     });
     row.appendChild(link);
@@ -5907,6 +5921,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
 }
 
 let photoLoadMoreObserver = null;
+let photosRequestSequence = 0;
 
 function estimateMapperPageLimit() {
   try {
@@ -6190,9 +6205,8 @@ function renderGrid() {
       appendFolderCard(folderPath, [], {
         title,
         onOpen: async () => {
-          state.mapperPath = folderPath;
-          state.folder = folderPath;
-          await loadMapperTools(folderPath);
+          const targetPath = beginMapperPathNavigation(folderPath);
+          await loadMapperTools(targetPath);
           await loadPhotos();
         },
       });
@@ -7618,6 +7632,17 @@ async function loadPhotos(append = false, preserveScroll = false) {
     return;
   }
 
+  const requestSequence = ++photosRequestSequence;
+  const requestedView = String(state.view || '');
+  const requestedMapperPath = requestedView === 'mapper'
+    ? _normalizeMapperPath(state.mapperPath || '')
+    : '';
+  const requestIsCurrent = () => (
+    requestSequence === photosRequestSequence
+    && String(state.view || '') === requestedView
+    && (requestedView !== 'mapper' || _normalizeMapperPath(state.mapperPath || '') === requestedMapperPath)
+  );
+
   // Timeline and Mapper support paging. Mapper only fetches direct photos in the
   // current folder; child folder previews are loaded separately and cheaply.
   const pagedView = (state.view === 'timeline' || state.view === 'mapper');
@@ -7643,6 +7668,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
 
   state.photosLoading = true;
   const res = await fetch(`/api/photos?${qs.toString()}`);
+  if (!requestIsCurrent()) return;
   let data;
   try {
     const ct = String(res.headers.get('content-type') || '');
@@ -7650,6 +7676,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
   } catch (_) {
     data = null;
   }
+  if (!requestIsCurrent()) return;
   if (!data) {
     const text = await res.text().catch(()=> '');
     console.warn('photos non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
@@ -7675,6 +7702,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
       handleMapperDiskSyncStatus(data.disk_sync);
     }
   }
+  if (!requestIsCurrent()) return;
   state.photosLoading = false;
 
   const labels = navLabels();
@@ -7684,6 +7712,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
 
   if (!append && state.view === 'mapper') {
     await prefetchMapperFolderPreviewsForCurrentPath();
+    if (!requestIsCurrent()) return;
   }
   const scrollAnchor = (preserveScroll && !append) ? captureGalleryScrollAnchor() : null;
   renderGrid();
@@ -11163,13 +11192,17 @@ async function saveAppUpdateSettings() {
   }
 }
 
+let mapperToolsRequestSequence = 0;
+
 async function loadMapperTools(preferred = null) {
+  const requestSequence = ++mapperToolsRequestSequence;
   try {
     const { res, data } = await fetchUploadDestinationConfig('uploads');
+    if (requestSequence !== mapperToolsRequestSequence) return false;
     if (!res.ok || !data || !data.ok) {
       const errMsg = String((data && data.error) || `HTTP ${res && res.status ? res.status : 'fejl'}`).trim();
       if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
-      return;
+      return false;
     }
     const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperFolders = folders;
@@ -11185,10 +11218,29 @@ async function loadMapperTools(preferred = null) {
     _expandMapperAncestors(wanted);
     renderMapperContext(state.mapperPath);
     if (state.view === 'mapper') _syncRouteStateToUrl();
+    return true;
   } catch (e) {
+    if (requestSequence !== mapperToolsRequestSequence) return false;
     const errMsg = String((e && e.message) || e || '').trim();
     if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
+    return false;
   }
+}
+
+function beginMapperPathNavigation(path) {
+  const nextPath = _normalizeMapperPath(path || '');
+  // Invalidate an in-flight photo response immediately and remove cards from
+  // the previous folder before any asynchronous mapper requests can repaint.
+  photosRequestSequence += 1;
+  state.mapperPath = nextPath;
+  state.folder = nextPath || null;
+  state.items = [];
+  state.photosPageOffset = 0;
+  state.photosHasMore = false;
+  _expandMapperAncestors(nextPath);
+  renderMapperContext(nextPath);
+  if (state.view === 'mapper') renderGrid();
+  return nextPath;
 }
 
 async function createMapperFolder() {
@@ -12800,6 +12852,10 @@ function applyUiLanguage() {
   if (els.similarDhashDistanceLabel) els.similarDhashDistanceLabel.textContent = tr('similar_dhash_label');
   if (els.similarAhashDistanceLabel) els.similarAhashDistanceLabel.textContent = tr('similar_ahash_label');
   if (els.similarDistanceApply) els.similarDistanceApply.textContent = tr('similar_distance_find');
+  if (els.detailReprocessBtn && !els.detailReprocessBtn.classList.contains('loading')) {
+    els.detailReprocessBtn.textContent = tr('detail_reprocess');
+    els.detailReprocessBtn.title = tr('detail_reprocess_title');
+  }
   if (els.similarSourceLabel) els.similarSourceLabel.textContent = tr('similar_source_label');
   if (els.similarAiMinLabel) els.similarAiMinLabel.textContent = tr('similar_ai_min_label');
   if (els.similarMethodLabel) els.similarMethodLabel.textContent = tr('similar_method_label');
@@ -13877,6 +13933,71 @@ if (els.detailRethumbBtn) {
       showStatus(String((error && error.message) || tr('detail_rethumb_failed')), 'err');
       els.detailRethumbBtn.disabled = false;
       els.detailRethumbBtn.classList.remove('loading');
+    }
+  });
+}
+
+if (els.detailReprocessBtn) {
+  els.detailReprocessBtn.addEventListener('click', async () => {
+    const originalId = Number(state.selectedId || 0);
+    if (!originalId) return;
+    const button = els.detailReprocessBtn;
+    button.disabled = true;
+    button.classList.add('loading');
+    button.textContent = tr('detail_reprocess_starting');
+    try {
+      const startResponse = await fetch(`/api/photos/${encodeURIComponent(originalId)}/reprocess`, { method: 'POST' });
+      const startData = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok || !startData.ok) {
+        throw new Error(startData.error || tr('detail_reprocess_failed'));
+      }
+      showStatus(tr('detail_reprocess_starting'), 'ok');
+
+      let status = startData;
+      while (status.running) {
+        const position = Math.max(0, Number(status.queue_position || 0));
+        const queuedText = tr('detail_reprocess_queued').replace('{position}', String(position || 1));
+        const phase = postprocessPhaseLabel(status.phase || 'metadata');
+        const waiting = String(status.phase || '').toLowerCase() === 'waiting';
+        button.textContent = status.queued ? queuedText : (waiting ? tr('detail_reprocess_waiting') : phase);
+        showStatus(
+          status.queued
+            ? queuedText
+            : (waiting ? tr('detail_reprocess_waiting') : tr('detail_reprocess_running').replace('{phase}', phase)),
+          'ok',
+        );
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        const response = await fetch(`/api/photos/${encodeURIComponent(originalId)}/reprocess`);
+        status = await response.json().catch(() => ({}));
+        if (!response.ok || !status.ok) {
+          throw new Error(status.error || tr('detail_reprocess_failed'));
+        }
+      }
+      if (status.error) throw new Error(status.error);
+
+      const updated = status.item && typeof status.item === 'object' ? status.item : null;
+      if (updated) {
+        for (const collectionName of ['items', 'viewerItems']) {
+          const collection = state[collectionName];
+          if (!Array.isArray(collection)) continue;
+          const index = collection.findIndex((item) => Number(item && item.id) === originalId);
+          if (index >= 0) collection[index] = { ...collection[index], ...updated };
+        }
+        if (Number(state.selectedId || 0) === originalId) {
+          state.selectedId = Number(updated.id || originalId);
+          setDetail(updated);
+        }
+      }
+      invalidateStoredFolderPreviews(status.preview_folders || []);
+      renderGrid();
+      showStatus(tr('detail_reprocess_done'), 'ok');
+    } catch (error) {
+      showStatus(String((error && error.message) || tr('detail_reprocess_failed')), 'err');
+    } finally {
+      button.disabled = false;
+      button.classList.remove('loading');
+      button.textContent = tr('detail_reprocess');
+      button.title = tr('detail_reprocess_title');
     }
   });
 }
@@ -15599,10 +15720,8 @@ els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const parts = cur.split('/').filter(Boolean);
   parts.pop();
   const parent = parts.join('/');
-  state.mapperPath = parent;
-  state.folder = parent || null;
-  renderMapperContext(parent);
-  await loadMapperTools(parent);
+  const targetPath = beginMapperPathNavigation(parent);
+  await loadMapperTools(targetPath);
   await loadPhotos();
 });
 if (els.mapperDropZone) {

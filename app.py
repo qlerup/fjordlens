@@ -1,5 +1,6 @@
 ﻿import hashlib
 import shutil
+import logging
 import subprocess
 import tempfile
 import html
@@ -476,6 +477,68 @@ except Exception:
     MOV_CONVERT_TIMEOUT_SEC = 7200
 MOV_CONVERT_TIMEOUT_SEC = max(60, min(21600, MOV_CONVERT_TIMEOUT_SEC))
 
+logger = logging.getLogger(__name__)
+
+
+def _probe_mov_audio_stream(src: Path, ffmpeg_bin: str) -> Optional[int]:
+    """Return the input index of the preferred decodable audio stream, if any."""
+    ffprobe_bin = shutil.which("ffprobe")
+    if not ffprobe_bin:
+        logger.warning("ffprobe not available; converting MOV without audio: %s", src)
+        return None
+
+    try:
+        probe = subprocess.run(
+            [
+                ffprobe_bin, "-v", "error", "-select_streams", "a",
+                "-show_entries", "stream=index,codec_name", "-of", "json", str(src),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=MOV_CONVERT_TIMEOUT_SEC,
+        )
+        streams = json.loads(probe.stdout or "{}").get("streams", [])
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
+        stderr = getattr(exc, "stderr", None) or ""
+        logger.error("ffprobe failed for %s: %s", src, stderr.strip() or exc)
+        return None
+
+    try:
+        decoder_result = subprocess.run(
+            [ffmpeg_bin, "-v", "error", "-decoders"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        audio_decoders = {
+            match.group(1)
+            for line in decoder_result.stdout.splitlines()
+            if (match := re.match(r"^\s*A[A-Z.]{5}\s+(\S+)", line))
+        }
+    except (subprocess.SubprocessError, OSError) as exc:
+        stderr = getattr(exc, "stderr", None) or ""
+        logger.error("Could not list FFmpeg audio decoders: %s", stderr.strip() or exc)
+        audio_decoders = set()
+
+    # Prefer AAC. The decoder list keeps known-but-unsupported formats (notably
+    # APAC) out while retaining input order among usable fallback codecs.
+    streams.sort(key=lambda stream: str(stream.get("codec_name", "")).lower() != "aac")
+    for stream in streams:
+        codec_name = str(stream.get("codec_name", "")).strip().lower()
+        try:
+            stream_index = int(stream["index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not codec_name:
+            continue
+        if codec_name in audio_decoders:
+            return stream_index
+
+    logger.warning("No decodable audio stream found; converting MOV without audio: %s", src)
+    return None
+
 
 def _mov_to_mp4(src: Path, dst: Path) -> None:
     """Convert MOV uploads to browser-friendly MP4/H.264."""
@@ -486,6 +549,7 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.tmp{dst.suffix}")
     try:
+        audio_stream_index = _probe_mov_audio_stream(src, ffmpeg_bin)
         cmd = [
             ffmpeg_bin,
             "-y",
@@ -498,8 +562,6 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
             "0",
             "-map",
             "0:v:0",
-            "-map",
-            "0:a?",
             "-c:v",
             "libx264",
             "-preset",
@@ -508,15 +570,32 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
             str(MOV_CONVERT_CRF),
             "-pix_fmt",
             "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            MOV_CONVERT_AUDIO_BITRATE,
-            "-movflags",
-            "+faststart",
-            str(tmp),
         ]
-        subprocess.run(cmd, check=True, timeout=MOV_CONVERT_TIMEOUT_SEC)
+        if audio_stream_index is not None:
+            cmd.extend([
+                "-map", f"0:{audio_stream_index}",
+                "-c:a", "aac",
+                "-b:a", MOV_CONVERT_AUDIO_BITRATE,
+            ])
+        else:
+            cmd.append("-an")
+        cmd.extend(["-movflags", "+faststart", str(tmp)])
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=MOV_CONVERT_TIMEOUT_SEC,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raw_stderr = exc.stderr or ""
+            stderr = raw_stderr.decode(errors="replace") if isinstance(raw_stderr, bytes) else raw_stderr
+            stderr = stderr.strip()
+            logger.error("ffmpeg MOV conversion failed for %s: %s", src, stderr or exc)
+            raise RuntimeError(
+                f"ffmpeg MOV conversion failed for {src}: {stderr or exc}"
+            ) from exc
         if not tmp.exists() or tmp.stat().st_size <= 0:
             raise RuntimeError("ffmpeg produced empty output")
         os.replace(tmp, dst)
@@ -966,6 +1045,12 @@ UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
 UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
 UPLOAD_POSTPROCESS_LOCK = threading.Lock()
+PHOTO_REPROCESS_BY_ID: Dict[int, Dict[str, Any]] = {}
+PHOTO_REPROCESS_LOCK = threading.Lock()
+PHOTO_REPROCESS_QUEUE: "queue.Queue[tuple[int, str, str]]" = queue.Queue()
+PHOTO_REPROCESS_QUEUED: set[int] = set()
+PHOTO_REPROCESS_WORKER_STARTED = False
+POSTPROCESS_PIPELINE_LOCK = threading.Lock()
 UPLOAD_TRANSFER_ACTIVE_BY_USER: Dict[str, float] = {}
 UPLOAD_TRANSFER_LOCK = threading.Lock()
 UPLOAD_TRANSFER_TTL_SEC = 180.0
@@ -2624,6 +2709,7 @@ def _postprocess_uploaded_rels(
     workflow_mode: Optional[str] = None,
     item_pause_sec: float = 0.0,
     stop_event: Optional[threading.Event] = None,
+    force_reprocess: bool = False,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -2699,7 +2785,7 @@ def _postprocess_uploaded_rels(
 
         # Reuse existing metadata for recovered/manual rows unless conversion is
         # pending for HEIC/RAW/MOV files.
-        if not needs_conversion:
+        if not needs_conversion and not force_reprocess:
             checksum_ready = ""
             try:
                 with closing(get_conn()) as conn:
@@ -3182,7 +3268,7 @@ def _postprocess_uploaded_rels(
                     break
                 err_inc = 0
                 try:
-                    _embed_uploaded_photo_if_needed(rel)
+                    _embed_uploaded_photo_if_needed(rel, force=force_reprocess)
                     ai_done += 1
                 except Exception as e:
                     ai_errors += 1
@@ -3203,7 +3289,7 @@ def _postprocess_uploaded_rels(
                     break
                 err_inc = 0
                 try:
-                    _describe_uploaded_photo_if_needed(rel)
+                    _describe_uploaded_photo_if_needed(rel, force=force_reprocess)
                     ai_desc_done += 1
                 except Exception as e:
                     ai_desc_errors += 1
@@ -3367,7 +3453,7 @@ def _postprocess_uploaded_rels(
                     }
                 )
                 try:
-                    _embed_uploaded_photo_if_needed(rel)
+                    _embed_uploaded_photo_if_needed(rel, force=force_reprocess)
                     ai_done += 1
                     _emit_progress(
                         {
@@ -3407,7 +3493,7 @@ def _postprocess_uploaded_rels(
                     }
                 )
                 try:
-                    _describe_uploaded_photo_if_needed(rel)
+                    _describe_uploaded_photo_if_needed(rel, force=force_reprocess)
                     ai_desc_done += 1
                 except Exception as e:
                     ai_desc_errors += 1
@@ -3432,6 +3518,7 @@ def _postprocess_uploaded_rels(
         "ok": True,
         "workflow_mode": mode,
         "received": len(rels),
+        "indexed_rels": list(indexed_ok),
         "indexed": len(indexed_ok),
         "index_errors": index_errors,
         "thumb_errors": thumb_errors,
@@ -3451,6 +3538,12 @@ def _postprocess_uploaded_rels(
     if process_status is not None:
         result["process_status"] = process_status
     return result
+
+
+def _run_postprocess_serialized(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Run every upload/manual post-process through one shared pipeline slot."""
+    with POSTPROCESS_PIPELINE_LOCK:
+        return _postprocess_uploaded_rels(*args, **kwargs)
 
 
 def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
@@ -3518,7 +3611,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             except Exception:
                 pass
 
-            result = _postprocess_uploaded_rels(
+            result = _run_postprocess_serialized(
                 user,
                 batch,
                 progress_cb=lambda p: _set_upload_postprocess_state(user, p),
@@ -12904,7 +12997,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     log_event("direct_upload_postprocess_start", files=len(chunk), pending=len(batch), workflow_mode=workflow_mode)
                 except Exception:
                     pass
-                result = _postprocess_uploaded_rels(
+                result = _run_postprocess_serialized(
                     "",
                     chunk,
                     progress_cb=set_direct_progress,
@@ -18621,7 +18714,7 @@ def _embed_missing_photos(stop_event=None) -> Dict[str, Any]:
     return last_ai_result
 
 
-def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
+def _embed_uploaded_photo_if_needed(rel_path: str, *, force: bool = False) -> None:
     try:
         try:
             log_event("ai_embed_start", rel_path=rel_path, source="upload")
@@ -18634,7 +18727,7 @@ def _embed_uploaded_photo_if_needed(rel_path: str) -> None:
         if not _is_ai_embedding_supported_rel(rel_path):
             log_event("ai_embed_skip_unsupported", rel_path=rel_path, source="upload")
             return
-        if row["embedding_json"]:
+        if row["embedding_json"] and not force:
             return
         pid = int(row["id"])
         if _embed_one_photo(pid, rel_path):
@@ -18786,7 +18879,7 @@ def _describe_missing_photos(stop_event=None, include_existing: bool = False) ->
     return last_ai_desc_result
 
 
-def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
+def _describe_uploaded_photo_if_needed(rel_path: str, *, force: bool = False) -> None:
     try:
         try:
             log_event("ai_desc_start", rel_path=rel_path, source="upload")
@@ -18796,7 +18889,7 @@ def _describe_uploaded_photo_if_needed(rel_path: str) -> None:
             row = conn.execute("SELECT id, ai_desc_tags, ai_desc_caption FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
             return
-        if _ai_desc_has_content(row["ai_desc_tags"], row["ai_desc_caption"]):
+        if _ai_desc_has_content(row["ai_desc_tags"], row["ai_desc_caption"]) and not force:
             return
         pid = int(row["id"])
         if _describe_one_photo(pid, rel_path):
@@ -19995,6 +20088,150 @@ def api_photo_detail(photo_id: int):
     if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
         return jsonify({"ok": False, "error": "Not found"}), 404
     return jsonify({"ok": True, "item": row_to_public(row)})
+
+
+def _photo_reprocess_worker(photo_id: int, rel_path: str, uploaded_by: str) -> None:
+    def progress(payload: Dict[str, Any]) -> None:
+        with PHOTO_REPROCESS_LOCK:
+            current = dict(PHOTO_REPROCESS_BY_ID.get(photo_id) or {})
+            current.update(payload or {})
+            current["running"] = True
+            PHOTO_REPROCESS_BY_ID[photo_id] = current
+
+    try:
+        log_event("photo_reprocess_start", photo_id=photo_id, rel_path=rel_path, uploaded_by=uploaded_by)
+        result = _run_postprocess_serialized(
+            uploaded_by,
+            [rel_path],
+            progress_cb=progress,
+            workflow_mode=upload_workflow_mode(),
+            force_reprocess=True,
+        )
+        indexed_rels = [str(value or "").strip() for value in (result.get("indexed_rels") or []) if str(value or "").strip()]
+        updated = None
+        with closing(get_conn()) as conn:
+            for candidate in indexed_rels + [rel_path]:
+                updated = conn.execute("SELECT * FROM photos WHERE rel_path=? LIMIT 1", (candidate,)).fetchone()
+                if updated:
+                    break
+        preview_folders = _refresh_folder_previews_for_rel_paths(indexed_rels or [rel_path])
+        with PHOTO_REPROCESS_LOCK:
+            PHOTO_REPROCESS_BY_ID[photo_id] = {
+                "running": False,
+                "queued": False,
+                "queue_position": 0,
+                "phase": "done",
+                "finished_at": now_iso(),
+                "result": result,
+                "item": row_to_public(updated) if updated else None,
+                "preview_folders": preview_folders,
+                "error": None,
+            }
+        log_event("photo_reprocess_done", photo_id=photo_id, rel_path=rel_path, **result)
+    except Exception as exc:
+        error = str(exc)
+        with PHOTO_REPROCESS_LOCK:
+            PHOTO_REPROCESS_BY_ID[photo_id] = {
+                "running": False,
+                "queued": False,
+                "queue_position": 0,
+                "phase": "error",
+                "finished_at": now_iso(),
+                "result": None,
+                "item": None,
+                "preview_folders": [],
+                "error": error,
+            }
+        log_event("error", photo_id=photo_id, rel_path=rel_path, error=f"photo_reprocess: {error}")
+
+
+def _refresh_photo_reprocess_queue_positions() -> None:
+    with PHOTO_REPROCESS_QUEUE.mutex:
+        queued_ids = [int(job[0]) for job in list(PHOTO_REPROCESS_QUEUE.queue)]
+    with PHOTO_REPROCESS_LOCK:
+        for position, queued_id in enumerate(queued_ids, start=1):
+            current = dict(PHOTO_REPROCESS_BY_ID.get(queued_id) or {})
+            if current.get("running"):
+                current["queued"] = True
+                current["queue_position"] = position
+                current["phase"] = "queued"
+                PHOTO_REPROCESS_BY_ID[queued_id] = current
+
+
+def _photo_reprocess_queue_worker() -> None:
+    while True:
+        photo_id, rel_path, uploaded_by = PHOTO_REPROCESS_QUEUE.get()
+        try:
+            with PHOTO_REPROCESS_LOCK:
+                current = dict(PHOTO_REPROCESS_BY_ID.get(photo_id) or {})
+                current.update({"running": True, "queued": False, "queue_position": 0, "phase": "waiting"})
+                PHOTO_REPROCESS_BY_ID[photo_id] = current
+            _refresh_photo_reprocess_queue_positions()
+            _photo_reprocess_worker(photo_id, rel_path, uploaded_by)
+        finally:
+            with PHOTO_REPROCESS_LOCK:
+                PHOTO_REPROCESS_QUEUED.discard(photo_id)
+            PHOTO_REPROCESS_QUEUE.task_done()
+            _refresh_photo_reprocess_queue_positions()
+
+
+def _ensure_photo_reprocess_queue_worker() -> None:
+    global PHOTO_REPROCESS_WORKER_STARTED
+    with PHOTO_REPROCESS_LOCK:
+        if PHOTO_REPROCESS_WORKER_STARTED:
+            return
+        PHOTO_REPROCESS_WORKER_STARTED = True
+        threading.Thread(target=_photo_reprocess_queue_worker, daemon=True).start()
+
+
+@app.route("/api/photos/<int:photo_id>/reprocess", methods=["GET", "POST"])
+@login_required
+def api_photo_reprocess(photo_id: int):
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Kun administratorer kan genkøre efterbehandling"}), 403
+
+    if request.method == "GET":
+        with PHOTO_REPROCESS_LOCK:
+            status = dict(PHOTO_REPROCESS_BY_ID.get(photo_id) or {})
+        if not status:
+            return jsonify({"ok": True, "running": False, "phase": None, "result": None, "error": None})
+        return jsonify({"ok": True, **status})
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row or not _is_rel_path_allowed_for_current_user(row["rel_path"]):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    rel_path = str(row["rel_path"] or "").strip()
+    source = _disk_path_from_rel_path(rel_path)
+    if not source.exists() or not source.is_file():
+        return jsonify({"ok": False, "error": "Kildefilen findes ikke"}), 404
+
+    with PHOTO_REPROCESS_LOCK:
+        current = dict(PHOTO_REPROCESS_BY_ID.get(photo_id) or {})
+        if current.get("running") or photo_id in PHOTO_REPROCESS_QUEUED:
+            return jsonify({"ok": True, "started": False, **current})
+        queue_position = PHOTO_REPROCESS_QUEUE.qsize() + 1
+        PHOTO_REPROCESS_QUEUED.add(photo_id)
+        PHOTO_REPROCESS_BY_ID[photo_id] = {
+            "running": True,
+            "queued": True,
+            "queue_position": queue_position,
+            "phase": "queued",
+            "started_at": now_iso(),
+            "current_rel": rel_path,
+            "stage_processed": 0,
+            "stage_total": 1,
+            "result": None,
+            "item": None,
+            "error": None,
+        }
+    uploaded_by = str(getattr(current_user, "username", "") or "admin")
+    PHOTO_REPROCESS_QUEUE.put((photo_id, rel_path, uploaded_by))
+    _refresh_photo_reprocess_queue_positions()
+    _ensure_photo_reprocess_queue_worker()
+    with PHOTO_REPROCESS_LOCK:
+        status = dict(PHOTO_REPROCESS_BY_ID[photo_id])
+    return jsonify({"ok": True, "started": True, **status})
 
 
 def _rebuild_thumbnail_for_row(row: sqlite3.Row) -> str:

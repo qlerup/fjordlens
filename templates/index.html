@@ -727,6 +727,9 @@
         <div class="detail-actions">
           <button id="favoriteBtn" class="icon-btn" title="Favorit">☆</button>
           <button id="similarBtn" class="btn" title="Find lignende">Lignende</button>
+          {% if user_role == "admin" %}
+          <button id="detailReprocessBtn" class="btn" type="button" title="Kør hele efter-upload-flowet igen">Kør efterflow</button>
+          {% endif %}
           <button id="detailRethumbBtn" class="icon-btn hidden" type="button" title="Genskab thumbnail" aria-label="Genskab thumbnail">↻</button>
         </div>
 
