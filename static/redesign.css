@@ -1398,20 +1398,6 @@ select.select {
   font-weight: 550;
   font-variant-numeric: tabular-nums;
 }
-/* Redigeringsknapper er stille til rækken berøres */
-.detail-row .icon-btn.tiny {
-  opacity: 0;
-  transform: translateX(3px);
-  transition: opacity 0.3s var(--fl-liquid), transform 0.35s var(--fl-liquid);
-}
-.detail-row:hover .icon-btn.tiny,
-.detail-row:focus-within .icon-btn.tiny {
-  opacity: 1;
-  transform: none;
-}
-@media (hover: none) {
-  .detail-row .icon-btn.tiny { opacity: 1; transform: none; }
-}
 .viewer-info-inner h3 {
   font-size: 1.06rem;
   font-weight: 650;
