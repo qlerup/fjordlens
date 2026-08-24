@@ -5953,11 +5953,12 @@ let photoLoadMoreObserver = null;
 let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
 
-function estimateMapperGridMetrics() {
+function estimateMapperGridMetrics(gridEl) {
+  const el = gridEl || els.grid;
   try {
-    const gridWidth = Math.max(0, (els.grid && els.grid.clientWidth) || window.innerWidth || 0);
+    const gridWidth = Math.max(0, (el && el.clientWidth) || window.innerWidth || 0);
     const rootStyle = getComputedStyle(document.documentElement);
-    const gridStyle = els.grid ? getComputedStyle(els.grid) : null;
+    const gridStyle = el ? getComputedStyle(el) : null;
     const renderedTracks = gridStyle
       ? String(gridStyle.gridTemplateColumns || '').split(/\s+/).filter((value) => parseFloat(value) > 0)
       : [];
@@ -6042,6 +6043,31 @@ function setupMapperGhostLoading() {
   }
 }
 
+function appendTimelineGhostRow() {
+  if (!els.grid || state.view !== 'timeline') return;
+  const groups = els.grid.querySelectorAll('.timeline-grid');
+  const lastGroup = groups.length ? groups[groups.length - 1] : null;
+  const cols = Math.max(1, estimateMapperGridMetrics(lastGroup).cols);
+  const wrap = document.createElement('div');
+  wrap.className = 'timeline-grid';
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < cols * 2; i += 1) {
+    const ghost = document.createElement('article');
+    ghost.className = 'photo-card mapper-ghost-card';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.innerHTML = '<div class="card-thumb mapper-ghost-thumb"></div>';
+    fragment.appendChild(ghost);
+  }
+  wrap.appendChild(fragment);
+  els.grid.appendChild(wrap);
+  if ('IntersectionObserver' in window) {
+    photoLoadMoreObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
+    }, { rootMargin: '700px 0px' });
+    photoLoadMoreObserver.observe(wrap.firstChild);
+  }
+}
+
 function appendPhotoLoadMoreButton(id, expectedView) {
   try {
     if (photoLoadMoreObserver) photoLoadMoreObserver.disconnect();
@@ -6052,6 +6078,10 @@ function appendPhotoLoadMoreButton(id, expectedView) {
   if (!state.photosHasMore) return;
   if (expectedView === 'mapper') {
     setupMapperGhostLoading();
+    return;
+  }
+  if (expectedView === 'timeline') {
+    appendTimelineGhostRow();
     return;
   }
   const btn = document.createElement('button');
