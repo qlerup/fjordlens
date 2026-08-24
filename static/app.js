@@ -1556,6 +1556,7 @@ const I18N = {
     people_match_running: 'Scanner…',
     people_match_failed: 'Match scan fejlede',
     people_match_done: 'Match scan færdig: {matched} matchet ud af {scanned}',
+    person_more_matches_found: 'Matchede {count} ansigt(er) mere.',
     users_panel_render_error: 'Fejl',
     twofa_loading: 'Indlæser…',
     twofa_load_failed: 'Kan ikke hente 2FA-status.',
@@ -2399,6 +2400,7 @@ const I18N = {
     people_match_running: 'Scanning…',
     people_match_failed: 'Match scan failed',
     people_match_done: 'Match scan done: {matched} matched of {scanned}',
+    person_more_matches_found: 'Matched {count} more face(s).',
     users_panel_render_error: 'Error',
     twofa_loading: 'Loading…',
     twofa_load_failed: 'Could not load 2FA status.',
@@ -5748,6 +5750,100 @@ function cardHTML(item) {
 }
 
 // Render a large People list in small chunks to avoid UI jank/crashes
+function personCardBodyHtml(p) {
+  const maybeName = String(p.maybe_person_name || '').trim();
+  const hasMaybeName = !!maybeName;
+  const maybeScoreVal = Number(p.maybe_score);
+  const maybeScorePct = Number.isFinite(maybeScoreVal) ? Math.round(maybeScoreVal * 100) : null;
+  const titleText = hasMaybeName
+    ? tr('person_maybe_name').replace('{name}', maybeName)
+    : String(p.name || tr('person_unknown'));
+  const maybePill = hasMaybeName
+    ? `<span class="pill person-maybe-pill">${escapeHtml(maybeScorePct === null ? '~' : `~${maybeScorePct}%`)}</span>`
+    : '';
+  return `
+    <h4 class="card-title ${hasMaybeName ? 'person-maybe-title' : ''}">${escapeHtml(titleText)}</h4>
+    <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
+    <div class="pills">${maybePill}${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
+    <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
+      ${hasMaybeName && p.id !== 'unknown' ? `<button class="btn tiny primary" data-act="accept-maybe">${escapeHtml(tr('person_btn_accept_maybe'))}</button>` : ''}
+      <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
+      ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
+    </div>
+  `;
+}
+
+function wirePersonCardBodyEvents(card, p) {
+  const maybeName = String(p.maybe_person_name || '').trim();
+  const hasMaybeName = !!maybeName;
+  const acceptMaybeBtn = card.querySelector('[data-act="accept-maybe"]');
+  if (acceptMaybeBtn) acceptMaybeBtn.addEventListener('click', async (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    if (!hasMaybeName) return;
+    await renameOrMergePerson(p.id, maybeName);
+  });
+  const renBtn = card.querySelector('[data-act="rename"]');
+  if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });
+  const hideBtn = card.querySelector('[data-act="hide"]');
+  if (hideBtn) hideBtn.addEventListener('click', async (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    if (!confirm(tr('person_hide_confirm'))) return;
+    try {
+      const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
+      const d = await r.json();
+      if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
+      showStatus(tr('person_hidden_ok'), 'ok');
+      // Fjern kortet med det samme for en snappy oplevelse
+      const node = document.querySelector(`.photo-card[data-person-id="${Number(p.id)}"]`);
+      if (node && node.parentElement) node.parentElement.removeChild(node);
+    } catch { showStatus(tr('person_hide_error'), 'err'); }
+  });
+  const unhideBtn = card.querySelector('[data-act="unhide"]');
+  if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    try {
+      const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })});
+      const d = await r.json();
+      if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; }
+      showStatus(tr('person_unhidden_ok'), 'ok');
+      const cardEl = e.currentTarget.closest('.photo-card');
+      if (cardEl) {
+        const pillWrap = cardEl.querySelector('.pills');
+        if (pillWrap) pillWrap.innerHTML = '';
+        const btn = cardEl.querySelector('[data-act="unhide"]');
+        if (btn) { btn.setAttribute('data-act','hide'); btn.classList.remove('danger'); btn.textContent = tr('person_btn_hide'); }
+      }
+    } catch { showStatus(tr('person_unhide_error'), 'err'); }
+  });
+}
+
+// Sync the People grid to a fresh server list without tearing down and
+// re-fetching thumbnails that already loaded — only touched by create/merge/
+// match-scan flows, so a card only vanishes, appears or updates its text.
+function reconcilePeopleGrid(newPeople) {
+  const list = Array.isArray(newPeople) ? newPeople : [];
+  state.people = list;
+  state._peopleCache = { key: (state.showHiddenPeople ? 'hidden:1' : 'hidden:0'), items: list.slice(), ts: Date.now() };
+  if (!els.grid || state.view !== 'personer' || state.personView.mode !== 'list') return;
+  const byId = new Map(list.map((p) => [String(p.id), p]));
+  const cards = Array.from(els.grid.querySelectorAll('.photo-card[data-person-id]'));
+  const seenIds = new Set();
+  for (const card of cards) {
+    const pid = card.getAttribute('data-person-id');
+    const p = byId.get(pid);
+    if (!p) { card.remove(); continue; }
+    seenIds.add(pid);
+    const body = card.querySelector('.card-body');
+    if (body) {
+      body.innerHTML = personCardBodyHtml(p);
+      wirePersonCardBodyEvents(card, p);
+    }
+  }
+  const newOnes = list.filter((p) => !seenIds.has(String(p.id)));
+  if (newOnes.length) appendPeopleInChunks(newOnes);
+  if (state.personView.mode === 'list') renderStats();
+}
+
 function appendPeopleInChunks(people, chunkSize = 48) {
   if (!els.grid) return;
   let index = 0;
@@ -5822,6 +5918,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     const onload = () => {
       // Kick quick face-ready polling so crop swaps in ASAP
       pollFaceReady(img);
+      try { const thumbEl = img.closest('.card-thumb'); if (thumbEl) thumbEl.classList.remove('mapper-ghost-thumb'); } catch {}
       cleanup();
       loadNextImg();
     };
@@ -5864,33 +5961,14 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       const card = document.createElement('article');
       card.className = 'photo-card';
       card.setAttribute('data-person-id', String(p.id));
-      const maybeName = String(p.maybe_person_name || '').trim();
-      const hasMaybeName = !!maybeName;
-      const maybeScoreVal = Number(p.maybe_score);
-      const maybeScorePct = Number.isFinite(maybeScoreVal) ? Math.round(maybeScoreVal * 100) : null;
-      const titleText = hasMaybeName
-        ? tr('person_maybe_name').replace('{name}', maybeName)
-        : String(p.name || tr('person_unknown'));
       const faceMatch = String(p.thumb_url || '').match(/\/api\/face-thumb\/(\d+)/);
       const faceAttr = faceMatch ? ` data-face-id="${faceMatch[1]}"` : '';
       const imgHtml = p.thumb_url
         ? `<img data-src="${p.thumb_url}"${faceAttr} alt="${escapeHtml(p.name || '')}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block;">`
         : `<div class="card-thumb placeholder">🙂</div>`;
-      const maybePill = hasMaybeName
-        ? `<span class="pill person-maybe-pill">${escapeHtml(maybeScorePct === null ? '~' : `~${maybeScorePct}%`)}</span>`
-        : '';
       card.innerHTML = `
-        <div class="card-thumb">${imgHtml}</div>
-        <div class="card-body">
-          <h4 class="card-title ${hasMaybeName ? 'person-maybe-title' : ''}">${escapeHtml(titleText)}</h4>
-          <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
-          <div class="pills">${maybePill}${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
-          <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
-            ${hasMaybeName && p.id !== 'unknown' ? `<button class="btn tiny primary" data-act="accept-maybe">${escapeHtml(tr('person_btn_accept_maybe'))}</button>` : ''}
-            <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
-            ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
-          </div>
-        </div>
+        <div class="card-thumb${p.thumb_url ? ' mapper-ghost-thumb' : ''}">${imgHtml}</div>
+        <div class="card-body">${personCardBodyHtml(p)}</div>
       `;
       card.querySelectorAll('img').forEach((el) => { el.setAttribute('draggable', 'false'); });
       card.addEventListener('click', (e)=>{
@@ -5898,45 +5976,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
         if (p.id === 'unknown') loadPersonPhotos('unknown', tr('person_unknown'));
         else loadPersonPhotos(p.id, p.name);
       });
-      const acceptMaybeBtn = card.querySelector('[data-act="accept-maybe"]');
-      if (acceptMaybeBtn) acceptMaybeBtn.addEventListener('click', async (e)=>{
-        e.preventDefault(); e.stopPropagation();
-        if (!hasMaybeName) return;
-        await renameOrMergePerson(p.id, maybeName);
-      });
-      const renBtn = card.querySelector('[data-act="rename"]');
-      if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });
-      const hideBtn = card.querySelector('[data-act="hide"]');
-      if (hideBtn) hideBtn.addEventListener('click', async (e)=>{
-        e.preventDefault(); e.stopPropagation();
-        if (!confirm(tr('person_hide_confirm'))) return;
-        try {
-          const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
-          const d = await r.json();
-          if (!r.ok || !d.ok) { showStatus(d.error || tr('person_hide_failed'), 'err'); return; }
-          showStatus(tr('person_hidden_ok'), 'ok');
-          // Fjern kortet med det samme for en snappy oplevelse
-          const node = document.querySelector(`.photo-card[data-person-id="${Number(p.id)}"]`);
-          if (node && node.parentElement) node.parentElement.removeChild(node);
-        } catch { showStatus(tr('person_hide_error'), 'err'); }
-      });
-      const unhideBtn = card.querySelector('[data-act="unhide"]');
-      if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{
-        e.preventDefault(); e.stopPropagation();
-        try {
-          const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: false })});
-          const d = await r.json();
-          if (!r.ok || !d.ok) { showStatus(d.error || tr('person_unhide_failed'), 'err'); return; }
-          showStatus(tr('person_unhidden_ok'), 'ok');
-          const cardEl = e.currentTarget.closest('.photo-card');
-          if (cardEl) {
-            const pillWrap = cardEl.querySelector('.pills');
-            if (pillWrap) pillWrap.innerHTML = '';
-            const btn = cardEl.querySelector('[data-act="unhide"]');
-            if (btn) { btn.setAttribute('data-act','hide'); btn.classList.remove('danger'); btn.textContent = tr('person_btn_hide'); }
-          }
-        } catch { showStatus(tr('person_unhide_error'), 'err'); }
-      });
+      wirePersonCardBodyEvents(card, p);
       frag.appendChild(card);
     }
     els.grid.appendChild(frag);
@@ -6942,37 +6982,28 @@ async function renameOrMergePerson(pid, name) {
     }
     if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
     else showStatus(tr('person_name_updated'), 'ok');
-    // Trigger training so future matches improve for this person
+    closePersonRenameMenu();
+    // Retrain this person's centroid, then re-match unknown faces/clusters against
+    // the now-improved centroids, so matching keeps getting better for this person.
     try {
       const targetId = Number(d.to_id || pid);
       if (Number.isFinite(targetId)) {
-        fetch(`/api/people/${targetId}/train`, { method: 'POST' }).catch(()=>{});
+        await fetch(`/api/people/${targetId}/train`, { method: 'POST' }).catch(()=>{});
       }
     } catch {}
-    // Light in-place UI update to avoid re-rendering all images
     try {
-      if (d.merged) {
-        const fromId = Number(d.from_id || pid);
-        const fromEl = document.querySelector(`.photo-card[data-person-id="${fromId}"]`);
-        if (fromEl && fromEl.parentElement) fromEl.parentElement.removeChild(fromEl);
-        const toId = Number(d.to_id);
-        if (Number.isFinite(toId)) {
-          const toEl = document.querySelector(`.photo-card[data-person-id="${toId}"]`);
-          const title = toEl && toEl.querySelector('.card-title');
-          if (title) title.textContent = String(d.name || nv);
-        }
-      } else {
-        const el = document.querySelector(`.photo-card[data-person-id="${Number(pid)}"] .card-title`);
-        if (el) el.textContent = nv;
-      }
+      const mr = await fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) });
+      const md = await mr.json().catch(() => ({}));
+      const promoted = (md && Number(md.matched || 0)) + (md && Number(md.clusters_promoted || 0));
+      if (md && md.ok && promoted > 0) showStatus(tr('person_more_matches_found').replace('{count}', String(promoted)), 'ok');
     } catch {}
-    // Optionally kick off a quick unknown-face re-match pass (non-blocking)
-    fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) })
-      .then(r=>r.json().catch(()=>({}))).then((d2)=>{ if (d2 && d2.ok && d2.matched>0) showStatus(`Matchede ${d2.matched} ukendte ansigt(er).`, 'ok'); }).catch(()=>{});
-    // Force fresh people list so newly created names are available immediately in rename suggestions.
-    state._peopleCache = { key: '', items: [], ts: 0 };
-    await loadPeople(false);
-    closePersonRenameMenu();
+    // Refresh the people list without tearing down cards whose thumbnails already loaded.
+    try {
+      const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
+      const pr = await fetch(url);
+      const pd = await pr.json();
+      reconcilePeopleGrid(pd.items || []);
+    } catch {}
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
   }
@@ -7004,7 +7035,12 @@ async function matchUnknownFaces(limit = 1000) {
     if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = msg;
     setTopStatusIndeterminate(false);
     setTimeout(hideTopStatusMessage, 2500);
-    await loadPeople();
+    try {
+      const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
+      const pr = await fetch(url);
+      const pd = await pr.json();
+      reconcilePeopleGrid(pd.items || []);
+    } catch {}
   } catch {
     showStatus(tr('people_match_failed'), 'err');
     setTopStatusIndeterminate(false);

@@ -13886,6 +13886,22 @@ def api_people_train_all():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _is_unknown_person_name(name: Optional[str]) -> bool:
+    nm = str(name or "").strip().lower()
+    return nm.startswith("ukendt") or nm.startswith("unknown")
+
+
+def _merge_person_rows(conn: sqlite3.Connection, from_id: int, to_id: int) -> None:
+    """Reassign all faces from one person row to another, then drop the source row."""
+    conn.execute("UPDATE faces SET person_id=? WHERE person_id=?", (to_id, from_id))
+    conn.execute("DELETE FROM people WHERE id=?", (from_id,))
+    conn.commit()
+    try:
+        _recompute_person_centroid(conn, to_id)
+    except Exception:
+        pass
+
+
 @app.route("/api/faces/match-unknown", methods=["POST"])
 def api_faces_match_unknown():
     """Try to match previously unknown faces (person_id IS NULL) against known person centroids."""
@@ -13944,7 +13960,43 @@ def api_faces_match_unknown():
                 conn.commit()
             except Exception:
                 pass
-        return jsonify({"ok": True, "scanned": scanned, "matched": matched})
+            # Promote whole "unknown" clusters that now confidently match a named
+            # person (e.g. after that person's centroid just improved from a merge/
+            # rename), instead of leaving them stuck as a "maybe" suggestion forever.
+            clusters_promoted = 0
+            try:
+                prows = conn.execute("SELECT id, name, centroid_json FROM people").fetchall()
+                named_pool: list[tuple[int, list[float]]] = []
+                unknown_clusters: list[tuple[int, list[float]]] = []
+                for pr in prows:
+                    pid_i = int(pr["id"]) if pr and pr["id"] is not None else None
+                    if pid_i is None:
+                        continue
+                    try:
+                        cvec = json.loads(pr["centroid_json"]) if pr["centroid_json"] else None
+                    except Exception:
+                        cvec = None
+                    if not (isinstance(cvec, list) and cvec):
+                        continue
+                    cvec = [float(x or 0.0) for x in cvec]
+                    if _is_unknown_person_name(pr["name"]):
+                        unknown_clusters.append((pid_i, cvec))
+                    else:
+                        named_pool.append((pid_i, cvec))
+                for upid, uvec in unknown_clusters:
+                    best_pid = None
+                    best_sc = -1.0
+                    for kpid, kvec in named_pool:
+                        sc = _cosine(uvec, kvec)
+                        if sc > best_sc:
+                            best_sc = sc
+                            best_pid = kpid
+                    if best_pid is not None and best_sc >= FACE_MATCH_THRESHOLD_CENTROID:
+                        _merge_person_rows(conn, upid, best_pid)
+                        clusters_promoted += 1
+            except Exception:
+                pass
+        return jsonify({"ok": True, "scanned": scanned, "matched": matched, "clusters_promoted": clusters_promoted})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -14500,14 +14552,7 @@ def api_people_rename(pid: int):
             existing = conn.execute("SELECT id, name FROM people WHERE LOWER(name)=LOWER(?)", (new_name,)).fetchone()
             if existing and int(existing["id"]) != int(pid):
                 target_id = int(existing["id"])
-                conn.execute("UPDATE faces SET person_id=? WHERE person_id=?", (target_id, pid))
-                conn.execute("DELETE FROM people WHERE id=?", (pid,))
-                conn.commit()
-                # Recompute centroid for target person after merge
-                try:
-                    _recompute_person_centroid(conn, target_id)
-                except Exception:
-                    pass
+                _merge_person_rows(conn, pid, target_id)
                 return jsonify({
                     "ok": True,
                     "merged": True,
