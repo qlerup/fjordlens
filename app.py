@@ -1039,10 +1039,14 @@ UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
 UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
 DIRECT_UPLOAD_POSTPROCESS_USER = "__direct_uploads__"
 
-# Simple in-memory log buffer for UI polling
+# Persistent JSONL event log with an in-memory window for fast UI polling.
 from collections import deque
-LOG_BUFFER: deque[Dict[str, Any]] = deque(maxlen=1000)
+LOG_MAX_ITEMS = 1000
+LOG_ROTATE_AT = 1200
+LOG_BUFFER: deque[Dict[str, Any]] = deque(maxlen=LOG_MAX_ITEMS)
 LOG_SEQ: int = 0
+LOG_FILE_ENTRIES: int = 0
+LOG_LOCK = threading.RLock()
 UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
 UPLOAD_POSTPROCESS_BY_USER: Dict[str, Dict[str, Any]] = {}
@@ -1065,11 +1069,90 @@ PHOTOFRAME_VIDEO_PREPARE_QUEUED: set[str] = set()
 PHOTOFRAME_VIDEO_PREPARE_WORKER_STARTED = False
 
 
+def _event_log_path() -> Path:
+    return DATA_DIR / "fjordlens-events.jsonl"
+
+
+def _rewrite_persistent_logs_locked() -> None:
+    global LOG_FILE_ENTRIES
+    path = _event_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
+        for item in LOG_BUFFER:
+            handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
+    temp_path.replace(path)
+    LOG_FILE_ENTRIES = len(LOG_BUFFER)
+
+
+def _load_persistent_logs() -> None:
+    global LOG_SEQ, LOG_FILE_ENTRIES
+    with LOG_LOCK:
+        LOG_BUFFER.clear()
+        LOG_SEQ = 0
+        LOG_FILE_ENTRIES = 0
+        path = _event_log_path()
+        if not path.exists():
+            return
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    LOG_FILE_ENTRIES += 1
+                    try:
+                        item = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        item_id = int(item.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if item_id <= 0:
+                        continue
+                    LOG_SEQ = max(LOG_SEQ, item_id)
+                    LOG_BUFFER.append(item)
+            if LOG_FILE_ENTRIES > LOG_ROTATE_AT:
+                _rewrite_persistent_logs_locked()
+        except OSError as exc:
+            print(f"Could not load persistent event log: {exc}")
+
+
+def _clear_persistent_logs() -> None:
+    global LOG_SEQ, LOG_FILE_ENTRIES
+    with LOG_LOCK:
+        LOG_BUFFER.clear()
+        LOG_SEQ = 0
+        LOG_FILE_ENTRIES = 0
+        path = _event_log_path()
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # Fall back to truncation when unlinking is not supported by the mount.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+
+
 def log_event(event: str, **data: Any) -> None:
-    global LOG_SEQ
-    LOG_SEQ += 1
+    global LOG_SEQ, LOG_FILE_ENTRIES
     t = now_iso()
-    LOG_BUFFER.append({"id": LOG_SEQ, "t": t, "event": event, **data})
+    with LOG_LOCK:
+        LOG_SEQ += 1
+        item = {"id": LOG_SEQ, "t": t, "event": event, **data}
+        LOG_BUFFER.append(item)
+        try:
+            path = _event_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
+            LOG_FILE_ENTRIES += 1
+            if LOG_FILE_ENTRIES > LOG_ROTATE_AT:
+                _rewrite_persistent_logs_locked()
+        except OSError as exc:
+            print(f"Could not persist event log: {exc}")
     # Console output with colors and proper newlines
     try:
         lvl = _classify_log_level(event, data)
@@ -4549,6 +4632,7 @@ def ensure_runtime_bootstrap() -> None:
             return
         ensure_dirs()
         init_db()
+        _load_persistent_logs()
         _ensure_install_state_for_existing_users()
         DB_BOOTSTRAP_READY = True
 
@@ -20000,11 +20084,9 @@ def api_factory_reset():
         except Exception:
             pass
 
-        # Reset in-memory logs
+        # Reset persistent logs
         try:
-            global LOG_SEQ
-            LOG_BUFFER.clear()
-            LOG_SEQ = 0
+            _clear_persistent_logs()
         except Exception:
             pass
 
@@ -21185,7 +21267,8 @@ def api_logs():
         after = int(request.args.get("after", "0"))
     except ValueError:
         after = 0
-    pending_items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
+    with LOG_LOCK:
+        pending_items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
     items = pending_items[:200]
     next_id = items[-1]["id"] if items else after
     return jsonify({"items": items, "next": next_id})
@@ -23197,9 +23280,7 @@ def api_logs_clear():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global LOG_SEQ
-    LOG_BUFFER.clear()
-    LOG_SEQ = 0
+    _clear_persistent_logs()
     return jsonify({"ok": True})
 
 

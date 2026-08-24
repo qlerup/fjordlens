@@ -2783,6 +2783,11 @@ let state = {
   appUpdateReconnectUntil: 0,
 };
 
+// Language setup can render the log panel before the rest of this file has run.
+// Keep its configuration beside the state so it is initialized first.
+const LOG_PAGE_SIZE = 20;
+const LOG_CATEGORIES = ['all', 'upload', 'conversion', 'changes', 'metadata', 'thumbnails', 'faces', 'ai', 'errors', 'other'];
+
 const PHOTOFRAME_STATUS_POLL_MS = 7000;
 let photoframeStatusPollTimer = null;
 const APP_UPDATE_STATUS_POLL_MS = 2500;
@@ -17401,6 +17406,7 @@ async function startExistingConversion(type, btn = null) {
       if (els.editUploaderBtn) els.editUploaderBtn.classList.remove('hidden');
       if (els.viEditUploaderBtn) els.viEditUploaderBtn.classList.remove('hidden');
     }
+    if (role !== 'user' && !state.logsRunning) startLogs();
   } catch {}
 })();
 
@@ -18933,9 +18939,6 @@ function classifySeverity(eventName) {
   return 'info';
 }
 
-const LOG_PAGE_SIZE = 20;
-const LOG_CATEGORIES = ['all', 'upload', 'conversion', 'changes', 'metadata', 'thumbnails', 'faces', 'ai', 'errors', 'other'];
-
 function logCategoryLabels() {
   const en = String(state.uiLanguage || '').toLowerCase().startsWith('en');
   return en
@@ -19135,6 +19138,7 @@ async function pollLogs() {
 }
 
 function startLogs() {
+  if (state.logsRunning) return;
   state.logsRunning = true;
   if (els.logsStart) els.logsStart.textContent = "Stop";
   pollLogs();
