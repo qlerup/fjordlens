@@ -579,7 +579,9 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
             ])
         else:
             cmd.append("-an")
-        cmd.extend(["-movflags", "+faststart", str(tmp)])
+        # use_metadata_tags retains Apple/QuickTime mdta keys such as the
+        # timezone-aware creation date in addition to standard MP4 metadata.
+        cmd.extend(["-movflags", "+faststart+use_metadata_tags", str(tmp)])
         try:
             subprocess.run(
                 cmd,
@@ -2813,6 +2815,12 @@ def _postprocess_uploaded_rels(
         conversion_from_ext: Optional[str] = None
         conversion_to_rel: Optional[str] = None
         conversion_to_ext: Optional[str] = None
+        source_metadata_before_conversion: Dict[str, Any] = {}
+        if needs_conversion and extl in VIDEO_EXTS and disk_path.exists():
+            try:
+                source_metadata_before_conversion = extract_video_metadata_via_exiftool(disk_path)
+            except Exception as exc:
+                log_event("error", rel_path=orig_rel_for_convert, error=f"source_video_metadata: {exc}")
         # Optional: convert HEIC/HEIF/RAW to JPEG and MOV to MP4.
         try:
             if needs_conversion and disk_path.exists():
@@ -2988,6 +2996,12 @@ def _postprocess_uploaded_rels(
             except Exception:
                 pass
             meta = extract_metadata(disk_path, rel, generate_thumb=False)
+            # The converted MP4 may expose FFmpeg's conversion timestamp as its
+            # CreateDate. The source MOV metadata captured before conversion is
+            # authoritative, including when originals are configured for deletion.
+            for key in ("captured_at", "gps_lat", "gps_lon"):
+                if source_metadata_before_conversion.get(key) is not None:
+                    meta[key] = source_metadata_before_conversion[key]
             if conversion_from_rel and conversion_to_rel:
                 _attach_conversion_metadata(
                     meta,
@@ -11160,6 +11174,25 @@ def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
         return path
 
 
+def _parse_video_capture_datetime(value: Any) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    # ExifTool commonly emits QuickTime dates as YYYY:MM:DD HH:MM:SS+HH:MM.
+    normalized = re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", raw)
+    normalized = normalized.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).isoformat(timespec="seconds")
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(normalized, fmt).isoformat(timespec="seconds")
+        except ValueError:
+            continue
+    return None
+
+
 def extract_video_metadata_via_exiftool(path: Path) -> Dict[str, Any]:
     """Read creation date + GPS from a video's container metadata (QuickTime atoms,
     MP4 boxes) — Pillow/piexif only understand JPEG-style EXIF, not video containers."""
@@ -11170,8 +11203,9 @@ def extract_video_metadata_via_exiftool(path: Path) -> Dict[str, Any]:
     try:
         result = subprocess.run(
             [
-                exiftool_bin, "-j", "-n",
-                "-DateTimeOriginal", "-CreateDate", "-MediaCreateDate",
+                exiftool_bin, "-j", "-n", "-G1", "-api", "QuickTimeUTC=1",
+                "-Keys:CreationDate", "-UserData:DateTimeOriginal",
+                "-QuickTime:CreateDate", "-QuickTime:MediaCreateDate",
                 "-GPSLatitude", "-GPSLongitude",
                 str(path),
             ],
@@ -11183,20 +11217,21 @@ def extract_video_metadata_via_exiftool(path: Path) -> Dict[str, Any]:
         if not rows:
             return out
         tags = rows[0]
-        for key in ("DateTimeOriginal", "CreateDate", "MediaCreateDate"):
+        for key in (
+            "Keys:CreationDate", "UserData:DateTimeOriginal",
+            "QuickTime:CreateDate", "QuickTime:MediaCreateDate",
+            # Backwards-compatible keys for older ExifTool output and tests.
+            "CreationDate", "DateTimeOriginal", "CreateDate", "MediaCreateDate",
+        ):
             raw = tags.get(key)
             if not raw:
                 continue
-            for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    out["captured_at"] = datetime.strptime(str(raw), fmt).isoformat(timespec="seconds")
-                    break
-                except ValueError:
-                    continue
-            if out.get("captured_at"):
+            parsed = _parse_video_capture_datetime(raw)
+            if parsed:
+                out["captured_at"] = parsed
                 break
-        lat = tags.get("GPSLatitude")
-        lon = tags.get("GPSLongitude")
+        lat = tags.get("Composite:GPSLatitude", tags.get("GPSLatitude"))
+        lon = tags.get("Composite:GPSLongitude", tags.get("GPSLongitude"))
         if isinstance(lat, (int, float)):
             out["gps_lat"] = float(lat)
         if isinstance(lon, (int, float)):
@@ -11447,13 +11482,16 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
     # uploads/originals <-> uploads/converted pairing), so unlike the same-folder
     # sibling search below, no visual-similarity verification is needed here.
     try:
-        needs_recovery = (
+        original_candidates = _uploads_original_candidates(rel_path)
+        # A converted container can have a fresh CreateDate written by FFmpeg.
+        # Always inspect its paired original so the real capture date can replace it.
+        needs_recovery = bool(original_candidates) or (
             not metadata.get("captured_at")
             or (not metadata.get("gps_lat") and not metadata.get("gps_lon"))
             or not metadata.get("lens_model")
         )
         if needs_recovery:
-            for cand in _uploads_original_candidates(rel_path):
+            for cand in original_candidates:
                 extra = _exif_from_any_source(cand)
                 if not extra:
                     continue
@@ -11462,7 +11500,10 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     "captured_at", "camera_make", "camera_model", "lens_model",
                     "iso", "focal_length", "f_number", "exposure_time", "gps_lat", "gps_lon",
                 ):
-                    if metadata.get(k) in (None, "") and extra.get(k) is not None:
+                    should_replace = k == "captured_at" and extra.get(k) is not None
+                    if (metadata.get(k) in (None, "") or should_replace) and extra.get(k) is not None:
+                        if metadata.get(k) == extra.get(k):
+                            continue
                         metadata[k] = extra[k]
                         filled.append(k)
                 if filled:

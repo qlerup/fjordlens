@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import piexif
 from PIL import Image
@@ -115,6 +117,57 @@ class RecoverFromOriginalTests(unittest.TestCase):
         self.assertEqual(meta.get("lens_model"), "TestLens")
         self.assertAlmostEqual(meta.get("gps_lat"), 55.6667, places=3)
         self.assertAlmostEqual(meta.get("gps_lon"), 12.5667, places=3)
+
+
+class ConvertedVideoDateTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.uploads = root / "uploads"
+        (self.uploads / "originals" / "album").mkdir(parents=True)
+        (self.uploads / "converted" / "album").mkdir(parents=True)
+        self.original = self.uploads / "originals" / "album" / "clip.mov"
+        self.converted = self.uploads / "converted" / "album" / "clip.mp4"
+        self.original.write_bytes(b"mov")
+        self.converted.write_bytes(b"mp4")
+        self.previous_upload_dir = fjordlens.UPLOAD_DIR
+        self.previous_geocode = fjordlens.GEOCODE_ENABLE
+        fjordlens.UPLOAD_DIR = self.uploads
+        fjordlens.GEOCODE_ENABLE = False
+
+    def tearDown(self):
+        fjordlens.UPLOAD_DIR = self.previous_upload_dir
+        fjordlens.GEOCODE_ENABLE = self.previous_geocode
+        self.tempdir.cleanup()
+
+    def test_parses_iphone_quicktime_date_with_timezone(self):
+        result = SimpleNamespace(
+            stdout='[{"Keys:CreationDate":"2023:07:15 10:30:00+02:00"}]'
+        )
+        with (
+            patch.object(fjordlens.shutil, "which", return_value="exiftool"),
+            patch.object(fjordlens.subprocess, "run", return_value=result),
+        ):
+            metadata = fjordlens.extract_video_metadata_via_exiftool(self.original)
+        self.assertEqual(metadata["captured_at"], "2023-07-15T10:30:00+02:00")
+
+    def test_original_mov_date_overrides_conversion_date(self):
+        def video_metadata(path):
+            if Path(path) == self.original:
+                return {"captured_at": "2023-07-15T10:30:00+02:00"}
+            return {"captured_at": "2026-08-25T12:00:00+02:00"}
+
+        with patch.object(
+            fjordlens,
+            "extract_video_metadata_via_exiftool",
+            side_effect=video_metadata,
+        ):
+            metadata = fjordlens.extract_metadata(
+                self.converted,
+                "uploads/converted/album/clip.mp4",
+                generate_thumb=False,
+            )
+        self.assertEqual(metadata["captured_at"], "2023-07-15T10:30:00+02:00")
 
 
 if __name__ == "__main__":

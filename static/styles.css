@@ -1642,6 +1642,30 @@ body.view-mapper .photo-card img {
   object-fit: cover;
   display: block;
 }
+.mapper-ghost-card {
+  pointer-events: none;
+  cursor: default;
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--border) 75%, transparent);
+}
+.mapper-ghost-card:hover { transform: none; border-color: var(--border); box-shadow: none; }
+.mapper-ghost-thumb {
+  background: linear-gradient(100deg, var(--panel) 20%, var(--bg-soft) 42%, var(--panel) 64%);
+  background-size: 240% 100%;
+  animation: mapperGhostShimmer 1.25s ease-in-out infinite;
+}
+.mapper-load-sentinel {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 1px;
+}
+@keyframes mapperGhostShimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mapper-ghost-thumb { animation: none; }
+}
 .card-thumb.folder-mosaic { position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; background: var(--panel); }
 .card-thumb.folder-mosaic::before { content: ""; display: block; padding-top: 100%; }
 .folder-mosaic .folder-grid {

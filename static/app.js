@@ -5931,18 +5931,39 @@ function appendPeopleInChunks(people, chunkSize = 48) {
 let photoLoadMoreObserver = null;
 let photosRequestSequence = 0;
 
-function estimateMapperPageLimit() {
+function estimateMapperGridMetrics() {
   try {
     const gridWidth = Math.max(0, (els.grid && els.grid.clientWidth) || window.innerWidth || 0);
     const rootStyle = getComputedStyle(document.documentElement);
     const gridStyle = els.grid ? getComputedStyle(els.grid) : null;
-    const tileWidth = parseFloat(rootStyle.getPropertyValue('--folder-tile')) || 230;
+    const renderedTracks = gridStyle
+      ? String(gridStyle.gridTemplateColumns || '').split(/\s+/).filter((value) => parseFloat(value) > 0)
+      : [];
+    const tileWidth = (renderedTracks.length ? parseFloat(renderedTracks[0]) : 0)
+      || parseFloat(rootStyle.getPropertyValue('--folder-tile')) || 230;
     const gap = gridStyle ? (parseFloat(gridStyle.columnGap || gridStyle.gap) || 12) : 12;
-    const cols = Math.max(1, Math.floor((gridWidth + gap) / (tileWidth + gap)));
-    const rows = Math.max(1, Number(state.mapperPageRows || 5));
-    return Math.max(cols * rows, cols);
+    const cols = renderedTracks.length || Math.max(1, Math.floor((gridWidth + gap) / (tileWidth + gap)));
+    return { cols, tileWidth, gap };
   } catch {
-    return 30;
+    return { cols: 6, tileWidth: 230, gap: 12 };
+  }
+}
+
+function estimateMapperPageLimit(append = false) {
+  const metrics = estimateMapperGridMetrics();
+  const rows = append ? 1 : Math.max(1, Number(state.mapperPageRows || 5));
+  return Math.max(metrics.cols * rows, metrics.cols);
+}
+
+function appendMapperGhostRow(beforeElement) {
+  if (!els.grid || !beforeElement) return;
+  const count = Math.max(1, estimateMapperGridMetrics().cols);
+  for (let index = 0; index < count; index += 1) {
+    const ghost = document.createElement('article');
+    ghost.className = 'photo-card mapper-ghost-card';
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.innerHTML = '<div class="card-thumb mapper-ghost-thumb"></div>';
+    els.grid.insertBefore(ghost, beforeElement);
   }
 }
 
@@ -5954,6 +5975,35 @@ function appendPhotoLoadMoreButton(id, expectedView) {
   const old = document.getElementById(id);
   if (old && old.parentNode) old.parentNode.removeChild(old);
   if (!state.photosHasMore) return;
+  if (expectedView === 'mapper') {
+    const sentinel = document.createElement('div');
+    sentinel.id = id;
+    sentinel.className = 'mapper-load-sentinel';
+    sentinel.setAttribute('aria-label', 'Indlæser flere billeder');
+    const loadNextRow = async () => {
+      if (state.photosLoading || state.view !== 'mapper' || !state.photosHasMore) return;
+      appendMapperGhostRow(sentinel);
+      try {
+        await loadPhotos(true);
+      } catch (_) {
+        document.querySelectorAll('.mapper-ghost-card').forEach((card) => card.remove());
+      }
+    };
+    els.grid.appendChild(sentinel);
+    if ('IntersectionObserver' in window) {
+      const metrics = estimateMapperGridMetrics();
+      const bufferPx = Math.ceil((metrics.tileWidth + metrics.gap) * 5);
+      photoLoadMoreObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadNextRow();
+      }, { rootMargin: `${bufferPx}px 0px` });
+      photoLoadMoreObserver.observe(sentinel);
+    } else {
+      sentinel.classList.add('btn');
+      sentinel.textContent = 'Indlæs næste række';
+      sentinel.addEventListener('click', loadNextRow);
+    }
+    return;
+  }
   const btn = document.createElement('button');
   btn.id = id;
   btn.className = 'btn';
@@ -7668,7 +7718,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
   if (state.view === 'mapper') {
     qs.set('direct', '1');
     qs.set('offset', String(state.photosPageOffset || 0));
-    qs.set('limit', String(estimateMapperPageLimit()));
+    qs.set('limit', String(estimateMapperPageLimit(append)));
   } else if (state.view === 'timeline') {
     qs.set('offset', String(state.photosPageOffset || 0));
     qs.set('limit', String(state.photosPageLimit || 300));
