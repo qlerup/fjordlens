@@ -308,6 +308,7 @@
   viewerMenu: document.getElementById("viewerMenu"),
   viewerMenuInfoBtn: document.getElementById("viewerMenuInfoBtn"),
   viewerInfoMediaBtn: document.getElementById("viewerInfoMediaBtn"),
+  viewerFaceBoxToggleBtn: document.getElementById("viewerFaceBoxToggleBtn"),
   viewerOpenOrig: document.getElementById("viewerOpenOrig"),
   similarModal: document.getElementById("similarModal"),
   similarModalClose: document.getElementById("similarModalClose"),
@@ -1541,6 +1542,7 @@ const I18N = {
     person_maybe_name: 'Måske {name}?',
     person_count_suffix: 'billede(r)',
     person_hidden_badge: 'Skjult',
+    person_show_face_boxes: 'Vis ansigtsbokse',
     person_btn_accept_maybe: 'Ja',
     person_btn_rename: 'Navngiv',
     person_btn_hide: 'Skjul',
@@ -2385,6 +2387,7 @@ const I18N = {
     person_maybe_name: 'Maybe {name}?',
     person_count_suffix: 'photo(s)',
     person_hidden_badge: 'Hidden',
+    person_show_face_boxes: 'Show face boxes',
     person_btn_accept_maybe: 'Yes',
     person_btn_rename: 'Rename',
     person_btn_hide: 'Hide',
@@ -2717,6 +2720,7 @@ let state = {
   _peopleCache: { key: '', items: [], ts: 0 },
   personView: { mode: 'list', personId: null, personName: null },
   showHiddenPeople: false,
+  showFaceBoxes: (() => { try { return localStorage.getItem('fl_show_face_boxes') !== '0'; } catch { return true; } })(),
   mapperPath: "",
   mapperFolders: [],
   mapperSort: "date_desc",
@@ -5780,7 +5784,13 @@ function wirePersonCardBodyEvents(card, p) {
   if (acceptMaybeBtn) acceptMaybeBtn.addEventListener('click', async (e)=>{
     e.preventDefault(); e.stopPropagation();
     if (!hasMaybeName) return;
-    await renameOrMergePerson(p.id, maybeName);
+    acceptMaybeBtn.disabled = true;
+    acceptMaybeBtn.classList.add('loading');
+    try {
+      await renameOrMergePerson(p.id, maybeName);
+    } finally {
+      if (acceptMaybeBtn.isConnected) { acceptMaybeBtn.disabled = false; acceptMaybeBtn.classList.remove('loading'); }
+    }
   });
   const renBtn = card.querySelector('[data-act="rename"]');
   if (renBtn) renBtn.addEventListener('click', async (e)=>{ e.preventDefault(); e.stopPropagation(); openPersonRenameMenu(e.currentTarget, p); });
@@ -5788,6 +5798,8 @@ function wirePersonCardBodyEvents(card, p) {
   if (hideBtn) hideBtn.addEventListener('click', async (e)=>{
     e.preventDefault(); e.stopPropagation();
     if (!confirm(tr('person_hide_confirm'))) return;
+    hideBtn.disabled = true;
+    hideBtn.classList.add('loading');
     try {
       const r = await fetch(`/api/people/${p.id}/hide`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hidden: true })});
       const d = await r.json();
@@ -5796,7 +5808,11 @@ function wirePersonCardBodyEvents(card, p) {
       // Fjern kortet med det samme for en snappy oplevelse
       const node = document.querySelector(`.photo-card[data-person-id="${Number(p.id)}"]`);
       if (node && node.parentElement) node.parentElement.removeChild(node);
-    } catch { showStatus(tr('person_hide_error'), 'err'); }
+    } catch {
+      showStatus(tr('person_hide_error'), 'err');
+    } finally {
+      if (hideBtn.isConnected) { hideBtn.disabled = false; hideBtn.classList.remove('loading'); }
+    }
   });
   const unhideBtn = card.querySelector('[data-act="unhide"]');
   if (unhideBtn) unhideBtn.addEventListener('click', async (e)=>{
@@ -6271,9 +6287,29 @@ function renderGrid() {
       els.grid.classList.remove('gallery-grid');
       const head = document.createElement('div');
       head.className = 'timeline-header';
-      head.style.cursor = 'pointer';
-      head.textContent = `← ${state.personView.personName || 'Person'}`;
-      head.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
+      head.style.display = 'flex';
+      head.style.alignItems = 'center';
+      head.style.justifyContent = 'space-between';
+      head.style.gap = '10px';
+      const backLabel = document.createElement('span');
+      backLabel.style.cursor = 'pointer';
+      backLabel.textContent = `← ${state.personView.personName || 'Person'}`;
+      backLabel.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
+      head.appendChild(backLabel);
+      const boxToggleWrap = document.createElement('label');
+      boxToggleWrap.style.display = 'inline-flex';
+      boxToggleWrap.style.alignItems = 'center';
+      boxToggleWrap.style.gap = '8px';
+      boxToggleWrap.style.fontSize = '0.82rem';
+      boxToggleWrap.style.fontWeight = '400';
+      boxToggleWrap.style.color = 'var(--muted)';
+      boxToggleWrap.innerHTML = `<span>${escapeHtml(tr('person_show_face_boxes'))}</span><input id="showFaceBoxesToggle" class="switch" type="checkbox"${state.showFaceBoxes ? ' checked' : ''}>`;
+      boxToggleWrap.querySelector('input').addEventListener('change', (e)=>{
+        state.showFaceBoxes = !!e.target.checked;
+        try { localStorage.setItem('fl_show_face_boxes', state.showFaceBoxes ? '1' : '0'); } catch {}
+        renderGrid();
+      });
+      head.appendChild(boxToggleWrap);
       els.grid.appendChild(head);
       const wrap = document.createElement('div');
       wrap.className = 'timeline-grid';
@@ -6456,9 +6492,9 @@ function appendCardTo(item, container) {
       if (els.detailContent) els.detailContent.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
-  // If viewing 'Ukendte' person folder, overlay detected face boxes on the thumbnail
+  // In a person's photo grid, optionally overlay their detected face box(es)
   try {
-    if (state.personView && state.personView.personId === 'unknown' && item && Array.isArray(item.faces) && item.faces.length) {
+    if (state.view === 'personer' && state.personView && state.personView.mode === 'photos' && state.showFaceBoxes && item && Array.isArray(item.faces) && item.faces.length) {
       const thumb = card.querySelector('.card-thumb');
       const img = thumb && thumb.querySelector('img');
       if (thumb && img) {
@@ -7559,6 +7595,7 @@ function openViewer(index) {
     els.viewerImg.onload = () => {
       try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
       updateViewerLandscapeClass(it);
+      try { updateViewerFaceBoxes(); } catch {}
     };
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
@@ -7579,6 +7616,7 @@ function openViewer(index) {
         if (current && Number(current.id || 0) === Number(it.id || 0)) {
           els.viewerImg.src = it.original_url || it.thumb_url || '';
           try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+          try { updateViewerFaceBoxes(); } catch {}
         }
       };
       hi.src = it.original_url || it.thumb_url || '';
@@ -7614,6 +7652,7 @@ function openViewer(index) {
     requestAnimationFrame(() => {
       positionViewerInfoPanel();
       positionViewerInfoTrigger();
+      updateViewerFaceBoxes();
     });
   } catch {}
   // Hold the next 10 and previous 5 images/videos ready in the browser cache.
@@ -7675,6 +7714,7 @@ function closeViewer() {
   if (!els.viewer) return;
   els.viewer.classList.add("hidden");
   els.viewer.classList.remove('viewer-landscape');
+  try { const fb = document.getElementById('viewerFaceBoxes'); if (fb) fb.remove(); } catch {}
   document.body.classList.remove('viewer-scroll-lock');
   viewerVideoSourceGeneration += 1;
   viewerVideoManualPlayRequired = false;
@@ -16475,6 +16515,81 @@ if (els.viewer) {
     if (e.target === els.viewer) closeViewer();
   });
 }
+
+// Face-box overlay: only meaningful while browsing a person's photos, toggled
+// persistently (grid header / viewer button) or peeked at by holding Space.
+let viewerFaceBoxSpaceHeld = false;
+function isPersonPhotosContext() {
+  return state.view === 'personer' && !!state.personView && state.personView.mode === 'photos';
+}
+function updateViewerFaceBoxes() {
+  try {
+    const existing = document.getElementById('viewerFaceBoxes');
+    if (existing) existing.remove();
+    const btn = els.viewerFaceBoxToggleBtn;
+    const items = getViewerItems();
+    const it = items[state.selectedIndex];
+    const hasFaces = !!(it && Array.isArray(it.faces) && it.faces.length);
+    const inContext = isPersonPhotosContext();
+    if (btn) {
+      btn.classList.toggle('hidden', !(inContext && hasFaces));
+      btn.classList.toggle('active', state.showFaceBoxes);
+    }
+    const shouldDraw = inContext && hasFaces && (state.showFaceBoxes || viewerFaceBoxSpaceHeld)
+      && els.viewerImg && els.viewerImg.style.display !== 'none'
+      && els.viewer && !els.viewer.classList.contains('hidden');
+    if (!shouldDraw) return;
+    const rect = els.viewerImg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'viewerFaceBoxes';
+    overlay.style.position = 'fixed';
+    overlay.style.left = `${rect.left}px`;
+    overlay.style.top = `${rect.top}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
+    overlay.style.pointerEvents = 'none';
+    overlay.style.zIndex = '4';
+    it.faces.forEach((fc) => {
+      const box = document.createElement('div');
+      box.style.position = 'absolute';
+      box.style.left = `${fc.x * 100}%`;
+      box.style.top = `${fc.y * 100}%`;
+      box.style.width = `${fc.w * 100}%`;
+      box.style.height = `${fc.h * 100}%`;
+      box.style.border = '2px solid #e33';
+      box.style.borderRadius = '2px';
+      box.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.4) inset';
+      overlay.appendChild(box);
+    });
+    document.body.appendChild(overlay);
+  } catch {}
+}
+if (els.viewerFaceBoxToggleBtn) {
+  els.viewerFaceBoxToggleBtn.addEventListener('click', () => {
+    state.showFaceBoxes = !state.showFaceBoxes;
+    try { localStorage.setItem('fl_show_face_boxes', state.showFaceBoxes ? '1' : '0'); } catch {}
+    updateViewerFaceBoxes();
+  });
+}
+window.addEventListener('resize', () => { try { updateViewerFaceBoxes(); } catch {} });
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' && e.key !== ' ') return;
+  if (viewerFaceBoxSpaceHeld) return;
+  if (!els.viewer || els.viewer.classList.contains('hidden')) return;
+  if (!isPersonPhotosContext()) return;
+  const activeTag = (document.activeElement && document.activeElement.tagName || '').toLowerCase();
+  if (activeTag === 'input' || activeTag === 'textarea' || (document.activeElement && document.activeElement.isContentEditable)) return;
+  viewerFaceBoxSpaceHeld = true;
+  e.preventDefault();
+  updateViewerFaceBoxes();
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code !== 'Space' && e.key !== ' ') return;
+  if (!viewerFaceBoxSpaceHeld) return;
+  viewerFaceBoxSpaceHeld = false;
+  updateViewerFaceBoxes();
+});
 
 // Viewer Info toggle
 const viPanel = document.getElementById('viewerInfo');

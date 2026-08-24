@@ -1300,8 +1300,8 @@ select.select {
   border-color: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.15));
 }
 
-/* Info-knappen: lille glas-cirkel med kursivt i */
-#viewerInfoMediaBtn {
+/* Info-/ansigtsboks-knapperne: små glas-cirkler */
+.viewer-info-media-btn {
   width: 40px;
   height: 40px;
   padding: 0;
@@ -1324,7 +1324,7 @@ select.select {
     left 0.3s var(--fl-liquid),
     top 0.3s var(--fl-liquid);
 }
-#viewerInfoMediaBtn:hover {
+.viewer-info-media-btn:hover {
   transform: scale(1.1);
   background: rgba(24, 50, 60, 0.78);
   border-color: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.15));
@@ -1473,12 +1473,12 @@ select.select {
   }
   .viewer-arrow:hover,
   .viewer-close:hover,
-  #viewerInfoMediaBtn:hover,
+  .viewer-info-media-btn:hover,
   .viewer-open-orig:hover {
     transform: translateY(-50%);
   }
   .viewer-close:hover,
-  #viewerInfoMediaBtn:hover,
+  .viewer-info-media-btn:hover,
   .viewer-open-orig:hover {
     transform: none;
   }

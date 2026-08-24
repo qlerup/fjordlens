@@ -14048,22 +14048,39 @@ def api_people_hide(pid: int):
 
 @app.route("/api/people/<int:pid>/photos")
 def api_people_photos(pid: int):
-    """List photos that include a given person id."""
+    """List photos that include a given person id, with that person's face box(es)
+    per photo (normalized 0-1) so the client can optionally draw them."""
     items: list[Dict[str, Any]] = []
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-            SELECT p.*
+            SELECT p.*, f.id as face_id, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
             FROM photos p
             INNER JOIN faces f ON f.photo_id = p.id
             WHERE f.person_id = ?
-            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC
+            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, f.id DESC
             """,
             (pid,),
         ).fetchall()
+        by_photo: Dict[int, Dict[str, Any]] = {}
         for r in rows:
-            if _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
-                items.append(row_to_public(r))
+            if not _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
+                continue
+            photo_id = int(r["id"])
+            if photo_id not in by_photo:
+                by_photo[photo_id] = row_to_public(r)
+                by_photo[photo_id]["faces"] = []
+            try:
+                w = float(r["width"] or 0) or 1.0
+                h = float(r["height"] or 0) or 1.0
+            except Exception:
+                w, h = 1.0, 1.0
+            x = max(0.0, float(r["bbox_x"] or 0) / w)
+            y = max(0.0, float(r["bbox_y"] or 0) / h)
+            bw = max(0.0, float(r["bbox_w"] or 0) / w)
+            bh = max(0.0, float(r["bbox_h"] or 0) / h)
+            by_photo[photo_id]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"])})
+        items = list(by_photo.values())
     return jsonify({"ok": True, "items": items})
 
 
