@@ -11195,25 +11195,53 @@ def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: i
     """Extract a representative frame via ffmpeg and save as JPEG thumbnail.
     Returns the thumbnail file name or None on failure.
     """
+    last_error: Optional[str] = None
     try:
         with tempfile.TemporaryDirectory() as td:
             out_path = Path(td) / "frame.jpg"
-            # Grab a frame at 0.5s; fall back to first frame if video is shorter
-            cmd = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-ss", "0.5", "-i", str(path),
-                "-frames:v", "1",
-                str(out_path),
+            # Try a frame at 0.5s two ways (fast input-seek, then accurate output-seek
+            # for containers where the fast seek lands past the end), then fall back to
+            # whatever frame is first available. Needed for videos under ~0.5s, which
+            # would otherwise never get a thumbnail at all.
+            commands = [
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", "0.5", "-i", str(path),
+                    "-frames:v", "1",
+                    str(out_path),
+                ],
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(path),
+                    "-ss", "0.5",
+                    "-frames:v", "1",
+                    str(out_path),
+                ],
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(path),
+                    "-frames:v", "1",
+                    str(out_path),
+                ],
             ]
-            subprocess.run(cmd, check=True)
-            with Image.open(out_path) as img:
-                return make_thumb(img, rel_path, file_mtime, file_size)
+            for cmd in commands:
+                try:
+                    if out_path.exists():
+                        out_path.unlink(missing_ok=True)
+                    subprocess.run(cmd, check=True, timeout=25)
+                    if out_path.exists() and out_path.stat().st_size > 0:
+                        with Image.open(out_path) as img:
+                            return make_thumb(img, rel_path, file_mtime, file_size)
+                except Exception as e:
+                    last_error = str(e)
+                    continue
     except Exception as e:
-        try:
-            log_event("error", rel_path=rel_path, error=f"video_thumb: {e}")
-        except Exception:
-            pass
-        return None
+        last_error = str(e)
+    try:
+        log_event("error", rel_path=rel_path, error=f"video_thumb: {last_error}")
+    except Exception:
+        pass
+    return None
 
 
 def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
