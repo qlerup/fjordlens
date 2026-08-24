@@ -242,6 +242,11 @@
   mainLogsBox: document.getElementById("mainLogs"),
   mainLogsStart: document.getElementById("mainLogsStart"),
   mainLogsClear: document.getElementById("mainLogsClear"),
+  logCategoryTabs: document.getElementById("logCategoryTabs"),
+  logPagination: document.getElementById("logPagination"),
+  logPrevPage: document.getElementById("logPrevPage"),
+  logNextPage: document.getElementById("logNextPage"),
+  logPageInfo: document.getElementById("logPageInfo"),
   logsPanel: document.getElementById("logsPanel"),
   settingsPanel: document.getElementById("settingsPanel"),
   dnsPanelTitle: document.getElementById("dnsPanelTitle"),
@@ -2688,6 +2693,9 @@ let state = {
   // Default off; enable only for authorized users
   logsRunning: false,
   logsAfter: 0,
+  logItems: [],
+  logCategory: 'all',
+  logPage: 1,
   // people view state
   people: [],
   _peopleCache: { key: '', items: [], ts: 0 },
@@ -13052,6 +13060,7 @@ function applyUiLanguage() {
   if (logsLabel) logsLabel.textContent = tr('logs_label');
   if (els.logsStart) els.logsStart.textContent = state.logsRunning ? tr('btn_stop') : tr('btn_start');
   if (els.mainLogsClear) els.mainLogsClear.textContent = tr('btn_clear');
+  renderLogList();
 
   if (els.mapperDownloadModalTitle) els.mapperDownloadModalTitle.textContent = tr('download_modal_title');
   if (els.mapperDownloadModalClose) {
@@ -18874,22 +18883,105 @@ function classifySeverity(eventName) {
   return 'info';
 }
 
-function appendLogLine(text, level = 'info') {
-  const makeLineEl = (container) => {
-    if (!container) return;
-    const line = document.createElement('span');
-    line.className = `log-line log-${level}`;
-    line.textContent = text;
-    container.appendChild(line);
-    // Trim to keep DOM light
-    const maxLines = (container.id === 'mainLogs') ? 1200 : 400;
-    while (container.childElementCount > maxLines) {
-      container.removeChild(container.firstElementChild);
+const LOG_PAGE_SIZE = 20;
+const LOG_CATEGORIES = ['all', 'upload', 'conversion', 'metadata', 'thumbnails', 'faces', 'ai', 'errors', 'other'];
+
+function logCategoryLabels() {
+  const en = String(state.uiLanguage || '').toLowerCase().startsWith('en');
+  return en
+    ? { all: 'All', upload: 'Uploads', conversion: 'Conversions', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Faces', ai: 'AI', errors: 'Errors', other: 'Other' }
+    : { all: 'Alle', upload: 'Uploads', conversion: 'Konverteringer', metadata: 'Metadata', thumbnails: 'Thumbnails', faces: 'Ansigter', ai: 'AI', errors: 'Fejl', other: 'Andet' };
+}
+
+function categoriesForLog(item) {
+  const eventName = String((item && item.event) || '').toLowerCase();
+  const categories = new Set();
+  if (eventName.includes('upload') || eventName.includes('tus')) categories.add('upload');
+  if (eventName.includes('convert') || eventName.includes('heic') || eventName.includes('raw_') || eventName.includes('mov_')) categories.add('conversion');
+  if (eventName.includes('metadata') || eventName.includes('index') || eventName.includes('scan')) categories.add('metadata');
+  if (eventName.includes('thumb') || eventName.includes('preview')) categories.add('thumbnails');
+  if (eventName.includes('face') || eventName.includes('person')) categories.add('faces');
+  if (eventName.includes('ai_') || eventName.includes('embed') || eventName.includes('description')) categories.add('ai');
+  if (classifySeverity(eventName) === 'err' || Number(item && item.errors) > 0 || item && item.error) categories.add('errors');
+  if (!categories.size) categories.add('other');
+  return categories;
+}
+
+function renderLogList() {
+  if (!els.mainLogsBox) return;
+  const labels = logCategoryLabels();
+  const isEnglish = String(state.uiLanguage || '').toLowerCase().startsWith('en');
+  const allItems = Array.isArray(state.logItems) ? state.logItems : [];
+  const category = LOG_CATEGORIES.includes(state.logCategory) ? state.logCategory : 'all';
+  const filtered = allItems
+    .filter((item) => category === 'all' || categoriesForLog(item).has(category))
+    .slice()
+    .reverse();
+  const pageCount = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE));
+  state.logPage = Math.max(1, Math.min(pageCount, Number(state.logPage || 1)));
+  const start = (state.logPage - 1) * LOG_PAGE_SIZE;
+  const pageItems = filtered.slice(start, start + LOG_PAGE_SIZE);
+
+  if (els.logCategoryTabs) {
+    els.logCategoryTabs.innerHTML = '';
+    for (const key of LOG_CATEGORIES) {
+      const count = key === 'all' ? allItems.length : allItems.filter((item) => categoriesForLog(item).has(key)).length;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `log-category-tab${key === category ? ' active' : ''}`;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', key === category ? 'true' : 'false');
+      button.textContent = `${labels[key]} (${count})`;
+      button.addEventListener('click', () => {
+        state.logCategory = key;
+        state.logPage = 1;
+        renderLogList();
+      });
+      els.logCategoryTabs.appendChild(button);
     }
-    container.scrollTop = container.scrollHeight;
-  };
-  makeLineEl(els.logsBox);
-  makeLineEl(els.mainLogsBox);
+  }
+
+  els.mainLogsBox.innerHTML = '';
+  if (!pageItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'log-list-empty';
+    empty.textContent = isEnglish ? 'No log entries in this category.' : 'Ingen logs i denne kategori.';
+    els.mainLogsBox.appendChild(empty);
+  } else {
+    for (const item of pageItems) {
+      const row = document.createElement('article');
+      const level = item._level || classifySeverity(item.event);
+      row.className = `log-list-row log-${level}`;
+      const head = document.createElement('div');
+      head.className = 'log-list-head';
+      const time = document.createElement('time');
+      time.textContent = fmtLogTime(item.t);
+      const badge = document.createElement('span');
+      badge.className = 'log-event-badge';
+      badge.textContent = item._label || item.event || '-';
+      head.append(time, badge);
+      const detail = document.createElement('div');
+      detail.className = 'log-list-detail';
+      detail.textContent = item._extra || '-';
+      row.append(head, detail);
+      els.mainLogsBox.appendChild(row);
+    }
+  }
+  if (els.logPageInfo) els.logPageInfo.textContent = `${isEnglish ? 'Page' : 'Side'} ${state.logPage} ${isEnglish ? 'of' : 'af'} ${pageCount}`;
+  if (els.logPrevPage) els.logPrevPage.textContent = isEnglish ? 'Previous' : 'Forrige';
+  if (els.logNextPage) els.logNextPage.textContent = isEnglish ? 'Next' : 'Næste';
+  if (els.logPrevPage) els.logPrevPage.disabled = state.logPage <= 1;
+  if (els.logNextPage) els.logNextPage.disabled = state.logPage >= pageCount;
+}
+
+function appendLogItem(item, extra, level) {
+  state.logItems.push({
+    ...item,
+    _extra: String(extra || '').replace(/^\s*::\s*/, '') || '-',
+    _level: level,
+    _label: (item.event === 'skip_unchanged' || item.event === 'no_new') ? 'no new' : item.event,
+  });
+  if (state.logItems.length > 1000) state.logItems.splice(0, state.logItems.length - 1000);
 }
 
 function fmtLogTime(ts) {
@@ -18955,12 +19047,11 @@ async function pollLogs() {
         if (it.transfer) extra += ` transfer=${it.transfer}`;
         if (it.workflow_mode) extra += ` workflow=${it.workflow_mode}`;
         if (it.error) extra += ` :: ${it.error}`;
-        const label = (it.event === 'skip_unchanged' || it.event === 'no_new') ? 'no new' : it.event;
-        const msg = `[${fmtLogTime(it.t)}] ${label}${extra}`;
-        const lvl = classifySeverity(it.event);
-        appendLogLine(msg, lvl);
+        const lvl = (it.error || Number(it.errors) > 0) ? 'err' : classifySeverity(it.event);
+        appendLogItem(it, extra, lvl);
         state.logsAfter = it.id;
       }
+      renderLogList();
     }
   } catch {}
   setTimeout(pollLogs, 1000);
@@ -18980,7 +19071,9 @@ async function clearLogs() {
   try { await fetch('/api/logs/clear', { method: 'POST' }); } catch {}
   state.logsAfter = 0;
   if (els.logsBox) els.logsBox.innerHTML = "";
-  if (els.mainLogsBox) els.mainLogsBox.innerHTML = "";
+  state.logItems = [];
+  state.logPage = 1;
+  renderLogList();
 }
 
 els.logsStart && els.logsStart.addEventListener('click', () => {
@@ -18988,5 +19081,13 @@ els.logsStart && els.logsStart.addEventListener('click', () => {
 });
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
+els.logPrevPage && els.logPrevPage.addEventListener('click', () => {
+  state.logPage = Math.max(1, Number(state.logPage || 1) - 1);
+  renderLogList();
+});
+els.logNextPage && els.logNextPage.addEventListener('click', () => {
+  state.logPage = Number(state.logPage || 1) + 1;
+  renderLogList();
+});
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);

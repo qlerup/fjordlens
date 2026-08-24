@@ -3291,6 +3291,80 @@ body.detail-open .detail-panel {
 .raw-meta .log-err { color: #f87171; }
 .raw-meta .log-info { color: var(--muted); }
 
+.log-category-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  scrollbar-width: thin;
+}
+.log-category-tab {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  padding: 7px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 700;
+}
+.log-category-tab:hover { color: var(--text); border-color: var(--accent); }
+.log-category-tab.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+.log-list {
+  display: grid;
+  gap: 7px;
+  min-height: 180px;
+}
+.log-list-row {
+  display: grid;
+  grid-template-columns: minmax(220px, .8fr) minmax(0, 2.2fr);
+  gap: 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid #64748b;
+  border-radius: 9px;
+  background: var(--panel);
+}
+.log-list-row.log-ok { border-left-color: #34d399; }
+.log-list-row.log-warn { border-left-color: #fbbf24; }
+.log-list-row.log-err { border-left-color: #f87171; }
+.log-list-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.log-list-head time { color: var(--muted); font-size: .76rem; white-space: nowrap; }
+.log-event-badge {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: 700 .76rem/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.log-list-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font: .79rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.log-list-empty {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+}
+.log-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 0 2px; }
+
+@media (max-width: 760px) {
+  .log-list-row { grid-template-columns: 1fr; gap: 7px; }
+  .log-list-head { flex-wrap: wrap; }
+}
+
 /* Inline date editor popover (keeps row size unchanged) */
 .date-popover { position: absolute; right: 8px; top: calc(100% + 6px); background: var(--panel); border:1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.45); padding:10px; border-radius:10px; z-index: 10000; }
 .date-popover.floating { position: fixed; right: auto; top: auto; }

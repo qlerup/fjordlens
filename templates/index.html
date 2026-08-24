@@ -697,7 +697,13 @@
             <button id="logsStart" class="btn">Stop</button>
             <button id="mainLogsClear" class="btn">Ryd</button>
           </div>
-          <pre id="mainLogs" class="raw-meta" style="height:60vh;"></pre>
+          <div id="logCategoryTabs" class="log-category-tabs" role="tablist" aria-label="Logkategorier"></div>
+          <div id="mainLogs" class="log-list" aria-live="polite"></div>
+          <div id="logPagination" class="log-pagination">
+            <button id="logPrevPage" class="btn" type="button">Forrige</button>
+            <span id="logPageInfo" class="mini-label">Side 1 af 1</span>
+            <button id="logNextPage" class="btn" type="button">Næste</button>
+          </div>
         </div>
 
         <!-- Brugere (indlejret UI via JSON, ingen iframes) -->
