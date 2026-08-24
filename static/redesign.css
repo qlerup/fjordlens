@@ -1,0 +1,1755 @@
+/* ==========================================================================
+   FjordLens redesign — "fjorden"-temaet
+   Indlæses EFTER styles.css og overstyrer gradvist, side for side.
+   Identitet: roligt nordisk vand, glacial-teal lys, optik/linse-motiver.
+   ========================================================================== */
+
+/* ---------- 1. Design-tokens (overstyrer basistemaets variabler) ---------- */
+
+:root {
+  /* Fjorden ved midnat */
+  --bg: #08141a;
+  --panel: #0e1f27;
+  --panel-2: #142933;
+  --panel-3: #1a3440;
+  --border: #23404c;
+  --text: #e9f4f4;
+  --muted: #94b1b7;
+  --accent: #2dd4bf;
+  --accent-2: #6ee7db;
+  --danger: #ff6b6b;
+  --ok: #34d399;
+
+  /* Redesign-egne tokens */
+  --fl-glow: rgba(45, 212, 191, 0.45);
+  --fl-glow-soft: rgba(45, 212, 191, 0.18);
+  --fl-card-bg: rgba(13, 28, 35, 0.62);
+  --fl-card-border: rgba(233, 244, 244, 0.09);
+  --fl-card-highlight: rgba(255, 255, 255, 0.07);
+  --fl-input-bg: rgba(233, 244, 244, 0.05);
+  --fl-input-bg-focus: rgba(233, 244, 244, 0.08);
+  --fl-input-border: rgba(233, 244, 244, 0.12);
+
+  /* Liquid glass: fjedrende easing + refraktiv kant-gradient */
+  --fl-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --fl-chrome-bg: rgba(11, 24, 30, 0.62);
+  --fl-chrome-border: rgba(233, 244, 244, 0.08);
+  --fl-ring: linear-gradient(145deg,
+    rgba(255, 255, 255, 0.38),
+    rgba(255, 255, 255, 0.07) 28%,
+    rgba(255, 255, 255, 0.02) 55%,
+    rgba(45, 212, 191, 0.3) 100%);
+
+  /* Baggrundens lysspil */
+  --fl-aur-a: rgba(13, 148, 136, 0.22);
+  --fl-aur-b: rgba(56, 189, 248, 0.13);
+  --fl-aur-c: rgba(45, 212, 191, 0.11);
+  --fl-ray-opacity: 0.06;
+  --fl-ray-tint: rgba(180, 240, 235, 0.85);
+  --fl-ray-tint-soft: rgba(180, 240, 235, 0.25);
+  --fl-backdrop-base:
+    radial-gradient(ellipse 90% 65% at 75% -12%, rgba(15, 60, 68, 0.55), transparent 62%),
+    radial-gradient(ellipse 70% 55% at 8% 112%, rgba(9, 48, 66, 0.5), transparent 60%),
+    #08141a;
+}
+
+:root[data-theme="light"] {
+  /* Morgendis over fjorden */
+  --bg: #edf3f4;
+  --panel: #f8fbfb;
+  --panel-2: #edf3f4;
+  --panel-3: #e2ebed;
+  --border: #c7d8db;
+  --text: #0b191d;
+  --muted: #52707a;
+  --accent: #0d9488;
+  --accent-2: #14b8a6;
+  --danger: #d91f4b;
+  --ok: #059669;
+
+  --fl-glow: rgba(13, 148, 136, 0.35);
+  --fl-glow-soft: rgba(13, 148, 136, 0.14);
+  --fl-card-bg: rgba(255, 255, 255, 0.52);
+  --fl-card-border: rgba(11, 25, 29, 0.08);
+  --fl-card-highlight: rgba(255, 255, 255, 0.85);
+  --fl-input-bg: rgba(11, 25, 29, 0.035);
+  --fl-input-bg-focus: rgba(255, 255, 255, 0.9);
+  --fl-input-border: rgba(11, 25, 29, 0.14);
+
+  --fl-ring: linear-gradient(145deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(11, 25, 29, 0.06) 35%,
+    rgba(11, 25, 29, 0.03) 60%,
+    rgba(13, 148, 136, 0.32) 100%);
+  --fl-chrome-bg: rgba(255, 255, 255, 0.55);
+  --fl-chrome-border: rgba(11, 25, 29, 0.08);
+
+  /* Morgensol over fjorden: kold is-blå + varmt sollys gennem disen */
+  --fl-aur-a: rgba(13, 148, 136, 0.24);
+  --fl-aur-b: rgba(56, 189, 248, 0.3);
+  --fl-aur-c: rgba(251, 191, 36, 0.22);
+  --fl-ray-opacity: 0.4;
+  --fl-ray-tint: rgba(255, 222, 166, 0.9);
+  --fl-ray-tint-soft: rgba(255, 222, 166, 0.3);
+  --fl-backdrop-base:
+    radial-gradient(ellipse 80% 55% at 78% -10%, rgba(125, 211, 252, 0.5), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 10% 6%, rgba(255, 228, 181, 0.55), transparent 62%),
+    radial-gradient(ellipse 70% 50% at 6% 112%, rgba(45, 212, 191, 0.35), transparent 58%),
+    #eaf2f4;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #edf3f4;
+    --panel: #f8fbfb;
+    --panel-2: #edf3f4;
+    --panel-3: #e2ebed;
+    --border: #c7d8db;
+    --text: #0b191d;
+    --muted: #52707a;
+    --accent: #0d9488;
+    --accent-2: #14b8a6;
+    --danger: #d91f4b;
+    --ok: #059669;
+
+    --fl-glow: rgba(13, 148, 136, 0.35);
+    --fl-glow-soft: rgba(13, 148, 136, 0.14);
+    --fl-card-bg: rgba(255, 255, 255, 0.52);
+    --fl-card-border: rgba(11, 25, 29, 0.08);
+    --fl-card-highlight: rgba(255, 255, 255, 0.85);
+    --fl-input-bg: rgba(11, 25, 29, 0.035);
+    --fl-input-bg-focus: rgba(255, 255, 255, 0.9);
+    --fl-input-border: rgba(11, 25, 29, 0.14);
+
+    --fl-ring: linear-gradient(145deg,
+      rgba(255, 255, 255, 0.95),
+      rgba(11, 25, 29, 0.06) 35%,
+      rgba(11, 25, 29, 0.03) 60%,
+      rgba(13, 148, 136, 0.32) 100%);
+    --fl-chrome-bg: rgba(255, 255, 255, 0.55);
+    --fl-chrome-border: rgba(11, 25, 29, 0.08);
+
+    /* Morgensol over fjorden: kold is-blå + varmt sollys gennem disen */
+    --fl-aur-a: rgba(13, 148, 136, 0.24);
+    --fl-aur-b: rgba(56, 189, 248, 0.3);
+    --fl-aur-c: rgba(251, 191, 36, 0.22);
+    --fl-ray-opacity: 0.4;
+    --fl-ray-tint: rgba(255, 222, 166, 0.9);
+    --fl-ray-tint-soft: rgba(255, 222, 166, 0.3);
+    --fl-backdrop-base:
+      radial-gradient(ellipse 80% 55% at 78% -10%, rgba(125, 211, 252, 0.5), transparent 60%),
+      radial-gradient(ellipse 55% 45% at 10% 6%, rgba(255, 228, 181, 0.55), transparent 62%),
+      radial-gradient(ellipse 70% 50% at 6% 112%, rgba(45, 212, 191, 0.35), transparent 58%),
+      #eaf2f4;
+  }
+}
+
+/* ---------- 2. Global finish ---------- */
+
+::selection {
+  background: rgba(45, 212, 191, 0.32);
+  color: #fff;
+}
+:root[data-theme="light"] ::selection {
+  background: rgba(13, 148, 136, 0.25);
+  color: #06231f;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 178, 184, 0.28) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(148, 178, 184, 0.28); border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- 3. Baggrund: fjordlys ---------- */
+
+.fjord-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--fl-backdrop-base);
+  transition: background 0.3s ease;
+}
+
+.fl-aurora {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  will-change: transform;
+}
+.fl-aurora-a {
+  width: 58vw;
+  height: 58vw;
+  top: -26vw;
+  right: -14vw;
+  background: radial-gradient(circle, var(--fl-aur-a), transparent 72%);
+  animation: fl-drift-a 34s ease-in-out infinite alternate;
+}
+.fl-aurora-b {
+  width: 48vw;
+  height: 48vw;
+  bottom: -24vw;
+  left: -12vw;
+  background: radial-gradient(circle, var(--fl-aur-b), transparent 72%);
+  animation: fl-drift-b 42s ease-in-out infinite alternate;
+}
+.fl-aurora-c {
+  width: 30vw;
+  height: 30vw;
+  top: 40%;
+  left: 58%;
+  background: radial-gradient(circle, var(--fl-aur-c), transparent 70%);
+  animation: fl-drift-a 52s ease-in-out infinite alternate-reverse;
+}
+
+/* Lysskakter, som sollys der falder gennem vand (kun synlige i mørkt tema) */
+.fl-ray {
+  position: absolute;
+  top: -12%;
+  height: 130%;
+  width: 14vw;
+  opacity: var(--fl-ray-opacity);
+  background: linear-gradient(180deg,
+    var(--fl-ray-tint) 0%,
+    var(--fl-ray-tint-soft) 45%,
+    transparent 82%);
+  filter: blur(26px);
+  transform: skewX(-14deg);
+  transform-origin: top center;
+  will-change: transform, opacity;
+}
+.fl-ray-a {
+  left: 22vw;
+  animation: fl-ray-sway 17s ease-in-out infinite alternate;
+}
+.fl-ray-b {
+  left: 55vw;
+  width: 9vw;
+  animation: fl-ray-sway 23s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes fl-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-7vw, 6vh, 0) scale(1.16); }
+}
+@keyframes fl-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(6vw, -5vh, 0) scale(1.12); }
+}
+@keyframes fl-ray-sway {
+  from { transform: skewX(-14deg) translateX(0); opacity: calc(var(--fl-ray-opacity) * 0.6); }
+  50% { opacity: var(--fl-ray-opacity); }
+  to { transform: skewX(-10deg) translateX(4vw); opacity: calc(var(--fl-ray-opacity) * 0.75); }
+}
+
+/* ---------- 4. Auth-scenen: login-kortet ---------- */
+
+.login-card {
+  position: relative;
+  width: 420px;
+  max-width: 92vw;
+  background: var(--fl-card-bg);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  border: none;
+  border-radius: 26px;
+  padding: 34px 32px 28px;
+  box-shadow:
+    0 24px 70px -18px rgba(2, 12, 16, 0.65),
+    0 4px 18px -6px rgba(2, 12, 16, 0.4);
+  animation: fl-card-in 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+:root[data-theme="light"] .login-card {
+  box-shadow:
+    0 24px 70px -22px rgba(30, 60, 68, 0.35),
+    0 4px 18px -8px rgba(30, 60, 68, 0.18);
+}
+.login-card.small { width: 384px; }
+
+/* Liquid glass-kant: gradient-ring der "bryder lyset" i stedet for en flad streg */
+.login-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--fl-ring);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Spekulært lys hen over glasset + et blødt glimt med jævne mellemrum */
+.login-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    linear-gradient(115deg,
+      rgba(255, 255, 255, 0.085) 0%,
+      rgba(255, 255, 255, 0.02) 26%,
+      transparent 40%),
+    linear-gradient(115deg,
+      transparent 42%,
+      rgba(255, 255, 255, 0.09) 50%,
+      transparent 58%);
+  background-size: 100% 100%, 260% 100%;
+  background-position: 0 0, 145% 0;
+  background-repeat: no-repeat;
+  animation: fl-glint 9s ease-in-out infinite 2.5s;
+}
+@keyframes fl-glint {
+  0%, 62% { background-position: 0 0, 145% 0; }
+  86%, 100% { background-position: 0 0, -45% 0; }
+}
+
+/* Staggered entrance: sæt --d (0,1,2 …) på elementerne */
+.fl-up {
+  opacity: 0;
+  animation: fl-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(120ms + var(--d, 0) * 75ms);
+}
+
+/* Mens login-siden stadig tjekker sessionen, står entrance-animationerne på pause,
+   så de først spiller når siden reelt bliver synlig */
+html.auth-session-checking .login-card,
+html.auth-session-checking .fl-up {
+  animation-play-state: paused;
+}
+
+@keyframes fl-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes fl-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Brandet: linsemærke med fokusring og roterende lysglimt */
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.lens-mark {
+  position: relative;
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+}
+.lens-mark img {
+  width: 46px;
+  height: 46px;
+  display: block;
+  filter: drop-shadow(0 2px 10px var(--fl-glow-soft));
+}
+.lens-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow:
+    inset 0 0 18px -6px var(--fl-glow-soft),
+    0 0 24px -8px var(--fl-glow-soft);
+}
+.lens-ring::before {
+  /* indre "blænde"-ring */
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.lens-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    transparent 292deg,
+    color-mix(in srgb, var(--accent-2) 85%, transparent) 336deg,
+    transparent 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  animation: fl-sweep 6.5s linear infinite;
+}
+@keyframes fl-sweep {
+  to { transform: rotate(360deg); }
+}
+
+.login-title {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.auth-intro {
+  margin: -6px 0 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.login-title span {
+  display: inline-block;
+  font-size: 1.32rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  background: linear-gradient(100deg, var(--text) 20%, var(--accent-2) 75%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* ---------- 5. Formularfelter ---------- */
+
+.login-card .form-row { gap: 7px; margin-bottom: 14px; }
+.login-card .form-row label {
+  font-size: 0.82rem;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.login-card .form-row input {
+  background: var(--fl-input-bg);
+  border: 1px solid var(--fl-input-border);
+  border-radius: 15px;
+  padding: 12px 16px;
+  font-size: 1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+:root[data-theme="light"] .login-card .form-row input {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+.login-card .form-row input:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--fl-input-border));
+}
+.login-card .form-row input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: var(--fl-input-bg-focus);
+  box-shadow: 0 0 0 3px var(--fl-glow-soft);
+}
+
+.login-card .reveal-btn {
+  transition: color 0.18s ease, transform 0.4s var(--fl-spring);
+}
+.login-card .reveal-btn:hover {
+  color: var(--accent);
+  transform: scale(1.12);
+}
+.login-card .reveal-btn:active {
+  transform: scale(0.9);
+}
+
+/* ---------- 6. Knapper (auth-scope, resten af appen migreres side for side) ---------- */
+
+.login-card .btn.primary {
+  position: relative;
+  border: none;
+  border-radius: 9999px;
+  padding: 11px 26px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: #052620;
+  background: linear-gradient(135deg, #5eead4 0%, #2dd4bf 45%, #14b8a6 100%);
+  background-size: 170% 170%;
+  box-shadow:
+    0 4px 20px -6px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(0, 40, 34, 0.14);
+  transition:
+    background-position 0.35s ease,
+    transform 0.45s var(--fl-spring),
+    box-shadow 0.3s ease;
+}
+.login-card .btn.primary:hover:not(:disabled) {
+  background-position: 90% 90%;
+  transform: translateY(-2px) scale(1.03);
+  box-shadow:
+    0 10px 32px -8px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 1px rgba(0, 40, 34, 0.1);
+}
+.login-card .btn.primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 0.35s, 0.12s, 0.2s;
+  box-shadow:
+    0 3px 12px -5px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 1px rgba(0, 40, 34, 0.16);
+}
+
+/* ---------- 7. Beskeder ---------- */
+
+.login-card .err,
+.login-card .ok {
+  border-radius: 12px;
+  padding: 10px 13px;
+  font-size: 0.92rem;
+  margin-bottom: 14px;
+  animation: fl-alert-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.login-card .err {
+  color: #ffb4b4;
+  background: rgba(255, 107, 107, 0.09);
+  border: 1px solid rgba(255, 107, 107, 0.32);
+}
+.login-card .ok {
+  color: #86efce;
+  background: rgba(52, 211, 153, 0.09);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+:root[data-theme="light"] .login-card .err { color: #b3123c; }
+:root[data-theme="light"] .login-card .ok { color: #04785a; }
+
+@keyframes fl-alert-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.login-card .actions {
+  margin-top: 20px;
+}
+
+/* ==========================================================================
+   HOVEDSIDEN — app-chrome i liquid glass
+   Bevægelses-princip: flader flyder som vand (--fl-liquid, 0.4–0.7s),
+   små kontroller fjedrer kort (--fl-spring). Ingen hårde snap.
+   ========================================================================== */
+
+:root {
+  --fl-liquid: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------- Sidebar: flydende glas-panel ---------- */
+
+.sidebar {
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(30px) saturate(1.35);
+  backdrop-filter: blur(30px) saturate(1.35);
+  border-right: 1px solid var(--fl-chrome-border);
+  box-shadow: inset 0 1px 0 var(--fl-card-highlight);
+}
+@media (min-width: 761px) {
+  .sidebar {
+    margin: 12px 0 12px 12px;
+    border: 1px solid var(--fl-chrome-border);
+    border-radius: 24px;
+    top: 12px;
+    height: calc(100dvh - 24px);
+    box-shadow:
+      0 18px 50px -22px rgba(2, 12, 16, 0.55),
+      inset 0 1px 0 var(--fl-card-highlight);
+  }
+}
+
+.sidebar {
+  padding: 20px 14px 14px;
+}
+.logo {
+  border-bottom: none;
+  margin-bottom: 20px;
+  padding: 6px 8px 0;
+}
+.logo-icon {
+  box-shadow: 0 0 14px var(--fl-glow-soft);
+}
+
+/* Nav: ikon-fliser i glas. Aktiv = glødende teal-flise (ingen kant-streg) */
+.nav { gap: 4px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 9px;
+  font-size: 0.94rem;
+  font-weight: 550;
+  color: var(--muted);
+  border-radius: 15px;
+  border: 1px solid transparent;
+  transition:
+    color 0.4s var(--fl-liquid),
+    background 0.45s var(--fl-liquid),
+    border-color 0.45s var(--fl-liquid),
+    box-shadow 0.45s var(--fl-liquid),
+    transform 0.45s var(--fl-liquid);
+}
+.nav-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.12rem;
+  transition: transform 0.45s var(--fl-spring);
+}
+.nav-item:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateX(3px);
+}
+:root[data-theme="light"] .nav-item:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+.nav-item:hover .nav-icon {
+  transform: translateY(-1px) scale(1.1);
+}
+.nav-item.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow:
+    0 4px 20px -8px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.nav-item.active .nav-icon {
+  transform: scale(1.06);
+}
+.nav-item:active {
+  transform: translateX(3px) scale(0.98);
+  transition-duration: 0.12s;
+}
+
+/* Sidebar-footer: "vandlinjen" — sidebarens bund er fjordens overflade.
+   En drivende bølge-hairline skiller navigation fra utility-links, og
+   links er stille graverede labels; hover sætter ringe i vandet. */
+.sidebar-footer {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, auto));
+  justify-content: start;
+  column-gap: 22px;
+  row-gap: 2px;
+  border-top: none;
+  padding-top: 16px;
+}
+.sidebar-footer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  right: 2px;
+  height: 7px;
+  background: linear-gradient(90deg,
+    transparent 2%,
+    color-mix(in srgb, var(--accent) 70%, transparent) 30%,
+    color-mix(in srgb, var(--accent-2) 80%, transparent) 55%,
+    transparent 96%);
+  opacity: 0.45;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='7' viewBox='0 0 44 7'%3E%3Cpath d='M0 3.5 Q5.5 1 11 3.5 T22 3.5 T33 3.5 T44 3.5' fill='none' stroke='%23000' stroke-width='1.2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='7' viewBox='0 0 44 7'%3E%3Cpath d='M0 3.5 Q5.5 1 11 3.5 T22 3.5 T33 3.5 T44 3.5' fill='none' stroke='%23000' stroke-width='1.2'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: repeat-x;
+  mask-repeat: repeat-x;
+  animation: fl-waterline 11s linear infinite;
+}
+@keyframes fl-waterline {
+  from { -webkit-mask-position: 0 0; mask-position: 0 0; }
+  to { -webkit-mask-position: 44px 0; mask-position: 44px 0; }
+}
+.sidebar-footer .mini-link {
+  position: relative;
+  padding: 5px 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 550;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition:
+    color 0.35s var(--fl-liquid),
+    transform 0.45s var(--fl-liquid),
+    text-shadow 0.45s var(--fl-liquid);
+}
+/* Ringe i vandet: to koncentriske ringe breder sig fra tekstens forkant */
+.sidebar-footer .mini-link::before,
+.sidebar-footer .mini-link::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: calc(50% - 13px);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  opacity: 0;
+  transform: scale(0.2);
+  pointer-events: none;
+}
+.sidebar-footer .mini-link:hover,
+.sidebar-footer .mini-link:focus-visible {
+  outline: none;
+  color: var(--accent-2);
+  transform: translateX(3px);
+  text-shadow: 0 9px 18px var(--fl-glow);
+}
+.sidebar-footer .mini-link:hover::before,
+.sidebar-footer .mini-link:focus-visible::before {
+  animation: fl-ripple 0.9s var(--fl-liquid);
+}
+.sidebar-footer .mini-link:hover::after,
+.sidebar-footer .mini-link:focus-visible::after {
+  animation: fl-ripple 0.9s var(--fl-liquid) 0.18s;
+}
+@keyframes fl-ripple {
+  0% { opacity: 0.5; transform: scale(0.2); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+:root[data-theme="light"] .sidebar-footer .mini-link:hover,
+:root[data-theme="light"] .sidebar-footer .mini-link:focus-visible {
+  color: var(--accent);
+}
+/* Log ud trækker mod dybet */
+.sidebar-footer .mini-link[href="/logout"]:hover,
+.sidebar-footer .mini-link[href="/logout"]:focus-visible {
+  color: var(--danger);
+  text-shadow: 0 9px 18px color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.sidebar-footer .mini-link[href="/logout"]:hover::before,
+.sidebar-footer .mini-link[href="/logout"]:hover::after,
+.sidebar-footer .mini-link[href="/logout"]:focus-visible::before,
+.sidebar-footer .mini-link[href="/logout"]:focus-visible::after {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-footer::before { animation: none; }
+  .sidebar-footer .mini-link { transition-duration: 0.01ms; }
+  .sidebar-footer .mini-link:hover::before,
+  .sidebar-footer .mini-link:hover::after,
+  .sidebar-footer .mini-link:focus-visible::before,
+  .sidebar-footer .mini-link:focus-visible::after {
+    animation: none;
+  }
+}
+
+/* Sidebar-kort: stille glas oven på det blurrede panel (ingen ekstra blur) */
+.sidebar-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fl-chrome-border);
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: background 0.5s var(--fl-liquid), border-color 0.5s var(--fl-liquid);
+}
+:root[data-theme="light"] .sidebar-card {
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+:root[data-theme="light"] .sidebar { background: var(--fl-chrome-bg); }
+:root[data-theme="light"] .sidebar-card { border-color: var(--fl-chrome-border); }
+
+/* ---------- Hero-området: transparent header med gradient-titel ---------- */
+
+.main {
+  padding: 18px 26px 26px;
+}
+.mapper-tools {
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(26px) saturate(1.3);
+  backdrop-filter: blur(26px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  border-radius: 18px;
+  box-shadow:
+    0 10px 34px -18px rgba(2, 12, 16, 0.5),
+    inset 0 1px 0 var(--fl-card-highlight);
+}
+
+/* Topbar og content-header slipper ud af deres kasser og bliver ét hero-område */
+.topbar {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 4px 0 0;
+  margin-bottom: 4px;
+}
+.topbar .btn.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 2px var(--fl-glow-soft);
+}
+.content-header {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 4px 4px 10px;
+  margin-bottom: 8px;
+}
+.content-header h1,
+.settings-header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.content-header p,
+.settings-header p {
+  font-size: 0.94rem;
+}
+
+/* Stats som svævende glas-piller */
+.stat-card {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 16px;
+  border-radius: 9999px;
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  box-shadow: inset 0 1px 0 var(--fl-card-highlight);
+  transition: transform 0.5s var(--fl-liquid), box-shadow 0.5s var(--fl-liquid), border-color 0.5s var(--fl-liquid);
+}
+.stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.stat-value {
+  margin-top: 0;
+  font-size: 1.05rem;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--fl-chrome-border));
+  box-shadow: 0 8px 24px -12px var(--fl-glow), inset 0 1px 0 var(--fl-card-highlight);
+}
+
+/* Sortering + søge-knap som glas-kapsler */
+.select,
+select.select {
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  border-radius: 9999px;
+  padding: 9px 14px;
+  color: var(--text);
+  transition: border-color 0.4s var(--fl-liquid), box-shadow 0.4s var(--fl-liquid);
+}
+.select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px var(--fl-glow-soft);
+}
+
+/* Tidslinjens månedsoverskrifter som svævende glas-piller */
+.timeline-group { margin-top: 26px; }
+.timeline-header {
+  display: inline-flex;
+  align-items: center;
+  top: 10px;
+  padding: 7px 16px;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  border-radius: 9999px;
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  backdrop-filter: blur(22px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  box-shadow:
+    0 8px 24px -14px rgba(2, 12, 16, 0.5),
+    inset 0 1px 0 var(--fl-card-highlight);
+}
+.timeline-grid { gap: 14px; }
+
+/* Foto-kortene ankommer i blød forskudt bølge */
+.timeline-grid .photo-card,
+.gallery-grid .photo-card {
+  animation: fl-fade-up 0.5s var(--fl-liquid) both;
+}
+.timeline-grid .photo-card:nth-child(1),  .gallery-grid .photo-card:nth-child(1)  { animation-delay: 0.02s; }
+.timeline-grid .photo-card:nth-child(2),  .gallery-grid .photo-card:nth-child(2)  { animation-delay: 0.06s; }
+.timeline-grid .photo-card:nth-child(3),  .gallery-grid .photo-card:nth-child(3)  { animation-delay: 0.1s; }
+.timeline-grid .photo-card:nth-child(4),  .gallery-grid .photo-card:nth-child(4)  { animation-delay: 0.14s; }
+.timeline-grid .photo-card:nth-child(5),  .gallery-grid .photo-card:nth-child(5)  { animation-delay: 0.18s; }
+.timeline-grid .photo-card:nth-child(6),  .gallery-grid .photo-card:nth-child(6)  { animation-delay: 0.22s; }
+.timeline-grid .photo-card:nth-child(7),  .gallery-grid .photo-card:nth-child(7)  { animation-delay: 0.26s; }
+.timeline-grid .photo-card:nth-child(8),  .gallery-grid .photo-card:nth-child(8)  { animation-delay: 0.3s; }
+.timeline-grid .photo-card:nth-child(9),  .gallery-grid .photo-card:nth-child(9)  { animation-delay: 0.34s; }
+.timeline-grid .photo-card:nth-child(10), .gallery-grid .photo-card:nth-child(10) { animation-delay: 0.38s; }
+.timeline-grid .photo-card:nth-child(11), .gallery-grid .photo-card:nth-child(11) { animation-delay: 0.42s; }
+.timeline-grid .photo-card:nth-child(12), .gallery-grid .photo-card:nth-child(12) { animation-delay: 0.46s; }
+
+/* ---------- Knapper: glas-kapsler i hele appen ---------- */
+
+.btn {
+  border: 1px solid var(--fl-chrome-border);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 9999px;
+  padding: 9px 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    background 0.45s var(--fl-liquid),
+    border-color 0.45s var(--fl-liquid),
+    box-shadow 0.45s var(--fl-liquid),
+    transform 0.45s var(--fl-spring),
+    filter 0.45s var(--fl-liquid);
+}
+:root[data-theme="light"] .btn {
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+.btn:hover {
+  filter: none;
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--fl-chrome-border));
+  background: rgba(255, 255, 255, 0.09);
+  transform: translateY(-1px);
+}
+:root[data-theme="light"] .btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+.btn:active {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 0.3s, 0.3s, 0.3s, 0.12s, 0.3s;
+}
+.btn.small { padding: 6px 12px; }
+
+.btn.primary {
+  border: none;
+  color: #052620;
+  background: linear-gradient(135deg, #5eead4 0%, #2dd4bf 45%, #14b8a6 100%);
+  background-size: 170% 170%;
+  box-shadow:
+    0 4px 18px -6px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(0, 40, 34, 0.14);
+}
+.btn.primary:hover {
+  background-position: 90% 90%;
+  box-shadow:
+    0 8px 26px -8px var(--fl-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 1px rgba(0, 40, 34, 0.1);
+}
+/* Farlige handlinger hvisker til man peger på dem */
+.btn.danger {
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: color-mix(in srgb, var(--danger) 70%, var(--text));
+  box-shadow: none;
+}
+.btn.danger:hover {
+  border-color: transparent;
+  background: linear-gradient(135deg, #f87171, #dc2626 80%);
+  color: #fff;
+  box-shadow:
+    0 4px 18px -8px rgba(239, 68, 68, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.btn.ghost {
+  background: rgba(255, 255, 255, 0.03);
+}
+:root[data-theme="light"] .btn.ghost {
+  background: rgba(255, 255, 255, 0.4);
+}
+.btn.toggled {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 2px var(--fl-glow-soft);
+}
+
+/* ---------- Inputs: glas-felter med teal fokus-glød ---------- */
+
+.form-row input,
+.form-row select,
+.mapper-input {
+  background: var(--fl-input-bg);
+  border: 1px solid var(--fl-input-border);
+  border-radius: 13px;
+  transition: border-color 0.35s var(--fl-liquid), background 0.35s var(--fl-liquid), box-shadow 0.35s var(--fl-liquid);
+}
+.form-row input:focus,
+.form-row select:focus,
+.mapper-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--fl-input-bg-focus);
+  box-shadow: 0 0 0 3px var(--fl-glow-soft);
+}
+
+/* ---------- Søgefeltet: linsen ----------
+   Sammenklappet er søgningen et cirkulært linse-element; udvidet folder
+   kapslen sig ud og et lysglimt fejer gennem glasset. Inputtet flyder
+   direkte på glasset — ingen boks-i-boks. */
+
+.search-shell,
+.mapper-search-shell {
+  position: relative;
+  min-height: 42px;
+  border-radius: 9999px;
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  transition:
+    max-width 0.5s var(--fl-liquid),
+    padding 0.5s var(--fl-liquid),
+    border-color 0.4s var(--fl-liquid),
+    box-shadow 0.4s var(--fl-liquid);
+}
+.search-shell:focus-within,
+.search-shell.expanded,
+.mapper-search-shell:focus-within,
+.mapper-search-shell.expanded {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--fl-chrome-border));
+  box-shadow: 0 0 0 3px var(--fl-glow-soft), 0 10px 26px -16px var(--fl-glow);
+}
+
+/* Lysglimt gennem glasset når linsen åbner */
+.search-shell::after {
+  content: "";
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -45%;
+  width: 30%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  transform: skewX(-16deg);
+  opacity: 0;
+  pointer-events: none;
+}
+.search-shell.expanded::after {
+  animation: fl-lens-glint 0.9s var(--fl-liquid) 0.12s;
+}
+@keyframes fl-lens-glint {
+  0% { left: -45%; opacity: 0; }
+  25% { opacity: 1; }
+  100% { left: 115%; opacity: 0; }
+}
+
+.search-toggle-btn {
+  color: var(--muted);
+  transition: color 0.35s var(--fl-liquid);
+}
+.search-toggle-btn:hover { color: var(--text); }
+.search-shell.expanded .search-toggle-btn,
+.search-shell:focus-within .search-toggle-btn {
+  color: var(--accent);
+}
+.fl-lens-icon {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+/* Inputtet flyder på glasset */
+.search-shell .search-wrap input,
+.search-shell .search-wrap input:focus,
+.mapper-search-shell .search-wrap input,
+.mapper-search-shell .search-wrap input:focus {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+}
+.search-shell .search-wrap input {
+  padding: 10px 10px 10px 4px;
+  font-size: 0.92rem;
+}
+.search-wrap input::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+/* Teksten glider ind efter lysglimtet */
+.search-wrap {
+  transform: translateX(-10px);
+  transition: opacity 0.4s var(--fl-liquid) 0.08s, transform 0.5s var(--fl-liquid) 0.08s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-shell.expanded::after { animation: none; }
+  .search-shell,
+  .mapper-search-shell,
+  .search-wrap {
+    transition-duration: 0.01ms;
+    transition-delay: 0s;
+  }
+}
+
+/* ---------- Foto-grid: kort der løfter sig blødt som gennem vand ---------- */
+
+.photo-card {
+  border-radius: 16px;
+  border-color: var(--fl-chrome-border);
+  transition:
+    transform 0.55s var(--fl-liquid),
+    border-color 0.55s var(--fl-liquid),
+    box-shadow 0.55s var(--fl-liquid);
+}
+.photo-card:hover {
+  transform: translateY(-4px) scale(1.012);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow:
+    0 18px 44px -16px rgba(2, 12, 16, 0.55),
+    0 6px 22px -10px var(--fl-glow-soft);
+}
+.photo-card .card-thumb img {
+  transition: transform 0.7s var(--fl-liquid);
+}
+.photo-card:hover .card-thumb img {
+  transform: scale(1.045);
+}
+.photo-card.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 0 0 2px var(--fl-glow-soft);
+}
+.upload-card:hover .upload-plus {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+
+/* ---------- Modaler: glas-dialoger der popper blødt op ---------- */
+
+.modal .modal-backdrop {
+  background: rgba(3, 10, 13, 0.45);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+  animation: fl-fade-in 0.3s ease-out both;
+}
+.modal .modal-dialog {
+  background: var(--fl-card-bg);
+  -webkit-backdrop-filter: blur(30px) saturate(1.4);
+  backdrop-filter: blur(30px) saturate(1.4);
+  border: 1px solid var(--fl-card-border);
+  border-radius: 22px;
+  box-shadow:
+    0 28px 80px -20px rgba(2, 12, 16, 0.7),
+    inset 0 1px 0 var(--fl-card-highlight);
+  animation: fl-pop 0.42s var(--fl-spring) both;
+}
+@keyframes fl-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fl-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ---------- Lightbox/viewer: biograf i flydende glas ---------- */
+
+#viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 20010; /* over sidebaren (20001), så intet bagved kan klikkes */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 10, 14, 0.72);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  animation: fl-fade-in 0.28s ease-out both;
+}
+#viewerImg,
+#viewerVideo {
+  max-width: 92vw;
+  max-height: 90vh;
+  border-radius: 18px;
+  border: none;
+  box-shadow:
+    0 40px 110px -30px rgba(0, 0, 0, 0.8),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+  /* 'backwards' (ikke 'both'): en færdig keyframe-animation med forward-fill
+     fastlåser transform/opacity og blokerer JS'ens slide ved bladring */
+  animation: fl-viewer-in 0.5s var(--fl-liquid) backwards;
+}
+@keyframes fl-viewer-in {
+  from {
+    opacity: 0;
+    transform: scale(0.955) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Fælles glas-kontroller i vieweren */
+#viewer .viewer-ctrl {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(14, 30, 38, 0.55);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+  color: #ecf6f6;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 30px -12px rgba(0, 0, 0, 0.65);
+}
+.viewer-arrow {
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  font-size: 1.3rem;
+  line-height: 1;
+  transform: translateY(-50%);
+  transition:
+    opacity 0.3s var(--fl-liquid),
+    transform 0.4s var(--fl-spring),
+    background 0.35s var(--fl-liquid),
+    border-color 0.35s var(--fl-liquid);
+}
+.viewer-arrow-prev { left: 18px; }
+.viewer-arrow-next { right: 18px; }
+/* Når info-panelet er åbent, trækker begge pile sig helt væk */
+#viewer:has(.viewer-info.open) .viewer-arrow {
+  opacity: 0;
+  pointer-events: none;
+}
+.viewer-arrow:hover {
+  background: rgba(24, 50, 60, 0.78);
+  border-color: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.15));
+  transform: translateY(-50%) scale(1.1);
+}
+.viewer-arrow:active {
+  transform: translateY(-50%) scale(0.92);
+  transition-duration: 0.12s;
+}
+.viewer-close {
+  top: 16px;
+  right: 16px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  font-size: 1.4rem;
+  line-height: 1;
+  transition:
+    transform 0.45s var(--fl-spring),
+    background 0.35s var(--fl-liquid),
+    border-color 0.35s var(--fl-liquid);
+}
+.viewer-close:hover {
+  transform: rotate(90deg) scale(1.08);
+  background: rgba(64, 24, 28, 0.6);
+  border-color: rgba(255, 120, 120, 0.5);
+}
+.viewer-open-orig {
+  top: 16px;
+  left: 16px;
+  padding: 10px 18px;
+  border-radius: 9999px;
+  font-size: 0.88rem;
+  font-weight: 550;
+  text-decoration: none;
+  transition:
+    transform 0.4s var(--fl-spring),
+    background 0.35s var(--fl-liquid),
+    border-color 0.35s var(--fl-liquid);
+}
+.viewer-open-orig:hover {
+  transform: translateY(-1px);
+  background: rgba(24, 50, 60, 0.78);
+  border-color: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.15));
+}
+
+/* Info-knappen: lille glas-cirkel med kursivt i */
+#viewerInfoMediaBtn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(14, 30, 38, 0.55);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+  color: #ecf6f6;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  transition:
+    transform 0.4s var(--fl-spring),
+    background 0.35s var(--fl-liquid),
+    border-color 0.35s var(--fl-liquid),
+    left 0.3s var(--fl-liquid),
+    top 0.3s var(--fl-liquid);
+}
+#viewerInfoMediaBtn:hover {
+  transform: scale(1.1);
+  background: rgba(24, 50, 60, 0.78);
+  border-color: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.15));
+}
+.viewer-info-i {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Slide-ud info-panelet som glas */
+.viewer-info {
+  background: rgba(10, 22, 28, 0.78);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+  backdrop-filter: blur(28px) saturate(1.35);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-top-right-radius: 18px;
+  border-bottom-right-radius: 18px;
+  box-shadow:
+    -18px 0 50px -20px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+:root[data-theme="light"] .viewer-info {
+  background: rgba(248, 252, 252, 0.85);
+  border-left-color: rgba(11, 25, 29, 0.08);
+}
+.viewer-info .detail-panel {
+  background: transparent;
+}
+/* Efter bladring "sætter" panelet sig blødt på det nye billedes kant
+   (ankeret er låst under selve sliden og repositioneres først til sidst) */
+.viewer-info.open {
+  transition:
+    transform 0.44s cubic-bezier(0.22, 1, 0.36, 1),
+    left 0.3s var(--fl-liquid),
+    top 0.3s var(--fl-liquid),
+    bottom 0.3s var(--fl-liquid);
+}
+
+/* Metadata som spec-ark: ingen boks pr. række — en stille tabel graveret
+   direkte i glasset med hairline-skillelinjer og små versal-labels */
+.detail-list {
+  margin-top: 14px;
+  gap: 0;
+}
+.detail-row {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 9px 2px;
+  min-height: 38px;
+  font-size: 0.85rem;
+}
+.detail-row + .detail-row {
+  border-top: 1px solid rgba(233, 244, 244, 0.07);
+}
+:root[data-theme="light"] .detail-row + .detail-row {
+  border-top-color: rgba(11, 25, 29, 0.08);
+}
+.detail-row > span,
+.detail-row.detail-row-multiline span {
+  font-size: 0.68rem;
+  font-weight: 550;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.detail-row strong {
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+/* Redigeringsknapper er stille til rækken berøres */
+.detail-row .icon-btn.tiny {
+  opacity: 0;
+  transform: translateX(3px);
+  transition: opacity 0.3s var(--fl-liquid), transform 0.35s var(--fl-liquid);
+}
+.detail-row:hover .icon-btn.tiny,
+.detail-row:focus-within .icon-btn.tiny {
+  opacity: 1;
+  transform: none;
+}
+@media (hover: none) {
+  .detail-row .icon-btn.tiny { opacity: 1; transform: none; }
+}
+.viewer-info-inner h3 {
+  font-size: 1.06rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Video-afspilningsknap: teal i stedet for gammel blå */
+.video-play-overlay {
+  background: rgba(13, 42, 52, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 9999px;
+  color: #eafffa;
+  transition: transform 0.4s var(--fl-spring), background 0.35s var(--fl-liquid);
+}
+.video-play-overlay:hover {
+  background: rgba(13, 148, 136, 0.85);
+  border-color: rgba(255, 255, 255, 0.7);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+.video-play-overlay:focus-visible {
+  outline: 3px solid var(--fl-glow);
+  outline-offset: 4px;
+}
+
+/* Overlays skal ligge over sidebaren, så intet bagved kan klikkes */
+.modal { z-index: 20010; }
+.detail-panel { z-index: 20005; }
+
+/* ---------- Mobil bundnav: glas-dok ---------- */
+
+.mobile-bottom-nav {
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+  backdrop-filter: blur(28px) saturate(1.35);
+  border-top: 1px solid var(--fl-chrome-border);
+}
+.mobile-nav-item {
+  border-radius: 16px;
+  border-color: transparent;
+  background: transparent;
+  transition: background 0.45s var(--fl-liquid), border-color 0.45s var(--fl-liquid), transform 0.3s var(--fl-spring);
+}
+.mobile-nav-item:active {
+  transform: scale(0.94);
+}
+.mobile-nav-item.active {
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+/* ---------- 8. Respektér reduceret bevægelse ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-aurora,
+  .fl-ray,
+  .lens-sweep,
+  .login-card::before {
+    animation: none !important;
+  }
+  .login-card,
+  .fl-up,
+  .login-card .err,
+  .login-card .ok,
+  .modal .modal-dialog,
+  .modal .modal-backdrop,
+  .timeline-grid .photo-card,
+  .gallery-grid .photo-card,
+  #viewer,
+  #viewerImg,
+  #viewerVideo {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+  .viewer-arrow:hover,
+  .viewer-close:hover,
+  #viewerInfoMediaBtn:hover,
+  .viewer-open-orig:hover {
+    transform: translateY(-50%);
+  }
+  .viewer-close:hover,
+  #viewerInfoMediaBtn:hover,
+  .viewer-open-orig:hover {
+    transform: none;
+  }
+  .nav-item,
+  .nav-item:hover,
+  .photo-card,
+  .photo-card:hover,
+  .photo-card .card-thumb img,
+  .photo-card:hover .card-thumb img,
+  .stat-card:hover,
+  .btn,
+  .btn:hover,
+  .mobile-nav-item {
+    transform: none;
+    transition-duration: 0.01ms;
+  }
+  .login-card .btn.primary,
+  .login-card .btn.primary:hover:not(:disabled),
+  .login-card .reveal-btn,
+  .login-card .reveal-btn:hover {
+    transform: none;
+  }
+}
+
+/* ---------- Custom dropdown (fl-select) ---------- */
+
+/* Den native select er stadig sandheden, men skjules når den er forbedret */
+select[data-fl-select] { display: none !important; }
+
+.fl-select {
+  position: relative;
+  display: inline-flex;
+}
+
+.fl-select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--fl-chrome-border);
+  border-radius: 9999px;
+  padding: 9px 14px 9px 16px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.4s var(--fl-liquid), box-shadow 0.4s var(--fl-liquid);
+}
+.fl-select-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--fl-chrome-border));
+}
+.fl-select-btn:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px var(--fl-glow-soft);
+}
+.fl-select-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fl-select-caret {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 0.35s var(--fl-liquid);
+}
+.fl-select.open .fl-select-caret { transform: rotate(180deg); }
+
+.fl-select-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: max(100%, 190px);
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--fl-chrome-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+  backdrop-filter: blur(24px) saturate(1.35);
+  border: 1px solid var(--fl-chrome-border);
+  box-shadow:
+    0 18px 44px -16px rgba(0, 0, 0, 0.55),
+    0 10px 30px -18px var(--fl-glow),
+    inset 0 1px 0 var(--fl-card-highlight);
+  z-index: 90;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.96);
+  transform-origin: top right;
+  transition:
+    opacity 0.26s var(--fl-liquid),
+    transform 0.32s var(--fl-liquid),
+    visibility 0s linear 0.32s;
+}
+.fl-select.open .fl-select-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.fl-select-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition:
+    background 0.25s var(--fl-liquid),
+    color 0.25s var(--fl-liquid),
+    opacity 0.3s var(--fl-liquid),
+    transform 0.34s var(--fl-liquid);
+}
+/* Punkterne "falder på plads" med lille forskydning når menuen åbner */
+.fl-select.open .fl-select-item { opacity: 1; transform: none; }
+.fl-select.open .fl-select-item:nth-child(2) { transition-delay: 0.025s; }
+.fl-select.open .fl-select-item:nth-child(3) { transition-delay: 0.05s; }
+.fl-select.open .fl-select-item:nth-child(4) { transition-delay: 0.075s; }
+.fl-select.open .fl-select-item:nth-child(5) { transition-delay: 0.1s; }
+.fl-select.open .fl-select-item:nth-child(6) { transition-delay: 0.125s; }
+.fl-select.open .fl-select-item:nth-child(n+7) { transition-delay: 0.15s; }
+
+.fl-select-item:hover,
+.fl-select-item:focus-visible {
+  outline: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+:root[data-theme="light"] .fl-select-item:hover,
+:root[data-theme="light"] .fl-select-item:focus-visible {
+  background: rgba(11, 25, 29, 0.05);
+}
+.fl-select-item.is-selected { color: var(--text); }
+
+.fl-select-check {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--accent);
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 0.25s var(--fl-liquid), transform 0.3s var(--fl-spring);
+}
+.fl-select-item.is-selected .fl-select-check {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-select-menu,
+  .fl-select-item,
+  .fl-select-caret,
+  .fl-select-check {
+    transition-duration: 0.01ms;
+    transition-delay: 0s;
+  }
+}
+
+/* ---------- Indstillinger: vandlinje-faner og roligere sektionskort ---------- */
+
+.tabs {
+  gap: 2px;
+  margin: 14px 0 18px;
+  border-bottom: 1px solid rgba(233, 244, 244, 0.06);
+  flex-wrap: wrap;
+}
+:root[data-theme="light"] .tabs {
+  border-bottom-color: rgba(11, 25, 29, 0.08);
+}
+.tab-btn {
+  position: relative;
+  padding: 8px 10px 13px;
+  border-bottom: none;
+  font-size: 0.72rem;
+  font-weight: 550;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 0.35s var(--fl-liquid);
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--accent-2);
+  border-bottom: none;
+}
+:root[data-theme="light"] .tab-btn.active { color: var(--accent); }
+/* Vandlinjen driver under den aktive fane.
+   OBS: update-badgen bruger ::after, så bølgen ligger på ::before */
+.tab-btn::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 3px;
+  height: 7px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 85%, transparent),
+    color-mix(in srgb, var(--accent-2) 85%, transparent));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='7' viewBox='0 0 44 7'%3E%3Cpath d='M0 3.5 Q5.5 1 11 3.5 T22 3.5 T33 3.5 T44 3.5' fill='none' stroke='%23000' stroke-width='1.2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='7' viewBox='0 0 44 7'%3E%3Cpath d='M0 3.5 Q5.5 1 11 3.5 T22 3.5 T33 3.5 T44 3.5' fill='none' stroke='%23000' stroke-width='1.2'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: repeat-x;
+  mask-repeat: repeat-x;
+  opacity: 0;
+  transform: scaleX(0.35);
+  transform-origin: left center;
+  transition: opacity 0.3s var(--fl-liquid), transform 0.5s var(--fl-liquid);
+  pointer-events: none;
+}
+.tab-btn.active::before {
+  opacity: 0.85;
+  transform: none;
+  animation: fl-waterline 11s linear infinite;
+}
+.tab-btn:focus-visible {
+  outline: none;
+  color: var(--text);
+}
+.tab-btn:focus-visible::before {
+  opacity: 0.35;
+  transform: none;
+}
+
+/* Faneindhold glider stille på plads ved skift */
+.tab-panel { animation: fl-tab-in 0.32s var(--fl-liquid); }
+.tab-panel.hidden { animation: none; }
+@keyframes fl-tab-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Sektionskort: mere luft, graverede labels som i resten af appen */
+#settingsPanel .sidebar-card {
+  padding: 18px;
+  border-radius: 18px;
+}
+#settingsPanel .sidebar-card-title {
+  font-size: 0.68rem;
+  font-weight: 550;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-btn::before { animation: none; transition: none; }
+  .tab-panel { animation: none; }
+}

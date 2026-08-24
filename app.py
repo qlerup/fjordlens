@@ -4159,6 +4159,7 @@ def init_db() -> None:
                 ui_language TEXT DEFAULT 'da',
                 search_language TEXT DEFAULT 'da',
                 theme_mode TEXT DEFAULT 'system',
+                ui_design TEXT DEFAULT 'classic',
                 totp_secret TEXT,
                 totp_enabled INTEGER DEFAULT 0,
                 totp_setup_done INTEGER DEFAULT 0,
@@ -4334,6 +4335,10 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN theme_mode TEXT DEFAULT 'system'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN ui_design TEXT DEFAULT 'classic'")
         except Exception:
             pass
         try:
@@ -15443,7 +15448,7 @@ def index():
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, role, ui_language, search_language, theme_mode FROM users WHERE id=?",
+                "SELECT id, username, role, ui_language, search_language, theme_mode, ui_design FROM users WHERE id=?",
                 (current_user.id,),
             ).fetchone()
         role = row["role"] if row and row["role"] else getattr(current_user, "role", None)
@@ -15454,6 +15459,7 @@ def index():
             "ui_language": _normalize_language((row["ui_language"] if row else None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
+            "ui_design": str((row["ui_design"] if row and "ui_design" in row.keys() else "classic") or "classic").lower(),
             "video_autoplay": video_autoplay_enabled(),
         }
     except Exception:
@@ -15465,6 +15471,7 @@ def index():
             "ui_language": _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": "system",
+            "ui_design": "classic",
             "video_autoplay": video_autoplay_enabled(),
         }
     return render_template(
@@ -24874,7 +24881,7 @@ def api_me():
         with closing(get_conn()) as conn:
             try:
                 row = conn.execute(
-                    "SELECT id, username, role, is_admin, ui_language, search_language, theme_mode FROM users WHERE id=?",
+                    "SELECT id, username, role, is_admin, ui_language, search_language, theme_mode, ui_design FROM users WHERE id=?",
                     (current_user.id,),
                 ).fetchone()
             except sqlite3.OperationalError as e:
@@ -24904,11 +24911,35 @@ def api_me():
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
                     "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),
+                    "ui_design": str((row["ui_design"] if "ui_design" in row.keys() else "classic") or "classic").lower(),
                 },
             }
         )
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/me/ui-design", methods=["POST"])
+@login_required
+def api_me_ui_design():
+    data = request.get_json(silent=True) or {}
+    ui_design = str(data.get("ui_design") or "classic").strip().lower()
+    if ui_design not in {"classic", "fjord"}:
+        return jsonify({"ok": False, "error": "invalid_ui_design"}), 400
+    try:
+        with closing(get_conn()) as conn:
+            try:
+                conn.execute("UPDATE users SET ui_design=? WHERE id=?", (ui_design, current_user.id))
+            except sqlite3.OperationalError as exc:
+                if "ui_design" not in str(exc).lower():
+                    raise
+                conn.execute("ALTER TABLE users ADD COLUMN ui_design TEXT DEFAULT 'classic'")
+                conn.execute("UPDATE users SET ui_design=? WHERE id=?", (ui_design, current_user.id))
+            conn.commit()
+        log_event("ui_design_updated", actor=_audit_actor(), new_value=ui_design)
+        return jsonify({"ok": True, "ui_design": ui_design})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.route("/api/me/profile", methods=["POST"])

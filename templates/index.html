@@ -14,6 +14,7 @@
     })();
   </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
+  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css') }}?v={{ app_build }}"{% if not user_profile or user_profile.ui_design != 'fjord' %} disabled{% endif %}>
   <!-- App icons / PWA manifest -->
   <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v=app_build) }}" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='logos/web/favicon-32x32.png', v=app_build) }}">
@@ -21,9 +22,10 @@
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v=app_build) }}">
   <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v=app_build) }}">
   <!-- Theme-color for browser UI: auto + JS override -->
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f6f8">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1115">
-  <meta id="theme-color-override" name="theme-color" content="#0f1115">
+  {% set fjord_active = user_profile and user_profile.ui_design == 'fjord' %}
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ '#edf3f4' if fjord_active else '#f5f6f8' }}">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ '#08141a' if fjord_active else '#0f1115' }}">
+  <meta id="theme-color-override" name="theme-color" content="{{ '#08141a' if fjord_active else '#0f1115' }}">
   <!-- iOS/Android PWA fullscreen + title -->
   <meta name="application-name" content="FjordLens">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -37,6 +39,13 @@
   <!-- JS indlæses nu lazy via app.js når 'Steder' åbnes -->
 </head>
 <body>
+  <div class="fjord-backdrop" aria-hidden="true">
+    <div class="fl-aurora fl-aurora-a"></div>
+    <div class="fl-aurora fl-aurora-b"></div>
+    <div class="fl-aurora fl-aurora-c"></div>
+    <div class="fl-ray fl-ray-a"></div>
+    <div class="fl-ray fl-ray-b"></div>
+  </div>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="logo">
@@ -645,6 +654,16 @@
 
         <!-- Andet (dupletter) -->
         <div class="tab-panel hidden" data-tabpanel="other">
+          <div class="sidebar-card" id="uiDesignCard" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">Udseende</div>
+            <p class="hint">Vælg mellem det klassiske FjordLens-design og det nye Fjord-tema. Valget gemmes på din bruger.</p>
+            <label class="mini-label" for="uiDesignSelect">Design</label>
+            <select id="uiDesignSelect" class="input-number" style="min-width:220px;margin-top:6px;">
+              <option value="classic">Klassisk</option>
+              <option value="fjord">Fjord — nyt design</option>
+            </select>
+            <div id="uiDesignStatus" class="status hidden" style="margin-top:10px;"></div>
+          </div>
           <div class="sidebar-card" id="dupeCard" style="margin-bottom:12px;">
             <div class="sidebar-card-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
               <span>Dupletter</span>
@@ -1208,6 +1227,24 @@
       </div>
     </div>
   </div>
+  {% if user_role == "admin" %}
+  <div id="uiDesignIntroModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="uiDesignIntroTitle">
+    <div class="modal-card" style="max-width:520px;">
+      <h3 id="uiDesignIntroTitle" style="margin-top:0;">Prøv det nye Fjord-tema</h3>
+      <p>FjordLens har fået et nyt nordisk design med roligere farver, glasflader og en opdateret navigation.</p>
+      <p class="mini-label">Du kan prøve det nu eller beholde det klassiske design. Valget kan altid ændres under Indstillinger → Andet.</p>
+      <label class="mini-label" for="uiDesignIntroSelect">Vælg design</label>
+      <select id="uiDesignIntroSelect" class="input-number" style="width:100%;margin:7px 0 16px;">
+        <option value="fjord">Fjord — nyt design</option>
+        <option value="classic">Klassisk</option>
+      </select>
+      <div class="actions" style="justify-content:flex-end;gap:8px;">
+        <button id="uiDesignIntroLater" class="btn" type="button">Behold klassisk</button>
+        <button id="uiDesignIntroApply" class="btn primary" type="button">Anvend</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <!-- Moments slideshow player -->
   <div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Moment-afspiller">
     <div class="moment-player-progress" id="momentPlayerProgress"></div>
@@ -1234,6 +1271,8 @@
   </script>
   <script src="{{ url_for('static', filename='media_preloader.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='theme-design.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='fl-select.js', v=app_build) }}"></script>
   <script>
     (function(){
       const i=document.getElementById('mapperSharePasswordInput');

@@ -474,7 +474,9 @@ function placeGlobalSearchSortForView() {
   const inHeaderBarView = !!(state && (state.view === "timeline" || state.view === "favorites" || state.view === "steder" || state.view === "kameraer"));
   const target = (inHeaderBarView && timelineActions) ? timelineActions : topbar;
   if (els.searchShell.parentElement !== target) target.appendChild(els.searchShell);
-  if (els.sort.parentElement !== target) target.appendChild(els.sort);
+  // Sortering kan være pakket ind i en custom dropdown (.fl-select) — flyt i så fald wrapperen
+  const sortNode = els.sort.closest(".fl-select") || els.sort;
+  if (sortNode.parentElement !== target) target.appendChild(sortNode);
 }
 
 function isSmallMobile() {
@@ -768,7 +770,19 @@ applyScanFeatureVisibility();
 const THEME_STORE_KEY = 'fl_theme_mode'; // 'system' | 'light' | 'dark'
 function getThemeMetaOverride(){ return document.querySelector('meta#theme-color-override'); }
 function systemPrefersDark(){ try { return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; } catch { return true; } }
+function isFjordDesignActive(){
+  try {
+    const link = document.getElementById('fjordDesignStylesheet');
+    return !!(link && !link.disabled);
+  } catch { return false; }
+}
 function themeColors(){
+  if (isFjordDesignActive()) {
+    return {
+      dark: '#08141a',
+      light: '#edf3f4',
+    };
+  }
   return {
     dark: '#0f1115',
     light: '#f5f6f8',
@@ -12957,7 +12971,23 @@ function applyUiLanguage() {
   };
   Object.entries(navMap).forEach(([view, text]) => {
     const el = document.querySelector(`.nav-item[data-view="${view}"]`);
-    if (el) el.textContent = text;
+    if (!el) return;
+    if (isFjordDesignActive()) {
+      // Split "emoji Label" i ikon-flise + tekst (Fjord-temaets nav-layout)
+      const m = String(text).match(/^(\S+)\s+(.*)$/);
+      if (m) {
+        el.textContent = '';
+        const ic = document.createElement('span');
+        ic.className = 'nav-icon';
+        ic.textContent = m[1];
+        const lb = document.createElement('span');
+        lb.className = 'nav-label';
+        lb.textContent = m[2];
+        el.append(ic, lb);
+        return;
+      }
+    }
+    el.textContent = text;
   });
 
   if (els.profileLink) els.profileLink.textContent = tr('profile_link');
