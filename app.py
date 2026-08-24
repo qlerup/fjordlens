@@ -14859,6 +14859,48 @@ def query_photos(
         return [row_to_public(r) for r in rows]
 
 
+def count_mapper_photos(folder: Optional[str] = None) -> int:
+    """Count logical direct children in a mapper folder without loading photo metadata."""
+    try:
+        raw = _normalize_folder_acl_path(str(folder or ""))
+    except Exception:
+        raw = ""
+    f = raw[8:] if raw.startswith("uploads/") else raw
+    if f == "uploads":
+        f = ""
+    if f.startswith("originals/"):
+        f = f[len("originals/"):]
+    elif f.startswith("converted/"):
+        f = f[len("converted/"):]
+    prefixes = (
+        [f"uploads/{f}", f"uploads/originals/{f}", f"uploads/converted/{f}"]
+        if f else ["uploads", "uploads/originals", "uploads/converted"]
+    )
+    parts: list[str] = []
+    params: list[Any] = []
+    for prefix in dict.fromkeys(prefixes):
+        parts.append("(rel_path LIKE ? || '/%' AND instr(substr(rel_path, length(?) + 2), '/') = 0)")
+        params.extend([prefix, prefix])
+    sql = f"""
+        SELECT rel_path
+        FROM photos
+        WHERE (UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%' AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%')
+          AND rel_path NOT LIKE '%/@eaDir/%'
+          AND ({' OR '.join(parts)})
+    """
+    with closing(get_conn()) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    visible = _filter_public_items_by_current_user_acl(
+        [{"rel_path": str(row["rel_path"] or "")} for row in rows]
+    )
+    logical_keys = {
+        _upload_display_key(str(item.get("rel_path") or ""))
+        for item in visible
+        if str(item.get("rel_path") or "")
+    }
+    return len(logical_keys)
+
+
 def _hamdist_hex(a: str, b: str) -> int:
     try:
         va = int(a, 16)
@@ -20181,6 +20223,7 @@ def api_photos():
             else:
                 items = [p for p in items if matches_search(p, q, search_language=search_language)]
         items = _filter_public_items_by_current_user_acl(items)
+        total = count_mapper_photos(folder) if view == "mapper" and not q else None
         # Provide pagination hints. When limited, we cannot know total cheaply without extra COUNT.
         has_more = bool(limit) and (len(items) >= int(limit or 0))
         next_offset = (offset or 0) + len(items)
@@ -20195,6 +20238,7 @@ def api_photos():
             "limit": limit,
             "has_more": has_more,
             "next_offset": next_offset,
+            "total": total,
             "search_lang": search_language,
             "disk_sync": disk_sync,
         })

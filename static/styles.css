@@ -1525,6 +1525,10 @@ body.view-kameraer .timeline-header-actions {
     content-visibility: visible;
     contain-intrinsic-size: auto;
   }
+  body.view-mapper .mapper-ghost-thumb {
+    animation: none;
+    background: color-mix(in srgb, var(--panel-2) 82%, var(--border));
+  }
 }
 body.view-mapper .photo-card,
 body.view-mapper .photo-card img {

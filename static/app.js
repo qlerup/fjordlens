@@ -2717,6 +2717,8 @@ let state = {
   photosPageOffset: 0,
   photosPageLimit: 300,
   mapperPageRows: 5,
+  mapperTotalItems: 0,
+  mapperGhostCapacity: 0,
   photosHasMore: false,
   photosLoading: false,
   currentUser: {
@@ -5934,6 +5936,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
 }
 
 let photoLoadMoreObserver = null;
+let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
 
 function estimateMapperGridMetrics() {
@@ -5956,19 +5959,72 @@ function estimateMapperGridMetrics() {
 
 function estimateMapperPageLimit(append = false) {
   const metrics = estimateMapperGridMetrics();
-  const rows = append ? 1 : Math.max(1, Number(state.mapperPageRows || 5));
+  const rows = Math.max(1, Number(state.mapperPageRows || 5));
   return Math.max(metrics.cols * rows, metrics.cols);
 }
 
-function appendMapperGhostRow(beforeElement) {
-  if (!els.grid || !beforeElement) return;
-  const count = Math.max(1, estimateMapperGridMetrics().cols);
-  for (let index = 0; index < count; index += 1) {
+function appendMapperGhostSlots(fromIndex, toIndex) {
+  if (!els.grid) return;
+  const fragment = document.createDocumentFragment();
+  for (let index = fromIndex; index < toIndex; index += 1) {
     const ghost = document.createElement('article');
     ghost.className = 'photo-card mapper-ghost-card';
     ghost.setAttribute('aria-hidden', 'true');
+    ghost.dataset.mapperIndex = String(index);
     ghost.innerHTML = '<div class="card-thumb mapper-ghost-thumb"></div>';
-    els.grid.insertBefore(ghost, beforeElement);
+    fragment.appendChild(ghost);
+  }
+  els.grid.appendChild(fragment);
+}
+
+function expandMapperGhostChunk() {
+  const cols = Math.max(1, estimateMapperGridMetrics().cols);
+  const total = Math.max(0, Number(state.mapperTotalItems || 0));
+  const nextCapacity = Math.min(total, Number(state.mapperGhostCapacity || 0) + (cols * 50));
+  if (nextCapacity <= Number(state.mapperGhostCapacity || 0)) return;
+  appendMapperGhostSlots(Number(state.mapperGhostCapacity || 0), nextCapacity);
+  state.mapperGhostCapacity = nextCapacity;
+  setupMapperGhostLoading();
+}
+
+function hydrateMapperItems(startIndex, items) {
+  if (!els.grid) return;
+  items.forEach((item, offset) => {
+    const index = startIndex + offset;
+    const ghost = els.grid.querySelector(`.mapper-ghost-card[data-mapper-index="${index}"]`);
+    if (!ghost) return;
+    const fragment = document.createDocumentFragment();
+    const card = appendCardTo(item, fragment);
+    if (card) card.dataset.mapperIndex = String(index);
+    if (fragment.firstChild) ghost.replaceWith(fragment.firstChild);
+  });
+}
+
+function setupMapperGhostLoading() {
+  try { if (photoLoadMoreObserver) photoLoadMoreObserver.disconnect(); } catch {}
+  try { if (mapperGhostChunkObserver) mapperGhostChunkObserver.disconnect(); } catch {}
+  if (!els.grid || state.view !== 'mapper') return;
+  const cols = Math.max(1, estimateMapperGridMetrics().cols);
+  const metrics = estimateMapperGridMetrics();
+  const bufferPx = Math.ceil((metrics.tileWidth + metrics.gap) * 5);
+  const firstGhost = els.grid.querySelector(`.mapper-ghost-card[data-mapper-index="${state.items.length}"]`);
+  if (firstGhost && state.photosHasMore && 'IntersectionObserver' in window) {
+    photoLoadMoreObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
+    }, { rootMargin: `${bufferPx}px 0px` });
+    photoLoadMoreObserver.observe(firstGhost);
+  }
+  const capacity = Number(state.mapperGhostCapacity || 0);
+  const total = Number(state.mapperTotalItems || 0);
+  if (capacity < total && 'IntersectionObserver' in window) {
+    const triggerIndex = Math.max(0, capacity - (cols * 40));
+    const trigger = els.grid.querySelector(`[data-mapper-index="${triggerIndex}"]`);
+    if (trigger) {
+      mapperGhostChunkObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) expandMapperGhostChunk();
+      });
+      mapperGhostChunkObserver.observe(trigger);
+    }
   }
 }
 
@@ -5981,32 +6037,7 @@ function appendPhotoLoadMoreButton(id, expectedView) {
   if (old && old.parentNode) old.parentNode.removeChild(old);
   if (!state.photosHasMore) return;
   if (expectedView === 'mapper') {
-    const sentinel = document.createElement('div');
-    sentinel.id = id;
-    sentinel.className = 'mapper-load-sentinel';
-    sentinel.setAttribute('aria-label', 'Indlæser flere billeder');
-    const loadNextRow = async () => {
-      if (state.photosLoading || state.view !== 'mapper' || !state.photosHasMore) return;
-      appendMapperGhostRow(sentinel);
-      try {
-        await loadPhotos(true);
-      } catch (_) {
-        document.querySelectorAll('.mapper-ghost-card').forEach((card) => card.remove());
-      }
-    };
-    els.grid.appendChild(sentinel);
-    if ('IntersectionObserver' in window) {
-      const metrics = estimateMapperGridMetrics();
-      const bufferPx = Math.ceil((metrics.tileWidth + metrics.gap) * 5);
-      photoLoadMoreObserver = new IntersectionObserver((entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) loadNextRow();
-      }, { rootMargin: `${bufferPx}px 0px` });
-      photoLoadMoreObserver.observe(sentinel);
-    } else {
-      sentinel.classList.add('btn');
-      sentinel.textContent = 'Indlæs næste række';
-      sentinel.addEventListener('click', loadNextRow);
-    }
+    setupMapperGhostLoading();
     return;
   }
   const btn = document.createElement('button');
@@ -6274,7 +6305,14 @@ function renderGrid() {
         },
       });
     }
-    items.forEach(item => appendCard(item));
+    items.forEach((item, index) => {
+      const card = appendCard(item);
+      if (card) card.dataset.mapperIndex = String(index);
+    });
+    const cols = Math.max(1, estimateMapperGridMetrics().cols);
+    const total = Math.max(items.length, Number(state.mapperTotalItems || items.length));
+    state.mapperGhostCapacity = Math.min(total, cols * 50);
+    appendMapperGhostSlots(items.length, state.mapperGhostCapacity);
     appendPhotoLoadMoreButton('mapperLoadMoreBtn', 'mapper');
   } else {
     items.forEach(item => appendCard(item));
@@ -6461,6 +6499,7 @@ function appendCardTo(item, container) {
     }
   });
   (container || els.grid).appendChild(card);
+  return card;
 }
 
 function appendCard(item){ return appendCardTo(item, els.grid); }
@@ -7696,6 +7735,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
   }
 
   const requestSequence = ++photosRequestSequence;
+  const mapperAppendStart = append && state.view === 'mapper' ? (state.items || []).length : 0;
   const requestedView = String(state.view || '');
   const requestedMapperPath = requestedView === 'mapper'
     ? _normalizeMapperPath(state.mapperPath || '')
@@ -7750,12 +7790,18 @@ async function loadPhotos(append = false, preserveScroll = false) {
     if (append) state.items = (state.items || []).concat(incoming);
     else state.items = incoming;
     state.photosHasMore = !!data.has_more;
+    if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined' && Number.isFinite(Number(data.total))) {
+      state.mapperTotalItems = Math.max(0, Number(data.total));
+    }
     if (pagedView) {
       const used = incoming.length;
       const nextOffset = Number(data.next_offset);
       state.photosPageOffset = Number.isFinite(nextOffset) && nextOffset >= 0
         ? nextOffset
         : ((state.photosPageOffset || 0) + used);
+    }
+    if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined') {
+      state.photosHasMore = state.photosPageOffset < state.mapperTotalItems;
     }
     if (data && data.error) {
       const errMsg = String(data.error || '').trim();
@@ -7776,6 +7822,12 @@ async function loadPhotos(append = false, preserveScroll = false) {
   if (!append && state.view === 'mapper') {
     await prefetchMapperFolderPreviewsForCurrentPath();
     if (!requestIsCurrent()) return;
+  }
+  if (append && state.view === 'mapper') {
+    hydrateMapperItems(mapperAppendStart, state.items.slice(mapperAppendStart));
+    setupMapperGhostLoading();
+    renderStats();
+    return;
   }
   const scrollAnchor = (preserveScroll && !append) ? captureGalleryScrollAnchor() : null;
   renderGrid();
