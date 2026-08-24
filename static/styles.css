@@ -4453,9 +4453,9 @@ body.view-mapper .content-header .mapper-header-actions {
   background: transparent;
   border: none;
   padding: 4px 0;
-  margin: 10px 0 6px;
+  margin: 34px 0 10px;
   font-weight: 700;
-  font-size: 1.2rem;
+  font-size: 1.45rem;
   color: var(--text);
 }
 .timeline-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
