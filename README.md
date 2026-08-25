@@ -50,6 +50,19 @@ This repository contains two parts:
 - Optional HEIC and RAW conversion flows
 - Post-processing pipeline for uploads
 
+### External camera clients
+
+Camera import clients can connect with FjordLens' device-pairing flow:
+
+1. Enter the FjordLens address in the client and request a connection.
+2. Compare the six-character code shown by the client with the pending request under **Settings → Tokens**.
+3. Choose a destination folder and approve the request.
+4. Revoke or delete the client from the same settings panel when it no longer needs access.
+
+The client receives a dedicated bearer token. FjordLens stores only its hash, limits concurrent pending requests, and immediately rejects revoked tokens. Camera uploads are written below `uploads/originals/<selected folder>` and use the same conversion, indexing, and post-processing workflow as normal uploads.
+
+Use an HTTPS address whenever the client crosses an untrusted network. Plain HTTP does not protect the pairing secret, bearer token, or uploaded media in transit. For a private LAN without TLS, restrict the FjordLens port to trusted devices at the firewall.
+
 ### AI and face features
 
 - AI embedding ingest with start/stop/status

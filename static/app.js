@@ -268,6 +268,10 @@
   sharedLinksDesc: document.getElementById("sharedLinksDesc"),
   sharedLinksStatus: document.getElementById("sharedLinksStatus"),
   sharedLinksList: document.getElementById("sharedLinksList"),
+  clientTokensPendingStatus: document.getElementById("clientTokensPendingStatus"),
+  clientTokensPendingList: document.getElementById("clientTokensPendingList"),
+  clientTokensStatus: document.getElementById("clientTokensStatus"),
+  clientTokensList: document.getElementById("clientTokensList"),
   sharedEditModal: document.getElementById("sharedEditModal"),
   sharedEditModalTitle: document.getElementById("sharedEditModalTitle"),
   sharedEditModalClose: document.getElementById("sharedEditModalClose"),
@@ -2569,7 +2573,7 @@ const I18N = {
 };
 
 const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'momenter', 'photoframe', 'personer', 'settings']);
-const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'profile', 'other']);
+const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'tokens', 'profile', 'other']);
 
 function _normalizeSettingsTab(tab) {
   const raw = String(tab || '').trim().toLowerCase();
@@ -10184,6 +10188,194 @@ async function loadDnsShares() {
   }
 }
 
+// --- Tokens tab: paired external API clients (e.g. kamera-import) ---
+
+function showClientTokensPendingStatus(txt, type) {
+  if (!els.clientTokensPendingStatus) return;
+  if (!txt) { els.clientTokensPendingStatus.classList.add('hidden'); return; }
+  els.clientTokensPendingStatus.textContent = txt;
+  els.clientTokensPendingStatus.className = `status${type ? ' ' + type : ''}`;
+}
+
+function showClientTokensStatus(txt, type) {
+  if (!els.clientTokensStatus) return;
+  if (!txt) { els.clientTokensStatus.classList.add('hidden'); return; }
+  els.clientTokensStatus.textContent = txt;
+  els.clientTokensStatus.className = `status${type ? ' ' + type : ''}`;
+}
+
+function _fmtClientTokenTime(isoValue) {
+  const raw = String(isoValue || '').trim();
+  if (!raw) return 'Aldrig';
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return raw;
+  try { return dt.toLocaleString(); } catch { return raw; }
+}
+
+function _clientTokenFolderDatalistHtml() {
+  const folders = Array.isArray(state.sharedFolderOptions) ? state.sharedFolderOptions : [];
+  return `<datalist id="clientTokenFolderOptions">${folders.map((f) => `<option value="${escapeHtml(f)}">`).join('')}</datalist>`;
+}
+
+function renderClientTokensPendingList() {
+  if (!els.clientTokensPendingList) return;
+  const items = (Array.isArray(state.clientTokens) ? state.clientTokens : []).filter((c) => c.status === 'pending');
+  if (!items.length) {
+    els.clientTokensPendingList.innerHTML = `<div class="mini-label">Ingen ventende anmodninger.</div>`;
+    return;
+  }
+  const rows = items.map((item) => `
+    <div class="client-token-row" data-client-row="${Number(item.id || 0)}">
+      <div class="client-token-row-main">
+        <div class="client-token-row-name">${escapeHtml(item.name || 'Ukendt enhed')}</div>
+        <div class="mini-label">Kode: <strong>${escapeHtml(item.verify_code || '')}</strong> · bekræft den matcher det appen viser · anmodet ${escapeHtml(_fmtClientTokenTime(item.requested_at))}</div>
+      </div>
+      <div class="client-token-row-actions">
+        <input type="text" list="clientTokenFolderOptions" class="input-number" placeholder="Mappe, fx Kamera" data-client-folder-input value="">
+        <button type="button" class="btn primary small" data-client-approve="${Number(item.id || 0)}">Godkend</button>
+        <button type="button" class="btn danger small" data-client-deny="${Number(item.id || 0)}">Afvis</button>
+      </div>
+    </div>
+  `).join('');
+  els.clientTokensPendingList.innerHTML = _clientTokenFolderDatalistHtml() + rows;
+}
+
+function renderClientTokensList() {
+  if (!els.clientTokensList) return;
+  const items = (Array.isArray(state.clientTokens) ? state.clientTokens : []).filter((c) => c.status !== 'pending');
+  if (!items.length) {
+    els.clientTokensList.innerHTML = `<div class="mini-label">Ingen forbundne enheder endnu.</div>`;
+    return;
+  }
+  const statusLabels = { approved: 'Forbundet', denied: 'Afvist', revoked: 'Tilbagekaldt' };
+  const statusPillClass = { approved: 'pill ok', denied: 'pill', revoked: 'pill danger' };
+  const rows = items.map((item) => {
+    const status = String(item.status || '');
+    const folderInput = status === 'approved'
+      ? `<input type="text" list="clientTokenFolderOptions" class="input-number" data-client-folder-input value="${escapeHtml(item.target_folder || '')}"><button type="button" class="btn small" data-client-save-folder="${Number(item.id || 0)}">Gem</button>`
+      : '';
+    const revokeBtn = status === 'approved'
+      ? `<button type="button" class="btn danger small" data-client-revoke="${Number(item.id || 0)}">Tilbagekald</button>`
+      : `<button type="button" class="btn small" data-client-delete="${Number(item.id || 0)}">Fjern</button>`;
+    const detail = status === 'approved'
+      ? `Mappe: ${escapeHtml(item.target_folder || '-')} · forbundet ${escapeHtml(_fmtClientTokenTime(item.approved_at))} · sidst brugt ${escapeHtml(_fmtClientTokenTime(item.last_used_at))}`
+      : `Anmodet ${escapeHtml(_fmtClientTokenTime(item.requested_at))}`;
+    return `
+      <div class="client-token-row" data-client-row="${Number(item.id || 0)}">
+        <div class="client-token-row-main">
+          <div class="client-token-row-name">${escapeHtml(item.name || 'Ukendt enhed')} <span class="${statusPillClass[status] || 'pill'}">${escapeHtml(statusLabels[status] || status)}</span></div>
+          <div class="mini-label">${detail}</div>
+        </div>
+        <div class="client-token-row-actions">
+          ${folderInput}
+          ${revokeBtn}
+        </div>
+      </div>
+    `;
+  }).join('');
+  els.clientTokensList.innerHTML = _clientTokenFolderDatalistHtml() + rows;
+}
+
+async function loadClientTokens() {
+  if (!els.clientTokensPendingList && !els.clientTokensList) return;
+  showClientTokensPendingStatus('');
+  showClientTokensStatus('');
+  try {
+    await loadSharedFolderOptions();
+  } catch {}
+  try {
+    const res = await fetch('/api/admin/clients');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !data.ok) {
+      const msg = (data && data.error) || 'Kunne ikke hente enheder.';
+      if (els.clientTokensPendingList) els.clientTokensPendingList.innerHTML = `<div class="mini-label">${escapeHtml(msg)}</div>`;
+      if (els.clientTokensList) els.clientTokensList.innerHTML = `<div class="mini-label">${escapeHtml(msg)}</div>`;
+      return;
+    }
+    state.clientTokens = Array.isArray(data.clients) ? data.clients : [];
+    renderClientTokensPendingList();
+    renderClientTokensList();
+  } catch {
+    const msg = 'Kunne ikke hente enheder.';
+    if (els.clientTokensPendingList) els.clientTokensPendingList.innerHTML = `<div class="mini-label">${escapeHtml(msg)}</div>`;
+    if (els.clientTokensList) els.clientTokensList.innerHTML = `<div class="mini-label">${escapeHtml(msg)}</div>`;
+  }
+}
+
+async function _postClientTokenAction(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok && data && data.ok, error: data && data.error };
+}
+
+async function _handleClientTokensClick(e) {
+  const target = e.target instanceof HTMLElement ? e.target : null;
+  if (!target) return;
+
+  const approveId = target.getAttribute('data-client-approve');
+  if (approveId) {
+    const row = target.closest('[data-client-row]');
+    const input = row ? row.querySelector('[data-client-folder-input]') : null;
+    const folder = input ? String(input.value || '').trim() : '';
+    if (!folder) { showClientTokensPendingStatus('Vælg en mappe før du godkender.', 'err'); return; }
+    target.disabled = true;
+    const { ok, error } = await _postClientTokenAction(`/api/admin/clients/${approveId}/approve`, { target_folder: folder });
+    if (!ok) { showClientTokensPendingStatus(error || 'Kunne ikke godkende.', 'err'); target.disabled = false; return; }
+    showClientTokensPendingStatus('Godkendt.', 'ok');
+    await loadClientTokens();
+    return;
+  }
+
+  const denyId = target.getAttribute('data-client-deny');
+  if (denyId) {
+    target.disabled = true;
+    const { ok, error } = await _postClientTokenAction(`/api/admin/clients/${denyId}/deny`, {});
+    if (!ok) { showClientTokensPendingStatus(error || 'Kunne ikke afvise.', 'err'); target.disabled = false; return; }
+    await loadClientTokens();
+    return;
+  }
+
+  const revokeId = target.getAttribute('data-client-revoke');
+  if (revokeId) {
+    target.disabled = true;
+    const { ok, error } = await _postClientTokenAction(`/api/admin/clients/${revokeId}/revoke`, {});
+    if (!ok) { showClientTokensStatus(error || 'Kunne ikke tilbagekalde.', 'err'); target.disabled = false; return; }
+    showClientTokensStatus('Adgang tilbagekaldt.', 'ok');
+    await loadClientTokens();
+    return;
+  }
+
+  const deleteId = target.getAttribute('data-client-delete');
+  if (deleteId) {
+    target.disabled = true;
+    const { ok, error } = await _postClientTokenAction(`/api/admin/clients/${deleteId}/delete`, {});
+    if (!ok) { showClientTokensStatus(error || 'Kunne ikke fjerne.', 'err'); target.disabled = false; return; }
+    await loadClientTokens();
+    return;
+  }
+
+  const saveFolderId = target.getAttribute('data-client-save-folder');
+  if (saveFolderId) {
+    const row = target.closest('[data-client-row]');
+    const input = row ? row.querySelector('[data-client-folder-input]') : null;
+    const folder = input ? String(input.value || '').trim() : '';
+    if (!folder) { showClientTokensStatus('Vælg en mappe.', 'err'); return; }
+    target.disabled = true;
+    const { ok, error } = await _postClientTokenAction(`/api/admin/clients/${saveFolderId}/folder`, { target_folder: folder });
+    if (!ok) { showClientTokensStatus(error || 'Kunne ikke gemme mappe.', 'err'); target.disabled = false; return; }
+    showClientTokensStatus('Mappe opdateret.', 'ok');
+    await loadClientTokens();
+    return;
+  }
+}
+
+if (els.clientTokensPendingList) els.clientTokensPendingList.addEventListener('click', _handleClientTokensClick);
+if (els.clientTokensList) els.clientTokensList.addEventListener('click', _handleClientTokensClick);
+
 function showSharedEditError(message = '') {
   if (!els.sharedEditError) return;
   const msg = String(message || '').trim();
@@ -16117,6 +16309,9 @@ document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
     }
     if (tab === 'shared') {
       loadDnsShares();
+    }
+    if (tab === 'tokens') {
+      loadClientTokens();
     }
     if (tab === 'other') {
       loadDupeFolders().catch(() => {});

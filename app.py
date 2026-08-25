@@ -386,6 +386,7 @@ VIDEO_FACE_SAMPLE_START_SEC = float(os.environ.get("VIDEO_FACE_SAMPLE_START_SEC"
 VIDEO_FACE_DEDUPE_THRESHOLD = float(os.environ.get("VIDEO_FACE_DEDUPE_THRESHOLD", "0.92"))
 AI_INGEST_THROTTLE_SEC = max(0.0, float(os.environ.get("AI_INGEST_THROTTLE_SEC", "0.04")))
 FACES_INDEX_THROTTLE_SEC = max(0.0, float(os.environ.get("FACES_INDEX_THROTTLE_SEC", "0.06")))
+API_CLIENT_MAX_PENDING = max(1, int(os.environ.get("API_CLIENT_MAX_PENDING", "25")))
 
 RAW_EXTS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".rw2", ".raf", ".orf", ".srw", ".pef"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"} | RAW_EXTS
@@ -4265,7 +4266,29 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_share_links_folder ON share_links(folder_path);
             CREATE INDEX IF NOT EXISTS idx_share_links_expires ON share_links(expires_at);
             CREATE INDEX IF NOT EXISTS idx_share_link_folders_share ON share_link_folders(share_id);
-            
+
+            -- External API clients (e.g. kamera-import): paired via a short-lived
+            -- pairing request, then approved by an admin in Settings -> Tokens.
+            -- The same client secret (issued once, at pair/start) is used both to
+            -- poll pairing status and, once approved, as the permanent bearer token.
+            CREATE TABLE IF NOT EXISTS api_clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                secret_hash TEXT NOT NULL,
+                secret_hint TEXT,
+                verify_code TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                target_folder TEXT,
+                requested_at TEXT NOT NULL,
+                pairing_expires_at TEXT,
+                approved_at TEXT,
+                last_used_at TEXT,
+                created_by_user_id INTEGER,
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_clients_status ON api_clients(status);
+            CREATE INDEX IF NOT EXISTS idx_api_clients_secret_hash ON api_clients(secret_hash);
+
             -- Persisted folder preview selections (for uniform folder thumbnails)
             CREATE TABLE IF NOT EXISTS folder_previews (
                 folder_path TEXT PRIMARY KEY,
@@ -5084,6 +5107,14 @@ def enforce_login_for_app():
         "api_ai_describe_external_next",
         "api_ai_describe_external_image",
         "api_ai_describe_external_result",
+        # External API clients (e.g. kamera-import): pairing has no session yet
+        # by definition, and the upload/status endpoints authenticate via their
+        # own bearer token, so they must run before the normal app login gate.
+        "api_client_pair_start",
+        "api_client_pair_status",
+        "api_client_status",
+        "api_client_upload",
+        "api_client_uploaded_names",
     }
     if request.endpoint in open_endpoints:
         return None
@@ -16588,6 +16619,360 @@ def api_share_delete(token: str):
         removed_photos=removed.get("photos", 0),
     )
     return jsonify({"ok": True, "removed": removed, "deleted_ids": allowed_ids})
+
+
+# --- External API clients: device pairing + token-authenticated uploads ---
+# Lets a companion app (e.g. kamera-import) pair with FjordLens: it requests a
+# pairing secret, an admin approves it (and assigns a target folder) from
+# Settings -> Tokens, and the same secret then serves as a permanent bearer
+# token the device uses to upload straight into that folder.
+
+def _generate_client_secret() -> str:
+    return "flcli_" + secrets.token_urlsafe(32)
+
+
+def _generate_client_verify_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no O/0/I/1 ambiguity
+    return "".join(secrets.choice(alphabet) for _ in range(6))
+
+
+def _api_client_row_public(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "name": row["name"],
+        "status": row["status"],
+        "verify_code": row["verify_code"] if row["status"] == "pending" else None,
+        "target_folder": row["target_folder"] or "",
+        "secret_hint": row["secret_hint"] or "",
+        "requested_at": row["requested_at"],
+        "approved_at": row["approved_at"],
+        "last_used_at": row["last_used_at"],
+    }
+
+
+def _load_api_client_from_bearer() -> Optional[sqlite3.Row]:
+    auth = str(request.headers.get("Authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    secret = auth[7:].strip()
+    if not secret:
+        return None
+    secret_hash = _share_token_digest(secret)
+    if not secret_hash:
+        return None
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM api_clients WHERE secret_hash=? AND status='approved' LIMIT 1",
+            (secret_hash,),
+        ).fetchone()
+        if row:
+            conn.execute("UPDATE api_clients SET last_used_at=? WHERE id=?", (now_iso(), int(row["id"])))
+            conn.commit()
+    return row
+
+
+@app.route("/api/client-auth/pair/start", methods=["POST"])
+def api_client_pair_start():
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("device_name") or "").strip()[:120] or "Ukendt enhed"
+    secret = _generate_client_secret()
+    secret_hash = _share_token_digest(secret)
+    secret_hint = secret[-6:]
+    verify_code = _generate_client_verify_code()
+    expires_at = (datetime.utcnow() + timedelta(minutes=15)).isoformat(timespec="seconds") + "Z"
+    with closing(get_conn()) as conn:
+        current_time = now_iso()
+        conn.execute(
+            "UPDATE api_clients SET status='denied' WHERE status='pending' AND pairing_expires_at<=?",
+            (current_time,),
+        )
+        pending_count = int(
+            conn.execute("SELECT COUNT(*) FROM api_clients WHERE status='pending'").fetchone()[0]
+        )
+        if pending_count >= API_CLIENT_MAX_PENDING:
+            conn.commit()
+            return jsonify({
+                "ok": False,
+                "error": "Der er for mange afventende forbindelsesanmodninger. Prøv igen senere.",
+            }), 429
+        cur = conn.execute(
+            """
+            INSERT INTO api_clients(name, secret_hash, secret_hint, verify_code, status, requested_at, pairing_expires_at)
+            VALUES(?,?,?,?, 'pending', ?, ?)
+            """,
+            (name, secret_hash, secret_hint, verify_code, current_time, expires_at),
+        )
+        conn.commit()
+        client_id = cur.lastrowid
+    log_event("api_client_pair_start", actor=name, client_id=client_id)
+    return jsonify({
+        "ok": True,
+        "pairing_id": client_id,
+        "secret": secret,
+        "verify_code": verify_code,
+        "expires_at": expires_at,
+    })
+
+
+@app.route("/api/client-auth/pair/status")
+def api_client_pair_status():
+    pairing_id = request.args.get("pairing_id")
+    secret = str(request.headers.get("X-Pairing-Secret") or "").strip()
+    if not pairing_id or not secret:
+        return jsonify({"ok": False, "error": "Mangler pairing_id eller secret"}), 400
+    try:
+        client_id = int(pairing_id)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldigt pairing_id"}), 400
+    secret_hash = _share_token_digest(secret)
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row or not hmac.compare_digest(str(row["secret_hash"] or ""), secret_hash):
+            return jsonify({"ok": False, "error": "Ukendt parring"}), 404
+        status = str(row["status"])
+        if status == "pending" and row["pairing_expires_at"] and str(row["pairing_expires_at"]) <= now_iso():
+            conn.execute("UPDATE api_clients SET status='denied' WHERE id=?", (client_id,))
+            conn.commit()
+            status = "denied"
+    return jsonify({
+        "ok": True,
+        "status": status,
+        "verify_code": row["verify_code"] if status == "pending" else None,
+        "target_folder": row["target_folder"] if status == "approved" else None,
+    })
+
+
+def _require_admin_for_api_clients() -> Optional[Tuple[dict, int]]:
+    if not getattr(current_user, "is_admin", False):
+        return ({"ok": False, "error": "Forbidden"}, 403)
+    return None
+
+
+@app.route("/api/admin/clients", methods=["GET"])
+@login_required
+def api_admin_clients_list():
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM api_clients ORDER BY requested_at DESC").fetchall()
+    return jsonify({"ok": True, "clients": [_api_client_row_public(r) for r in rows]})
+
+
+@app.route("/api/admin/clients/<int:client_id>/approve", methods=["POST"])
+@login_required
+def api_admin_clients_approve(client_id: int):
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    body = request.get_json(silent=True) or {}
+    target_folder = _normalize_share_folder_path(body.get("target_folder"))
+    if not target_folder:
+        return jsonify({"ok": False, "error": "Vælg en mappe"}), 400
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Ukendt enhed"}), 404
+        if str(row["status"]) != "pending":
+            return jsonify({"ok": False, "error": "Anmodningen afventer ikke godkendelse"}), 409
+        if row["pairing_expires_at"] and str(row["pairing_expires_at"]) <= now_iso():
+            conn.execute("UPDATE api_clients SET status='denied' WHERE id=?", (client_id,))
+            conn.commit()
+            return jsonify({"ok": False, "error": "Anmodningen er udløbet"}), 410
+        conn.execute(
+            "UPDATE api_clients SET status='approved', target_folder=?, approved_at=?, created_by_user_id=? WHERE id=?",
+            (target_folder, now_iso(), int(current_user.id), client_id),
+        )
+        conn.commit()
+    log_event("api_client_approved", actor=_audit_actor(), client_id=client_id, target_folder=target_folder)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/clients/<int:client_id>/deny", methods=["POST"])
+@login_required
+def api_admin_clients_deny(client_id: int):
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, status FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Ukendt enhed"}), 404
+        if str(row["status"]) != "pending":
+            return jsonify({"ok": False, "error": "Anmodningen afventer ikke afvisning"}), 409
+        conn.execute("UPDATE api_clients SET status='denied' WHERE id=?", (client_id,))
+        conn.commit()
+    log_event("api_client_denied", actor=_audit_actor(), client_id=client_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/clients/<int:client_id>/revoke", methods=["POST"])
+@login_required
+def api_admin_clients_revoke(client_id: int):
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, status FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Ukendt enhed"}), 404
+        if str(row["status"]) != "approved":
+            return jsonify({"ok": False, "error": "Enheden har ikke aktiv adgang"}), 409
+        conn.execute("UPDATE api_clients SET status='revoked' WHERE id=?", (client_id,))
+        conn.commit()
+    log_event("api_client_revoked", actor=_audit_actor(), client_id=client_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/clients/<int:client_id>/folder", methods=["POST"])
+@login_required
+def api_admin_clients_set_folder(client_id: int):
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    body = request.get_json(silent=True) or {}
+    target_folder = _normalize_share_folder_path(body.get("target_folder"))
+    if not target_folder:
+        return jsonify({"ok": False, "error": "Vælg en mappe"}), 400
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, status FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Ukendt enhed"}), 404
+        if str(row["status"]) != "approved":
+            return jsonify({"ok": False, "error": "Kun forbundne enheder kan skifte mappe"}), 409
+        conn.execute("UPDATE api_clients SET target_folder=? WHERE id=?", (target_folder, client_id))
+        conn.commit()
+    log_event("api_client_folder_changed", actor=_audit_actor(), client_id=client_id, target_folder=target_folder)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/clients/<int:client_id>/delete", methods=["POST"])
+@login_required
+def api_admin_clients_delete(client_id: int):
+    fb = _require_admin_for_api_clients()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, status FROM api_clients WHERE id=?", (client_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Ukendt enhed"}), 404
+        if str(row["status"]) == "approved":
+            return jsonify({"ok": False, "error": "Tilbagekald adgangen først"}), 400
+        conn.execute("DELETE FROM api_clients WHERE id=?", (client_id,))
+        conn.commit()
+    log_event("api_client_deleted", actor=_audit_actor(), client_id=client_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/client/status")
+def api_client_status():
+    client = _load_api_client_from_bearer()
+    if not client:
+        return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    return jsonify({
+        "ok": True,
+        "name": client["name"],
+        "target_folder": client["target_folder"] or "",
+    })
+
+
+@app.route("/api/client/uploaded-names")
+def api_client_uploaded_names():
+    # Lets a client (e.g. kamera-import) check what's already been uploaded to
+    # its target folder before sending a file again, since _commit_uploaded_file
+    # has no content-based dedup of its own (a re-upload just gets a "_1" suffix).
+    client = _load_api_client_from_bearer()
+    if not client:
+        return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    folder_path = str(client["target_folder"] or "").strip()
+    names: list[Dict[str, Any]] = []
+    if folder_path:
+        target_dir = UPLOAD_DIR / "originals" / folder_path
+        try:
+            if target_dir.exists():
+                for p in target_dir.iterdir():
+                    if p.is_file():
+                        names.append({"name": p.name, "size": p.stat().st_size})
+        except Exception:
+            pass
+    return jsonify({"ok": True, "names": names})
+
+
+@app.route("/api/client/upload", methods=["POST"])
+def api_client_upload():
+    client = _load_api_client_from_bearer()
+    if not client:
+        return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    folder_path = str(client["target_folder"] or "").strip()
+    if not folder_path:
+        return jsonify({"ok": False, "error": "Ingen mappe valgt for denne enhed endnu"}), 400
+
+    client_label = f"client:{client['name']}#{client['id']}"
+    target_dir = UPLOAD_DIR / "originals" / folder_path
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kan ikke oprette upload-destination: {e}"}), 500
+
+    files = request.files.getlist("files") or []
+    if not files:
+        return jsonify({"ok": False, "error": "No files"}), 400
+
+    try:
+        log_event("api_client_upload_start", client_id=int(client["id"]), files=len(files))
+    except Exception:
+        pass
+
+    saved = []
+    errors: list[str] = []
+    rel_prefix = "uploads/originals/"
+    allowed_upload_exts = upload_allowed_extensions()
+    for f in files:
+        try:
+            name = secure_filename(f.filename or "")
+            if not name:
+                continue
+            ext = Path(name).suffix.lower()
+            if not _is_upload_extension_allowed(ext, allowed_upload_exts):
+                errors.append(_blocked_upload_file_error(name, ext))
+                continue
+
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                f.stream.seek(0)
+                shutil.copyfileobj(f.stream, tmp)
+                tmp_path = Path(tmp.name)
+
+            ok, saved_name, err = _commit_uploaded_file(
+                target_dir=target_dir,
+                rel_prefix=rel_prefix,
+                subdir=folder_path,
+                source_path=tmp_path,
+                original_name=name,
+                last_modified_ms=None,
+                uploaded_by=client_label,
+                autostart_postprocess=False,
+            )
+            if ok:
+                saved.append(saved_name)
+            else:
+                errors.append(err or f"Commit failed: {name}")
+        except Exception as e:
+            errors.append(str(e))
+
+    try:
+        _ensure_upload_postprocess_running(client_label)
+    except Exception as e:
+        try:
+            log_event("api_client_postprocess_failed", client_id=int(client["id"]), error=f"autostart: {e}")
+        except Exception:
+            pass
+
+    try:
+        log_event("api_client_upload_done", client_id=int(client["id"]), files=len(files), saved=len(saved), errors=len(errors))
+    except Exception:
+        pass
+
+    return jsonify({"ok": bool(saved) or not errors, "saved": saved, "errors": errors})
 
 
 @app.route("/api/health")

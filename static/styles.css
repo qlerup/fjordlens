@@ -2326,6 +2326,24 @@ body.view-mapper .photo-card img {
   border-color: rgba(255, 221, 89, 0.35);
   background: rgba(255, 221, 89, 0.08);
 }
+.pill.ok { border-color: rgba(52, 211, 153, 0.45); color: var(--ok); }
+.pill.danger { border-color: rgba(255, 107, 107, 0.45); color: var(--danger); }
+
+/* Tokens (paired API clients, e.g. kamera-import) */
+.client-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.client-token-row:last-child { border-bottom: none; }
+.client-token-row-main { min-width: 200px; flex: 1; }
+.client-token-row-name { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.client-token-row-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.client-token-row-actions input.input-number { min-width: 160px; }
 
 /* Photoframe */
 .photoframe-wrap {
