@@ -13504,7 +13504,13 @@ def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
 
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
-    for key in ("ai_tags", "ai_desc_tags", "embedding_json", "metadata_json", "exif_json"):
+    # embedding_json is a raw CLIP vector (hundreds of floats) used only for
+    # server-side AI similarity search; the client never reads it, so drop it
+    # here instead of JSON-decoding + re-serializing + sending it on every
+    # photo list/detail response. For a 300-photo Timeline page this alone is
+    # several MB of dead weight and was the main cause of slow view loads.
+    d.pop("embedding_json", None)
+    for key in ("ai_tags", "ai_desc_tags", "metadata_json", "exif_json"):
         if d.get(key):
             try:
                 d[key] = json.loads(d[key])
