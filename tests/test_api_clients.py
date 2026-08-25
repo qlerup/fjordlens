@@ -61,6 +61,9 @@ class ApiClientTests(unittest.TestCase):
 
     def test_pairing_secret_is_hashed_and_approval_enables_bearer_access(self):
         pairing = self._start_pairing()
+        self.assertIn("?view=settings&tab=tokens", pairing["verification_uri"])
+        self.assertIn(f"pairing_id={pairing['pairing_id']}", pairing["verification_uri_complete"])
+        self.assertIn(f"code={pairing['verify_code']}", pairing["verification_uri_complete"])
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             row = conn.execute("SELECT * FROM api_clients WHERE id=?", (pairing["pairing_id"],)).fetchone()
         self.assertNotEqual(row["secret_hash"], pairing["secret"])
@@ -136,6 +139,20 @@ class ApiClientTests(unittest.TestCase):
             json={"device_name": "Kamera 2"},
         )
         self.assertEqual(replacement.status_code, 200)
+
+    def test_approval_page_requires_login_and_returns_to_tokens_tab(self):
+        anonymous = fjordlens.app.test_client()
+        approval_path = "/?view=settings&tab=tokens&pairing_id=42&code=ABC234"
+        redirect_response = anonymous.get(approval_path)
+        self.assertEqual(redirect_response.status_code, 302)
+        self.assertIn("/login?next=", redirect_response.headers["Location"])
+
+        login_response = anonymous.post(
+            redirect_response.headers["Location"],
+            data={"username": "admin", "password": "test-password"},
+        )
+        self.assertEqual(login_response.status_code, 302)
+        self.assertEqual(login_response.headers["Location"], approval_path)
 
 
 if __name__ == "__main__":

@@ -5138,7 +5138,8 @@ def enforce_login_for_app():
         # For API calls, return 401 to avoid HTML in fetch
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
-        return redirect(url_for("login", next=request.path))
+        next_url = request.full_path.rstrip("?")
+        return redirect(url_for("login", next=next_url))
     # Enforce initial 2FA setup only when 2FA is enabled but not completed
     try:
         with closing(get_conn()) as conn:
@@ -16705,12 +16706,18 @@ def api_client_pair_start():
         conn.commit()
         client_id = cur.lastrowid
     log_event("api_client_pair_start", actor=name, client_id=client_id)
+    approval_url = (
+        f"{_request_public_base_url()}/"
+        f"?view=settings&tab=tokens&pairing_id={client_id}"
+    )
     return jsonify({
         "ok": True,
         "pairing_id": client_id,
         "secret": secret,
         "verify_code": verify_code,
         "expires_at": expires_at,
+        "verification_uri": approval_url,
+        "verification_uri_complete": f"{approval_url}&code={verify_code}",
     })
 
 
