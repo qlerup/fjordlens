@@ -16755,6 +16755,15 @@ def _require_admin_for_api_clients() -> Optional[Tuple[dict, int]]:
     return None
 
 
+def _api_client_target_folder_exists(target_folder: str) -> bool:
+    try:
+        target = (UPLOAD_DIR / "originals" / target_folder).resolve()
+        root = (UPLOAD_DIR / "originals").resolve()
+        return target != root and root in target.parents and target.is_dir()
+    except Exception:
+        return False
+
+
 @app.route("/api/admin/clients", methods=["GET"])
 @login_required
 def api_admin_clients_list():
@@ -16776,6 +16785,8 @@ def api_admin_clients_approve(client_id: int):
     target_folder = _normalize_share_folder_path(body.get("target_folder"))
     if not target_folder:
         return jsonify({"ok": False, "error": "Vælg en mappe"}), 400
+    if not _api_client_target_folder_exists(target_folder):
+        return jsonify({"ok": False, "error": "Den valgte mappe findes ikke længere"}), 400
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM api_clients WHERE id=?", (client_id,)).fetchone()
         if not row:
@@ -16841,6 +16852,8 @@ def api_admin_clients_set_folder(client_id: int):
     target_folder = _normalize_share_folder_path(body.get("target_folder"))
     if not target_folder:
         return jsonify({"ok": False, "error": "Vælg en mappe"}), 400
+    if not _api_client_target_folder_exists(target_folder):
+        return jsonify({"ok": False, "error": "Den valgte mappe findes ikke længere"}), 400
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT id, status FROM api_clients WHERE id=?", (client_id,)).fetchone()
         if not row:

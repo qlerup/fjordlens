@@ -27,6 +27,8 @@ class ApiClientTests(unittest.TestCase):
         fjordlens.DB_BOOTSTRAP_READY = False
         fjordlens.DATA_DIR.mkdir(parents=True)
         fjordlens.UPLOAD_DIR.mkdir(parents=True)
+        (fjordlens.UPLOAD_DIR / "originals" / "Kamera" / "Test").mkdir(parents=True)
+        (fjordlens.UPLOAD_DIR / "originals" / "Kamera" / "Ny").mkdir(parents=True)
         fjordlens.init_db()
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             conn.execute(
@@ -117,6 +119,15 @@ class ApiClientTests(unittest.TestCase):
             json={"target_folder": "Kamera/Ny"},
         )
         self.assertEqual(response.status_code, 409)
+
+    def test_approval_rejects_a_folder_that_does_not_exist(self):
+        pairing = self._start_pairing()
+        response = self.client.post(
+            f"/api/admin/clients/{pairing['pairing_id']}/approve",
+            json={"target_folder": "Kamera/FindesIkke"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("findes ikke", response.get_json()["error"])
 
     def test_pairing_requests_are_limited_until_one_expires(self):
         fjordlens.API_CLIENT_MAX_PENDING = 1

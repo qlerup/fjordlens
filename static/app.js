@@ -10212,9 +10212,18 @@ function _fmtClientTokenTime(isoValue) {
   try { return dt.toLocaleString(); } catch { return raw; }
 }
 
-function _clientTokenFolderDatalistHtml() {
+function _clientTokenFolderSelectHtml(selectedValue = '') {
   const folders = Array.isArray(state.sharedFolderOptions) ? state.sharedFolderOptions : [];
-  return `<datalist id="clientTokenFolderOptions">${folders.map((f) => `<option value="${escapeHtml(f)}">`).join('')}</datalist>`;
+  const selected = String(selectedValue || '').trim();
+  const options = folders.map((folder) => {
+    const value = String(folder || '').trim();
+    return `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(value)}</option>`;
+  }).join('');
+  const missingCurrent = selected && !folders.includes(selected)
+    ? `<option value="${escapeHtml(selected)}" selected disabled>${escapeHtml(selected)} (mappen findes ikke længere)</option>`
+    : '';
+  const placeholder = folders.length ? 'Vælg eksisterende mappe…' : 'Ingen mapper fundet';
+  return `<select class="input-number" data-client-folder-input><option value=""${selected ? '' : ' selected'} disabled>${placeholder}</option>${missingCurrent}${options}</select>`;
 }
 
 function renderClientTokensPendingList() {
@@ -10231,13 +10240,13 @@ function renderClientTokensPendingList() {
         <div class="mini-label">Kode: <strong>${escapeHtml(item.verify_code || '')}</strong> · bekræft den matcher det appen viser · anmodet ${escapeHtml(_fmtClientTokenTime(item.requested_at))}</div>
       </div>
       <div class="client-token-row-actions">
-        <input type="text" list="clientTokenFolderOptions" class="input-number" placeholder="Mappe, fx Kamera" data-client-folder-input value="">
+        ${_clientTokenFolderSelectHtml()}
         <button type="button" class="btn primary small" data-client-approve="${Number(item.id || 0)}">Godkend</button>
         <button type="button" class="btn danger small" data-client-deny="${Number(item.id || 0)}">Afvis</button>
       </div>
     </div>
   `).join('');
-  els.clientTokensPendingList.innerHTML = _clientTokenFolderDatalistHtml() + rows;
+  els.clientTokensPendingList.innerHTML = rows;
 }
 
 function renderClientTokensList() {
@@ -10252,7 +10261,7 @@ function renderClientTokensList() {
   const rows = items.map((item) => {
     const status = String(item.status || '');
     const folderInput = status === 'approved'
-      ? `<input type="text" list="clientTokenFolderOptions" class="input-number" data-client-folder-input value="${escapeHtml(item.target_folder || '')}"><button type="button" class="btn small" data-client-save-folder="${Number(item.id || 0)}">Gem</button>`
+      ? `${_clientTokenFolderSelectHtml(item.target_folder || '')}<button type="button" class="btn small" data-client-save-folder="${Number(item.id || 0)}">Gem</button>`
       : '';
     const revokeBtn = status === 'approved'
       ? `<button type="button" class="btn danger small" data-client-revoke="${Number(item.id || 0)}">Tilbagekald</button>`
@@ -10273,7 +10282,7 @@ function renderClientTokensList() {
       </div>
     `;
   }).join('');
-  els.clientTokensList.innerHTML = _clientTokenFolderDatalistHtml() + rows;
+  els.clientTokensList.innerHTML = rows;
 }
 
 async function loadClientTokens() {
@@ -10281,7 +10290,7 @@ async function loadClientTokens() {
   showClientTokensPendingStatus('');
   showClientTokensStatus('');
   try {
-    await loadSharedFolderOptions();
+    await loadSharedFolderOptions(true);
   } catch {}
   try {
     const res = await fetch('/api/admin/clients');

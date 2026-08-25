@@ -2343,7 +2343,7 @@ body.view-mapper .photo-card img {
 .client-token-row-main { min-width: 200px; flex: 1; }
 .client-token-row-name { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .client-token-row-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.client-token-row-actions input.input-number { min-width: 160px; }
+.client-token-row-actions select.input-number { min-width: 220px; max-width: 360px; }
 
 /* Photoframe */
 .photoframe-wrap {
