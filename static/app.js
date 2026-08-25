@@ -6993,6 +6993,40 @@ function appendFolderCard(folder, arr, opts = {}) {
   })();
 }
 
+// Insert one freshly-created folder card without touching any other card in
+// the grid (used after "create folder" so photo thumbnails already loaded
+// aren't torn down and re-fetched for an unrelated change).
+function insertMapperFolderCard(folderPath, opts) {
+  if (!els.grid || state.view !== 'mapper') return null;
+  appendFolderCard(folderPath, [], opts);
+  const card = els.grid.lastElementChild; // appendFolderCard always appends to els.grid
+  if (!card) return null;
+  const title = String((opts && opts.title) || folderPath.split('/').filter(Boolean).pop() || folderPath);
+  const before = Array.from(els.grid.querySelectorAll('.folder-card[data-folder]')).find((c) => {
+    if (c === card) return false;
+    const otherPath = c.getAttribute('data-folder') || '';
+    const otherTitle = otherPath.split('/').filter(Boolean).pop() || otherPath;
+    return title.localeCompare(otherTitle, 'da-DK') < 0;
+  });
+  if (before) els.grid.insertBefore(card, before);
+  return card;
+}
+
+// Swap one folder card for a freshly-built one with a new path/title (used
+// after "rename folder" when the rename doesn't affect the folder currently
+// being browsed, so nothing else in the grid needs to reload).
+function replaceMapperFolderCard(oldPath, newPath, opts) {
+  if (!els.grid || state.view !== 'mapper') return false;
+  let oldCard = null;
+  try { oldCard = els.grid.querySelector(`.folder-card[data-folder="${CSS.escape(oldPath)}"]`); } catch { oldCard = null; }
+  if (!oldCard) return false;
+  appendFolderCard(newPath, [], opts);
+  const newCard = els.grid.lastElementChild;
+  if (!newCard) return false;
+  oldCard.replaceWith(newCard);
+  return true;
+}
+
 let personRenameMenuEl = null;
 
 function closePersonRenameMenu() {
@@ -11510,9 +11544,20 @@ async function createMapperFolder() {
     state.mapperPath = parent;
     state.folder = parent || null;
     renderMapperContext(parent);
-    await loadPhotos();
     closeMapperCreateModal(false);
     const createdPath = String(data.created || path || '');
+    // Creating a folder never changes the current path or its photos, so just
+    // drop the new card in instead of reloading everything already on screen.
+    const inserted = createdPath ? insertMapperFolderCard(createdPath, {
+      title: createdPath.split('/').filter(Boolean).pop() || createdPath,
+      onOpen: async () => {
+        const targetPath = beginMapperPathNavigation(createdPath);
+        await loadMapperTools(targetPath);
+        await loadPhotos();
+      },
+    }) : null;
+    if (inserted) renderStats();
+    else await loadPhotos();
     showStatus(`${tr('mapper_created_status')}: ${createdPath}`, 'ok');
   } catch {
     showStatus(tr('mapper_create_error'), 'err');
@@ -11590,14 +11635,33 @@ async function renameMapperFolder() {
       state.mapperSelectedFolders = next;
     }
 
-    const nextCurrent = _replaceMapperPathPrefix(String(state.mapperPath || ''), oldPath, newPath);
+    const previousCurrent = String(state.mapperPath || '');
+    const nextCurrent = _replaceMapperPathPrefix(previousCurrent, oldPath, newPath);
+    const affectsCurrentView = nextCurrent !== previousCurrent;
     state.mapperPath = nextCurrent;
     state.folder = nextCurrent || null;
     _expandMapperAncestors(nextCurrent);
 
     closeMapperCreateModal();
-    await loadMapperTools(nextCurrent);
-    await loadPhotos();
+    // Renaming a sibling folder doesn't change what's currently shown, so just
+    // swap that one card instead of reloading every already-loaded thumbnail.
+    // If we renamed the folder we're inside (or an ancestor of it), the path
+    // itself changed and we do need a fresh fetch.
+    const patched = !affectsCurrentView && replaceMapperFolderCard(oldPath, newPath, {
+      title: newPath.split('/').filter(Boolean).pop() || newPath,
+      onOpen: async () => {
+        const targetPath = beginMapperPathNavigation(newPath);
+        await loadMapperTools(targetPath);
+        await loadPhotos();
+      },
+    });
+    if (patched) {
+      renderMapperContext(nextCurrent);
+      renderStats();
+    } else {
+      await loadMapperTools(nextCurrent);
+      await loadPhotos();
+    }
     showStatus(`${tr('mapper_rename_success')}: ${oldPath} -> ${newPath}`, 'ok');
   } catch {
     showStatus(tr('mapper_rename_error'), 'err');
