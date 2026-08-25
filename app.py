@@ -3442,9 +3442,13 @@ def _postprocess_uploaded_rels(
             _emit_parallel()
 
         _emit_parallel()
+        if indexed_ok and not _should_stop():
+            thumbnail_worker = threading.Thread(target=_thumb_worker, daemon=True)
+            thumbnail_worker.start()
+            thumbnail_worker.join()
+
         workers: list[threading.Thread] = []
         if indexed_ok and not _should_stop():
-            workers.append(threading.Thread(target=_thumb_worker, daemon=True))
             if faces_enabled:
                 workers.append(threading.Thread(target=_faces_worker, daemon=True))
             if ai_enabled:
@@ -16904,11 +16908,21 @@ def api_client_status():
     client = _load_api_client_from_bearer()
     if not client:
         return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    _resume_api_client_postprocess_if_needed(client)
     return jsonify({
         "ok": True,
         "name": client["name"],
         "target_folder": client["target_folder"] or "",
     })
+
+
+def _resume_api_client_postprocess_if_needed(client: sqlite3.Row) -> bool:
+    client_label = f"client:{client['name']}#{client['id']}"
+    if _is_upload_transfer_active(client_label) or _is_upload_postprocess_running(client_label):
+        return False
+    if not _recover_uploaded_rels_missing_postprocess(client_label, limit=1):
+        return False
+    return _ensure_upload_postprocess_running(client_label)
 
 
 @app.route("/api/client/uploaded-names")
@@ -16919,6 +16933,7 @@ def api_client_uploaded_names():
     client = _load_api_client_from_bearer()
     if not client:
         return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    _resume_api_client_postprocess_if_needed(client)
     folder_path = str(client["target_folder"] or "").strip()
     names: list[Dict[str, Any]] = []
     if folder_path:

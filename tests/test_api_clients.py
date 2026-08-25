@@ -184,6 +184,23 @@ class ApiClientTests(unittest.TestCase):
             self.assertEqual(finished.status_code, 200)
             ensure.assert_called_once_with("client:Testkamera#1")
 
+    def test_client_status_resumes_interrupted_postprocessing(self):
+        pairing = self._start_pairing()
+        self.assertEqual(self._approve(pairing["pairing_id"]).status_code, 200)
+        source = fjordlens.UPLOAD_DIR / "originals" / "Kamera" / "Test" / "missing-thumb.jpg"
+        source.write_bytes(b"camera-image")
+        rel = "uploads/originals/Kamera/Test/missing-thumb.jpg"
+        fjordlens._upsert_uploaded_stub(rel, source, "client:Testkamera#1")
+
+        with patch.object(fjordlens, "_ensure_upload_postprocess_running", return_value=True) as ensure:
+            response = self.client.get(
+                "/api/client/status",
+                headers={"Authorization": f"Bearer {pairing['secret']}"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        ensure.assert_called_once_with("client:Testkamera#1")
+
     def test_approval_page_requires_login_and_returns_to_tokens_tab(self):
         anonymous = fjordlens.app.test_client()
         approval_path = "/?view=settings&tab=tokens&pairing_id=42&code=ABC234"

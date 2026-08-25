@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 import app as fjordlens
 
 
@@ -110,6 +112,33 @@ class UploadConversionUploaderTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["uploaded_by"], "Anna")
+
+    def test_aggressive_workflow_finishes_thumbnail_before_face_detection(self):
+        source = fjordlens.UPLOAD_DIR / "originals" / "camera" / "order.jpg"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (32, 24), color="teal").save(source, format="JPEG")
+        rel = "uploads/originals/camera/order.jpg"
+        fjordlens._upsert_uploaded_stub(rel, source, "Kamera")
+        events = []
+
+        with (
+            patch.object(fjordlens, "heic_convert_on_upload_enabled", return_value=False),
+            patch.object(fjordlens, "raw_convert_on_upload_enabled", return_value=False),
+            patch.object(fjordlens, "mov_convert_on_upload_enabled", return_value=False),
+            patch.object(fjordlens, "faces_auto_index_enabled", return_value=True),
+            patch.object(fjordlens, "ai_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "ai_desc_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "make_thumb", side_effect=lambda *args, **kwargs: events.append("thumb") or "order.webp"),
+            patch.object(fjordlens, "index_faces_for_photo", side_effect=lambda _rel: events.append("face") or 0),
+        ):
+            result = fjordlens._postprocess_uploaded_rels(
+                "Kamera",
+                [rel],
+                workflow_mode=fjordlens.UPLOAD_WORKFLOW_MODE_AGGRESSIVE,
+            )
+
+        self.assertEqual(result["indexed"], 1)
+        self.assertEqual(events, ["thumb", "face"])
 
     def test_disk_sync_does_not_claim_system_uploaded_file_after_queue_handoff(self):
         source = fjordlens.UPLOAD_DIR / "camera.jpg"
