@@ -16938,7 +16938,13 @@ function updateViewerFaceBoxes() {
     overlay.style.width = `${rect.width}px`;
     overlay.style.height = `${rect.height}px`;
     overlay.style.pointerEvents = 'none';
-    overlay.style.zIndex = '4';
+    // Sit above the viewer itself: position:fixed siblings under <body> stack
+    // purely by z-index, and #viewer's own z-index differs between the
+    // classic (10000) and fjord (20010) themes, so read it instead of
+    // hardcoding a number that could drift out of sync with either theme.
+    let viewerZ = 10000;
+    try { viewerZ = parseInt(window.getComputedStyle(els.viewer).zIndex, 10) || 10000; } catch {}
+    overlay.style.zIndex = String(viewerZ + 5);
     it.faces.forEach((fc) => {
       const box = document.createElement('div');
       box.style.position = 'absolute';
