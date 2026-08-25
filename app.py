@@ -1057,6 +1057,13 @@ PHOTO_REPROCESS_QUEUE: "queue.Queue[tuple[int, str, str]]" = queue.Queue()
 PHOTO_REPROCESS_QUEUED: set[int] = set()
 PHOTO_REPROCESS_WORKER_STARTED = False
 POSTPROCESS_PIPELINE_LOCK = threading.Lock()
+# index_faces_for_photo() runs its (slow, GPU/CPU-bound) AI detection concurrently
+# across a whole batch by design, but the DB write phase that follows it - person
+# matching plus INSERT/UPDATE - does not benefit from that concurrency, since
+# SQLite only ever allows one writer at a time. Serializing that phase behind a
+# fast in-process lock avoids piling multiple threads onto SQLite's own busy_timeout,
+# which is what surfaced as intermittent "database is locked" errors under load.
+FACE_DB_WRITE_LOCK = threading.Lock()
 UPLOAD_TRANSFER_ACTIVE_BY_USER: Dict[str, float] = {}
 UPLOAD_TRANSFER_LOCK = threading.Lock()
 UPLOAD_TRANSFER_TTL_SEC = 180.0
@@ -1945,7 +1952,7 @@ def index_faces_for_photo(rel_path: str) -> int:
         else:
             faces = _ai_detect_faces_path(disk_path) or []
             log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces))
-        with closing(get_conn()) as conn:
+        with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
             row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
             if not row:
                 return 0
