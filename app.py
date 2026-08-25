@@ -3260,6 +3260,10 @@ def _postprocess_uploaded_rels(
                                     (thumb_name, now_iso(), rel),
                                 )
                                 conn.commit()
+                            try:
+                                log_event("thumb_saved", rel_path=rel, thumb_name=thumb_name)
+                            except Exception:
+                                pass
                         else:
                             thumb_errors += 1
                             err_inc = 1
@@ -3459,6 +3463,10 @@ def _postprocess_uploaded_rels(
                     with closing(get_conn()) as conn:
                         conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (thumb_name, now_iso(), rel))
                         conn.commit()
+                    try:
+                        log_event("thumb_saved", rel_path=rel, thumb_name=thumb_name)
+                    except Exception:
+                        pass
                 else:
                     thumb_errors += 1
                 _emit_progress(
