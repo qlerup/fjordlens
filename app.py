@@ -1595,7 +1595,19 @@ def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
 
 
 def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
-    """Send a viewable copy of the image to AI service for face detection/embeddings."""
+    """Send a viewable, EXIF-orientation-corrected copy of the image to the AI
+    service for face detection/embeddings.
+
+    Stored bbox_x/y/w/h are later normalized against photos.width/height, which
+    extract_metadata() records *after* ImageOps.exif_transpose() (i.e. in
+    display orientation). ensure_viewable_copy() only re-encodes HEIC/RAW
+    files (which it already transposes); a plain JPEG/PNG is passed through
+    unchanged, so the AI service — which does not itself apply EXIF rotation —
+    was detecting faces in raw sensor orientation. For any rotated or mirrored
+    photo (essentially all portrait phone photos) that put the stored box in
+    the wrong place. Transposing here keeps detection in the same orientation
+    as the stored dimensions and the displayed image.
+    """
     try:
         rel_guess = None
         try:
@@ -1603,9 +1615,20 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
         except Exception:
             rel_guess = path.name
         ai_src = ensure_viewable_copy(path, rel_guess)
-        with ai_src.open("rb") as f:
-            files = {"file": (ai_src.name, f, "application/octet-stream")}
-            r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        data: Optional[bytes] = None
+        try:
+            with Image.open(ai_src) as im:
+                im = ImageOps.exif_transpose(im)
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, format="JPEG", quality=95)
+            data = buf.getvalue()
+        except Exception:
+            data = None
+        if data is None:
+            with ai_src.open("rb") as f:
+                data = f.read()
+        files = {"file": (ai_src.name, data, "application/octet-stream")}
+        r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
         if r.ok:
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):
