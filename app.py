@@ -4089,6 +4089,12 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_photos_captured_at ON photos(captured_at);
+            -- query_photos() always sorts/pages on this exact expression (to fall back
+            -- to filesystem dates when captured_at is missing); idx_photos_captured_at
+            -- alone can't be used for that ORDER BY, forcing a full-table scan + sort
+            -- on every photo list load. This expression index lets SQLite satisfy the
+            -- ORDER BY ... LIMIT directly from the index instead.
+            CREATE INDEX IF NOT EXISTS idx_photos_sort_date ON photos(COALESCE(captured_at, modified_fs, created_fs));
             CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
                 CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
 
@@ -4147,6 +4153,12 @@ def init_db() -> None:
                 FOREIGN KEY(photo_id) REFERENCES photos(id),
                 FOREIGN KEY(person_id) REFERENCES people(id)
             );
+
+            -- SQLite does not auto-index foreign keys. Without these, the per-row
+            -- "people_names" subquery in query_photos() (run on every photo list
+            -- load) and the various person-photo lookups both full-scan faces.
+            CREATE INDEX IF NOT EXISTS idx_faces_photo_id ON faces(photo_id);
+            CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces(person_id);
 
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
