@@ -21,7 +21,27 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="msapplication-TileColor" content="#041A44">
   <meta name="msapplication-config" content="{{ url_for('static', filename='logos/web/browserconfig.xml', v=app_build) }}">
+  <script>
+    (function () {
+      try {
+        const theme = localStorage.getItem('fl_theme_mode');
+        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
+        const design = localStorage.getItem('fl_ui_design');
+        if (design === 'fjord') document.documentElement.setAttribute('data-ui-design', 'fjord');
+      } catch (_) {}
+    })();
+  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=app_build) }}">
+  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css', v=app_build) }}" disabled>
+  <script>
+    (function () {
+      try {
+        const design = localStorage.getItem('fl_ui_design');
+        const stylesheet = document.getElementById('fjordDesignStylesheet');
+        if (stylesheet && design === 'fjord') stylesheet.disabled = false;
+      } catch (_) {}
+    })();
+  </script>
   {% block head %}{% endblock %}
   <style>/* minimal safe defaults for pages that center a single card */
     .center-screen{display:grid;min-height:100vh;place-items:center;}

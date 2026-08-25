@@ -13,6 +13,12 @@
 {% endblock %}
 {% block body %}
   {% set en = (ui_lang == 'en') %}
+  <div class="fjord-backdrop" aria-hidden="true">
+    <div class="fl-aurora fl-aurora-a"></div>
+    <div class="fl-aurora fl-aurora-b"></div>
+    <div class="fl-ray fl-ray-a"></div>
+    <div class="fl-ray fl-ray-b"></div>
+  </div>
   <div class="center-screen">
     {% if force_password_change %}
     <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login_change_password', next=request.args.get('next')) if request.args.get('next') else url_for('login_change_password') }}">

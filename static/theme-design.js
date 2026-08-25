@@ -2,6 +2,7 @@
   'use strict';
 
   const INTRO_KEY = 'fjordlens.uiDesignIntro.v1';
+  const DESIGN_KEY = 'fl_ui_design';
   const bootstrap = document.getElementById('bootstrapData');
   let profile = {};
   try { profile = JSON.parse((bootstrap && bootstrap.dataset.profile) || '{}') || {}; } catch {}
@@ -44,6 +45,7 @@
 
   function applyLocally(value) {
     current = value === 'fjord' ? 'fjord' : 'classic';
+    try { localStorage.setItem(DESIGN_KEY, current); } catch {}
     if (stylesheet) stylesheet.disabled = current !== 'fjord';
     document.documentElement.dataset.uiDesign = current;
     if (settingsSelect) settingsSelect.value = current;

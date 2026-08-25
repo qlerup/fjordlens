@@ -68,6 +68,17 @@ class UiDesignTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_login_bootstraps_last_selected_design_and_theme(self):
+        page = fjordlens.app.test_client().get("/login")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'id="fjordDesignStylesheet"', page.data)
+        self.assertIn(b"fl_ui_design", page.data)
+        self.assertIn(b"fl_theme_mode", page.data)
+        self.assertIn(b'class="fjord-backdrop"', page.data)
+
+        design_script = (Path(fjordlens.app.static_folder) / "theme-design.js").read_text(encoding="utf-8")
+        self.assertIn("localStorage.setItem(DESIGN_KEY, current)", design_script)
+
 
 if __name__ == "__main__":
     unittest.main()
