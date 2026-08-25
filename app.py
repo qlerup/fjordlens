@@ -11330,13 +11330,51 @@ def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: i
     return None
 
 
-def ensure_viewable_copy(path: Path, rel_path: str) -> Path:
+def _ios_compatible_jpeg(path: Path, rel_path: str) -> Path:
+    stat = path.stat()
+    cache_key = hashlib.sha256(
+        f"{rel_path}|{stat.st_mtime_ns}|{stat.st_size}".encode("utf-8", errors="ignore")
+    ).hexdigest()[:32]
+    dest_dir = CONVERT_DIR / "browser_jpeg"
+    dest = dest_dir / f"{cache_key}.jpg"
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    temp_dest = dest.with_name(f".{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with Image.open(path) as image:
+            try:
+                image = ImageOps.exif_transpose(image)
+            except Exception:
+                pass
+            rgb = image.convert("RGB")
+            rgb.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+            rgb.save(temp_dest, format="JPEG", quality=90, optimize=True, progressive=False)
+        os.replace(temp_dest, dest)
+        return dest
+    finally:
+        try:
+            temp_dest.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def ensure_viewable_copy(path: Path, rel_path: str, normalize_jpeg: bool = False) -> Path:
     """Return a path that browsers and AI can read.
     For assets under uploads/, place any ad-hoc conversions under uploads/converted/<subpath>.jpg
     instead of DATA/converted. For library files, keep using DATA/converted.
     If rawpy is unavailable for RAW formats, return original path.
     """
     ext = path.suffix.lower()
+    if normalize_jpeg and ext in {".jpg", ".jpeg"}:
+        try:
+            return _ios_compatible_jpeg(path, rel_path)
+        except Exception as exc:
+            try:
+                log_event("error", rel_path=rel_path, error=f"ios_viewable_jpeg: {exc}")
+            except Exception:
+                pass
+            return path
     if ext not in ({".heic", ".heif"} | RAW_EXTS):
         return path
     try:
@@ -13622,7 +13660,9 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     view_rel = _resolve_row_view_rel_path(d)
     if rel:
         try:
-            d["original_url"] = f"/api/viewable/{quote(view_rel or rel)}"
+            view_version = str(d.get("checksum_sha256") or d.get("last_scanned_at") or d.get("modified_fs") or "").strip()
+            version_query = f"?v={quote(view_version[:32])}" if view_version else ""
+            d["original_url"] = f"/api/viewable/{quote(view_rel or rel)}{version_query}"
             d["download_url"] = f"/api/original/{quote(rel)}"
         except Exception:
             d["original_url"] = None
@@ -21509,7 +21549,9 @@ def api_viewable(rel_path: str):
         if cand.exists():
             return send_from_directory(CONVERT_DIR, safe_rel)
         return ("Not found", 404)
-    view_path = ensure_viewable_copy(src, safe_rel)
+    user_agent = str(request.headers.get("User-Agent") or "").lower()
+    needs_ios_jpeg = any(marker in user_agent for marker in ("iphone", "ipad", "ipod"))
+    view_path = ensure_viewable_copy(src, safe_rel, normalize_jpeg=needs_ios_jpeg)
     # Serve from the appropriate root
     try:
         vp = str(view_path.resolve(strict=False))
@@ -21521,28 +21563,33 @@ def api_viewable(rel_path: str):
             resp = send_from_directory(CONVERT_DIR, rel_conv)
             try: resp.headers["Cache-Control"] = "public, max-age=86400"  # 1 day
             except Exception: pass
+            resp.headers["Vary"] = "User-Agent"
             return resp
         if vp.startswith(uploads_root):
             rel_up = str(view_path.relative_to(UPLOAD_DIR)).replace("\\", "/")
             resp = send_from_directory(UPLOAD_DIR, rel_up)
             try: resp.headers["Cache-Control"] = "public, max-age=86400"
             except Exception: pass
+            resp.headers["Vary"] = "User-Agent"
             return resp
         if vp.startswith(photo_root):
             rel_photo = str(view_path.relative_to(PHOTO_DIR)).replace("\\", "/")
             resp = send_from_directory(PHOTO_DIR, rel_photo)
             try: resp.headers["Cache-Control"] = "public, max-age=86400"
             except Exception: pass
+            resp.headers["Vary"] = "User-Agent"
             return resp
         # Last-resort fallback to original request path
         if safe_rel.startswith("uploads/"):
             resp = send_from_directory(UPLOAD_DIR, safe_rel[len("uploads/"):])
             try: resp.headers["Cache-Control"] = "public, max-age=86400"
             except Exception: pass
+            resp.headers["Vary"] = "User-Agent"
             return resp
         resp = send_from_directory(PHOTO_DIR, safe_rel)
         try: resp.headers["Cache-Control"] = "public, max-age=86400"
         except Exception: pass
+        resp.headers["Vary"] = "User-Agent"
         return resp
     except Exception as e:
         return (str(e), 500)

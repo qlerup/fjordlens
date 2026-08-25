@@ -17,6 +17,7 @@ class UploadConversionUploaderTests(unittest.TestCase):
             "DATA_DIR": fjordlens.DATA_DIR,
             "UPLOAD_DIR": fjordlens.UPLOAD_DIR,
             "THUMB_DIR": fjordlens.THUMB_DIR,
+            "CONVERT_DIR": fjordlens.CONVERT_DIR,
             "CONVERSION_WORK_DIR": fjordlens.CONVERSION_WORK_DIR,
             "DB_PATH": fjordlens.DB_PATH,
             "INSTALL_STATE_PATH": fjordlens.INSTALL_STATE_PATH,
@@ -25,6 +26,7 @@ class UploadConversionUploaderTests(unittest.TestCase):
         fjordlens.DATA_DIR = root / "data"
         fjordlens.UPLOAD_DIR = root / "uploads"
         fjordlens.THUMB_DIR = root / "thumbs"
+        fjordlens.CONVERT_DIR = root / "converted"
         fjordlens.CONVERSION_WORK_DIR = root / "conversion_work"
         fjordlens.DB_PATH = fjordlens.DATA_DIR / "fjordlens.db"
         fjordlens.INSTALL_STATE_PATH = fjordlens.DATA_DIR / "fjordlens.install.json"
@@ -32,6 +34,7 @@ class UploadConversionUploaderTests(unittest.TestCase):
         fjordlens.DATA_DIR.mkdir(parents=True, exist_ok=True)
         fjordlens.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         fjordlens.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        fjordlens.CONVERT_DIR.mkdir(parents=True, exist_ok=True)
         with fjordlens.UPLOAD_PENDING_LOCK:
             fjordlens.UPLOAD_PENDING_BY_USER.clear()
         fjordlens.init_db()
@@ -139,6 +142,26 @@ class UploadConversionUploaderTests(unittest.TestCase):
 
         self.assertEqual(result["indexed"], 1)
         self.assertEqual(events, ["thumb", "face"])
+
+    def test_ios_viewable_normalizes_jpeg_without_changing_original(self):
+        source = fjordlens.UPLOAD_DIR / "originals" / "camera" / "ios.jpg"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("CMYK", (5000, 2500), color=(20, 40, 60, 0)).save(source, format="JPEG")
+        original_bytes = source.read_bytes()
+
+        viewable = fjordlens.ensure_viewable_copy(
+            source,
+            "uploads/originals/camera/ios.jpg",
+            normalize_jpeg=True,
+        )
+
+        self.assertNotEqual(viewable, source)
+        self.assertTrue(viewable.is_file())
+        with Image.open(viewable) as image:
+            self.assertEqual(image.mode, "RGB")
+            self.assertLessEqual(max(image.size), 4096)
+            self.assertFalse(bool(image.info.get("progressive") or image.info.get("progression")))
+        self.assertEqual(source.read_bytes(), original_bytes)
 
     def test_disk_sync_does_not_claim_system_uploaded_file_after_queue_handoff(self):
         source = fjordlens.UPLOAD_DIR / "camera.jpg"
