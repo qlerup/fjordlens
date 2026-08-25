@@ -201,8 +201,14 @@ compose_build_no_cache() {
 }
 
 compose_up() {
+	# --force-recreate when a specific service list is given: fjordlens-ai in
+	# particular only detects CUDA/onnxruntime GPU providers once at process
+	# startup, so if it never rebuilds (its image/config didn't change) plain
+	# "up -d" leaves the same long-running process in place and any GPU
+	# detection glitch from its last boot persists indefinitely. Forcing a
+	# recreate on every update guarantees a fresh device check.
 	if [ -n "$COMPOSE_SERVICES" ]; then
-		docker_compose up -d $COMPOSE_SERVICES
+		docker_compose up -d --force-recreate $COMPOSE_SERVICES
 	else
 		docker_compose up -d
 	fi
@@ -210,7 +216,7 @@ compose_up() {
 
 compose_up_build() {
 	if [ -n "$COMPOSE_SERVICES" ]; then
-		docker_compose up -d --build $COMPOSE_SERVICES
+		docker_compose up -d --build --force-recreate $COMPOSE_SERVICES
 	else
 		docker_compose up -d --build
 	fi
