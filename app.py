@@ -15553,6 +15553,7 @@ def index():
             "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
             "ui_design": str((row["ui_design"] if row and "ui_design" in row.keys() else "classic") or "classic").lower(),
             "video_autoplay": video_autoplay_enabled(),
+            "ui_design_intro_seen": _get_setting_bool("ui_design_intro_seen", False),
         }
     except Exception:
         role = None
@@ -15565,6 +15566,7 @@ def index():
             "theme_mode": "system",
             "ui_design": "classic",
             "video_autoplay": video_autoplay_enabled(),
+            "ui_design_intro_seen": _get_setting_bool("ui_design_intro_seen", False),
         }
     return render_template(
         "index.html",
@@ -25032,6 +25034,15 @@ def api_me_ui_design():
         return jsonify({"ok": True, "ui_design": ui_design})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/ui-design-intro-seen", methods=["POST"])
+@login_required
+def api_ui_design_intro_seen():
+    # Global, not per-user: once anyone has dismissed the "new design" intro,
+    # nobody should see it again on any account or device.
+    _set_setting("ui_design_intro_seen", "1")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/me/profile", methods=["POST"])

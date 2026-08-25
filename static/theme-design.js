@@ -89,6 +89,9 @@
   function closeIntro() {
     if (introModal) introModal.classList.remove('active');
     try { localStorage.setItem(INTRO_KEY, 'seen'); } catch {}
+    // Source of truth is server-side and global: once anyone dismisses this,
+    // nobody should see it again on any account or device.
+    try { fetch('/api/ui-design-intro-seen', { method: 'POST' }); } catch {}
   }
 
   applyLocally(current);
@@ -102,8 +105,10 @@
     closeIntro();
   });
 
-  let introSeen = false;
-  try { introSeen = localStorage.getItem(INTRO_KEY) === 'seen'; } catch {}
+  let introSeen = !!profile.ui_design_intro_seen;
+  if (!introSeen) {
+    try { introSeen = localStorage.getItem(INTRO_KEY) === 'seen'; } catch {}
+  }
   if (!introSeen && introModal) {
     if (introSelect) introSelect.value = current === 'fjord' ? 'fjord' : 'classic';
     window.setTimeout(() => introModal.classList.add('active'), 350);

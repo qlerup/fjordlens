@@ -1175,6 +1175,34 @@ select.select {
   }
 }
 
+/* ---------- Mapper: højreklik-menu + thumbnail-vælger i fjord-glas ---------- */
+
+.mapper-context-menu {
+  background: var(--fl-card-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--fl-card-border);
+  border-radius: 18px;
+  box-shadow:
+    0 24px 60px -18px rgba(2, 12, 16, 0.65),
+    inset 0 1px 0 var(--fl-card-highlight);
+}
+.mapper-context-menu.open {
+  animation: fl-pop 0.28s var(--fl-spring) both;
+}
+.mapper-context-menu-item {
+  border-radius: 11px;
+}
+
+.mapper-thumbnail-picker-cell {
+  background: var(--fl-input-bg);
+  border-radius: 13px;
+  border-color: var(--fl-card-border);
+}
+.mapper-thumbnail-picker-cell:hover {
+  border-color: var(--accent);
+}
+
 /* ---------- Lightbox/viewer: biograf i flydende glas ---------- */
 
 #viewer {

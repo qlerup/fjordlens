@@ -192,6 +192,28 @@
       <section id="emptyState" class="empty hidden"></section>
       <section id="galleryGrid" class="gallery-grid"></section>
 
+      <div id="mapperContextMenu" class="mapper-context-menu hidden" role="menu" aria-label="Mapper genvejsmenu"></div>
+
+      <!-- Vælg nye thumbnails til mappen -->
+      <div id="mapperThumbnailPickerModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mapperThumbnailPickerTitle">
+        <div class="modal-backdrop"></div>
+        <div class="modal-dialog mapper-thumbnail-picker-dialog">
+          <div class="modal-header">
+            <h3 id="mapperThumbnailPickerTitle">V&aelig;lg nye thumbnails</h3>
+            <button id="mapperThumbnailPickerClose" class="btn ghost" type="button" aria-label="Luk">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p id="mapperThumbnailPickerHint" class="mini-label">V&aelig;lg 1, 2 eller 4 billeder til mappens forsidebillede.</p>
+            <div id="mapperThumbnailPickerGrid" class="mapper-thumbnail-picker-grid"></div>
+            <p id="mapperThumbnailPickerStatus" class="status hidden"></p>
+            <div class="toolbar mapper-thumbnail-picker-actions">
+              <button id="mapperThumbnailPickerCancel" class="btn" type="button">Annuller</button>
+              <button id="mapperThumbnailPickerSave" class="btn primary" type="button">Gem</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Download modal -->
       <div id="mapperDownloadModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mapperDownloadModalTitle">
         <div class="modal-backdrop"></div>

@@ -140,6 +140,15 @@
   mapperHeaderCreateAction: document.getElementById("mapperHeaderCreateAction"),
   mapperHeaderRenameAction: document.getElementById("mapperHeaderRenameAction"),
   mapperHeaderRefreshPreviewsAction: document.getElementById("mapperHeaderRefreshPreviewsAction"),
+  mapperContextMenu: document.getElementById("mapperContextMenu"),
+  mapperThumbnailPickerModal: document.getElementById("mapperThumbnailPickerModal"),
+  mapperThumbnailPickerTitle: document.getElementById("mapperThumbnailPickerTitle"),
+  mapperThumbnailPickerHint: document.getElementById("mapperThumbnailPickerHint"),
+  mapperThumbnailPickerClose: document.getElementById("mapperThumbnailPickerClose"),
+  mapperThumbnailPickerGrid: document.getElementById("mapperThumbnailPickerGrid"),
+  mapperThumbnailPickerStatus: document.getElementById("mapperThumbnailPickerStatus"),
+  mapperThumbnailPickerCancel: document.getElementById("mapperThumbnailPickerCancel"),
+  mapperThumbnailPickerSave: document.getElementById("mapperThumbnailPickerSave"),
   momentPlayerOverlay: document.getElementById("momentPlayerOverlay"),
   momentPlayerProgress: document.getElementById("momentPlayerProgress"),
   momentPlayerCloseBtn: document.getElementById("momentPlayerCloseBtn"),
@@ -1306,6 +1315,21 @@ const I18N = {
     mapper_refresh_previews_select_one: 'V\u00e6lg pr\u00e6cis \u00e9n mappe.',
     mapper_refresh_previews_success: 'Mappepreviews opdateret',
     mapper_refresh_previews_failed: 'Kunne ikke finde mappepreviews',
+    mapper_ctx_upload: 'Upload',
+    mapper_ctx_create_folder: 'Opret mappe',
+    mapper_ctx_select: 'V\u00e6lg',
+    mapper_ctx_rename: 'Omd\u00f8b',
+    mapper_ctx_delete: 'Slet',
+    mapper_ctx_choose_thumbnails: 'V\u00e6lg nye thumbnails til mappen',
+    mapper_thumb_picker_title: 'V\u00e6lg nye thumbnails',
+    mapper_thumb_picker_hint: 'V\u00e6lg 1, 2 eller 4 billeder til mappens forsidebillede.',
+    mapper_thumb_picker_save: 'Gem',
+    mapper_thumb_picker_empty: 'Denne mappe har ingen billeder endnu.',
+    mapper_thumb_picker_loading: 'Henter billeder\u2026',
+    mapper_thumb_picker_load_failed: 'Kunne ikke hente billeder',
+    mapper_thumb_picker_invalid_count: 'V\u00e6lg 1, 2 eller 4 billeder.',
+    mapper_thumb_picker_success: 'Thumbnails opdateret',
+    mapper_thumb_picker_failed: 'Kunne ikke gemme thumbnails',
     detail_rethumb_title: 'Genskab thumbnail',
     detail_rethumb_success: 'Thumbnail genskabt',
     detail_rethumb_failed: 'Thumbnail kunne ikke genskabes',
@@ -2151,6 +2175,21 @@ const I18N = {
     mapper_refresh_previews_select_one: 'Select exactly one folder.',
     mapper_refresh_previews_success: 'Folder previews updated',
     mapper_refresh_previews_failed: 'Could not find folder previews',
+    mapper_ctx_upload: 'Upload',
+    mapper_ctx_create_folder: 'Create folder',
+    mapper_ctx_select: 'Select',
+    mapper_ctx_rename: 'Rename',
+    mapper_ctx_delete: 'Delete',
+    mapper_ctx_choose_thumbnails: 'Choose new thumbnails for the folder',
+    mapper_thumb_picker_title: 'Choose new thumbnails',
+    mapper_thumb_picker_hint: 'Choose 1, 2, or 4 photos for the folder cover.',
+    mapper_thumb_picker_save: 'Save',
+    mapper_thumb_picker_empty: 'This folder has no photos yet.',
+    mapper_thumb_picker_loading: 'Loading photos…',
+    mapper_thumb_picker_load_failed: 'Could not load photos',
+    mapper_thumb_picker_invalid_count: 'Choose 1, 2, or 4 photos.',
+    mapper_thumb_picker_success: 'Thumbnails updated',
+    mapper_thumb_picker_failed: 'Could not save thumbnails',
     detail_rethumb_title: 'Rebuild thumbnail',
     detail_rethumb_success: 'Thumbnail rebuilt',
     detail_rethumb_failed: 'Thumbnail could not be rebuilt',
@@ -2731,6 +2770,9 @@ let state = {
   mapperSelectedPhotoIds: new Set(),
   mapperFolderModalMode: "create",
   mapperRenameTargetPath: "",
+  mapperUploadTargetOverride: null,
+  mapperThumbnailPickerFolder: "",
+  mapperThumbnailPickerSelected: [],
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
   // Paging for large folders (timeline and mapper views)
@@ -6572,11 +6614,19 @@ function appendCardTo(item, container) {
   card.addEventListener('touchmove', cancelMapperLongPressOnMove, { passive: true });
   ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => card.addEventListener(eventName, cancelMapperLongPress));
   card.addEventListener('contextmenu', (ev) => {
-    if (state.view !== 'mapper' || !shouldReplaceNativeMediaContextMenu()) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    cancelMapperLongPress();
-    activateMapperLongPress();
+    if (state.view !== 'mapper') return;
+    if (shouldReplaceNativeMediaContextMenu()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancelMapperLongPress();
+      activateMapperLongPress();
+      return;
+    }
+    if (isDesktopContextMenuDevice()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openMapperContextMenu(ev.clientX, ev.clientY, mapperContextMenuItemsForPhoto(item.id));
+    }
   });
   card.addEventListener('dragstart', (ev) => ev.preventDefault());
   card.addEventListener('pointerdown', (ev) => {
@@ -6883,6 +6933,13 @@ function appendFolderCard(folder, arr, opts = {}) {
   card.addEventListener('mousedown', _lpStart);
   card.addEventListener('touchstart', _lpStart, { passive: true });
   ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev => card.addEventListener(ev, _lpCancel));
+  card.addEventListener('contextmenu', (ev) => {
+    if (state.view !== 'mapper' || !isDesktopContextMenuDevice()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    _lpCancel();
+    openMapperContextMenu(ev.clientX, ev.clientY, mapperContextMenuItemsForFolder(folder));
+  });
   card.addEventListener("click", (ev) => {
     if (_lpActivated) { _lpActivated = false; return; }
     if (_consumeMapperDragSelectClickSuppression()) {
@@ -13053,7 +13110,7 @@ async function setView(view, opts = {}) {
     const isSmall = window.matchMedia('(max-width: 760px)').matches;
     document.body.classList.toggle('compact-settings', nextView === 'settings' && isSmall);
   } catch {}
-  if (nextView !== 'mapper') closeMapperHeaderMenu();
+  if (nextView !== 'mapper') { closeMapperHeaderMenu(); closeMapperContextMenu(); }
   if (nextView !== 'mapper' && els.mapperTreeNav) {
     if (els.mapperNavMenu) els.mapperNavMenu.classList.add('hidden');
     els.mapperTreeNav.classList.add('hidden');
@@ -13382,6 +13439,12 @@ function applyUiLanguage() {
   if (els.downloadDateTodayHelp) els.downloadDateTodayHelp.textContent = tr('download_date_today_help');
   if (els.downloadConvertedBtn) els.downloadConvertedBtn.textContent = tr('mapper_download_converted');
   if (els.downloadOriginalBtn) els.downloadOriginalBtn.textContent = tr('mapper_download_original');
+
+  if (els.mapperThumbnailPickerTitle) els.mapperThumbnailPickerTitle.textContent = tr('mapper_thumb_picker_title');
+  if (els.mapperThumbnailPickerHint) els.mapperThumbnailPickerHint.textContent = tr('mapper_thumb_picker_hint');
+  if (els.mapperThumbnailPickerClose) els.mapperThumbnailPickerClose.setAttribute('aria-label', tr('scan_modal_close'));
+  if (els.mapperThumbnailPickerCancel) els.mapperThumbnailPickerCancel.textContent = tr('scan_modal_cancel');
+  if (els.mapperThumbnailPickerSave) els.mapperThumbnailPickerSave.textContent = tr('mapper_thumb_picker_save');
   if (els.mapperDownloadMobileShareBtn) els.mapperDownloadMobileShareBtn.textContent = tr('download_mobile_share');
   if (els.mapperDownloadMobileFallbackBtn) els.mapperDownloadMobileFallbackBtn.textContent = tr('download_mobile_fallback');
   updateMapperDownloadHint();
@@ -13884,6 +13947,124 @@ function toggleMapperHeaderMenu() {
   else openMapperHeaderMenu();
 }
 
+// --- Desktop right-click context menu for Mapper (background / folder / photo) ---
+// Only shown on pointer devices with real hover (mouse/trackpad). Touch keeps its
+// existing long-press-to-select behavior untouched — see shouldReplaceNativeMediaContextMenu().
+function isDesktopContextMenuDevice() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  } catch {
+    return true;
+  }
+}
+
+function closeMapperContextMenu() {
+  const menu = els.mapperContextMenu;
+  if (!menu) return;
+  menu.classList.remove('open');
+  menu.classList.add('hidden');
+  menu.innerHTML = '';
+}
+
+// items: [{ label, action, danger, disabled }]
+function openMapperContextMenu(x, y, items) {
+  const menu = els.mapperContextMenu;
+  if (!menu || !Array.isArray(items) || !items.length) return;
+  menu.innerHTML = '';
+  items.forEach((item) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mapper-context-menu-item' + (item.danger ? ' danger' : '');
+    btn.textContent = item.label;
+    if (item.disabled) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeMapperContextMenu();
+        try { item.action && item.action(); } catch (err) { console.error(err); }
+      });
+    }
+    menu.appendChild(btn);
+  });
+  menu.classList.remove('hidden');
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  menu.classList.add('open');
+  // Clamp within viewport after layout so the menu never spills off-screen
+  requestAnimationFrame(() => {
+    try {
+      const vw = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0);
+      const vh = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+      const rect = menu.getBoundingClientRect();
+      const pad = 8;
+      const left = Math.max(pad, Math.min(x, vw - rect.width - pad));
+      const top = Math.max(pad, Math.min(y, vh - rect.height - pad));
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    } catch {}
+  });
+}
+
+function selectSingleMapperFolder(folderPath) {
+  if (!state.mapperSelectedFolders) state.mapperSelectedFolders = new Set();
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  state.mapperSelectedPhotoIds.clear();
+  state.mapperSelectedFolders = new Set([folderPath]);
+}
+
+function selectSingleMapperPhoto(photoId) {
+  if (!state.mapperSelectedFolders) state.mapperSelectedFolders = new Set();
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  state.mapperSelectedFolders.clear();
+  state.mapperSelectedPhotoIds = new Set([photoId]);
+}
+
+function mapperContextMenuItemsForBackground() {
+  return [
+    { label: tr('mapper_ctx_upload'), action: () => openMapperUploadPicker() },
+    { label: tr('mapper_ctx_create_folder'), action: () => openMapperCreateModal() },
+    { label: tr('mapper_ctx_select'), action: () => setMapperEditMode(true) },
+  ];
+}
+
+function mapperContextMenuItemsForFolder(folderPath) {
+  return [
+    { label: tr('mapper_ctx_rename'), action: () => openMapperRenameModal(folderPath) },
+    { label: tr('mapper_ctx_select'), action: () => { setMapperEditMode(true); toggleMapperFolderSelection(folderPath); } },
+    {
+      label: tr('mapper_ctx_delete'),
+      danger: true,
+      action: () => { selectSingleMapperFolder(folderPath); deleteSelectedMapperFolders(); },
+    },
+    { label: tr('mapper_ctx_choose_thumbnails'), action: () => openMapperThumbnailPickerModal(folderPath) },
+    {
+      label: tr('mapper_ctx_upload'),
+      action: () => { state.mapperUploadTargetOverride = folderPath; openMapperUploadPicker(); },
+    },
+  ];
+}
+
+function mapperContextMenuItemsForPhoto(photoId) {
+  return [
+    {
+      label: tr('mapper_ctx_select'),
+      action: () => {
+        if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+        state.mapperSelectedPhotoIds.add(photoId);
+        setMapperEditMode(true);
+      },
+    },
+    {
+      label: tr('mapper_ctx_delete'),
+      danger: true,
+      action: () => { selectSingleMapperPhoto(photoId); deleteSelectedMapperPhotos(); },
+    },
+    { label: tr('mapper_ctx_upload'), action: () => openMapperUploadPicker() },
+  ];
+}
+
 let pendingIosUploadPicker = null;
 
 function isProbablyIosDevice() {
@@ -13937,6 +14118,114 @@ function openMapperUploadPicker(skipPrepNotice = false) {
     els.mapperUploadInput.click();
   } catch {
     showStatus(tr('file_picker_open_failed'), 'err');
+  }
+}
+
+// --- Manual folder-thumbnail picker ("Vælg nye thumbnails til mappen") ---
+async function openMapperThumbnailPickerModal(folderPath) {
+  if (!els.mapperThumbnailPickerModal) return;
+  state.mapperThumbnailPickerFolder = String(folderPath || '');
+  state.mapperThumbnailPickerSelected = [];
+  if (els.mapperThumbnailPickerStatus) {
+    els.mapperThumbnailPickerStatus.textContent = '';
+    els.mapperThumbnailPickerStatus.classList.add('hidden');
+  }
+  if (els.mapperThumbnailPickerGrid) {
+    els.mapperThumbnailPickerGrid.innerHTML = `<p class="mini-label">${escapeHtml(tr('mapper_thumb_picker_loading'))}</p>`;
+  }
+  els.mapperThumbnailPickerModal.classList.remove('hidden');
+  try {
+    const query = new URLSearchParams({ view: 'mapper', folder: state.mapperThumbnailPickerFolder, direct: '1', limit: '200' });
+    const res = await fetch(`/api/photos?${query.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data || !Array.isArray(data.items)) throw new Error((data && data.error) || 'load_failed');
+    renderMapperThumbnailPickerGrid(data.items);
+  } catch {
+    if (els.mapperThumbnailPickerGrid) {
+      els.mapperThumbnailPickerGrid.innerHTML = `<p class="mini-label">${escapeHtml(tr('mapper_thumb_picker_load_failed'))}</p>`;
+    }
+  }
+}
+
+function renderMapperThumbnailPickerGrid(items) {
+  const grid = els.mapperThumbnailPickerGrid;
+  if (!grid) return;
+  grid.innerHTML = '';
+  const toUrl = (p) => p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
+  const usable = (Array.isArray(items) ? items : []).filter((it) => !!toUrl(it));
+  if (!usable.length) {
+    grid.innerHTML = `<p class="mini-label">${escapeHtml(tr('mapper_thumb_picker_empty'))}</p>`;
+    return;
+  }
+  usable.forEach((item) => {
+    const url = toUrl(item);
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'mapper-thumbnail-picker-cell';
+    cell.innerHTML = `<img src="${escapeHtml(url)}" alt="" draggable="false"><span class="mapper-thumbnail-picker-badge"></span>`;
+    cell.addEventListener('click', () => toggleMapperThumbnailPickerSelection(url));
+    grid.appendChild(cell);
+  });
+}
+
+function toggleMapperThumbnailPickerSelection(url) {
+  const selected = state.mapperThumbnailPickerSelected;
+  const idx = selected.indexOf(url);
+  if (idx >= 0) selected.splice(idx, 1);
+  else if (selected.length < 4) selected.push(url);
+  const grid = els.mapperThumbnailPickerGrid;
+  if (!grid) return;
+  Array.from(grid.querySelectorAll('.mapper-thumbnail-picker-cell')).forEach((cell) => {
+    const img = cell.querySelector('img');
+    const u = img && img.getAttribute('src');
+    const pos = selected.indexOf(u);
+    cell.classList.toggle('selected', pos >= 0);
+    const badge = cell.querySelector('.mapper-thumbnail-picker-badge');
+    if (badge) badge.textContent = pos >= 0 ? String(pos + 1) : '';
+  });
+  if (els.mapperThumbnailPickerStatus) els.mapperThumbnailPickerStatus.classList.add('hidden');
+}
+
+function closeMapperThumbnailPickerModal() {
+  if (!els.mapperThumbnailPickerModal) return;
+  els.mapperThumbnailPickerModal.classList.add('hidden');
+  state.mapperThumbnailPickerFolder = '';
+  state.mapperThumbnailPickerSelected = [];
+}
+
+async function saveMapperThumbnailPickerSelection() {
+  const folder = state.mapperThumbnailPickerFolder;
+  const selected = (state.mapperThumbnailPickerSelected || []).slice();
+  if (![1, 2, 4].includes(selected.length)) {
+    if (els.mapperThumbnailPickerStatus) {
+      els.mapperThumbnailPickerStatus.textContent = tr('mapper_thumb_picker_invalid_count');
+      els.mapperThumbnailPickerStatus.className = 'status err';
+      els.mapperThumbnailPickerStatus.classList.remove('hidden');
+    }
+    return;
+  }
+  const btn = els.mapperThumbnailPickerSave;
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+  try {
+    const res = await fetch('/api/folder-previews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, previews: selected }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'save_failed');
+    invalidateStoredFolderPreviews([folder]);
+    closeMapperThumbnailPickerModal();
+    showStatus(tr('mapper_thumb_picker_success'), 'ok');
+    renderGrid();
+  } catch {
+    if (els.mapperThumbnailPickerStatus) {
+      els.mapperThumbnailPickerStatus.textContent = tr('mapper_thumb_picker_failed');
+      els.mapperThumbnailPickerStatus.className = 'status err';
+      els.mapperThumbnailPickerStatus.classList.remove('hidden');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
   }
 }
 
@@ -13998,6 +14287,7 @@ if (els.search) {
 document.addEventListener('pointerdown', (e) => {
   const target = e.target;
   if (!(target instanceof Node)) return;
+  if (!(els.mapperContextMenu && els.mapperContextMenu.contains(target))) closeMapperContextMenu();
   if (els.searchShell && els.searchShell.contains(target)) return;
   if (els.mapperSearchShell && els.mapperSearchShell.contains(target)) return;
   if (els.mapperHeaderActions && els.mapperHeaderActions.contains(target)) return;
@@ -14005,10 +14295,18 @@ document.addEventListener('pointerdown', (e) => {
   if (els.mapperSearchShell) els.mapperSearchShell.classList.remove('expanded');
   closeMapperHeaderMenu();
 });
+window.addEventListener('scroll', () => closeMapperContextMenu(), { passive: true, capture: true });
+window.addEventListener('resize', () => closeMapperContextMenu());
 
 // Global ESC to cancel selection in Mapper view
 document.addEventListener('keydown', (e) => {
   try {
+    if (e.key === 'Escape' && els.mapperContextMenu && els.mapperContextMenu.classList.contains('open')) {
+      closeMapperContextMenu();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Escape' && state && state.view === 'mapper' && state.mapperEditMode) {
       setMapperEditMode(false);
       e.preventDefault();
@@ -14016,6 +14314,16 @@ document.addEventListener('keydown', (e) => {
     }
   } catch {}
 });
+
+if (els.grid) {
+  els.grid.addEventListener('contextmenu', (ev) => {
+    if (state.view !== 'mapper' || state.mapperEditMode || !isDesktopContextMenuDevice()) return;
+    if (ev.target && ev.target.closest && ev.target.closest('.folder-card, .photo-card')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openMapperContextMenu(ev.clientX, ev.clientY, mapperContextMenuItemsForBackground());
+  });
+}
 
 if (els.mapperSearchToggleBtn) {
   els.mapperSearchToggleBtn.addEventListener('click', (e) => {
@@ -15595,6 +15903,20 @@ if (els.mapperCreateModal) {
     if (e.target === els.mapperCreateModal) closeMapperCreateModal();
   });
 }
+if (els.mapperThumbnailPickerClose) {
+  els.mapperThumbnailPickerClose.addEventListener('click', () => closeMapperThumbnailPickerModal());
+}
+if (els.mapperThumbnailPickerCancel) {
+  els.mapperThumbnailPickerCancel.addEventListener('click', () => closeMapperThumbnailPickerModal());
+}
+if (els.mapperThumbnailPickerSave) {
+  els.mapperThumbnailPickerSave.addEventListener('click', () => { saveMapperThumbnailPickerSelection(); });
+}
+if (els.mapperThumbnailPickerModal) {
+  els.mapperThumbnailPickerModal.addEventListener('click', (e) => {
+    if (e.target === els.mapperThumbnailPickerModal) closeMapperThumbnailPickerModal();
+  });
+}
 if (els.mapperSharePasswordToggle) {
   els.mapperSharePasswordToggle.addEventListener('change', _syncMapperSharePasswordVisibility);
 }
@@ -16067,7 +16389,10 @@ if (els.mapperUploadInput) {
   els.mapperUploadInput.addEventListener('change', () => {
     const list = (els.mapperUploadInput && els.mapperUploadInput.files) ? els.mapperUploadInput.files : null;
     if (!list || !list.length) return;
-    const targetSubdir = String(state.mapperPath || '');
+    const targetSubdir = state.mapperUploadTargetOverride != null
+      ? String(state.mapperUploadTargetOverride)
+      : String(state.mapperPath || '');
+    state.mapperUploadTargetOverride = null;
     // Clone FileList immediately; iOS may keep the picker open until the handler returns.
     // Defer heavy work so the system UI can dismiss smoothly.
     const files = Array.from(list);
