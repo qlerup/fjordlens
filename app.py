@@ -241,7 +241,17 @@ RAW_CONVERT_ON_UPLOAD_DEFAULT = str(os.environ.get("RAW_CONVERT_ON_UPLOAD", "1")
 UPLOAD_WORKFLOW_MODE_GENTLE = "gentle"
 UPLOAD_WORKFLOW_MODE_AGGRESSIVE = "aggressive"
 UPLOAD_WORKFLOW_MODE_DEFAULT = UPLOAD_WORKFLOW_MODE_GENTLE
-UPLOAD_WORKFLOW_FACE_BATCH_SIZE = 10
+try:
+    UPLOAD_WORKFLOW_FACE_BATCH_SIZE = int(os.environ.get("UPLOAD_WORKFLOW_FACE_BATCH_SIZE", "2") or 2)
+except Exception:
+    UPLOAD_WORKFLOW_FACE_BATCH_SIZE = 2
+UPLOAD_WORKFLOW_FACE_BATCH_SIZE = max(1, min(4, UPLOAD_WORKFLOW_FACE_BATCH_SIZE))
+try:
+    FACE_DETECT_MAX_CONCURRENCY = int(os.environ.get("FACE_DETECT_MAX_CONCURRENCY", str(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)) or UPLOAD_WORKFLOW_FACE_BATCH_SIZE)
+except Exception:
+    FACE_DETECT_MAX_CONCURRENCY = UPLOAD_WORKFLOW_FACE_BATCH_SIZE
+FACE_DETECT_MAX_CONCURRENCY = max(1, min(4, FACE_DETECT_MAX_CONCURRENCY))
+FACE_DETECT_SEMAPHORE = threading.BoundedSemaphore(FACE_DETECT_MAX_CONCURRENCY)
 # Thumbnail generation currently uses PIL/ffmpeg and does not use GPU in this service.
 UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU = False
 UPLOAD_DEST_UPLOADS = "uploads"
@@ -1629,11 +1639,14 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
             with ai_src.open("rb") as f:
                 data = f.read()
         files = {"file": (ai_src.name, data, "application/octet-stream")}
-        r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        with FACE_DETECT_SEMAPHORE:
+            r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
         if r.ok:
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):
                 return js.get("faces")
+        else:
+            log_event("ai_http_error", rel_path=str(path), error=f"faces_status:{r.status_code}")
     except Exception as e:
         log_event("error", rel_path=str(path), error=f"ai_faces: {e}")
     return None
@@ -1643,7 +1656,8 @@ def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional
     """Send image bytes to AI service for face detection/embeddings."""
     try:
         files = {"file": (filename, data, "application/octet-stream")}
-        r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        with FACE_DETECT_SEMAPHORE:
+            r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
         if r.ok:
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):

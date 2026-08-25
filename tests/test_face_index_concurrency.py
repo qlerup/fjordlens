@@ -105,6 +105,13 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
                 faces = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE photo_id=?", (photo["id"],)).fetchone()
                 self.assertEqual(faces["c"], 1)
 
+    def test_upload_face_batch_uses_bounded_concurrency(self):
+        payload = fjordlens._upload_workflow_settings_payload()
+        self.assertEqual(payload["batch_size"], fjordlens.UPLOAD_WORKFLOW_FACE_BATCH_SIZE)
+        self.assertGreaterEqual(payload["batch_size"], 1)
+        self.assertLessEqual(payload["batch_size"], 4)
+        self.assertLessEqual(fjordlens.FACE_DETECT_MAX_CONCURRENCY, 4)
+
 
 if __name__ == "__main__":
     unittest.main()
