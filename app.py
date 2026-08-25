@@ -5113,6 +5113,7 @@ def enforce_login_for_app():
         "api_client_pair_start",
         "api_client_pair_status",
         "api_client_status",
+        "api_client_upload_transfer_state",
         "api_client_upload",
         "api_client_uploaded_names",
     }
@@ -16918,6 +16919,41 @@ def api_client_uploaded_names():
     return jsonify({"ok": True, "names": names})
 
 
+@app.route("/api/client/upload-transfer-state", methods=["POST"])
+def api_client_upload_transfer_state():
+    client = _load_api_client_from_bearer()
+    if not client:
+        return jsonify({"ok": False, "error": "Ugyldig eller tilbagekaldt adgang"}), 401
+    body = request.get_json(silent=True) or {}
+    active = bool(body.get("active"))
+    try:
+        expected_count = max(0, int(body.get("expected_count") or 0))
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldigt antal filer"}), 400
+    client_label = f"client:{client['name']}#{client['id']}"
+    _set_upload_transfer_active(client_label, active)
+    if active:
+        log_event(
+            "api_client_upload_batch_start",
+            client_id=int(client["id"]),
+            expected_count=expected_count,
+        )
+    else:
+        log_event(
+            "api_client_upload_batch_done",
+            client_id=int(client["id"]),
+            expected_count=expected_count,
+            pending=_pending_upload_count(client_label),
+        )
+        _ensure_upload_postprocess_running(client_label)
+    return jsonify({
+        "ok": True,
+        "active": _is_upload_transfer_active(client_label),
+        "expected_count": expected_count,
+        "pending": _pending_upload_count(client_label),
+    })
+
+
 @app.route("/api/client/upload", methods=["POST"])
 def api_client_upload():
     client = _load_api_client_from_bearer()
@@ -16928,6 +16964,9 @@ def api_client_upload():
         return jsonify({"ok": False, "error": "Ingen mappe valgt for denne enhed endnu"}), 400
 
     client_label = f"client:{client['name']}#{client['id']}"
+    batch_active = _is_upload_transfer_active(client_label)
+    if batch_active:
+        _set_upload_transfer_active(client_label, True)
     target_dir = UPLOAD_DIR / "originals" / folder_path
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -16979,13 +17018,14 @@ def api_client_upload():
         except Exception as e:
             errors.append(str(e))
 
-    try:
-        _ensure_upload_postprocess_running(client_label)
-    except Exception as e:
+    if not batch_active:
         try:
-            log_event("api_client_postprocess_failed", client_id=int(client["id"]), error=f"autostart: {e}")
-        except Exception:
-            pass
+            _ensure_upload_postprocess_running(client_label)
+        except Exception as e:
+            try:
+                log_event("api_client_postprocess_failed", client_id=int(client["id"]), error=f"autostart: {e}")
+            except Exception:
+                pass
 
     try:
         log_event("api_client_upload_done", client_id=int(client["id"]), files=len(files), saved=len(saved), errors=len(errors))

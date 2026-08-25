@@ -1,7 +1,9 @@
 import tempfile
 import unittest
+from io import BytesIO
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
 
@@ -150,6 +152,37 @@ class ApiClientTests(unittest.TestCase):
             json={"device_name": "Kamera 2"},
         )
         self.assertEqual(replacement.status_code, 200)
+
+    def test_postprocessing_waits_until_client_finishes_upload_batch(self):
+        pairing = self._start_pairing()
+        self.assertEqual(self._approve(pairing["pairing_id"]).status_code, 200)
+        headers = {"Authorization": f"Bearer {pairing['secret']}"}
+
+        with patch.object(fjordlens, "_ensure_upload_postprocess_running", return_value=True) as ensure:
+            started = self.client.post(
+                "/api/client/upload-transfer-state",
+                headers=headers,
+                json={"active": True, "expected_count": 2},
+            )
+            self.assertEqual(started.status_code, 200)
+            self.assertEqual(started.get_json()["expected_count"], 2)
+
+            uploaded = self.client.post(
+                "/api/client/upload",
+                headers=headers,
+                data={"files": (BytesIO(b"camera-image"), "camera.jpg")},
+                content_type="multipart/form-data",
+            )
+            self.assertEqual(uploaded.status_code, 200)
+            ensure.assert_not_called()
+
+            finished = self.client.post(
+                "/api/client/upload-transfer-state",
+                headers=headers,
+                json={"active": False, "expected_count": 2},
+            )
+            self.assertEqual(finished.status_code, 200)
+            ensure.assert_called_once_with("client:Testkamera#1")
 
     def test_approval_page_requires_login_and_returns_to_tokens_tab(self):
         anonymous = fjordlens.app.test_client()
