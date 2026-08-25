@@ -1790,7 +1790,10 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
     best_pid: Optional[int] = None
     best_score = -1.0
     try:
-        rows = conn.execute("SELECT id, centroid_json FROM people WHERE centroid_json IS NOT NULL AND TRIM(centroid_json) != ''").fetchall()
+        rows = conn.execute(
+            "SELECT id, centroid_json FROM people "
+            "WHERE centroid_json IS NOT NULL AND TRIM(centroid_json) != '' AND COALESCE(hidden,0)=0"
+        ).fetchall()
         for row in rows:
             try:
                 cvec = json.loads(row["centroid_json"]) if row["centroid_json"] else None
@@ -1812,7 +1815,11 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
     best_pid = None
     best_score = -1.0
     try:
-        rows = conn.execute("SELECT embedding_json, person_id FROM faces WHERE embedding_json IS NOT NULL").fetchall()
+        rows = conn.execute(
+            "SELECT f.embedding_json, f.person_id FROM faces f "
+            "LEFT JOIN people p ON p.id = f.person_id "
+            "WHERE f.embedding_json IS NOT NULL AND (p.id IS NULL OR COALESCE(p.hidden,0)=0)"
+        ).fetchall()
         for row in rows:
             try:
                 vec = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -1892,10 +1899,10 @@ def _recompute_person_centroid(conn: sqlite3.Connection, pid: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[float]]]:
-    """Return list of (person_id, centroid_vec). Recompute missing on the fly."""
+    """Return list of (person_id, centroid_vec) for non-hidden people. Recompute missing on the fly."""
     out: list[tuple[int, list[float]]] = []
     try:
-        rows = conn.execute("SELECT id, centroid_json FROM people").fetchall()
+        rows = conn.execute("SELECT id, centroid_json FROM people WHERE COALESCE(hidden,0)=0").fetchall()
         for r in rows:
             pid = int(r["id"]) if r and r["id"] is not None else None
             if pid is None:
@@ -13825,6 +13832,8 @@ def api_people_list():
                     cvec = centroid_by_id.get(pid_i)
                     if not cvec:
                         continue
+                    if (item or {}).get("hidden"):
+                        continue
                     name_i = str((item or {}).get("name") or "")
                     if _is_unknown_bucket(item):
                         unknown_targets.append(pid_i)
@@ -13986,7 +13995,7 @@ def api_faces_match_unknown():
             # rename), instead of leaving them stuck as a "maybe" suggestion forever.
             clusters_promoted = 0
             try:
-                prows = conn.execute("SELECT id, name, centroid_json FROM people").fetchall()
+                prows = conn.execute("SELECT id, name, centroid_json FROM people WHERE COALESCE(hidden,0)=0").fetchall()
                 named_pool: list[tuple[int, list[float]]] = []
                 unknown_clusters: list[tuple[int, list[float]]] = []
                 for pr in prows:
