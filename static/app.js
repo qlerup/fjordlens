@@ -19363,7 +19363,6 @@ function appendLogItem(item, extra, level) {
     _level: level,
     _label: humanizeLogEvent(item.event),
   });
-  if (state.logItems.length > 1000) state.logItems.splice(0, state.logItems.length - 1000);
 }
 
 function humanizeLogEvent(eventName) {

@@ -1039,13 +1039,11 @@ UPLOAD_FOLDER_SYNC_RUNNING: set[str] = set()
 UPLOAD_FOLDER_SYNC_LAST_AT: Dict[str, float] = {}
 DIRECT_UPLOAD_POSTPROCESS_USER = "__direct_uploads__"
 
-# Persistent JSONL event log with an in-memory window for fast UI polling.
+# Persistent JSONL event log. Grows until the user clears it (Settings -> Logs
+# -> Ryd) - nothing is trimmed or rotated away automatically.
 from collections import deque
-LOG_MAX_ITEMS = 1000
-LOG_ROTATE_AT = 1200
-LOG_BUFFER: deque[Dict[str, Any]] = deque(maxlen=LOG_MAX_ITEMS)
+LOG_BUFFER: deque[Dict[str, Any]] = deque()
 LOG_SEQ: int = 0
-LOG_FILE_ENTRIES: int = 0
 LOG_LOCK = threading.RLock()
 UPLOAD_PENDING_BY_USER: Dict[str, list[str]] = {}
 UPLOAD_PENDING_LOCK = threading.Lock()
@@ -1080,24 +1078,11 @@ def _event_log_path() -> Path:
     return DATA_DIR / "fjordlens-events.jsonl"
 
 
-def _rewrite_persistent_logs_locked() -> None:
-    global LOG_FILE_ENTRIES
-    path = _event_log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
-        for item in LOG_BUFFER:
-            handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
-    temp_path.replace(path)
-    LOG_FILE_ENTRIES = len(LOG_BUFFER)
-
-
 def _load_persistent_logs() -> None:
-    global LOG_SEQ, LOG_FILE_ENTRIES
+    global LOG_SEQ
     with LOG_LOCK:
         LOG_BUFFER.clear()
         LOG_SEQ = 0
-        LOG_FILE_ENTRIES = 0
         path = _event_log_path()
         if not path.exists():
             return
@@ -1107,7 +1092,6 @@ def _load_persistent_logs() -> None:
                     raw = line.strip()
                     if not raw:
                         continue
-                    LOG_FILE_ENTRIES += 1
                     try:
                         item = json.loads(raw)
                     except (TypeError, ValueError):
@@ -1122,18 +1106,15 @@ def _load_persistent_logs() -> None:
                         continue
                     LOG_SEQ = max(LOG_SEQ, item_id)
                     LOG_BUFFER.append(item)
-            if LOG_FILE_ENTRIES > LOG_ROTATE_AT:
-                _rewrite_persistent_logs_locked()
         except OSError as exc:
             print(f"Could not load persistent event log: {exc}")
 
 
 def _clear_persistent_logs() -> None:
-    global LOG_SEQ, LOG_FILE_ENTRIES
+    global LOG_SEQ
     with LOG_LOCK:
         LOG_BUFFER.clear()
         LOG_SEQ = 0
-        LOG_FILE_ENTRIES = 0
         path = _event_log_path()
         try:
             path.unlink(missing_ok=True)
@@ -1144,7 +1125,7 @@ def _clear_persistent_logs() -> None:
 
 
 def log_event(event: str, **data: Any) -> None:
-    global LOG_SEQ, LOG_FILE_ENTRIES
+    global LOG_SEQ
     t = now_iso()
     with LOG_LOCK:
         LOG_SEQ += 1
@@ -1155,9 +1136,6 @@ def log_event(event: str, **data: Any) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
-            LOG_FILE_ENTRIES += 1
-            if LOG_FILE_ENTRIES > LOG_ROTATE_AT:
-                _rewrite_persistent_logs_locked()
         except OSError as exc:
             print(f"Could not persist event log: {exc}")
     # Console output with colors and proper newlines
