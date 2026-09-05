@@ -4142,6 +4142,7 @@ def init_db() -> None:
             -- ORDER BY ... LIMIT directly from the index instead.
             CREATE INDEX IF NOT EXISTS idx_photos_sort_date ON photos(COALESCE(captured_at, modified_fs, created_fs));
             CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(filename);
+            CREATE INDEX IF NOT EXISTS idx_photos_thumb_name ON photos(thumb_name);
                 CREATE INDEX IF NOT EXISTS idx_photos_phash ON photos(phash);
 
                 CREATE TABLE IF NOT EXISTS geo_cache (
@@ -6108,9 +6109,12 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
     try:
         blocked_dir_names = {"@eadir", "#recycle"}
         for root, dirs, _files in os.walk(base):
+            # These storage trees are hidden below; prune them before walking
+            # thousands of media directories on the NAS for a folder picker.
             dirs[:] = sorted([
                 d for d in dirs
                 if (not d.startswith(".")) and (d.strip().lower() not in blocked_dir_names)
+                and not (Path(root) == base and d in {"originals", "converted"})
             ])
             for d in dirs:
                 p = Path(root) / d
@@ -6221,9 +6225,10 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     ]
     where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
     with closing(get_conn()) as conn:
-        # Limit scan size for performance; we'll prefer newest items and stop after we pick enough
         rows = conn.execute(
-            f"SELECT * FROM photos WHERE {where} ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
+            f"SELECT id, rel_path, thumb_name FROM photos WHERE ({where}) "
+            "AND COALESCE(thumb_name, '') != '' "
+            "ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
             prefixes,
         ).fetchall()
     rows = _dedupe_upload_storage_rows(rows)
@@ -6231,35 +6236,20 @@ def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
     desc: list[str] = []
     seen: set[str] = set()
     for r in rows:
-        try:
-            rel = str(r["rel_path"] or "")
-            if not rel:
-                continue
-            try:
-                if not _disk_path_from_rel_path(rel).exists():
-                    continue
-            except Exception:
-                continue
-            thumb_name = str(r["thumb_name"] or "").strip()
-            has_real_thumb = bool(thumb_name) and (THUMB_DIR / thumb_name).exists()
-            pub = row_to_public(r)
-            if has_real_thumb:
-                url = pub.get("thumb_url")
-            else:
-                # Fallback keeps Mapper folder previews visible while background
-                # postprocess catches up and generates real thumbnails.
-                url = pub.get("view_url") or pub.get("original_url") or pub.get("download_url")
-        except Exception:
-            url = None
-        if not url or url in seen:
-            continue
+        rel = str(r["rel_path"] or "")
         photo_folder = _mapper_folder_from_rel(rel)
-        if photo_folder == f:
-            own.append(url)
-        else:
-            if f == "" or photo_folder.startswith(f + "/"):
-                desc.append(url)
-        seen.add(url)
+        bucket = own if photo_folder == f else desc
+        if len(bucket) >= 4:
+            continue
+        thumb_name = str(r["thumb_name"] or "").strip()
+        if not thumb_name or thumb_name in seen or not (THUMB_DIR / thumb_name).is_file():
+            continue
+        if photo_folder != f and not photo_folder.startswith(f + "/"):
+            continue
+        bucket.append(f"/api/thumbs/{thumb_name}")
+        seen.add(thumb_name)
+        if len(own) == 4:
+            break
     ordered = own + desc
     if not ordered:
         try:
@@ -6315,11 +6305,9 @@ def api_folder_previews_get():
         keys.append(nk)
     if not keys:
         return jsonify({"ok": True, "items": {}})
-    for k in keys:
-        try:
-            _sync_upload_folder_from_disk(k, recursive=False, max_files=UPLOAD_FOLDER_SYNC_PREVIEW_MAX_FILES)
-        except Exception:
-            pass
+    # Folder covers use the existing index and thumbnails. Browsing covers must
+    # not scan every child folder on the NAS; normal folder sync handles discovery.
+    keys = list(dict.fromkeys(keys))
     placeholders = ",".join(["?"] * len(keys))
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -6461,9 +6449,8 @@ def _folder_preview_urls_are_current(folder_key: str, urls: Any) -> bool:
         return False
     thumb_names = [_folder_preview_thumb_name_from_url(u) for u in clean]
     if any(not tn for tn in thumb_names):
-        # Backward/compat mode: allow non-thumb preview URLs (view/original/download)
-        # to remain valid so folder previews do not vanish when thumbs are missing.
-        return True
+        # Replace legacy full-size covers with actual thumbnails.
+        return False
     if any(not (THUMB_DIR / tn).exists() for tn in thumb_names):
         return False
     placeholders = ",".join(["?"] * len(set(thumb_names)))
@@ -6482,18 +6469,7 @@ def _folder_preview_urls_are_current(folder_key: str, urls: Any) -> bool:
         rels = by_thumb.get(tn) or []
         if not rels:
             return False
-        found_current = False
-        for rel in rels:
-            if not _folder_preview_rel_belongs(folder, rel):
-                continue
-            try:
-                if not _disk_path_from_rel_path(rel).exists():
-                    continue
-            except Exception:
-                continue
-            found_current = True
-            break
-        if not found_current:
+        if not any(_folder_preview_rel_belongs(folder, rel) for rel in rels):
             return False
     return True
 
@@ -16018,7 +15994,7 @@ def api_share_photos(token: str):
         child_path = f"{current_path}/{segment}" if current_path else segment
         entry = folders.setdefault(child_path, {"path": child_path, "count": 0, "previews": []})
         entry["count"] += 1
-        if len(entry["previews"]) < 4:
+        if len(entry["previews"]) < 4 and row["thumb_name"] and (THUMB_DIR / str(row["thumb_name"])).is_file():
             entry["previews"].append(url_for("api_share_thumb", token=token, photo_id=int(row["id"])))
 
     total = len(direct_rows)

@@ -6218,6 +6218,7 @@ function appendPhotoLoadMoreButton(id, expectedView) {
 }
 
 function renderGrid() {
+  window.FjordLensFolderPreviews.reset();
   // Toggle fixed-width columns for folder view
   if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
   if (els.mapperTools) els.mapperTools.classList.add("hidden");
@@ -6727,6 +6728,13 @@ function bindFolderNameMarquee(card, fullText) {
 
 const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
 
+const loadMapperFolderPreview = window.FjordLensFolderPreviews.createBatchLoader(async folders => {
+  const res = await fetch(`/api/folder-previews?${buildFolderPreviewsQuery(folders)}`);
+  if (!res.ok) throw new Error('Folder previews unavailable');
+  const data = await res.json();
+  return data.items || {};
+});
+
 function buildFolderPreviewsQuery(folders) {
   const qs = new URLSearchParams();
   qs.set('folders_format', 'multi');
@@ -6781,126 +6789,11 @@ function mapperImmediateChildFolder(folderPath, parentPath) {
   return seg ? `${p}/${seg}` : null;
 }
 
-async function prefetchMapperFolderPreviewsForCurrentPath() {
-  if (state.view !== 'mapper') return;
-  const current = String(state.mapperPath || '');
-  const childSet = new Set();
-  for (const f of (state.mapperFolders || [])) {
-    const child = mapperImmediateChildFolder(String(f || ''), current);
-    if (child) childSet.add(child);
-  }
-  const folders = Array.from(childSet.values()).sort((a, b) => a.localeCompare(b, 'da-DK'));
-  if (!folders.length) return;
-  try {
-    const query = buildFolderPreviewsQuery(folders);
-    if (!query) return;
-    const res = await fetch(`/api/folder-previews?${query}`);
-    const data = await res.json().catch(() => ({}));
-    const items = data && data.items && typeof data.items === 'object' ? data.items : {};
-    const store = JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {};
-    let changed = false;
-    for (const folder of folders) {
-      const answered = Object.prototype.hasOwnProperty.call(items, folder);
-      const urls = Array.isArray(items[folder])
-        ? items[folder].map((u) => String(u || '').trim()).filter(Boolean).slice(0, 4)
-        : [];
-      if (urls.length) {
-        store[folder] = urls;
-        changed = true;
-      } else if (answered && Object.prototype.hasOwnProperty.call(store, folder)) {
-        // Server explicitly says this folder has no previews (e.g. photos
-        // were deleted from another device) - drop the stale cached entry.
-        delete store[folder];
-        changed = true;
-      }
-    }
-    if (changed) localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(store));
-  } catch {}
-}
-
 function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
   card.className = "photo-card folder-card" + (isSelected ? " selected" : "");
   try { card.setAttribute('data-folder', folder); } catch {}
-  // Randomize and select unique preview URLs (prefer folder's own items; arr includes subtree)
-  const shuffled = (list) => {
-    const a = list.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  };
-  const toUrl = (p) => p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
-  const normFolder = (rel) => {
-    let f = String(rel || '');
-    f = f.includes('/') ? f.split('/').slice(0, -1).join('/') : '';
-    if (f === 'uploads') f = '';
-    else if (f.startsWith('uploads/')) f = f.slice('uploads/'.length);
-    if (f.startsWith('converted/')) f = f.slice('converted/'.length);
-    if (f.startsWith('originals/')) f = f.slice('originals/'.length);
-    return f;
-  };
-  const ownFirst = []; // items whose immediate folder equals this tile
-  const descLater = []; // deeper descendants
-  for (const it of arr) {
-    const u = toUrl(it);
-    if (!u) continue;
-    const f = normFolder(String(it.rel_path || ''));
-    if (f === folder) ownFirst.push({u}); else descLater.push({u});
-  }
-  // Deduplicate and randomize within priority buckets
-  const collect = (list) => {
-    const seen = new Set();
-    const out = [];
-    for (const x of shuffled(list)) { if (x.u && !seen.has(x.u)) { seen.add(x.u); out.push(x.u); } }
-    return out;
-  };
-  const uniqUrls = collect(ownFirst).concat(collect(descLater));
-
-  // Persist selection per folder in localStorage so it stays after refresh
-  const loadStore = () => { try { return JSON.parse(localStorage.getItem(FOLDER_PREVIEW_STORE_KEY) || '{}') || {}; } catch { return {}; } };
-  const saveStore = (obj) => { try { localStorage.setItem(FOLDER_PREVIEW_STORE_KEY, JSON.stringify(obj)); } catch {} };
-  const store = loadStore();
-  const stored = Array.isArray(store[folder]) ? store[folder] : null;
-  const intersect = (want, avail) => want.filter(u => avail.includes(u));
-
-  // Decide variant: 1 image → full; 2 or 3 images → 2 tall columns; 4+ → 2×2 grid
-  let variant = 'v4';
-  let useUrls = [];
-  const pickFresh = () => {
-    if (uniqUrls.length <= 0) return [];
-    if (uniqUrls.length === 1) { variant = 'v1'; return [uniqUrls[0]]; }
-    if (uniqUrls.length === 2 || uniqUrls.length === 3) { variant = 'v2'; return uniqUrls.slice(0,2); }
-    variant = 'v4'; return uniqUrls.slice(0,4);
-  };
-  const desired = () => {
-    if (uniqUrls.length <= 0 && stored && stored.length) {
-      return stored.length >= 4 ? 4 : (stored.length >= 2 ? 2 : 1);
-    }
-    return uniqUrls.length === 1 ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
-  };
-  if (stored && stored.length) {
-    const candidates = uniqUrls.length ? intersect(stored, uniqUrls) : stored;
-    if (candidates.length >= desired()) {
-      useUrls = candidates.slice(0, desired());
-      variant = (useUrls.length === 1 ? 'v1' : (useUrls.length === 2 ? 'v2' : 'v4'));
-    } else {
-      useUrls = pickFresh();
-      if (useUrls.length) {
-        store[folder] = useUrls;
-        saveStore(store);
-      }
-    }
-  } else {
-    useUrls = pickFresh();
-    if (useUrls.length) {
-      store[folder] = useUrls;
-      saveStore(store);
-    }
-  }
-  const cells = useUrls.map(u => `<img src="${escapeHtml(u)}" alt="">`).join("");
   const title = opts.title || folder;
   const selBadge = state.mapperEditMode ? `<span class="folder-select-badge">${isSelected ? '✓' : ''}</span>` : '';
   const folderTitle = escapeHtml(title || '');
@@ -6908,9 +6801,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   const countVal = hasExplicitCount ? Number(opts.count || 0) : (Array.isArray(arr) ? arr.length : 0);
   const countLabel = countVal > 0 ? `${countVal} ${countVal === 1 ? 'element' : 'elementer'}` : '';
   const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span>${countLabel ? `<span class="folder-count">${escapeHtml(countLabel)}</span>` : ''}</div>`;
-  const thumbHtml = (useUrls && useUrls.length)
-    ? `<div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${cells}</div>${selBadge}${overlay}</div>`
-    : `<div class="card-thumb placeholder">${escapeHtml('Ingen billeder')}${overlay}</div>`;
+  const thumbHtml = `<div class="card-thumb folder-mosaic"><div class="folder-grid v1"></div>${selBadge}${overlay}</div>`;
   card.innerHTML = `
     ${thumbHtml}
     <div class="card-body">
@@ -6972,90 +6863,8 @@ function appendFolderCard(folder, arr, opts = {}) {
   });
   els.grid.appendChild(card);
 
-  // After initial render, try to load persisted selection from server; else persist our pick
-  (async () => {
-    try {
-      const query = buildFolderPreviewsQuery([folder]);
-      const res = await fetch(`/api/folder-previews?${query}`);
-      const data = await res.json();
-      const saved = data && data.items ? data.items[folder] : null;
-      const variantForCount = (count) => (count === 1 ? 'v1' : (count === 2 ? 'v2' : 'v4'));
-      const normalizePreviewSet = (urls) => {
-        const raw = (Array.isArray(urls) ? urls : []).map((u) => String(u || '').trim()).filter(Boolean).slice(0, 4);
-        if (raw.length >= 4) return raw.slice(0, 4);
-        if (raw.length >= 2) return raw.slice(0, 2);
-        return raw.slice(0, 1);
-      };
-      let grid = card.querySelector('.folder-grid');
-      const updateGrid = (urls, v) => {
-        const nextUrls = normalizePreviewSet(urls);
-        if (!nextUrls.length) return;
-        const nextVariant = v || variantForCount(nextUrls.length);
-        let thumb = card.querySelector('.card-thumb');
-        grid = card.querySelector('.folder-grid');
-        if (!grid) {
-          if (!thumb) return;
-          thumb.className = 'card-thumb folder-mosaic';
-          thumb.innerHTML = `<div class="folder-grid ${nextVariant}"></div>${selBadge}${overlay}`;
-          bindFolderNameMarquee(card, title || folder || '');
-          grid = card.querySelector('.folder-grid');
-        }
-        if (!grid) return;
-        grid.classList.remove('v1','v2','v4');
-        grid.classList.add(nextVariant);
-        grid.innerHTML = nextUrls.map(u => `<img src="${escapeHtml(u)}" alt="">`).join("");
-        card.querySelectorAll('img').forEach((img) => {
-          img.setAttribute('draggable', 'false');
-        });
-      };
-      const persistPreviews = async (urls) => {
-        if (!Array.isArray(urls) || !urls.length) return;
-        try {
-          await fetch('/api/folder-previews', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folder, previews: urls }),
-          });
-        } catch {}
-      };
-      // Determine desired preview count based on available unique URLs
-      // If we didn't compute uniqUrls (arr empty), accept saved previews as-is
-      const desiredCount = (uniqUrls.length === 1) ? 1 : ((uniqUrls.length === 2 || uniqUrls.length === 3) ? 2 : 4);
-      const desiredVariant = (desiredCount === 1 ? 'v1' : (desiredCount === 2 ? 'v2' : 'v4'));
-      if (Array.isArray(saved) && saved.length) {
-        // When uniqUrls is empty (we skipped client-side scan), trust server-saved picks
-        const normalizedSaved = uniqUrls.length ? normalizePreviewSet(saved.filter((u) => uniqUrls.includes(u)).slice(0, desiredCount)) : normalizePreviewSet(saved);
-        if (normalizedSaved.length) {
-          const latestStore = loadStore();
-          latestStore[folder] = normalizedSaved;
-          saveStore(latestStore);
-        }
-        if (!uniqUrls.length) {
-          updateGrid(normalizedSaved, variantForCount(normalizedSaved.length));
-          return;
-        }
-        if (normalizedSaved.length < desiredCount) {
-          const fresh = uniqUrls.slice(0, desiredCount);
-          if (fresh.length) {
-            const latestStore = loadStore();
-            latestStore[folder] = fresh;
-            saveStore(latestStore);
-            updateGrid(fresh, desiredVariant);
-            await persistPreviews(fresh);
-          }
-        } else {
-          const savedVariant = (normalizedSaved.length === 1 ? 'v1' : (normalizedSaved.length === 2 ? 'v2' : 'v4'));
-          // Only update if different from what we rendered
-          const same = Array.isArray(useUrls) && useUrls.length === normalizedSaved.length && useUrls.every((u,i)=>u===normalizedSaved[i]);
-          if (!same) updateGrid(normalizedSaved, savedVariant);
-          const changed = uniqUrls.length > 0 && (normalizedSaved.length !== saved.length || normalizedSaved.some((u, i) => u !== saved[i]));
-          if (changed) await persistPreviews(normalizedSaved);
-        }
-      } else if (useUrls && useUrls.length) {
-        await persistPreviews(useUrls);
-      }
-    } catch {}
-  })();
+  window.FjordLensFolderPreviews.watch(card, () => loadMapperFolderPreview(folder));
+
 }
 
 // Insert one freshly-created folder card without touching any other card in
@@ -8076,10 +7885,6 @@ async function loadPhotosPage(append = false, preserveScroll = false) {
   els.viewTitle.textContent = title;
   els.viewSubtitle.textContent = subtitle;
 
-  if (!append && state.view === 'mapper') {
-    await prefetchMapperFolderPreviewsForCurrentPath();
-    if (!requestIsCurrent()) return;
-  }
   if (append && state.view === 'mapper') {
     hydrateMapperItems(mapperAppendStart, state.items.slice(mapperAppendStart));
     setupMapperGhostLoading();
@@ -14394,7 +14199,7 @@ function renderMapperThumbnailPickerGrid(items) {
   const grid = els.mapperThumbnailPickerGrid;
   if (!grid) return;
   grid.innerHTML = '';
-  const toUrl = (p) => p && (p.thumb_url || p.view_url || p.original_url || p.download_url);
+  const toUrl = (p) => p && p.thumb_url;
   const usable = (Array.isArray(items) ? items : []).filter((it) => !!toUrl(it));
   if (!usable.length) {
     grid.innerHTML = `<p class="mini-label">${escapeHtml(tr('mapper_thumb_picker_empty'))}</p>`;
@@ -14768,7 +14573,6 @@ if (els.mapperHeaderRefreshPreviewsAction) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error || tr('mapper_refresh_previews_failed'));
       invalidateStoredFolderPreviews([folder]);
-      await prefetchMapperFolderPreviewsForCurrentPath();
       renderGrid();
       showStatus(`${tr('mapper_refresh_previews_success')}: ${Number(data.count || 0)}`, 'ok');
     } catch (error) {

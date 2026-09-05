@@ -1090,6 +1090,7 @@ function closeUploadWarningModal() {
 }
 
 function renderGrid() {
+  window.FjordLensFolderPreviews.reset();
   if (!els.grid) return;
   // Build folder cards and photo cards based on currentPath
   // If multiple folders are shared, treat a virtual root so we only show folders at top-level
@@ -1141,7 +1142,7 @@ function renderGrid() {
       incCount(child);
       try {
         const prev = byFolder.get(child);
-        const url = String(it.thumb_url || it.view_url || it.original_url || '');
+        const url = String(it.thumb_url || '');
         if (url && prev.length < 4) prev.push(url);
       } catch {}
     }
@@ -1202,11 +1203,11 @@ function renderGrid() {
       useUrls = pickFresh();
       store[fk] = useUrls; saveStore(store);
     }
-    const thumbs = useUrls.map(u => `<img src="${u}" alt="">`).join("");
+
     const count = Number(folderCounts.get(fk) || 0);
     const title = (fk.split('/').pop() || fk);
     card.innerHTML = `
-      <div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}">${thumbs}</div></div>
+      <div class="card-thumb folder-mosaic"><div class="folder-grid ${variant}"></div></div>
       <div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${title}</span></span><span class="folder-count">${count ? `${count} elementer` : ''}</span></div>
     `;
     // Hover marquee for long folder names (same logic as app.js)
@@ -1254,6 +1255,7 @@ function renderGrid() {
       await loadPhotos(false);
     });
     els.grid.appendChild(card);
+    window.FjordLensFolderPreviews.watch(card, () => useUrls);
   }
 
   // Photo cards
