@@ -1,4 +1,5 @@
 from app import app as application
+from cast_airplay import init_cast_airplay
 from google_photo_frame import init_google_photo_frame
 from google_photo_frame_picker import init_google_photo_frame_picker
 from google_photo_frame_selection import init_google_photo_frame_selection
@@ -15,5 +16,8 @@ init_google_photo_frame_selection(application)
 
 # Share links automatically use the configured DNS base URL and require a visitor name for upload/manage links.
 init_share_link_defaults(application)
+
+# Mobile AirPlay / Google Cast sessions and the public custom Cast receiver.
+init_cast_airplay(application)
 
 # Gunicorn expects a module-level 'application' or a named app; we expose 'application'.
