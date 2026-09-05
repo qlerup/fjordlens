@@ -53,15 +53,21 @@
       const detail = segments > 0
         ? `Streamen er startet · ${segments} segment${segments === 1 ? '' : 'er'} klar`
         : 'Klargør de første sekunder…';
-      body.innerHTML = `<div class="cast-airplay-loading"><strong>Starter AirPlay</strong><br><span style="opacity:.75">${detail}</span></div>`;
+      const html = `<div class="cast-airplay-loading"><strong>Starter AirPlay</strong><br><span style="opacity:.75">${detail}</span></div>`;
+      if (body.innerHTML !== html) body.innerHTML = html;
     }
   }
 
   function setError(message) {
     const error = document.getElementById('castAirplayError');
     const body = document.getElementById('castAirplayBody');
-    if (error) { error.textContent = String(message || 'Kunne ikke starte AirPlay.'); error.classList.remove('hidden'); }
-    if (body) body.innerHTML = '<div class="cast-airplay-note">Prøv igen, eller vælg færre billeder/videoer.</div>';
+    const text = String(message || 'Kunne ikke starte AirPlay.');
+    if (error) {
+      if (error.textContent !== text) error.textContent = text;
+      error.classList.remove('hidden');
+    }
+    const html = '<div class="cast-airplay-note">Prøv igen, eller vælg færre billeder/videoer.</div>';
+    if (body && body.innerHTML !== html) body.innerHTML = html;
   }
 
   async function waitUntilPlayable(session) {
@@ -111,20 +117,32 @@
     startAirPlay(latestSession);
   }, true);
 
-  const observer = new MutationObserver(() => {
+  function syncAirPlayUi() {
     if (!isIOS() || !latestSession?.token) return;
     const choice = document.querySelector('#castAirplayBody .cast-airplay-choice p');
     if (choice) {
       const native = !!nativeAirPlayPlugin();
-      choice.textContent = native
+      const desired = native
         ? 'Vælg AirPlay-enhed i FjordLens. Slideshowet streames løbende, så det kan starte før hele valget er klargjort.'
         : 'FjordLens streamer de valgte billeder og videoer som HLS til AirPlay. I den installerede iOS-app bruges Apples native AirPlay-vælger.';
+      if (choice.textContent !== desired) choice.textContent = desired;
     }
     const button = document.querySelector('#castAirplayBody [data-airplay-start]');
     if (button && button.textContent !== 'AirPlay') button.textContent = 'AirPlay';
+  }
+
+  let syncQueued = false;
+  const observer = new MutationObserver(() => {
+    if (syncQueued) return;
+    syncQueued = true;
+    requestAnimationFrame(() => {
+      syncQueued = false;
+      syncAirPlayUi();
+    });
   });
 
   function beginObserve() {
+    syncAirPlayUi();
     observer.observe(document.body, {subtree:true, childList:true});
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', beginObserve, {once:true});
