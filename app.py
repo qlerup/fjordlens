@@ -37,6 +37,11 @@ import pyotp
 import qrcode
 import base64
 import queue
+import uuid
+import smtplib
+from email.message import EmailMessage
+from email.utils import formataddr
+from cryptography.fernet import Fernet, InvalidToken
 try:
     # Enable HEIC/HEIF support via pillow-heif if available
     from pillow_heif import register_heif_opener, HeifFile  # type: ignore
@@ -4250,6 +4255,22 @@ def init_db() -> None:
                 value TEXT
             );
 
+            -- "Glemt kode" i standalone-tilstand (ikke FjordHub-managed). Hub-managed
+            -- installationer delegerer i stedet hele flowet til FjordHub's egen tabel.
+            CREATE TABLE IF NOT EXISTS password_reset_challenges (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                reset_token_hash TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                expires_at TEXT NOT NULL,
+                verified_at TEXT,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_password_reset_user_created ON password_reset_challenges(user_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS user_folder_access (
                 user_id INTEGER NOT NULL,
                 folder_path TEXT NOT NULL,
@@ -4420,6 +4441,14 @@ def init_db() -> None:
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN ui_design TEXT DEFAULT 'classic'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL AND email != ''")
         except Exception:
             pass
         try:
@@ -5080,6 +5109,7 @@ def enforce_login_for_app():
     open_endpoints = {
         "login",
         "login_change_password",
+        "forgot_password",
         "verify_2fa",
         "setup",
         "hub_login",
@@ -5234,6 +5264,200 @@ def _set_setting(key: str, value: str) -> None:
             (key, value),
         )
         conn.commit()
+
+
+# --- "Glemt kode" (standalone mode only - hub-managed installs delegate to FjordHub) ---
+
+def _prf_fernet() -> Fernet:
+    secret = app.secret_key if isinstance(app.secret_key, (bytes, bytearray)) else str(app.secret_key or "").encode("utf-8")
+    key = base64.urlsafe_b64encode(hashlib.sha256(bytes(secret) + b":mail-settings").digest())
+    return Fernet(key)
+
+
+def _prf_encrypt(value: str) -> str:
+    return _prf_fernet().encrypt(value.encode("utf-8")).decode("ascii")
+
+
+def _prf_decrypt(value: str) -> str:
+    try:
+        return _prf_fernet().decrypt(value.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError, Exception):
+        return ""
+
+
+def _mail_settings() -> Optional[dict]:
+    user = _prf_decrypt(_get_setting("smtp_user", "") or "")
+    password = _prf_decrypt(_get_setting("smtp_password", "") or "")
+    if not user or not password:
+        return None
+    return {
+        "user": user,
+        "password": password,
+        "host": _get_setting("smtp_host", "smtp.gmail.com") or "smtp.gmail.com",
+        "port": int(_get_setting("smtp_port", "465") or 465),
+        "from_address": _get_setting("smtp_from", "") or user,
+    }
+
+
+def _mail_smtp(user: str, password: str, host: str, port: int):
+    if port == 465:
+        client = smtplib.SMTP_SSL(host, port, timeout=10)
+    else:
+        client = smtplib.SMTP(host, port, timeout=10)
+        client.starttls()
+    client.login(user, password)
+    return client
+
+
+def _save_mail_settings(user: str, password: str, host: str, port: int, from_address: str = "") -> None:
+    current = _mail_settings()
+    user = str(user or "").strip()
+    password = "".join(str(password or "").split()) or (current or {}).get("password", "")
+    host = str(host or "smtp.gmail.com").strip()
+    port = int(port or 465)
+    from_address = str(from_address or "").strip().lower() or user.lower()
+    if not user or not password:
+        raise ValueError("SMTP-brugernavn og adgangskode/API-nøgle er påkrævet.")
+    if "@" not in from_address:
+        raise ValueError("Afsenderadressen skal være en gyldig email.")
+    with _mail_smtp(user, password, host, port) as client:
+        client.noop()
+    _set_setting("smtp_user", _prf_encrypt(user))
+    _set_setting("smtp_password", _prf_encrypt(password))
+    _set_setting("smtp_host", host)
+    _set_setting("smtp_port", str(port))
+    _set_setting("smtp_from", from_address)
+
+
+def _send_reset_code_email(to: str, code: str) -> None:
+    settings = _mail_settings()
+    if not settings:
+        raise RuntimeError("Mailafsendelse er ikke konfigureret.")
+    message = EmailMessage()
+    message["From"] = formataddr(("FjordLens", settings["from_address"]))
+    message["To"] = to
+    message["Subject"] = f"{code} er din sikkerhedskode til FjordLens"
+    message.set_content(
+        f"Hej\n\nDin sikkerhedskode til FjordLens er: {code}\n\n"
+        "Koden udløber om 5 minutter. Hvis du ikke har bedt om den, kan du ignorere denne mail."
+    )
+    message.add_alternative(f"""<!doctype html>
+<html lang="da"><body style="margin:0;padding:0;background:#f5f1e8">
+<div style="background:#f5f1e8;padding:32px 16px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;color:#29251c">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:560px">
+      <tr><td style="padding:0 6px 14px">
+        <div style="font-size:11px;letter-spacing:2px;color:#8a8272;text-transform:uppercase;font-weight:700">FjordLens</div>
+        <div style="font-family:'Palatino Linotype',Palatino,Georgia,serif;font-size:28px;font-weight:700;margin-top:4px">Nulstil adgangskode</div>
+      </td></tr>
+      <tr><td style="background:#fffdf7;border:1px solid #e3dccb;border-radius:14px;padding:24px">
+        <div style="font-size:14px;line-height:1.6;color:#514b40">Brug sikkerhedskoden herunder for at vælge en ny adgangskode.</div>
+        <div style="margin:22px 0;padding:18px 12px;background:#edf3ff;border:1px solid #3b82f6;border-radius:10px;text-align:center;font-size:30px;font-weight:800;letter-spacing:8px;color:#1d4ed8">{code}</div>
+        <div style="font-size:13px;line-height:1.6;color:#8a8272"><strong style="color:#514b40">Koden udløber om 5 minutter.</strong><br>Hvis du ikke har bedt om at nulstille din adgangskode, kan du roligt ignorere mailen.</div>
+      </td></tr>
+      <tr><td style="padding:14px 6px 0;font-size:12px;color:#8a8272;text-align:center">Sendt automatisk af FjordLens · Du skal ikke besvare denne mail</td></tr>
+    </table>
+  </td></tr></table>
+</div>
+</body></html>""", subtype="html")
+    with _mail_smtp(settings["user"], settings["password"], settings["host"], settings["port"]) as client:
+        client.send_message(message)
+
+
+def _prc_hash(value: str) -> str:
+    secret = app.secret_key if isinstance(app.secret_key, (bytes, bytearray)) else str(app.secret_key or "").encode("utf-8")
+    return hmac.new(bytes(secret), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _local_password_reset_request(email: str) -> str:
+    """Standalone-mode challenge creation. Returns a challenge_id regardless of
+    whether the email matched a user, so the caller can't distinguish the two
+    (avoids leaking which emails are registered)."""
+    challenge_id = str(uuid.uuid4())
+    normalized = str(email or "").strip().lower()
+    if not normalized:
+        return challenge_id
+    now = datetime.now(timezone.utc)
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id FROM users WHERE lower(email)=?", (normalized,)).fetchone()
+        if not row:
+            return challenge_id
+        user_id = int(row["id"])
+        recent = conn.execute(
+            """SELECT id, created_at FROM password_reset_challenges
+               WHERE user_id=? AND used_at IS NULL AND expires_at>?
+               ORDER BY created_at DESC LIMIT 1""",
+            (user_id, now.isoformat()),
+        ).fetchone()
+        if recent and datetime.fromisoformat(recent["created_at"]) > now - timedelta(seconds=60):
+            return str(recent["id"])
+        hourly = conn.execute(
+            "SELECT COUNT(*) AS c FROM password_reset_challenges WHERE user_id=? AND created_at>?",
+            (user_id, (now - timedelta(hours=1)).isoformat()),
+        ).fetchone()
+        if int((hourly["c"] if hourly else 0) or 0) >= 5:
+            return str(recent["id"]) if recent else challenge_id
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        conn.execute(
+            """INSERT INTO password_reset_challenges
+               (id, user_id, code_hash, expires_at, created_at) VALUES (?,?,?,?,?)""",
+            (challenge_id, user_id, _prc_hash(f"{challenge_id}:{code}"),
+             (now + timedelta(minutes=5)).isoformat(), now.isoformat()),
+        )
+        conn.commit()
+    try:
+        _send_reset_code_email(normalized, code)
+    except Exception as exc:
+        app.logger.warning("[password-reset] Mail kunne ikke sendes: %s", exc)
+    return challenge_id
+
+
+def _local_password_reset_verify(challenge_id: str, code: str) -> str:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """SELECT * FROM password_reset_challenges
+               WHERE id=? AND used_at IS NULL AND verified_at IS NULL AND attempts<5""",
+            (challenge_id,),
+        ).fetchone()
+        valid = bool(
+            row and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
+            and hmac.compare_digest(row["code_hash"], _prc_hash(f"{challenge_id}:{code}"))
+        )
+        if not valid:
+            if row:
+                conn.execute("UPDATE password_reset_challenges SET attempts=attempts+1 WHERE id=?", (challenge_id,))
+                conn.commit()
+            return ""
+        token = secrets.token_urlsafe(32)
+        conn.execute(
+            "UPDATE password_reset_challenges SET verified_at=?, reset_token_hash=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), _prc_hash(f"{challenge_id}:{token}"), challenge_id),
+        )
+        conn.commit()
+        return token
+
+
+def _local_password_reset_complete(challenge_id: str, token: str, password: str) -> bool:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """SELECT * FROM password_reset_challenges
+               WHERE id=? AND verified_at IS NOT NULL AND used_at IS NULL""",
+            (challenge_id,),
+        ).fetchone()
+        valid = bool(
+            row and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
+            and hmac.compare_digest(row["reset_token_hash"] or "", _prc_hash(f"{challenge_id}:{token}"))
+        )
+        if not valid:
+            return False
+        user_id = int(row["user_id"])
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(password), user_id))
+        conn.execute(
+            "UPDATE password_reset_challenges SET used_at=? WHERE user_id=? AND used_at IS NULL",
+            (datetime.now(timezone.utc).isoformat(), user_id),
+        )
+        conn.commit()
+        return True
 
 
 def _get_setting_bool(key: str, default: bool = False) -> bool:
@@ -24162,6 +24386,74 @@ def login():
     return _no_store_response(make_response(render_template("login.html", created=created)))
 
 
+@app.route("/glemt-adgangskode", methods=["GET", "POST"])
+def forgot_password():
+    """Glemt kode: delegerer til FjordHub når hub-managed, ellers lokalt SMTP-flow."""
+    ensure_runtime_bootstrap()
+    if current_user.is_authenticated:
+        return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
+    en = (_request_ui_language() == "en")
+    step = str(request.form.get("step") or request.args.get("step") or "email")
+    error = ""
+    message = ""
+    email = str(request.form.get("email") or "").strip().lower()
+    challenge_id = str(request.form.get("challenge_id") or "")
+    reset_token = str(request.form.get("reset_token") or "")
+    managed = _fjordhub_managed()
+
+    if request.method == "POST" and step == "email":
+        if managed:
+            result = _hub_api("/api/hub/apps/password-reset/request", {"email": email})
+            challenge_id = str(result.get("challenge_id") or "") or str(uuid.uuid4())
+        else:
+            challenge_id = _local_password_reset_request(email)
+        message = (
+            "If the email address exists, a security code has been sent. Remember to check Spam/Junk too."
+            if en else
+            "Hvis email-adressen findes, er sikkerhedskoden sendt. Husk også at kontrollere Spam eller Uønsket mail."
+        )
+        step = "code"
+    elif request.method == "POST" and step == "code":
+        code = "".join(ch for ch in str(request.form.get("code") or "") if ch.isdigit())[:6]
+        if managed:
+            result = _hub_api("/api/hub/apps/password-reset/verify", {"challenge_id": challenge_id, "code": code})
+            reset_token = str(result.get("reset_token") or "") if result.get("ok") else ""
+        else:
+            reset_token = _local_password_reset_verify(challenge_id, code)
+        if reset_token:
+            step = "password"
+        else:
+            error = "The code is invalid or has expired." if en else "Koden er ugyldig eller udløbet."
+    elif request.method == "POST" and step == "password":
+        password = str(request.form.get("password") or "")
+        password2 = str(request.form.get("password2") or "")
+        if password != password2:
+            error = "The two passwords do not match." if en else "De to adgangskoder matcher ikke."
+        elif len(password) < 6:
+            error = "The password must be at least 6 characters." if en else "Adgangskoden skal være mindst 6 tegn."
+        else:
+            hub_error = ""
+            if managed:
+                result = _hub_api("/api/hub/apps/password-reset/complete", {
+                    "challenge_id": challenge_id, "reset_token": reset_token, "password": password,
+                })
+                ok = bool(result.get("ok"))
+                if not ok:
+                    hub_error = str(result.get("error") or "")
+            else:
+                ok = _local_password_reset_complete(challenge_id, reset_token, password)
+            if ok:
+                step = "done"
+            else:
+                error = hub_error or ("The reset is invalid or has expired." if en else "Nulstillingen er ugyldig eller udløbet.")
+
+    return _no_store_response(make_response(render_template(
+        "glemt_adgangskode.html",
+        step=step, error=error, message=message, email=email,
+        challenge_id=challenge_id, reset_token=reset_token,
+    )))
+
+
 @app.route("/login/change-password", methods=["POST"])
 def login_change_password():
     """Tvungent kodeskift ved første login for FjordHub-styrede brugere."""
@@ -24391,6 +24683,7 @@ def admin_users():
             u = (request.form.get("username") or "").strip()
             p = request.form.get("password") or ""
             role = (request.form.get("role") or "user").strip().lower()
+            email = (request.form.get("email") or "").strip().lower() or None
             enforce_2fa = 1 if (request.form.get("enforce_2fa") in ("1", "on", "true", "True")) else 0
             if role not in {"admin", "manager", "user"}:
                 role = "user"
@@ -24398,8 +24691,8 @@ def admin_users():
                 try:
                     with closing(get_conn()) as conn:
                         conn.execute(
-                            "INSERT INTO users(username, password_hash, is_admin, role, totp_enabled, totp_setup_done, created_at) VALUES (?,?,?,?,?,?,?)",
-                            (u, generate_password_hash(p), 1 if role == "admin" else 0, role, enforce_2fa, 0, now_iso()),
+                            "INSERT INTO users(username, password_hash, is_admin, role, email, totp_enabled, totp_setup_done, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                            (u, generate_password_hash(p), 1 if role == "admin" else 0, role, email, enforce_2fa, 0, now_iso()),
                         )
                         conn.commit()
                     msg = _ui_text("admin_user_created")
@@ -24435,9 +24728,33 @@ def admin_users():
                                     msg = _ui_text("admin_user_deleted")
                     except Exception as e:
                         msg = f"{_ui_text('error_prefix')} {e}"
+        elif action == "mail_settings" and not _fjordhub_managed():
+            en = (_request_ui_language() == "en")
+            try:
+                _save_mail_settings(
+                    request.form.get("smtp_user") or "",
+                    request.form.get("smtp_password") or "",
+                    request.form.get("smtp_host") or "smtp.gmail.com",
+                    int(request.form.get("smtp_port") or 465),
+                    request.form.get("smtp_from") or "",
+                )
+                msg = "Connection works, mail settings saved." if en else "Forbindelsen virker, og mailopsætningen er gemt."
+            except Exception as e:
+                msg = f"{_ui_text('error_prefix')} {e}"
     with closing(get_conn()) as conn:
-        users = conn.execute("SELECT id, username, is_admin, role, totp_enabled, created_at FROM users ORDER BY id").fetchall()
-    return render_template("admin_users.html", users=users, msg=msg)
+        users = conn.execute("SELECT id, username, is_admin, role, email, totp_enabled, created_at FROM users ORDER BY id").fetchall()
+    mail_settings = _mail_settings()
+    return render_template(
+        "admin_users.html",
+        users=users,
+        msg=msg,
+        fjordhub_managed=_fjordhub_managed(),
+        mail_configured=bool(mail_settings),
+        smtp_user=(mail_settings or {}).get("user", ""),
+        smtp_host=(mail_settings or {}).get("host", "smtp.gmail.com"),
+        smtp_port=(mail_settings or {}).get("port", 465),
+        smtp_from=(mail_settings or {}).get("from_address", ""),
+    )
 
 
 # --- JSON APIs for embedded UI ---

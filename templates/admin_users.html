@@ -36,6 +36,10 @@
             </div>
           </label>
           <label>
+            <div class="mini-label">{{ 'Email (optional, needed for "forgot password")' if en else 'Email (valgfri, kræves til "glemt adgangskode")' }}</div>
+            <input name="email" type="email" placeholder="bruger@eksempel.dk" class="input-number" style="width:100%;">
+          </label>
+          <label>
             <div class="mini-label">{{ 'Role' if en else 'Rolle' }}</div>
             <select name="role" class="select" style="width:100%;">
               <option value="admin">Admin</option>
@@ -55,12 +59,50 @@
       </div>
     </div>
 
+    {% if not fjordhub_managed %}
+    <div class="panel" style="margin-bottom:12px;">
+      <h3 style="margin:0 0 4px;">{{ 'Email for "forgot password"' if en else 'Email til "glemt adgangskode"' }}</h3>
+      <p class="mini-label" style="margin-bottom:14px;">{{ 'E.g. Gmail or Resend. Only used to send security codes.' if en else 'Fx Gmail eller Resend. Bruges kun til at sende sikkerhedskoder.' }}</p>
+      <form method="post" style="display:grid;gap:10px;max-width:520px;">
+        <input type="hidden" name="action" value="mail_settings">
+        <label>
+          <div class="mini-label">{{ 'Sender email' if en else 'Afsender-email' }}</div>
+          <input name="smtp_from" type="email" value="{{ smtp_from }}" placeholder="noreply@dit-domæne.dk" required class="input-number" style="width:100%;">
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <label>
+            <div class="mini-label">{{ 'SMTP username' if en else 'SMTP-brugernavn' }}</div>
+            <input name="smtp_user" value="{{ smtp_user }}" placeholder="fx din Gmail-adresse, eller “resend”" required class="input-number" style="width:100%;">
+          </label>
+          <label>
+            <div class="mini-label">{{ 'Password / API key' if en else 'Adgangskode / API-nøgle' }}</div>
+            <input name="smtp_password" type="password" placeholder="{{ 'Leave blank to keep the current one' if (en and mail_configured) else ('Lad stå tom for at beholde den nuværende' if mail_configured else '') }}" {% if not mail_configured %}required{% endif %} class="input-number" style="width:100%;">
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <label>
+            <div class="mini-label">{{ 'SMTP server' if en else 'SMTP-server' }}</div>
+            <input name="smtp_host" value="{{ smtp_host }}" placeholder="fx smtp.resend.com" required class="input-number" style="width:100%;">
+          </label>
+          <label>
+            <div class="mini-label">{{ 'Port' if en else 'Port' }}</div>
+            <input name="smtp_port" type="number" value="{{ smtp_port }}" required class="input-number" style="width:100%;">
+          </label>
+        </div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button class="btn primary" type="submit">{{ 'Test and save' if en else 'Test og gem' }}</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+
     <div class="data-table" style="margin-top:8px;">
       <table>
         <thead>
           <tr>
             <th>ID</th>
             <th>{{ 'User' if en else 'Bruger' }}</th>
+            <th>Email</th>
             <th>{{ 'Role' if en else 'Rolle' }}</th>
             <th>2FA</th>
             <th>{{ 'Action' if en else 'Handling' }}</th>
@@ -72,6 +114,7 @@
           <tr>
             <td class="muted">#{{ u.id }}</td>
             <td><strong>{{ u.username }}</strong></td>
+            <td class="muted">{{ u.email or '—' }}</td>
             <td>
               {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}
               {% if role == 'admin' %}
