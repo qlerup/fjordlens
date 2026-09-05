@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from werkzeug.security import generate_password_hash
 
@@ -85,6 +85,66 @@ class ForgotPasswordStandaloneTests(unittest.TestCase):
         forgot_response = client.get('/glemt-adgangskode')
         self.assertEqual(forgot_response.status_code, 302)
         self.assertIn('/login', forgot_response.headers['Location'])
+
+    def _admin_client(self):
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            cur = conn.execute(
+                "INSERT INTO users(username,password_hash,is_admin,role,email,created_at) VALUES(?,?,?,?,?,?)",
+                ('admin', generate_password_hash('admin-secret'), 1, 'admin', 'admin@example.com', fjordlens.now_iso()),
+            )
+            conn.commit()
+            admin_id = cur.lastrowid
+        client = fjordlens.app.test_client()
+        with client.session_transaction() as session:
+            session['_user_id'] = str(admin_id)
+            session['_fresh'] = True
+        return client
+
+    def test_mail_settings_api_get_put_roundtrip(self):
+        client = self._admin_client()
+        empty = client.get('/api/admin/mail-settings').get_json()
+        self.assertTrue(empty['ok'])
+        self.assertFalse(empty['configured'])
+
+        with patch.object(fjordlens, '_mail_smtp') as mock_smtp:
+            fake = MagicMock()
+            fake.__enter__.return_value = fake
+            mock_smtp.return_value = fake
+            put_resp = client.put('/api/admin/mail-settings', json={
+                'smtp_user': 'resend', 'smtp_password': 'api-key', 'smtp_host': 'smtp.resend.com',
+                'smtp_port': 465, 'smtp_from': 'noreply@example.com',
+            })
+        self.assertTrue(put_resp.get_json()['ok'])
+
+        saved = client.get('/api/admin/mail-settings').get_json()
+        self.assertTrue(saved['configured'])
+        self.assertEqual(saved['smtp_user'], 'resend')
+        self.assertEqual(saved['smtp_from'], 'noreply@example.com')
+
+    def test_mail_settings_test_endpoint_sends_without_persisting(self):
+        client = self._admin_client()
+        sent = []
+        with patch.object(fjordlens, '_mail_smtp') as mock_smtp:
+            fake = MagicMock()
+            fake.__enter__.return_value = fake
+            fake.send_message.side_effect = lambda msg: sent.append(msg)
+            mock_smtp.return_value = fake
+            resp = client.post('/api/admin/mail-settings/test', json={
+                'smtp_user': 'resend', 'smtp_password': 'api-key', 'smtp_host': 'smtp.resend.com',
+                'smtp_port': 465, 'smtp_from': 'noreply@example.com', 'test_to': 'admin@example.com',
+            })
+        self.assertTrue(resp.get_json()['ok'])
+        self.assertEqual(len(sent), 1)
+        self.assertIsNone(fjordlens._mail_settings())
+
+    def test_forgot_password_toggle_api_roundtrip(self):
+        client = self._admin_client()
+        default = client.get('/api/admin/forgot-password-toggle').get_json()
+        self.assertTrue(default['enabled'])
+
+        client.post('/api/admin/forgot-password-toggle', json={'enabled': False})
+        after = client.get('/api/admin/forgot-password-toggle').get_json()
+        self.assertFalse(after['enabled'])
 
     def test_mail_settings_roundtrip_encrypts_password_at_rest(self):
         with patch.object(fjordlens, '_mail_smtp') as mock_smtp:

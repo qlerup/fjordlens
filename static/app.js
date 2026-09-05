@@ -18323,6 +18323,165 @@ try {
 } catch {}
 
 // --- Embedded Admin Panels ---
+
+async function initForgotPasswordToggle(){
+  const cb = document.getElementById('fp_toggle');
+  if (!cb) return;
+  try{
+    const r = await fetch('/api/admin/forgot-password-toggle');
+    const js = await r.json();
+    cb.checked = js && js.enabled !== false;
+  }catch{ cb.checked = true; }
+  cb.addEventListener('change', async () => {
+    try{
+      await fetch('/api/admin/forgot-password-toggle', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ enabled: cb.checked }),
+      });
+    }catch{}
+  });
+}
+
+async function renderMailSettingsPanel(){
+  const inner = document.getElementById('mailSettingsInner');
+  if (!inner) return;
+  inner.textContent = 'Indlæser…';
+  let js;
+  try{
+    const r = await fetch('/api/admin/mail-settings');
+    js = await r.json();
+  }catch{
+    inner.innerHTML = '<div class="empty">Kan ikke hente mailopsætning.</div>';
+    return;
+  }
+  if (!js || !js.ok){
+    inner.innerHTML = `<div class="empty">Kan ikke hente mailopsætning. ${escapeHtml((js && js.error) || '')}</div>`;
+    return;
+  }
+  if (js.hub_managed){
+    inner.innerHTML = '<p class="mini-label">Denne installation bruger FjordHubs mailopsætning. Selve mailafsendelsen konfigureres under Indstillinger i FjordHub.</p>';
+    return;
+  }
+  const configured = !!js.configured;
+  inner.innerHTML = `
+    <p class="mini-label" style="margin-bottom:12px;">Fx Gmail eller Resend. Du sender en testmail for at bekræfte at den virker, før den gemmes.</p>
+    <div id="ms_status" style="margin-bottom:10px;"></div>
+    <div class="form-row"><label for="ms_from">Afsender-email</label><input id="ms_from" type="email" placeholder="noreply@dit-domæne.dk" value="${escapeHtml(js.smtp_from || '')}"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div class="form-row"><label for="ms_user">SMTP-brugernavn</label><input id="ms_user" placeholder='fx din Gmail-adresse, eller "resend"' value="${escapeHtml(js.smtp_user || '')}"></div>
+      <div class="form-row"><label for="ms_password">Adgangskode / API-nøgle</label><input id="ms_password" type="password" placeholder="${configured ? 'Lad stå tom for at beholde den nuværende' : ''}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 100px;gap:10px;">
+      <div class="form-row"><label for="ms_host">SMTP-server</label><input id="ms_host" placeholder="fx smtp.resend.com" value="${escapeHtml(js.smtp_host || 'smtp.gmail.com')}"></div>
+      <div class="form-row"><label for="ms_port">Port</label><input id="ms_port" type="number" value="${Number(js.smtp_port) || 465}"></div>
+    </div>
+    <button id="ms_save" class="btn primary" style="margin-top:6px;">Test og gem</button>
+
+    <div id="ms_test_modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:9999;">
+      <div style="width:400px;max-width:92vw;background:var(--panel,#0f1115);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:18px;">
+        <h3 style="margin:0 0 6px;">Send en testmail først</h3>
+        <p class="mini-label" style="margin:0 0 12px;">Vi sender en rigtig mail med de nye indstillinger, så du kan bekræfte at den kommer frem, før den gemmes.</p>
+        <div id="ms_test_ask">
+          <div class="form-row"><label for="ms_test_to">Send testmail til</label><input id="ms_test_to" type="email" placeholder="din@email.dk"></div>
+          <div id="ms_test_error" class="empty" style="display:none;color:#e57373;margin-top:6px;"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+            <button type="button" class="btn" id="ms_test_cancel">Annuller</button>
+            <button type="button" class="btn primary" id="ms_test_send">Send testmail</button>
+          </div>
+        </div>
+        <div id="ms_test_sent" style="display:none;">
+          <p class="mini-label" style="color:#8fd19e;">Testmailen er sendt. Tjek indbakken (og Spam) for at bekræfte at den kom frem.</p>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+            <button type="button" class="btn" id="ms_test_retry">Prøv en anden adresse</button>
+            <button type="button" class="btn primary" id="ms_test_confirm">Jeg modtog mailen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const statusEl = document.getElementById('ms_status');
+  const modal = document.getElementById('ms_test_modal');
+  const askStep = document.getElementById('ms_test_ask');
+  const sentStep = document.getElementById('ms_test_sent');
+  const errorBox = document.getElementById('ms_test_error');
+  const testToInput = document.getElementById('ms_test_to');
+  const saveBtn = document.getElementById('ms_save');
+  const sendBtn = document.getElementById('ms_test_send');
+  const confirmBtn = document.getElementById('ms_test_confirm');
+
+  function currentValues(){
+    return {
+      smtp_user: document.getElementById('ms_user').value,
+      smtp_password: document.getElementById('ms_password').value,
+      smtp_host: document.getElementById('ms_host').value,
+      smtp_port: document.getElementById('ms_port').value,
+      smtp_from: document.getElementById('ms_from').value,
+    };
+  }
+  function openModal(){
+    askStep.style.display = '';
+    sentStep.style.display = 'none';
+    errorBox.style.display = 'none';
+    testToInput.value = '';
+    modal.style.display = 'flex';
+    testToInput.focus();
+  }
+  function closeModal(){ modal.style.display = 'none'; }
+
+  saveBtn.addEventListener('click', openModal);
+  document.getElementById('ms_test_cancel').addEventListener('click', closeModal);
+  document.getElementById('ms_test_retry').addEventListener('click', openModal);
+
+  sendBtn.addEventListener('click', async () => {
+    const testTo = testToInput.value.trim();
+    if (!testTo) { testToInput.focus(); return; }
+    errorBox.style.display = 'none';
+    sendBtn.disabled = true; sendBtn.textContent = 'Sender…';
+    try{
+      const body = Object.assign(currentValues(), { test_to: testTo });
+      const r = await fetch('/api/admin/mail-settings/test', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (r.ok && data.ok){
+        askStep.style.display = 'none';
+        sentStep.style.display = '';
+      } else {
+        errorBox.textContent = (data && data.error) || 'Kunne ikke sende testmailen.';
+        errorBox.style.display = '';
+      }
+    }catch{
+      errorBox.textContent = 'Kunne ikke kontakte serveren.';
+      errorBox.style.display = '';
+    }finally{
+      sendBtn.disabled = false; sendBtn.textContent = 'Send testmail';
+    }
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true; confirmBtn.textContent = 'Gemmer…';
+    try{
+      const r = await fetch('/api/admin/mail-settings', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(currentValues()),
+      });
+      const data = await r.json();
+      closeModal();
+      if (r.ok && data.ok){
+        statusEl.innerHTML = '<p class="mini-label" style="color:#8fd19e;">Mailopsætningen er gemt.</p>';
+        renderMailSettingsPanel();
+      } else {
+        statusEl.innerHTML = `<p class="mini-label" style="color:#e57373;">${escapeHtml((data && data.error) || 'Kunne ikke gemme.')}</p>`;
+      }
+    }catch{
+      closeModal();
+      statusEl.innerHTML = '<p class="mini-label" style="color:#e57373;">Kunne ikke kontakte serveren.</p>';
+    }finally{
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Jeg modtog mailen';
+    }
+  });
+}
+
 async function renderUsersPanel(){
   const wrap = document.getElementById('usersPanelInner');
   if (!wrap) return;
@@ -18394,6 +18553,17 @@ async function renderUsersPanel(){
       </tr>`;
     }).join('');
     wrap.innerHTML = `
+      <div class="panel" style="margin-bottom:12px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin:0;">
+          <input type="checkbox" id="fp_toggle">
+          <span>Tillad "Glemt adgangskode?" på login-siden</span>
+        </label>
+        <p class="mini-label" style="margin:4px 0 0 26px;">Slår kun FjordLens' egen glemt-kode-side til/fra. FjordHub og andre apps har hver deres egen tilsvarende indstilling.</p>
+      </div>
+      <div class="panel" style="margin-bottom:12px;" id="mailSettingsPanel">
+        <div class="sidebar-card-title" style="margin-bottom:8px;">Email til glemt adgangskode</div>
+        <div id="mailSettingsInner">Indlæser…</div>
+      </div>
       <div class="panel" style="margin-bottom:12px;">
         <div class="toolbar">
           <strong>${escapeHtml(tr('users_panel_title'))}</strong>
@@ -18526,6 +18696,9 @@ async function renderUsersPanel(){
         </div>
       </div>
     `;
+
+    renderMailSettingsPanel();
+    initForgotPasswordToggle();
 
     const byId = new Map(items.map(u => [String(u.id), u]));
 

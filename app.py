@@ -5365,6 +5365,38 @@ def _send_reset_code_email(to: str, code: str) -> None:
         client.send_message(message)
 
 
+def _send_test_email(user: str, password: str, host: str, port: int, from_address: str, test_to: str) -> None:
+    """Send a real email using NOT-YET-SAVED settings, to a chosen test address.
+
+    Lets the settings UI prove delivery actually works before persisting anything -
+    a login-only check can't catch a rejected send (e.g. an unverified sender
+    domain). Admin-only diagnostic action, so raising the real error is fine here,
+    unlike the public "glemt kode" flow.
+    """
+    user = str(user or "").strip()
+    password = "".join(str(password or "").split())
+    host = str(host or "smtp.gmail.com").strip()
+    port = int(port or 465)
+    from_address = str(from_address or "").strip().lower()
+    test_to = str(test_to or "").strip().lower()
+    if not user or not password:
+        raise ValueError("SMTP-brugernavn og adgangskode/API-nøgle er påkrævet.")
+    if "@" not in from_address:
+        raise ValueError("Afsenderadressen skal være en gyldig email.")
+    if "@" not in test_to:
+        raise ValueError("Angiv en gyldig email at sende testmailen til.")
+    message = EmailMessage()
+    message["From"] = formataddr(("FjordLens", from_address))
+    message["To"] = test_to
+    message["Subject"] = "Testmail fra FjordLens"
+    message.set_content(
+        "Hej\n\nDette er en testmail fra FjordLens for at bekræfte at mailopsætningen virker.\n\n"
+        "Hvis du kan læse denne mail, er opsætningen klar til brug."
+    )
+    with _mail_smtp(user, password, host, port) as client:
+        client.send_message(message)
+
+
 def _prc_hash(value: str) -> str:
     secret = app.secret_key if isinstance(app.secret_key, (bytes, bytearray)) else str(app.secret_key or "").encode("utf-8")
     return hmac.new(bytes(secret), value.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -24882,6 +24914,76 @@ def api_admin_users():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/mail-settings", methods=["GET", "PUT"])
+@login_required
+def api_admin_mail_settings():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    if request.method == "GET":
+        if _fjordhub_managed():
+            return jsonify({"ok": True, "hub_managed": True, "configured": True})
+        settings = _mail_settings()
+        return jsonify({
+            "ok": True,
+            "hub_managed": False,
+            "configured": bool(settings),
+            "smtp_user": (settings or {}).get("user", ""),
+            "smtp_host": (settings or {}).get("host", "smtp.gmail.com"),
+            "smtp_port": (settings or {}).get("port", 465),
+            "smtp_from": (settings or {}).get("from_address", ""),
+        })
+    if _fjordhub_managed():
+        return jsonify({"ok": False, "error": "Mail indstilles i FjordHub"}), 400
+    data = request.get_json(silent=True) or {}
+    try:
+        _save_mail_settings(
+            str(data.get("smtp_user") or ""),
+            str(data.get("smtp_password") or ""),
+            str(data.get("smtp_host") or "smtp.gmail.com"),
+            int(data.get("smtp_port") or 465),
+            str(data.get("smtp_from") or ""),
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/mail-settings/test", methods=["POST"])
+@login_required
+def api_admin_mail_settings_test():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    password = str(data.get("smtp_password") or "")
+    if not password:
+        # Blank means "keep the currently saved one" (mirrors _save_mail_settings).
+        password = (_mail_settings() or {}).get("password", "")
+    try:
+        _send_test_email(
+            str(data.get("smtp_user") or ""),
+            password,
+            str(data.get("smtp_host") or "smtp.gmail.com"),
+            int(data.get("smtp_port") or 465),
+            str(data.get("smtp_from") or ""),
+            str(data.get("test_to") or ""),
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/admin/forgot-password-toggle", methods=["GET", "POST"])
+@login_required
+def api_admin_forgot_password_toggle():
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    if request.method == "GET":
+        return jsonify({"ok": True, "enabled": _get_setting_bool("forgot_password_enabled", True)})
+    data = request.get_json(silent=True) or {}
+    _set_setting("forgot_password_enabled", "1" if bool(data.get("enabled")) else "0")
+    return jsonify({"ok": True})
 
 
 # ── FjordHub integration ──────────────────────────────────────────────────────
