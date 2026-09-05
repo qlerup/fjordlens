@@ -1,4 +1,5 @@
 from app import app as application
+from airplay_stream import init_airplay_stream
 from cast_airplay import init_cast_airplay
 from google_photo_frame import init_google_photo_frame
 from google_photo_frame_picker import init_google_photo_frame_picker
@@ -19,5 +20,9 @@ init_share_link_defaults(application)
 
 # Mobile AirPlay / Google Cast sessions and the public custom Cast receiver.
 init_cast_airplay(application)
+
+# Build a temporary AirPlay-compatible slideshow for iOS so images and mixed selections
+# can be sent through the native AirPlay media picker without Screen Mirroring.
+init_airplay_stream(application)
 
 # Gunicorn expects a module-level 'application' or a named app; we expose 'application'.
