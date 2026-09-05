@@ -1,4 +1,5 @@
 from flask import Response, request
+from flask_login import current_user
 
 
 def _inject_share_link_defaults(response: Response) -> Response:
@@ -19,7 +20,33 @@ def _inject_share_link_defaults(response: Response) -> Response:
     return response
 
 
+def _install_manager_share_permission(flask_app) -> None:
+    """Allow managers to create share links without widening other admin-only maintenance permissions."""
+    if flask_app.extensions.get("manager_share_permission_registered"):
+        return
+
+    try:
+        import app as core
+        original = core._forbid_user_role_for_maintenance
+    except Exception:
+        return
+
+    def share_aware_forbid():
+        try:
+            if request.path == "/api/shares" and request.method == "POST":
+                role = str(getattr(current_user, "role", "") or "").strip().lower()
+                if getattr(current_user, "is_authenticated", False) and role == "manager":
+                    return None
+        except Exception:
+            pass
+        return original()
+
+    core._forbid_user_role_for_maintenance = share_aware_forbid
+    flask_app.extensions["manager_share_permission_registered"] = True
+
+
 def init_share_link_defaults(flask_app) -> None:
     if not flask_app.extensions.get("share_link_defaults_registered"):
         flask_app.after_request(_inject_share_link_defaults)
         flask_app.extensions["share_link_defaults_registered"] = True
+    _install_manager_share_permission(flask_app)
