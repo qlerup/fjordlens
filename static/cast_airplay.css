@@ -1,0 +1,141 @@
+.cast-airplay-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 14000;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+}
+.cast-airplay-modal.hidden { display: none !important; }
+.cast-airplay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.68);
+  backdrop-filter: blur(6px);
+}
+.cast-airplay-card {
+  position: relative;
+  width: min(560px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  border-radius: 16px;
+  background: var(--panel, #0e2027);
+  color: inherit;
+  padding: 16px;
+  box-shadow: 0 26px 80px rgba(0,0,0,.42);
+}
+.cast-airplay-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.cast-airplay-head h3 { margin: 0 0 4px; font-size: 18px; }
+.cast-airplay-loading,
+.cast-airplay-note,
+.cast-airplay-choice {
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 12px;
+  background: rgba(255,255,255,.025);
+  padding: 13px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.cast-airplay-choice {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.cast-airplay-choice strong { font-size: 15px; }
+.cast-airplay-choice p,
+.cast-airplay-note p { margin: 5px 0 0; color: var(--muted, #9fb0b6); }
+.cast-airplay-platform-icon,
+.cast-airplay-castmark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  background: rgba(255,255,255,.04);
+}
+.cast-airplay-actions,
+.cast-airplay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.cast-airplay-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(190,65,65,.12);
+  border: 1px solid rgba(210,86,86,.36);
+  color: #e68181;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cast-airplay-error.hidden { display: none; }
+.cast-airplay-note code {
+  display: block;
+  margin-top: 7px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: rgba(0,0,0,.18);
+  color: #dcecef;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.cast-airplay-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.cast-airplay-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  border-radius: 10px;
+  background: var(--input-bg, rgba(0,0,0,.14));
+  color: inherit;
+  padding: 11px;
+  font: inherit;
+  text-transform: uppercase;
+}
+.cast-airplay-casting {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  text-align: center;
+  padding: 18px 10px;
+}
+.cast-airplay-casting strong { font-size: 17px; }
+.cast-airplay-casting span { color: var(--muted, #9fb0b6); font-size: 13px; }
+
+/* The action is intentionally phone-only. JS also guards this so it never
+   becomes an active desktop feature if CSS is overridden. */
+@media (min-width: 761px) {
+  #mapperHeaderCastAirplayAction { display: none !important; }
+}
+
+@media (max-width: 760px) {
+  .cast-airplay-modal { align-items: end; padding: 0; }
+  .cast-airplay-card {
+    width: 100%;
+    max-height: 86dvh;
+    border-radius: 18px 18px 0 0;
+    padding: 16px 14px calc(16px + env(safe-area-inset-bottom));
+  }
+  .cast-airplay-actions .btn { flex: 1 1 auto; min-height: 44px; }
+  .cast-airplay-controls { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .cast-airplay-controls .btn { min-width: 0; padding-left: 7px; padding-right: 7px; }
+}
