@@ -19,6 +19,22 @@ The Google card shows:
 
 Multiple Nest Hubs can select the same FjordLens album.
 
+## Public privacy policy
+
+FjordLens includes a public privacy-policy route for Google OAuth consent and general disclosure:
+
+```text
+https://YOUR-FJORDLENS-HOST/privacy
+```
+
+For the current hosted installation this is intended to be:
+
+```text
+https://photostation.gleruphub.dk/privacy
+```
+
+The route is public and does not require a FjordLens login. It explains what the Google Photo Frame integration stores, what selected photos are uploaded, how OAuth tokens are handled, and how Google Photos acts as a third party.
+
 ## 1. Create a Google Cloud OAuth client
 
 1. Open Google Cloud Console and create or choose a project.
