@@ -2259,7 +2259,7 @@ class User(UserMixin):
         self.username = username
         self.hub_user_id = int(hub_user_id) if hub_user_id is not None else None
         role_norm = (role or ("admin" if is_admin_fallback else "user") or "user").strip().lower()
-        if role_norm not in {"admin", "user"}:
+        if role_norm not in {"admin", "manager", "user"}:
             role_norm = "user"
         self.role = role_norm
         self.ui_language = _normalize_language(ui_language, DEFAULT_UI_LANGUAGE)
@@ -2271,7 +2271,11 @@ class User(UserMixin):
 
     @property
     def is_manager(self) -> bool:
-        return False
+        return self.role == "manager"
+
+    @property
+    def can_manage_media(self) -> bool:
+        return self.is_admin or self.is_manager
 
     def can_manage_users(self) -> bool:
         return self.is_admin
@@ -4880,7 +4884,7 @@ def _get_user_allowed_folders(conn: sqlite3.Connection, user_id: int) -> list[di
 
 def _current_user_acl_prefixes(conn: Optional[sqlite3.Connection] = None) -> Optional[list[str]]:
     try:
-        if getattr(current_user, "is_admin", False):
+        if getattr(current_user, "can_manage_media", False):
             return None
         uid = int(getattr(current_user, "id", 0) or 0)
         if uid <= 0:
@@ -4949,9 +4953,9 @@ def _folder_owner_user_id_for_rel(rel_path: Optional[str], conn: Optional[sqlite
 
 
 def _is_rel_visible_for_current_user(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> bool:
-    # Admins can always see
+    # Admins and media managers can always see.
     try:
-        if getattr(current_user, "is_admin", False):
+        if getattr(current_user, "can_manage_media", False):
             return True
     except Exception:
         pass
@@ -5015,13 +5019,13 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
 def _current_user_folder_permission_for_rel(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> Optional[str]:
     """Return the effective permission for the current user on a rel path under uploads.
     Values: 'edit' > 'upload' > 'view'. None if no access.
-    Admins and owners receive 'edit'.
+    Admins, managers and owners receive 'edit'.
     """
     rel = _normalize_rel_path_for_acl(rel_path)
     if not rel:
         return None
     try:
-        if getattr(current_user, "is_admin", False):
+        if getattr(current_user, "can_manage_media", False):
             return "edit"
     except Exception:
         pass
@@ -5170,12 +5174,18 @@ def enforce_login_for_app():
 
 
 def _forbid_user_role_for_maintenance() -> Optional[Tuple[dict, int]]:
-    """Return (resp, code) when current user is basic 'user' and tries to access maint/log features."""
+    """System settings and maintenance are reserved for administrators."""
     try:
         role = getattr(current_user, "role", "user")
     except Exception:
         role = "user"
-    if role == "user":
+    if role != "admin":
+        return ({"ok": False, "error": "Forbidden"}, 403)
+    return None
+
+
+def _forbid_media_management() -> Optional[Tuple[dict, int]]:
+    if not getattr(current_user, "can_manage_media", False):
         return ({"ok": False, "error": "Forbidden"}, 403)
     return None
 
@@ -22094,7 +22104,7 @@ def api_settings_upload_destination():
 
 @app.route("/api/settings/upload-folder", methods=["POST"])
 def api_settings_upload_folder():
-    fb = _forbid_user_role_for_maintenance()
+    fb = _forbid_media_management()
     if fb:
         return jsonify(fb[0]), fb[1]
 
@@ -22117,9 +22127,9 @@ def api_settings_upload_folder():
             if not _perm_allows(perm, "edit") and not getattr(current_user, "is_admin", False):
                 return jsonify({"ok": False, "error": "Ingen rettighed til at oprette i denne mappe"}), 403
         else:
-            # Creating directly under uploads root limited to admins
-            if not getattr(current_user, "is_admin", False):
-                return jsonify({"ok": False, "error": "Kun admin kan oprette i rodmappen"}), 403
+            # Creating directly under uploads root requires media management.
+            if not getattr(current_user, "can_manage_media", False):
+                return jsonify({"ok": False, "error": "Kun admin og manager kan oprette i rodmappen"}), 403
 
     try:
         new_subdir_input = _normalize_upload_subdir(str(body.get("path") or ""))
@@ -22191,7 +22201,7 @@ def api_settings_upload_folder():
 
 @app.route("/api/settings/upload-folder-delete", methods=["POST"])
 def api_settings_upload_folder_delete():
-    fb = _forbid_user_role_for_maintenance()
+    fb = _forbid_media_management()
     if fb:
         return jsonify(fb[0]), fb[1]
 
@@ -22579,7 +22589,7 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
 
 @app.route("/api/settings/upload-folder-rename", methods=["POST"])
 def api_settings_upload_folder_rename():
-    fb = _forbid_user_role_for_maintenance()
+    fb = _forbid_media_management()
     if fb:
         return jsonify(fb[0]), fb[1]
 
@@ -24406,7 +24416,7 @@ def admin_users():
             p = request.form.get("password") or ""
             role = (request.form.get("role") or "user").strip().lower()
             enforce_2fa = 1 if (request.form.get("enforce_2fa") in ("1", "on", "true", "True")) else 0
-            if role not in {"admin", "user"}:
+            if role not in {"admin", "manager", "user"}:
                 role = "user"
             if u and p:
                 try:
@@ -24542,7 +24552,7 @@ def api_admin_users():
         theme_mode = "system"
     raw_allowed = data.get("allowed_folders")
     allowed_folders = raw_allowed if isinstance(raw_allowed, list) else []
-    if role not in {"admin", "user"}:
+    if role not in {"admin", "manager", "user"}:
         role = "user"
     if not u or not p:
         return jsonify({"ok": False, "error": "username_password_required"}), 400
@@ -24663,7 +24673,8 @@ def _coerce_hub_user_id(value: Any) -> Optional[int]:
 
 
 def _coerce_hub_role(value: Any) -> str:
-    return "admin" if str(value or "user").strip().lower() == "admin" else "user"
+    role = str(value or "user").strip().lower()
+    return role if role in {"admin", "manager", "user"} else "user"
 
 
 def _ensure_hub_user_columns(conn: sqlite3.Connection) -> None:
@@ -24941,7 +24952,7 @@ def _api_admin_users_managed():
 
     data = request.get_json(silent=True) or {}
     role = str(data.get("role") or "user").strip().lower()
-    if role not in {"admin", "user"}:
+    if role not in {"admin", "manager", "user"}:
         role = "user"
     result = _hub_create_user({
         "username": str(data.get("username") or "").strip(),
@@ -24998,7 +25009,7 @@ def hub_users():
     u = str(data.get("username") or "").strip()
     p = str(data.get("password") or "")
     role = str(data.get("role") or "user").strip().lower()
-    if role not in ("admin", "user"):
+    if role not in ("admin", "manager", "user"):
         role = "user"
     if not u or not p:
         return jsonify({"ok": False, "error": "username og password påkrævet"}), 400
@@ -25031,7 +25042,7 @@ def hub_user(user_id: int):
         return jsonify({"ok": True})
     data = request.get_json(silent=True) or {}
     role = str(data.get("role") or "user").strip().lower()
-    if role not in ("admin", "user"):
+    if role not in ("admin", "manager", "user"):
         return jsonify({"ok": False, "error": "Ugyldig rolle"}), 400
     with closing(get_conn()) as conn:
         conn.execute(
@@ -25369,7 +25380,7 @@ def api_admin_users_delete(uid: int):
         if request.method == "PUT":
             data = request.get_json(silent=True) or {}
             role = str(data.get("role") or "user").strip().lower()
-            if role not in {"admin", "user"}:
+            if role not in {"admin", "manager", "user"}:
                 return jsonify({"ok": False, "error": "invalid_role"}), 400
             with closing(get_conn()) as conn:
                 _ensure_hub_user_columns(conn)
@@ -25426,7 +25437,7 @@ def api_admin_users_delete(uid: int):
         new_role = None
         if new_role_raw is not None:
             new_role = str(new_role_raw).strip().lower()
-            if new_role not in {"admin", "user"}:
+            if new_role not in {"admin", "manager", "user"}:
                 return jsonify({"ok": False, "error": "invalid_role"}), 400
         ui_language = _normalize_language(data.get("ui_language"), DEFAULT_UI_LANGUAGE)
         search_language = _normalize_language(data.get("search_language"), DEFAULT_SEARCH_LANGUAGE)
@@ -25552,7 +25563,7 @@ def api_me():
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         raw_role = str((row["role"] if "role" in row.keys() else "") or "").strip().lower()
-        if raw_role not in {"admin", "user"}:
+        if raw_role not in {"admin", "manager", "user"}:
             try:
                 raw_role = "admin" if bool(row["is_admin"]) else "user"
             except Exception:

@@ -1517,6 +1517,19 @@ const shareViewerPager = window.FjordLensMediaPreloader.createViewerPager({
   isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
   onUpdate: () => shareViewerMediaPreloader.update(state.visible, state.viewerIndex),
 });
+const shareViewerZoom = window.FjordLensViewerZoom.create({
+  viewer: els.viewer,
+  getImage: () => els.viewerImg,
+  isEnabled: () => !els.viewer.classList.contains('hidden') && els.viewerImg.style.display !== 'none'
+    && (!els.viewerImg.style.transition || els.viewerImg.style.transition === 'none')
+    && window.matchMedia('(max-width: 760px)').matches,
+  onGestureStart: () => {
+    resetShareViewerTouch();
+    cleanupShareViewerDrag();
+    closeShareViewerMenu();
+    els.viewer.classList.remove('viewer-controls-visible');
+  },
+});
 
 function isShareViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo || els.viewer.classList.contains('hidden')) return false;
@@ -1569,6 +1582,7 @@ function prepareShareViewerVideoPlayback() {
 }
 
 function openShareViewer(index) {
+  shareViewerZoom.reset();
   if (!els.viewer || !state.visible.length) return;
   const clamp = (i) => (i + state.visible.length) % state.visible.length;
   state.viewerIndex = clamp(index);
@@ -1626,6 +1640,7 @@ function openShareViewer(index) {
 }
 function closeShareViewer() {
   if (!els.viewer) return;
+  shareViewerZoom.reset();
   els.viewer.classList.add('hidden');
   els.viewer.classList.remove('viewer-controls-visible');
   document.body.classList.remove('viewer-scroll-lock');
@@ -1779,6 +1794,7 @@ function resetShareViewerTouch() {
 }
 
 function cleanupShareViewerDrag() {
+  if (shareViewerZoom.isActive()) return;
   [els.viewerImg, els.viewerVideo].forEach((node) => {
     if (!node) return;
     node.style.transition = '';

@@ -4007,6 +4007,10 @@ body.detail-open .detail-panel {
   .detail-panel { display: none; }
 }
 @media (max-width: 760px) {
+  #viewer, #shareViewer { overflow: hidden; }
+  #viewerImg, #shareViewerImg { touch-action: none; }
+  .viewer-zoomed #viewerFaceBoxes,
+  .viewer-zoomed .viewer-info-media-btn { visibility: hidden; }
   #viewer {
     background: #000 !important;
   }

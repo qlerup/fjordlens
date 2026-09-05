@@ -1321,6 +1321,7 @@
     }
   </script>
   <script src="{{ url_for('static', filename='media_preloader.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='viewer_zoom.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='theme-design.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='fl-select.js', v=app_build) }}"></script>
@@ -1362,7 +1363,7 @@
         if(btn) btn.style.display = 'none';
         if(panel) panel.parentElement && panel.parentElement.removeChild(panel);
       }
-      if(ROLE === 'user'){
+      if(ROLE !== 'admin'){
         hideTab('users');
         hideTab('other');
         hideTab('maint');
@@ -1371,11 +1372,6 @@
         hideTab('shared');
         hideTab('upload_workflow');
         hideTab('file_types');
-        hideTab('update');
-      } else if(ROLE === 'manager'){
-        hideTab('users');
-        hideTab('dns');
-        hideTab('shared');
         hideTab('update');
       }
       // Ensure one visible tab is active

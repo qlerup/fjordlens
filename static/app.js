@@ -7380,6 +7380,20 @@ const viewerPager = window.FjordLensMediaPreloader.createViewerPager({
   isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
   onUpdate: () => viewerMediaPreloader.update(getViewerItems(), state.selectedIndex),
 });
+const viewerZoom = window.FjordLensViewerZoom.create({
+  viewer: els.viewer,
+  getImage: () => els.viewerImg,
+  isEnabled: () => !viewerTransitionRunning && !els.viewer.classList.contains('hidden')
+    && els.viewerImg.style.display !== 'none' && window.matchMedia('(max-width: 760px)').matches,
+  onGestureStart: () => {
+    resetViewerTouchState();
+    removeViewerSwipePreview();
+    cleanupViewerMediaAnimation();
+    els.viewer.style.background = viewerDismissBg || 'rgba(0,0,0,0.85)';
+    els.viewer.classList.remove('viewer-controls-visible');
+    if (isViewerInfoPanelOpen()) toggleViewerInfoPanel(false);
+  },
+});
 
 function isViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo) return false;
@@ -7435,6 +7449,7 @@ function prepareViewerVideoPlayback() {
 }
 
 function cleanupViewerMediaAnimation() {
+  if (viewerZoom.isActive()) return;
   [els.viewerImg, els.viewerVideo].forEach((node) => {
     if (!node) return;
     node.style.transition = '';
@@ -7702,6 +7717,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
 }
 
 function openViewer(index, preview = null) {
+  viewerZoom.reset();
   const items = getViewerItems();
   state.selectedIndex = index;
   const it = items[index];
@@ -7812,6 +7828,7 @@ function openViewer(index, preview = null) {
 }
 function closeViewer() {
   if (!els.viewer) return;
+  viewerZoom.reset();
   viewerTransitionRunning = false;
   viewerPendingStep = 0;
   els.viewer.classList.add("hidden");
@@ -13299,10 +13316,10 @@ async function toggleFavorite() {
 async function setView(view, opts = {}) {
   const { syncUrl = true } = opts || {};
   let nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
-  // Block settings for basic users (UI safety)
+  // System settings are reserved for administrators.
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (nextView === 'settings' && role === 'user') nextView = 'timeline';
+    if (nextView === 'settings' && role !== 'admin') nextView = 'timeline';
   } catch {}
   state.view = nextView;
   if (nextView === 'mapper') {
@@ -18298,7 +18315,7 @@ async function startExistingConversion(type, btn = null) {
   } catch {}
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (role === 'user') {
+    if (role !== 'admin') {
       const settingsBtn = document.querySelector('.nav-item[data-view="settings"]');
       if (settingsBtn) settingsBtn.style.display = 'none';
       document.querySelectorAll('.mobile-nav-item[data-view="settings"]').forEach(el=>{ el.style.display = 'none'; });
@@ -18308,7 +18325,7 @@ async function startExistingConversion(type, btn = null) {
       if (els.editUploaderBtn) els.editUploaderBtn.classList.remove('hidden');
       if (els.viEditUploaderBtn) els.viEditUploaderBtn.classList.remove('hidden');
     }
-    if (role !== 'user' && !state.logsRunning) startLogs();
+    if (role === 'admin' && !state.logsRunning) startLogs();
   } catch {}
 })();
 
@@ -18323,10 +18340,10 @@ setView(state.view, { syncUrl: false }).then(async () => {
       }
     }).catch(() => {});
   }
-  // Start logs only for elevated roles (not basic 'user')
+  // Start logs only for administrators.
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (role !== 'user') {
+    if (role === 'admin') {
       startLogs();
     } else {
       // Ensure UI reflects stopped state
@@ -18339,7 +18356,7 @@ setView(state.view, { syncUrl: false }).then(async () => {
   }
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (role !== 'user') loadVideoPlaybackSettings({ silent: true }).catch(() => {});
+    if (role === 'admin') loadVideoPlaybackSettings({ silent: true }).catch(() => {});
   } catch {}
   loadUploadFileTypeSettings({ silent: true }).catch(() => {});
   // Load conversion settings into toggles
@@ -18526,7 +18543,7 @@ async function renderUsersPanel(){
     const managedByHub = !!js.managed_by_fjordhub;
     const rows = items.map(u => {
       const role = String(u.role || '').toLowerCase();
-      const aclButton = role === 'admin'
+      const aclButton = role === 'admin' || role === 'manager'
         ? ''
         : `<button data-acl="${u.id}" class="btn small">Mapper</button>`;
       return `
@@ -18618,6 +18635,7 @@ async function renderUsersPanel(){
           <div class="form-row"><label for="nu_role">Rolle</label>
             <select id="nu_role" class="select">
               <option value="user">Bruger</option>
+              <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>
           </div>
@@ -18660,6 +18678,7 @@ async function renderUsersPanel(){
           <div class="form-row"><label for="eu_role">Rolle</label>
             <select id="eu_role" class="select">
               <option value="user">Bruger</option>
+              <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>
           </div>
