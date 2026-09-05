@@ -59,6 +59,11 @@
       // Capture phase makes sure the hidden values are correct before app.js reads them.
       applyAll();
     }
+    if (event.target?.closest('#dnsSaveBtn')) {
+      // app.js saves asynchronously; refresh the effective setting immediately afterwards.
+      setTimeout(refreshDnsConfigured, 350);
+      setTimeout(refreshDnsConfigured, 1000);
+    }
   }, true);
 
   const observer = new MutationObserver(() => applyAll());
