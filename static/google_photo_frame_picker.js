@@ -2,6 +2,7 @@
   'use strict';
 
   const selected = new Set();
+  const initialSelected = new Set();
   let folders = [];
   let currentFolder = '';
   let currentItems = [];
@@ -30,7 +31,7 @@
         <div class="gpf-picker-head">
           <div>
             <h3 id="gpfPickerTitle">${esc(tr('Vælg billeder til Google Photo Frame', 'Choose photos for Google Photo Frame'))}</h3>
-            <div class="mini-label">${esc(tr('Vælg en mappe og markér de billeder, der skal vises på Nest Hub.', 'Choose a folder and select the photos to show on Nest Hub.'))}</div>
+            <div class="mini-label">${esc(tr('Flueben viser billeder, der er med i Google Photo Frame-albummet.', 'Checked photos are included in the Google Photo Frame album.'))}</div>
           </div>
           <button type="button" class="btn" data-gpf-picker-close>×</button>
         </div>
@@ -54,8 +55,7 @@
         </div>
         <div class="gpf-picker-actions">
           <button type="button" class="btn" data-gpf-picker-close>${esc(tr('Annuller', 'Cancel'))}</button>
-          <button type="button" class="btn" id="gpfPickerRemove">${esc(tr('Fjern valgte', 'Remove selected'))}</button>
-          <button type="button" class="btn primary" id="gpfPickerAdd">${esc(tr('Tilføj valgte', 'Add selected'))}</button>
+          <button type="button" class="btn primary" id="gpfPickerSave">${esc(tr('Gem valg', 'Save selection'))}</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
@@ -71,14 +71,18 @@
     el.classList.toggle('hidden', !text);
   }
 
+  function hasChanges() {
+    if (selected.size !== initialSelected.size) return true;
+    for (const id of selected) if (!initialSelected.has(id)) return true;
+    return false;
+  }
+
   function updateCount() {
     const count = selected.size;
     const el = document.getElementById('gpfPickerCount');
     if (el) el.textContent = `${count} ${tr('valgt', 'selected')}`;
-    const add = document.getElementById('gpfPickerAdd');
-    const remove = document.getElementById('gpfPickerRemove');
-    if (add) add.disabled = !count;
-    if (remove) remove.disabled = !count;
+    const save = document.getElementById('gpfPickerSave');
+    if (save) save.disabled = !hasChanges();
   }
 
   function closePicker() {
@@ -107,8 +111,7 @@
         updateCount();
         return;
       }
-      if (event.target.closest('#gpfPickerAdd')) syncSelected('add');
-      if (event.target.closest('#gpfPickerRemove')) syncSelected('remove');
+      if (event.target.closest('#gpfPickerSave')) saveSelection();
     });
 
     modal.querySelector('#gpfPickerSearch')?.addEventListener('input', () => {
@@ -163,6 +166,22 @@
     renderFolders();
   }
 
+  async function loadCurrentSelection() {
+    const response = await fetch('/api/google-photo-frame/selection', {credentials:'same-origin'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    selected.clear();
+    initialSelected.clear();
+    const ids = Array.isArray(data.photo_ids) ? data.photo_ids : [];
+    for (const raw of ids) {
+      const id = Number(raw || 0);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      selected.add(id);
+      initialSelected.add(id);
+    }
+    updateCount();
+  }
+
   async function loadPhotos() {
     const loading = document.getElementById('gpfPickerLoading');
     const wrap = document.getElementById('gpfPickerPhotos');
@@ -198,6 +217,7 @@
   async function openPicker() {
     const modal = ensureModal();
     selected.clear();
+    initialSelected.clear();
     currentFolder = '';
     currentItems = [];
     const search = modal.querySelector('#gpfPickerSearch');
@@ -205,38 +225,62 @@
     updateCount();
     modal.classList.remove('hidden');
     try {
-      await loadFolders();
+      await Promise.all([loadCurrentSelection(), loadFolders()]);
       await loadPhotos();
     } catch (error) {
       setError(error.message || error);
     }
   }
 
-  async function syncSelected(mode) {
-    const ids = Array.from(selected);
-    if (!ids.length) return;
-    const addBtn = document.getElementById('gpfPickerAdd');
-    const removeBtn = document.getElementById('gpfPickerRemove');
-    if (addBtn) addBtn.disabled = true;
-    if (removeBtn) removeBtn.disabled = true;
-    setError('');
+  async function syncIds(mode, ids) {
     let changed = 0;
     let failed = 0;
+    for (let i = 0; i < ids.length; i += 20) {
+      const chunk = ids.slice(i, i + 20);
+      const response = await fetch(`/api/google-photo-frame/photos/${mode}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({photo_ids: chunk}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 207) throw new Error(data.error || `HTTP ${response.status}`);
+      changed += Number(mode === 'add' ? data.added || 0 : data.removed || 0);
+      failed += Array.isArray(data.failed) ? data.failed.length : 0;
+    }
+    return {changed, failed};
+  }
+
+  async function saveSelection() {
+    const toAdd = Array.from(selected).filter(id => !initialSelected.has(id));
+    const toRemove = Array.from(initialSelected).filter(id => !selected.has(id));
+    if (!toAdd.length && !toRemove.length) {
+      closePicker();
+      return;
+    }
+
+    const saveBtn = document.getElementById('gpfPickerSave');
+    if (saveBtn) saveBtn.disabled = true;
+    setError('');
     try {
-      for (let i = 0; i < ids.length; i += 20) {
-        const chunk = ids.slice(i, i + 20);
-        const response = await fetch(`/api/google-photo-frame/photos/${mode === 'add' ? 'add' : 'remove'}`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({photo_ids: chunk}),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok && response.status !== 207) throw new Error(data.error || `HTTP ${response.status}`);
-        changed += Number(mode === 'add' ? data.added || 0 : data.removed || 0);
-        failed += Array.isArray(data.failed) ? data.failed.length : 0;
+      let added = 0;
+      let removed = 0;
+      let failed = 0;
+      if (toAdd.length) {
+        const result = await syncIds('add', toAdd);
+        added += result.changed;
+        failed += result.failed;
       }
-      notify(`${mode === 'add' ? tr('Google Photo Frame opdateret', 'Google Photo Frame updated') : tr('Billeder fjernet fra Google Photo Frame', 'Photos removed from Google Photo Frame')}: ${changed}${failed ? ` · ${failed} ${tr('fejl', 'failed')}` : ''}`, failed ? 'err' : 'ok');
+      if (toRemove.length) {
+        const result = await syncIds('remove', toRemove);
+        removed += result.changed;
+        failed += result.failed;
+      }
+      if (failed) {
+        notify(`${tr('Google Photo Frame opdateret med fejl', 'Google Photo Frame updated with errors')}: +${added} / -${removed} · ${failed} ${tr('fejl', 'failed')}`, 'err');
+      } else {
+        notify(`${tr('Google Photo Frame opdateret', 'Google Photo Frame updated')}: +${added} / -${removed}`, 'ok');
+      }
       window.postMessage({type:'fjordlens-google-photo-frame'}, window.location.origin);
       closePicker();
     } catch (error) {
