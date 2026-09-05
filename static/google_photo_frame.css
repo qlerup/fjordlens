@@ -1,0 +1,311 @@
+/* Google Photos / Nest Hub Photo Frame integration.
+   Kept separate from the Raspberry Pi photoframe styles on purpose: Google
+   exposes album/sync state, not device heartbeat/IP/version information. */
+
+.gpf-section {
+  margin: 0 0 22px;
+}
+
+.gpf-section-head,
+.gpf-native-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 10px;
+}
+
+.gpf-section-head h2,
+.gpf-native-section-head h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.gpf-section-head p,
+.gpf-native-section-head p {
+  margin: 4px 0 0;
+  color: var(--muted, #8b98a1);
+  font-size: 13px;
+}
+
+.gpf-native-section-head {
+  margin-top: 22px;
+}
+
+.gpf-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 14px;
+  background: var(--panel, #121a20);
+  padding: 16px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.08);
+}
+
+.gpf-card::before {
+  content: "G";
+  position: absolute;
+  right: -12px;
+  top: -30px;
+  font: 800 118px/1 system-ui, sans-serif;
+  opacity: .035;
+  pointer-events: none;
+}
+
+.gpf-card-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.gpf-card-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.gpf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gpf-badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.gpf-badge.is-on { color: #2eaa73; }
+.gpf-badge.is-warn { color: #c28b26; }
+.gpf-badge.is-off { color: var(--muted, #8b98a1); }
+
+.gpf-meta {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 22px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.10));
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+}
+
+.gpf-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.07));
+  font-size: 13px;
+}
+
+.gpf-row:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.gpf-row span {
+  color: var(--muted, #8b98a1);
+  white-space: nowrap;
+}
+
+.gpf-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-weight: 650;
+}
+
+.gpf-note,
+.gpf-hint,
+.gpf-error {
+  position: relative;
+  z-index: 1;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gpf-note {
+  background: color-mix(in srgb, var(--panel, #121a20) 72%, #4285f4 8%);
+  border: 1px solid color-mix(in srgb, var(--border, #46515a) 70%, #4285f4 30%);
+  color: var(--muted, #aab4ba);
+}
+
+.gpf-hint {
+  background: color-mix(in srgb, var(--panel, #121a20) 74%, #34a853 8%);
+  border: 1px solid color-mix(in srgb, var(--border, #46515a) 70%, #34a853 30%);
+}
+
+.gpf-error {
+  background: rgba(196, 69, 69, .10);
+  border: 1px solid rgba(196, 69, 69, .35);
+  color: #d66b6b;
+}
+
+.gpf-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.gpf-subactions {
+  margin-top: 10px;
+}
+
+.gpf-link-danger {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #c95a5a;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gpf-link-danger:hover { text-decoration: underline; }
+
+.gpf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.gpf-modal.hidden { display: none !important; }
+
+.gpf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.62);
+  backdrop-filter: blur(5px);
+}
+
+.gpf-modal-card {
+  position: relative;
+  width: min(620px, 94vw);
+  max-height: min(760px, 90vh);
+  overflow: auto;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 16px;
+  background: var(--panel, #121a20);
+  padding: 18px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.36);
+}
+
+.gpf-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.gpf-modal-head h3 { margin: 0; }
+
+.gpf-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.gpf-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  border-radius: 10px;
+  background: var(--input-bg, rgba(0,0,0,.13));
+  color: inherit;
+  padding: 10px 11px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.gpf-field input:focus {
+  outline: 2px solid color-mix(in srgb, #4285f4 55%, transparent);
+  outline-offset: 1px;
+}
+
+.gpf-help {
+  color: var(--muted, #8b98a1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gpf-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.gpf-action-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.gpf-action-choice .btn {
+  min-height: 44px;
+  justify-content: center;
+}
+
+#gpfMapperButton {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .gpf-section { margin-bottom: 18px; }
+  .gpf-card { padding: 14px; }
+  .gpf-card-head { align-items: flex-start; }
+  .gpf-meta { grid-template-columns: 1fr; }
+  .gpf-row:nth-last-child(-n + 2) { border-bottom: 1px solid var(--border, rgba(255,255,255,.07)); }
+  .gpf-row:last-child { border-bottom: 0; }
+  .gpf-row { gap: 10px; }
+  .gpf-row span { white-space: normal; }
+  .gpf-actions .btn { flex: 1 1 auto; }
+  .gpf-action-choice { grid-template-columns: 1fr; }
+  .gpf-modal-card { padding: 15px; }
+}
+
+.gpf-big-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.gpf-big-actions .btn {
+  min-height: 44px;
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .gpf-big-actions { grid-template-columns: 1fr; }
+}
