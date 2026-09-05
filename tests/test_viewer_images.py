@@ -169,6 +169,31 @@ class ViewerImageTests(unittest.TestCase):
         self.page.wait_for_timeout(100)
         self.wait_image("/b-thumb.jpg", 12)
 
+    def test_cached_navigation_does_not_restart_the_design_entrance_animation(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ("styles.css", "redesign.css"):
+            self.page.add_style_tag(content=(root / "static" / name).read_text(encoding="utf-8"))
+        self.page.evaluate("current.id = 'viewerImg'")
+        self.show(0)
+        self.release("a.jpg")
+        self.wait_image("/a.jpg", 600)
+        self.page.wait_for_timeout(550)
+        self.page.evaluate("preloader.getImage(items[1])")
+        self.release("b.jpg")
+        self.page.wait_for_timeout(50)
+        self.show(1)
+        frames = self.page.evaluate("""async () => {
+          const frames = [];
+          for (let i = 0; i < 8; i++) {
+            await new Promise(requestAnimationFrame);
+            const style = getComputedStyle(current);
+            frames.push({opacity: Number(style.opacity), transform: style.transform});
+          }
+          return frames;
+        }""")
+        self.assertTrue(all(frame["opacity"] == 1 for frame in frames), frames)
+        self.assertTrue(all(frame["transform"] in ("none", "matrix(1, 0, 0, 1, 0, 0)") for frame in frames), frames)
+
     def test_switching_to_video_preserves_the_cached_photo(self):
         self.show(0)
         self.release("a.jpg")

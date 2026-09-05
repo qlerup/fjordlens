@@ -202,5 +202,53 @@
     return { show, clear };
   }
 
-  window.FjordLensMediaPreloader = { create, mediaUrl, createImagePresenter };
+  // Metadata paging is independent of the rolling cache of full-size media.
+  function createViewerPager({ getItems, getIndex, hasMore, loadMore, getContext, isOpen, onUpdate }) {
+    let pending = null;
+    const valid = context => isOpen() && getContext() === context;
+
+    async function nextPage(context) {
+      if (!valid(context)) return false;
+      const count = getItems().length;
+      if (!pending) {
+        const request = Promise.resolve().then(loadMore).catch(() => false);
+        pending = request;
+        request.finally(() => { if (pending === request) pending = null; });
+      }
+      await pending;
+      if (!valid(context)) return false;
+      onUpdate();
+      return getItems().length > count;
+    }
+
+    async function prefetch() {
+      const context = getContext();
+      while (valid(context) && hasMore() && getItems().length <= getIndex() + 10) {
+        if (!await nextPage(context)) break;
+      }
+    }
+
+    function peek(step) {
+      const length = getItems().length;
+      const target = getIndex() + step;
+      if (!length || (hasMore() && (target < 0 || target >= length))) return -1;
+      return ((target % length) + length) % length;
+    }
+
+    async function target(step) {
+      const context = getContext();
+      const index = getIndex();
+      // A backwards wrap needs the actual end of the folder, not the last
+      // photo in the first page. Forward navigation only fetches what's needed.
+      while (valid(context) && hasMore() && (index + step < 0 || index + step >= getItems().length)) {
+        if (!await nextPage(context)) return -1;
+      }
+      if (!valid(context) || getIndex() !== index) return -1;
+      return peek(step);
+    }
+
+    return { prefetch, peek, target };
+  }
+
+  window.FjordLensMediaPreloader = { create, mediaUrl, createImagePresenter, createViewerPager };
 })();

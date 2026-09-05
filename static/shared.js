@@ -1455,8 +1455,10 @@ function expandShareGhostChunk() {
   const cols = estimateShareColumns();
   const next = Math.min(state.photosTotal, state.ghostCapacity + (cols * 50));
   if (next <= state.ghostCapacity) return;
-  appendShareGhostSlots(state.ghostCapacity, next);
+  const startIndex = state.ghostCapacity;
+  appendShareGhostSlots(startIndex, next);
   state.ghostCapacity = next;
+  hydrateShareItems(startIndex, state.items.slice(startIndex, next));
   setupShareGhostLoading();
 }
 
@@ -1505,6 +1507,15 @@ const shareViewerImagePresenter = window.FjordLensMediaPreloader.createImagePres
   getNode: () => els.viewerImg,
   setNode: (node) => { els.viewerImg = node; },
   preloader: shareViewerMediaPreloader,
+});
+const shareViewerPager = window.FjordLensMediaPreloader.createViewerPager({
+  getItems: () => state.visible,
+  getIndex: () => state.viewerIndex,
+  hasMore: () => state.photosHasMore,
+  loadMore: () => loadPhotos(false, true),
+  getContext: () => JSON.stringify([state.token, state.currentPath, shareViewerVideoSourceGeneration]),
+  isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
+  onUpdate: () => shareViewerMediaPreloader.update(state.visible, state.viewerIndex),
 });
 
 function isShareViewerVideoActive() {
@@ -1611,6 +1622,7 @@ function openShareViewer(index) {
 
   // Hold de næste 10 og forrige 10 billeder/videoer klar i browserens cache.
   shareViewerMediaPreloader.update(state.visible, state.viewerIndex);
+  shareViewerPager.prefetch();
 }
 function closeShareViewer() {
   if (!els.viewer) return;
@@ -1632,9 +1644,10 @@ function closeShareViewer() {
     try { els.viewerVideo.load(); } catch {}
   }
 }
-function navShareViewer(step) {
+async function navShareViewer(step) {
   if (!state.visible.length) return;
-  openShareViewer(state.viewerIndex + step);
+  const targetIndex = await shareViewerPager.target(step);
+  if (targetIndex >= 0) openShareViewer(targetIndex);
 }
 
 if (els.viewerClose) els.viewerClose.addEventListener('click', closeShareViewer);
@@ -1834,12 +1847,15 @@ function commitShareViewerDismiss() {
   window.setTimeout(closeShareViewer, 210);
 }
 
-function commitShareViewerNav(step) {
+async function commitShareViewerNav(step) {
   const sourceGeneration = shareViewerVideoSourceGeneration;
+  const targetIndex = await shareViewerPager.target(step);
+  if (sourceGeneration !== shareViewerVideoSourceGeneration) return;
+  if (targetIndex < 0) { animateShareViewerReset(); return; }
   const active = getActiveShareViewerMedia();
   const w = Math.max(1, window.innerWidth || 1);
   if (!active) {
-    navShareViewer(step);
+    openShareViewer(targetIndex);
     return;
   }
   active.style.transition = 'transform 170ms ease, opacity 170ms ease';
@@ -1847,7 +1863,7 @@ function commitShareViewerNav(step) {
   active.style.opacity = '0.25';
   window.setTimeout(() => {
     if (sourceGeneration !== shareViewerVideoSourceGeneration || els.viewer.classList.contains('hidden')) return;
-    navShareViewer(step);
+    openShareViewer(targetIndex);
     cleanupShareViewerDrag();
   }, 180);
 }
@@ -2071,8 +2087,29 @@ function restoreShareGridScrollAnchor(anchor) {
   });
 }
 
+let sharePhotosLoadPromise = null;
+let sharePhotosRequestSequence = 0;
+
 async function loadPhotos(preserveScroll = false, append = false) {
-  if (state.photosLoading) return;
+  if (append && sharePhotosLoadPromise) return sharePhotosLoadPromise.catch(() => false);
+  const request = loadSharePhotosPage(preserveScroll, append);
+  sharePhotosLoadPromise = request;
+  try {
+    return await request;
+  } catch (error) {
+    showStatus('Kunne ikke hente billeder. Prøv igen.', 'err');
+    return false;
+  } finally {
+    if (sharePhotosLoadPromise === request) {
+      sharePhotosLoadPromise = null;
+      state.photosLoading = false;
+    }
+  }
+}
+
+async function loadSharePhotosPage(preserveScroll = false, append = false) {
+  const sequence = ++sharePhotosRequestSequence;
+  const path = state.currentPath;
   state.photosLoading = true;
   const cols = estimateShareColumns();
   const params = new URLSearchParams({
@@ -2083,6 +2120,7 @@ async function loadPhotos(preserveScroll = false, append = false) {
   const startIndex = append ? state.items.length : 0;
   const res = await fetch(`/api/share/${encodeURIComponent(state.token)}/photos?${params.toString()}`);
   const data = await res.json().catch(() => ({}));
+  if (sequence !== sharePhotosRequestSequence || path !== state.currentPath) return false;
   if (res.status === 401 && data && (data.password_required || data.name_required)) {
     applyAuthRequirements(data);
     state.photosLoading = false;

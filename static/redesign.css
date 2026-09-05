@@ -1226,19 +1226,9 @@ select.select {
   box-shadow:
     0 40px 110px -30px rgba(0, 0, 0, 0.8),
     0 0 0 1px rgba(255, 255, 255, 0.1);
-  /* 'backwards' (ikke 'both'): en færdig keyframe-animation med forward-fill
-     fastlåser transform/opacity og blokerer JS'ens slide ved bladring */
-  animation: fl-viewer-in 0.5s var(--fl-liquid) backwards;
-}
-@keyframes fl-viewer-in {
-  from {
-    opacity: 0;
-    transform: scale(0.955) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  /* The viewer itself fades in on opening. Individual media nodes are also
+     mounted/promoted during swipes, so an entrance animation here would
+     restart with a black flash and a scale/position jump on every photo. */
 }
 
 /* Fælles glas-kontroller i vieweren */

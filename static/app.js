@@ -6054,6 +6054,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
 let photoLoadMoreObserver = null;
 let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
+let photosLoadPromise = null;
 
 function estimateMapperGridMetrics(gridEl) {
   const el = gridEl || els.grid;
@@ -6099,8 +6100,11 @@ function expandMapperGhostChunk() {
   const total = Math.max(0, Number(state.mapperTotalItems || 0));
   const nextCapacity = Math.min(total, Number(state.mapperGhostCapacity || 0) + (cols * 50));
   if (nextCapacity <= Number(state.mapperGhostCapacity || 0)) return;
-  appendMapperGhostSlots(Number(state.mapperGhostCapacity || 0), nextCapacity);
+  const startIndex = Number(state.mapperGhostCapacity || 0);
+  appendMapperGhostSlots(startIndex, nextCapacity);
   state.mapperGhostCapacity = nextCapacity;
+  // The viewer may already have fetched these items while the grid was hidden.
+  hydrateMapperItems(startIndex, state.items.slice(startIndex, nextCapacity));
   setupMapperGhostLoading();
 }
 
@@ -7367,6 +7371,15 @@ const viewerImagePresenter = window.FjordLensMediaPreloader.createImagePresenter
     try { updateViewerFaceBoxes(); } catch {}
   },
 });
+const viewerPager = window.FjordLensMediaPreloader.createViewerPager({
+  getItems: getViewerItems,
+  getIndex: () => state.selectedIndex,
+  hasMore: () => !Array.isArray(state.viewerItems) && ['mapper', 'timeline'].includes(state.view) && state.photosHasMore,
+  loadMore: () => loadPhotos(true),
+  getContext: () => JSON.stringify([state.view, state.mapperPath, state.folder, state.q, state.sort, state.mapperSort, viewerVideoSourceGeneration]),
+  isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
+  onUpdate: () => viewerMediaPreloader.update(getViewerItems(), state.selectedIndex),
+});
 
 function isViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo) return false;
@@ -7743,6 +7756,7 @@ function openViewer(index, preview = null) {
   } catch {}
   // Keep the next 10 and previous 10 images/videos ready in the browser cache.
   viewerMediaPreloader.update(items, index);
+  viewerPager.prefetch();
   // Populate slide-out info with the current item's metadata
   try {
     const title = (it.filename || it.rel_path || "-");
@@ -7817,19 +7831,23 @@ function closeViewer() {
     try { els.viewerVideo.load(); } catch(_) {}
   }
 }
-function nextViewer(step=1) {
+async function nextViewer(step=1) {
   if (state.selectedIndex < 0) return;
   if (viewerTransitionRunning) {
     viewerPendingStep = step;
     return;
   }
-  const items = getViewerItems();
-  const n = items.length;
-  if (!n) return;
-  const targetIndex = (state.selectedIndex + step + n) % n;
-  const it = items[targetIndex];
-  if (!it || !it.original_url) return;
+  const sourceGeneration = viewerVideoSourceGeneration;
   viewerTransitionRunning = true;
+  const targetIndex = await viewerPager.target(step);
+  if (sourceGeneration !== viewerVideoSourceGeneration) return;
+  const items = getViewerItems();
+  const it = items[targetIndex];
+  if (!it || !it.original_url) {
+    viewerTransitionRunning = false;
+    viewerPendingStep = 0;
+    return;
+  }
   state.selectedIndex = targetIndex;
   animateViewerSlideTransition(step, () => openViewer(state.selectedIndex));
 }
@@ -7933,6 +7951,23 @@ function restoreGalleryScrollAnchor(anchor) {
 }
 
 async function loadPhotos(append = false, preserveScroll = false) {
+  if (append && photosLoadPromise) return photosLoadPromise.catch(() => false);
+  const request = loadPhotosPage(append, preserveScroll);
+  photosLoadPromise = request;
+  try {
+    return await request;
+  } catch (error) {
+    showStatus('Kunne ikke hente billeder. Prøv igen.', 'err');
+    return false;
+  } finally {
+    if (photosLoadPromise === request) {
+      photosLoadPromise = null;
+      state.photosLoading = false;
+    }
+  }
+}
+
+async function loadPhotosPage(append = false, preserveScroll = false) {
   if (state.view === 'photoframe') {
     state.items = [];
     const labels = navLabels();
@@ -7989,10 +8024,10 @@ async function loadPhotos(append = false, preserveScroll = false) {
     data = null;
   }
   if (!requestIsCurrent()) return;
-  if (!data) {
+  if (!data || !res.ok || data.error) {
     const text = await res.text().catch(()=> '');
     console.warn('photos non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
-    showStatus('Kunne ikke hente billeder (server svarede ikke med JSON).', 'err');
+    showStatus(data && data.error ? `Kunne ikke hente billeder: ${data.error}` : 'Kunne ikke hente billeder. Prøv igen.', 'err');
     if (!append) state.items = []; // keep existing on append failure
   } else {
     const incoming = Array.isArray(data.items) ? data.items : [];
@@ -8011,10 +8046,6 @@ async function loadPhotos(append = false, preserveScroll = false) {
     }
     if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined') {
       state.photosHasMore = state.photosPageOffset < state.mapperTotalItems;
-    }
-    if (data && data.error) {
-      const errMsg = String(data.error || '').trim();
-      if (errMsg) showStatus(`Kunne ikke hente billeder: ${errMsg}`, 'err');
     }
     if (!append && state.view === 'mapper') {
       handleMapperDiskSyncStatus(data.disk_sync);
@@ -16680,9 +16711,7 @@ function scheduleViewerLongPressSelection() {
 }
 
 function getViewerTargetIndex(step) {
-  const n = getViewerItems().length;
-  if (!n || state.selectedIndex < 0) return -1;
-  return (state.selectedIndex + step + n) % n;
+  return viewerPager.peek(step);
 }
 
 function removeViewerSwipePreview() {
@@ -16863,11 +16892,13 @@ function commitViewerDismiss() {
   }, 210);
 }
 
-function commitViewerDragSwipe(step) {
+async function commitViewerDragSwipe(step) {
   const sourceGeneration = viewerVideoSourceGeneration;
+  const targetIndex = await viewerPager.target(step);
+  if (sourceGeneration !== viewerVideoSourceGeneration) return;
   const items = getViewerItems();
-  const targetIndex = getViewerTargetIndex(step);
   if (targetIndex < 0 || !items[targetIndex]) {
+    viewerTransitionRunning = false;
     animateViewerDragReset();
     return;
   }
