@@ -2,7 +2,7 @@
   'use strict';
 
   const DEFAULT_AHEAD = 10;
-  const DEFAULT_BEHIND = 5;
+  const DEFAULT_BEHIND = 10;
 
   function mediaUrl(item) {
     return String(item && (item.original_url || item.view_url || item.thumb_url) || '').trim();
@@ -21,7 +21,10 @@
       try { node.load(); } catch (_) {}
     } else {
       try { node.onload = null; node.onerror = null; } catch (_) {}
-      try { node.src = ''; } catch (_) {}
+      // The presenter owns any image currently on screen.
+      if (!node.isConnected) {
+        try { node.removeAttribute('src'); } catch (_) {}
+      }
     }
   }
 
@@ -41,6 +44,8 @@
     try { node.decoding = 'async'; } catch (_) {}
     try { node.fetchPriority = 'low'; } catch (_) {}
     node.src = url;
+    // Fetching alone does not make a large photo ready to paint on mobile.
+    try { if (node.decode) node.decode().catch(() => {}); } catch (_) {}
     return { node, video: false };
   }
 
@@ -74,7 +79,7 @@
       cancelScheduled();
       const list = Array.isArray(items) ? items : [];
       const length = list.length;
-      if (length < 2 || !Number.isFinite(Number(currentIndex))) {
+      if (!length || !Number.isFinite(Number(currentIndex))) {
         clear();
         return;
       }
@@ -84,7 +89,6 @@
       const targetKeys = new Set();
       const addTarget = (index) => {
         const normalized = ((index % length) + length) % length;
-        if (normalized === current) return;
         const item = list[normalized];
         const url = mediaUrl(item);
         if (!url) return;
@@ -94,8 +98,13 @@
         targets.push({ key, item, url });
       };
 
-      for (let offset = 1; offset <= ahead; offset += 1) addTarget(current + offset);
-      for (let offset = 1; offset <= behind; offset += 1) addTarget(current - offset);
+      // Keep the current photo too: advancing one step should only add one
+      // distant neighbour and evict one at the opposite end of the window.
+      addTarget(current);
+      for (let offset = 1; offset <= Math.max(ahead, behind); offset += 1) {
+        if (offset <= ahead) addTarget(current + offset);
+        if (offset <= behind) addTarget(current - offset);
+      }
 
       for (const [key, entry] of cache.entries()) {
         if (targetKeys.has(key)) continue;
@@ -120,8 +129,78 @@
       }
     }
 
-    return { update, clear };
+    function getImage(item) {
+      if (isVideo(item) || !mediaUrl(item)) return null;
+      const key = `i:${mediaUrl(item)}`;
+      if (!cache.has(key)) cache.set(key, createEntry(item, mediaUrl(item)));
+      return cache.get(key).node;
+    }
+
+    return { update, clear, getImage };
   }
 
-  window.FjordLensMediaPreloader = { create, mediaUrl };
+  function createImagePresenter({ getNode, setNode, preloader, onReady = () => {} }) {
+    let generation = 0;
+
+    function clear() {
+      generation += 1;
+      const node = getNode();
+      if (node) {
+        node.onload = null;
+        // Keep a cached photo intact when the next item is a video.
+        const blank = new Image();
+        for (const attr of Array.from(node.attributes)) {
+          if (attr.name !== 'src') blank.setAttribute(attr.name, attr.value);
+        }
+        node.replaceWith(blank);
+        setNode(blank);
+      }
+    }
+
+    function show(item, preview = null) {
+      const previous = getNode();
+      if (!previous) return;
+      const currentGeneration = ++generation;
+      const url = mediaUrl(item);
+      const readyPreview = preview && preview.tagName === 'IMG'
+        && preview.getAttribute('src') === url && preview.complete && preview.naturalWidth > 0;
+      const full = readyPreview ? preview : (preloader.getImage?.(item) || new Image());
+      const readyFull = full.complete && full.naturalWidth > 0;
+      const node = readyFull ? full : new Image();
+
+      // A reused <img> can keep painting the previous photo while its new src
+      // loads. Start with a fresh node, or promote the actual loaded swipe image.
+      const attributes = Array.from(previous.attributes, attr => [attr.name, attr.value]);
+      for (const attr of Array.from(node.attributes)) {
+        if (attr.name !== 'src') node.removeAttribute(attr.name);
+      }
+      for (const [name, value] of attributes) {
+        if (name !== 'src') node.setAttribute(name, value);
+      }
+      node.style.display = 'block';
+      const isCurrent = () => currentGeneration === generation && getNode() === node;
+      node.onload = () => { if (isCurrent()) onReady(item); };
+      if (!readyFull && item.thumb_url) node.src = item.thumb_url;
+      previous.onload = null;
+      previous.replaceWith(node);
+      setNode(node);
+
+      if (readyFull) {
+        onReady(item);
+        return;
+      }
+
+      full.decoding = 'async';
+      full.fetchPriority = 'high';
+      full.addEventListener('load', async () => {
+        try { if (full.decode) await full.decode(); } catch (_) {}
+        if (isCurrent() && full.naturalWidth > 0) node.src = url;
+      }, { once: true });
+      if (full.getAttribute('src') !== url) full.src = url;
+    }
+
+    return { show, clear };
+  }
+
+  window.FjordLensMediaPreloader = { create, mediaUrl, createImagePresenter };
 })();

@@ -7355,8 +7355,18 @@ let viewerPendingStep = 0;
 let viewerVideoManualPlayRequired = false;
 let viewerVideoSourceGeneration = 0;
 const viewerMediaPreloader = (window.FjordLensMediaPreloader && typeof window.FjordLensMediaPreloader.create === 'function')
-  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 5 })
+  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 10 })
   : { update() {}, clear() {} };
+const viewerImagePresenter = window.FjordLensMediaPreloader.createImagePresenter({
+  getNode: () => els.viewerImg,
+  setNode: (node) => { els.viewerImg = node; },
+  preloader: viewerMediaPreloader,
+  onReady: (item) => {
+    try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
+    updateViewerLandscapeClass(item);
+    try { updateViewerFaceBoxes(); } catch {}
+  },
+});
 
 function isViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo) return false;
@@ -7620,6 +7630,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
   }
 
   const duration = 180;
+  const sourceGeneration = viewerVideoSourceGeneration;
   const distance = Math.min(Math.round(window.innerWidth * 0.22), 160);
   const outX = step > 0 ? -distance : distance;
   const inStartX = step > 0 ? distance : -distance;
@@ -7632,7 +7643,9 @@ function animateViewerSlideTransition(step, applyUpdate) {
   fromEl.style.opacity = '0';
 
   window.setTimeout(() => {
+    if (sourceGeneration !== viewerVideoSourceGeneration || els.viewer.classList.contains('hidden')) return;
     applyUpdate();
+    const targetGeneration = viewerVideoSourceGeneration;
     const infoPanelIn = animateInfoPanel && prepareViewerInfoSlideIn(inStartX);
     const infoButtonIn = animateInfoButton && prepareViewerInfoButtonSlideIn(inStartX);
     const toEl = getActiveViewerMediaElement();
@@ -7651,6 +7664,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
     toEl.style.opacity = '0';
 
     requestAnimationFrame(() => {
+      if (targetGeneration !== viewerVideoSourceGeneration) return;
       toEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
       toEl.style.transform = 'translateX(0)';
       toEl.style.opacity = '1';
@@ -7659,6 +7673,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
     });
 
     window.setTimeout(() => {
+      if (targetGeneration !== viewerVideoSourceGeneration) return;
       cleanupViewerMediaAnimation();
       finishViewerInfoSlideAnimation();
       finishViewerInfoButtonSlideAnimation();
@@ -7673,7 +7688,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
   }, duration);
 }
 
-function openViewer(index) {
+function openViewer(index, preview = null) {
   const items = getViewerItems();
   state.selectedIndex = index;
   const it = items[index];
@@ -7687,36 +7702,12 @@ function openViewer(index) {
   // Toggle media elements
   if (els.viewerImg) {
     els.viewerImg.setAttribute('draggable', 'false');
-    els.viewerImg.onload = () => {
-      try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
-      updateViewerLandscapeClass(it);
-      try { updateViewerFaceBoxes(); } catch {}
-    };
     els.viewerImg.style.display = it.is_video ? 'none' : 'block';
     if (!it.is_video) {
-      // Show a fast placeholder immediately, then swap to full viewable when ready
-      if (it.thumb_url) {
-        els.viewerImg.src = it.thumb_url;
-      } else {
-        els.viewerImg.removeAttribute('src');
-      }
-      const hi = new Image();
-      try { hi.decoding = 'async'; } catch {}
-      try { hi.fetchPriority = 'high'; } catch {}
-      hi.onload = async () => {
-        try { if (hi.decode) await hi.decode().catch(()=>{}); } catch {}
-        // Only swap if the viewer still shows this item
-        const currentItems = getViewerItems();
-        const current = currentItems[state.selectedIndex];
-        if (current && Number(current.id || 0) === Number(it.id || 0)) {
-          els.viewerImg.src = it.original_url || it.thumb_url || '';
-          try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
-          try { updateViewerFaceBoxes(); } catch {}
-        }
-      };
-      hi.src = it.original_url || it.thumb_url || '';
+      viewerImagePresenter.show(it, preview);
+    } else {
+      viewerImagePresenter.clear();
     }
-    if (it.is_video) els.viewerImg.removeAttribute('src');
   }
   if (els.viewerVideo) {
     els.viewerVideo.setAttribute('draggable', 'false');
@@ -7750,7 +7741,7 @@ function openViewer(index) {
       updateViewerFaceBoxes();
     });
   } catch {}
-  // Hold the next 10 and previous 5 images/videos ready in the browser cache.
+  // Keep the next 10 and previous 10 images/videos ready in the browser cache.
   viewerMediaPreloader.update(items, index);
   // Populate slide-out info with the current item's metadata
   try {
@@ -7807,6 +7798,8 @@ function openViewer(index) {
 }
 function closeViewer() {
   if (!els.viewer) return;
+  viewerTransitionRunning = false;
+  viewerPendingStep = 0;
   els.viewer.classList.add("hidden");
   els.viewer.classList.remove('viewer-landscape');
   try { const fb = document.getElementById('viewerFaceBoxes'); if (fb) fb.remove(); } catch {}
@@ -7814,6 +7807,7 @@ function closeViewer() {
   viewerVideoSourceGeneration += 1;
   viewerVideoManualPlayRequired = false;
   viewerMediaPreloader.clear();
+  viewerImagePresenter.clear();
   setViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute("src");
   if (els.viewerVideo) {
@@ -16722,7 +16716,13 @@ function ensureViewerSwipePreview(targetIndex) {
   const it = items[targetIndex];
   if (!it || !it.original_url) return null;
 
-  const node = it.is_video ? document.createElement('video') : document.createElement('img');
+  const cachedImage = !it.is_video ? viewerMediaPreloader.getImage(it) : null;
+  const node = cachedImage && !cachedImage.isConnected
+    ? cachedImage
+    : document.createElement(it.is_video ? 'video' : 'img');
+  node.removeAttribute('id');
+  node.removeAttribute('style');
+  node.onload = null;
   if (it.is_video) {
     node.muted = true;
     node.playsInline = true;
@@ -16730,7 +16730,8 @@ function ensureViewerSwipePreview(targetIndex) {
     node.src = it.original_url;
   } else {
     node.alt = '';
-    node.src = it.original_url || it.thumb_url || '';
+    const url = it.original_url || it.thumb_url || '';
+    if (node.getAttribute('src') !== url) node.src = url;
   }
   node.style.position = 'absolute';
   node.style.left = '0';
@@ -16863,6 +16864,7 @@ function commitViewerDismiss() {
 }
 
 function commitViewerDragSwipe(step) {
+  const sourceGeneration = viewerVideoSourceGeneration;
   const items = getViewerItems();
   const targetIndex = getViewerTargetIndex(step);
   if (targetIndex < 0 || !items[targetIndex]) {
@@ -16894,9 +16896,16 @@ function commitViewerDragSwipe(step) {
   preview.style.opacity = '1';
 
   window.setTimeout(() => {
+    if (sourceGeneration !== viewerVideoSourceGeneration || els.viewer.classList.contains('hidden')) return;
     state.selectedIndex = targetIndex;
+    // Keep the already displayed photo instead of reverting to the old <img>.
+    const readyPreview = preview.tagName === 'IMG' && preview.complete && preview.naturalWidth > 0;
+    if (readyPreview) {
+      viewerSwipePreviewEl = null;
+      viewerSwipePreviewIndex = -1;
+    }
+    openViewer(targetIndex, readyPreview ? preview : null);
     removeViewerSwipePreview();
-    openViewer(targetIndex);
     cleanupViewerMediaAnimation();
     scheduleViewerInfoPosition();
     viewerTransitionRunning = false;

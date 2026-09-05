@@ -1499,8 +1499,13 @@ function navigateShareBackPath() {
 let shareViewerVideoManualPlayRequired = false;
 let shareViewerVideoSourceGeneration = 0;
 const shareViewerMediaPreloader = (window.FjordLensMediaPreloader && typeof window.FjordLensMediaPreloader.create === 'function')
-  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 5 })
+  ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 10 })
   : { update() {}, clear() {} };
+const shareViewerImagePresenter = window.FjordLensMediaPreloader.createImagePresenter({
+  getNode: () => els.viewerImg,
+  setNode: (node) => { els.viewerImg = node; },
+  preloader: shareViewerMediaPreloader,
+});
 
 function isShareViewerVideoActive() {
   if (!els.viewer || !els.viewerVideo || els.viewer.classList.contains('hidden')) return false;
@@ -1564,20 +1569,9 @@ function openShareViewer(index) {
     els.viewerImg.setAttribute('draggable', 'false');
     els.viewerImg.style.display = isVideo ? 'none' : 'block';
     if (!isVideo) {
-      if (it && it.thumb_url) els.viewerImg.src = it.thumb_url;
-      else els.viewerImg.removeAttribute('src');
-      const hi = new Image();
-      try { hi.decoding = 'async'; } catch {}
-      try { hi.fetchPriority = 'high'; } catch {}
-      hi.onload = async () => {
-        try { if (hi.decode) await hi.decode().catch(() => {}); } catch {}
-        if (state.visible[state.viewerIndex] === it && els.viewerImg) {
-          els.viewerImg.src = mediaUrl;
-        }
-      };
-      hi.src = mediaUrl;
+      shareViewerImagePresenter.show(it);
     } else {
-      els.viewerImg.removeAttribute('src');
+      shareViewerImagePresenter.clear();
     }
   }
   if (els.viewerVideo) {
@@ -1615,7 +1609,7 @@ function openShareViewer(index) {
   document.body.classList.add('viewer-scroll-lock');
   prepareShareViewerVideoPlayback();
 
-  // Hold de næste 10 og forrige 5 billeder/videoer klar i browserens cache.
+  // Hold de næste 10 og forrige 10 billeder/videoer klar i browserens cache.
   shareViewerMediaPreloader.update(state.visible, state.viewerIndex);
 }
 function closeShareViewer() {
@@ -1628,6 +1622,7 @@ function closeShareViewer() {
   shareViewerVideoSourceGeneration += 1;
   shareViewerVideoManualPlayRequired = false;
   shareViewerMediaPreloader.clear();
+  shareViewerImagePresenter.clear();
   setShareViewerVideoPlayOverlayVisible(false);
   if (els.viewerImg) els.viewerImg.removeAttribute('src');
   if (els.viewerVideo) {
@@ -1840,6 +1835,7 @@ function commitShareViewerDismiss() {
 }
 
 function commitShareViewerNav(step) {
+  const sourceGeneration = shareViewerVideoSourceGeneration;
   const active = getActiveShareViewerMedia();
   const w = Math.max(1, window.innerWidth || 1);
   if (!active) {
@@ -1850,8 +1846,9 @@ function commitShareViewerNav(step) {
   active.style.transform = `translateX(${step > 0 ? -w : w}px)`;
   active.style.opacity = '0.25';
   window.setTimeout(() => {
-    cleanupShareViewerDrag();
+    if (sourceGeneration !== shareViewerVideoSourceGeneration || els.viewer.classList.contains('hidden')) return;
     navShareViewer(step);
+    cleanupShareViewerDrag();
   }, 180);
 }
 
