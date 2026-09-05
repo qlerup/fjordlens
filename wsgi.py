@@ -3,6 +3,7 @@ from google_photo_frame import init_google_photo_frame
 from google_photo_frame_picker import init_google_photo_frame_picker
 from google_photo_frame_selection import init_google_photo_frame_selection
 from privacy import init_privacy_page
+from share_link_defaults import init_share_link_defaults
 
 # Register public/support pages and optional integrations without touching filesystem or DB at startup.
 init_privacy_page(application)
@@ -11,5 +12,8 @@ init_privacy_page(application)
 init_google_photo_frame(application)
 init_google_photo_frame_picker(application)
 init_google_photo_frame_selection(application)
+
+# Share links automatically use the configured DNS base URL and require a visitor name for upload/manage links.
+init_share_link_defaults(application)
 
 # Gunicorn expects a module-level 'application' or a named app; we expose 'application'.
