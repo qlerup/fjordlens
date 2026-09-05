@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="index,follow">
+  <title>Privatlivspolitik · FjordLens</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #07111f;
+      --panel: #0d1b2a;
+      --text: #edf5ff;
+      --muted: #a9b8ca;
+      --line: rgba(255,255,255,.12);
+      --accent: #6bc7d8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #12304a 0, var(--bg) 48%);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    main {
+      width: min(860px, calc(100% - 32px));
+      margin: 48px auto;
+      padding: 32px;
+      background: rgba(13,27,42,.92);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+    h1 { margin: 0 0 8px; font-size: clamp(2rem, 5vw, 3rem); }
+    h2 { margin-top: 32px; font-size: 1.25rem; }
+    p, li { color: var(--muted); }
+    strong { color: var(--text); }
+    a { color: var(--accent); }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      font-size: .78rem;
+    }
+    .updated { margin-top: 0; font-size: .92rem; }
+    .note {
+      margin-top: 28px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.035);
+    }
+    footer {
+      margin-top: 36px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">FjordLens</p>
+  <h1>Privatlivspolitik</h1>
+  <p class="updated">Senest opdateret: 6. september 2026</p>
+
+  <p>
+    FjordLens er en self-hosted fotoapplikation. Denne privatlivspolitik beskriver især,
+    hvordan FjordLens behandler oplysninger, når Google Photos-integrationen til
+    <strong>Google Photo Frame</strong> bruges.
+  </p>
+
+  <h2>Hvilke oplysninger behandles</h2>
+  <p>FjordLens kan behandle følgende oplysninger i forbindelse med Google-integrationen:</p>
+  <ul>
+    <li>OAuth-adgangs- og refresh-tokens udstedt af Google.</li>
+    <li>ID'er for det Google Photos-album og de medieelementer, som FjordLens selv opretter.</li>
+    <li>De billeder, som en administrator eller bruger aktivt vælger at sende til Google Photo Frame.</li>
+  </ul>
+
+  <h2>Formål</h2>
+  <p>
+    Oplysningerne bruges udelukkende til at forbinde FjordLens med Google Photos,
+    oprette og vedligeholde et FjordLens-administreret album og synkronisere de valgte
+    billeder til dette album, så det kan bruges som Photo Frame-kilde på kompatible Google Nest-skærme.
+  </p>
+
+  <h2>Google Photos-adgang</h2>
+  <p>
+    FjordLens anmoder kun om Google Photos-rettigheder, der er nødvendige for at oprette,
+    uploade, læse og administrere indhold, som FjordLens selv har oprettet via integrationen.
+    FjordLens bruger ikke Google Photos-adgangen til at gennemgå eller kopiere brugerens øvrige
+    Google Photos-bibliotek.
+  </p>
+
+  <h2>Upload af billeder</h2>
+  <p>
+    FjordLens uploader ikke automatisk hele fotobiblioteket. Kun billeder, der aktivt vælges til
+    Google Photo Frame, sendes til Google Photos. Før upload kan FjordLens oprette en reduceret
+    JPEG-kopi beregnet til visning på en skærm. Det originale billede i FjordLens ændres ikke.
+  </p>
+
+  <h2>Opbevaring</h2>
+  <p>
+    OAuth-tokens og forbindelsen mellem FjordLens-billeder og Google Photos-medie-ID'er opbevares
+    lokalt på den server, hvor FjordLens kører. Disse oplysninger deles ikke med andre tredjeparter
+    end Google, når det er nødvendigt for at udføre den valgte Google Photos-funktion.
+  </p>
+
+  <h2>Google som tredjepart</h2>
+  <p>
+    Når billeder uploades til Google Photos, behandles de også af Google i henhold til Googles egne
+    vilkår og privatlivspolitik. FjordLens kontrollerer ikke Googles behandling efter upload.
+  </p>
+
+  <h2>Sletning og frakobling</h2>
+  <p>
+    Google-integrationen kan frakobles fra FjordLens. Valgte billeder kan fjernes fra det
+    FjordLens-administrerede Photo Frame-album. Google Photos API'et giver ikke i alle tilfælde
+    FjordLens mulighed for at slette den uploadede kopi fuldstændigt fra brugerens Google Photos-bibliotek;
+    dette kan derfor kræve manuel sletning i Google Photos.
+  </p>
+
+  <h2>Deling og salg af data</h2>
+  <p>
+    FjordLens sælger ikke personoplysninger eller billeddata. Data bruges ikke til annoncering eller
+    profilering gennem denne integration.
+  </p>
+
+  <h2>Sikkerhed</h2>
+  <p>
+    FjordLens er designet til at blive drevet på brugerens egen server. Den konkrete installations
+    administrator er ansvarlig for serverens adgangskontrol, backup, netværk og øvrige sikkerhedsopsætning.
+  </p>
+
+  <h2>Kontakt</h2>
+  <p>
+    Spørgsmål om denne FjordLens-installation eller dens behandling af data rettes til administratoren
+    af den pågældende FjordLens-server eller til den supportadresse, der vises på Googles OAuth-samtykkeskærm.
+  </p>
+
+  <div class="note">
+    Denne side gælder for FjordLens' Google Photo Frame-integration. En installation kan have andre
+    funktioner eller integrationer med deres egne databehandlingsbehov.
+  </div>
+
+  <footer>FjordLens · Self-hosted photo management</footer>
+</main>
+</body>
+</html>
