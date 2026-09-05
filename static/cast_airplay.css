@@ -121,12 +121,6 @@
 .cast-airplay-casting strong { font-size: 17px; }
 .cast-airplay-casting span { color: var(--muted, #9fb0b6); font-size: 13px; }
 
-/* The action is intentionally phone-only. JS also guards this so it never
-   becomes an active desktop feature if CSS is overridden. */
-@media (min-width: 761px) {
-  #mapperHeaderCastAirplayAction { display: none !important; }
-}
-
 @media (max-width: 760px) {
   .cast-airplay-modal { align-items: end; padding: 0; }
   .cast-airplay-card {
