@@ -73,6 +73,19 @@ class ForgotPasswordStandaloneTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(sent, [])
 
+    def test_link_hidden_and_route_blocked_when_toggled_off(self):
+        client = fjordlens.app.test_client()
+        enabled_page = client.get('/login')
+        self.assertIn(b'Glemt adgangskode?', enabled_page.data)
+
+        fjordlens._set_setting('forgot_password_enabled', '0')
+        disabled_page = client.get('/login')
+        self.assertNotIn(b'Glemt adgangskode?', disabled_page.data)
+
+        forgot_response = client.get('/glemt-adgangskode')
+        self.assertEqual(forgot_response.status_code, 302)
+        self.assertIn('/login', forgot_response.headers['Location'])
+
     def test_mail_settings_roundtrip_encrypts_password_at_rest(self):
         with patch.object(fjordlens, '_mail_smtp') as mock_smtp:
             mock_smtp.return_value.__enter__ = lambda self_: self_

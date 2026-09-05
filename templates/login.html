@@ -64,7 +64,7 @@
         </button>
       </div>
       <div class="actions">
-        <a href="{{ url_for('forgot_password') }}" style="color:var(--muted); font-size:0.85rem;">{{ 'Forgot password?' if en else 'Glemt adgangskode?' }}</a>
+        {% if forgot_password_enabled %}<a href="{{ url_for('forgot_password') }}" style="color:var(--muted); font-size:0.85rem;">{{ 'Forgot password?' if en else 'Glemt adgangskode?' }}</a>{% else %}<span></span>{% endif %}
         <button class="btn primary" type="submit">{{ 'Sign in' if en else 'Log ind' }}</button>
       </div>
     </form>

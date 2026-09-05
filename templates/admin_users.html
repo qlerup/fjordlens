@@ -13,6 +13,19 @@
       </div>
     </div>
 
+    <div class="panel" style="margin-bottom:12px;">
+      <form method="post" style="margin:0;">
+        <input type="hidden" name="action" value="forgot_password_toggle">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin:0;">
+          <input type="checkbox" name="enabled" value="1" onchange="this.form.requestSubmit()" {% if forgot_password_enabled %}checked{% endif %}>
+          <span>{{ 'Allow "Forgot password?" on the login screen' if en else 'Tillad "Glemt adgangskode?" på login-siden' }}</span>
+        </label>
+        {% if fjordhub_managed %}
+        <p class="mini-label" style="margin:4px 0 0 26px;">{{ 'Mail is sent via FjordHub\'s configuration.' if en else 'Mailen sendes via FjordHub\'s opsætning.' }}</p>
+        {% endif %}
+      </form>
+    </div>
+
     <!-- Opret bruger modal -->
     <div id="createModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;">
       <div style="width:520px;max-width:92vw;background:var(--panel,#0f1115);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:16px;">

@@ -800,6 +800,7 @@ def inject_template_i18n():
         "ui_lang": lang,
         "tt": lambda key: _ui_text(str(key), lang),
         "app_build": APP_BUILD_ID,
+        "forgot_password_enabled": _get_setting_bool("forgot_password_enabled", True),
     }
 
 
@@ -24392,6 +24393,8 @@ def forgot_password():
     ensure_runtime_bootstrap()
     if current_user.is_authenticated:
         return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
+    if not _get_setting_bool("forgot_password_enabled", True):
+        return _no_store_response(redirect(url_for("login")))
     en = (_request_ui_language() == "en")
     step = str(request.form.get("step") or request.args.get("step") or "email")
     error = ""
@@ -24675,10 +24678,12 @@ def admin_users():
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     msg = None
-    if _fjordhub_managed() and request.method == "POST":
-        return redirect(url_for("index"))
     if request.method == "POST":
         action = (request.form.get("action") or "create").strip()
+        # Local user management is disabled when hub-managed (users come from
+        # FjordHub), but the forgot-password toggle is independent of that.
+        if _fjordhub_managed() and action != "forgot_password_toggle":
+            return redirect(url_for("index"))
         if action == "create":
             u = (request.form.get("username") or "").strip()
             p = request.form.get("password") or ""
@@ -24741,6 +24746,8 @@ def admin_users():
                 msg = "Connection works, mail settings saved." if en else "Forbindelsen virker, og mailopsætningen er gemt."
             except Exception as e:
                 msg = f"{_ui_text('error_prefix')} {e}"
+        elif action == "forgot_password_toggle":
+            _set_setting("forgot_password_enabled", "1" if (request.form.get("enabled") == "1") else "0")
     with closing(get_conn()) as conn:
         users = conn.execute("SELECT id, username, is_admin, role, email, totp_enabled, created_at FROM users ORDER BY id").fetchall()
     mail_settings = _mail_settings()
