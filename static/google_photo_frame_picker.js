@@ -7,6 +7,8 @@
   let currentFolder = '';
   let currentItems = [];
   let searchTimer = null;
+  let canManage = false;
+  let googleConnected = false;
 
   const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const isEnglish = () => String(document.documentElement.lang || 'da').toLowerCase().startsWith('en');
@@ -170,6 +172,7 @@
     const response = await fetch('/api/google-photo-frame/selection', {credentials:'same-origin'});
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    canManage = data.can_manage === true;
     selected.clear();
     initialSelected.clear();
     const ids = Array.isArray(data.photo_ids) ? data.photo_ids : [];
@@ -237,7 +240,7 @@
     let failed = 0;
     for (let i = 0; i < ids.length; i += 20) {
       const chunk = ids.slice(i, i + 20);
-      const response = await fetch(`/api/google-photo-frame/photos/${mode}`, {
+      const response = await fetch(`/api/google-photo-frame/manage/photos/${mode}`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {'Content-Type':'application/json'},
@@ -291,6 +294,36 @@
     }
   }
 
+  async function refreshManageCapability() {
+    try {
+      const [statusResponse, selectionResponse] = await Promise.all([
+        fetch('/api/google-photo-frame/status', {credentials:'same-origin'}),
+        fetch('/api/google-photo-frame/selection', {credentials:'same-origin'}),
+      ]);
+      const statusData = await statusResponse.json().catch(() => ({}));
+      const selectionData = await selectionResponse.json().catch(() => ({}));
+      googleConnected = !!(statusResponse.ok && statusData?.item?.connected);
+      canManage = !!(selectionResponse.ok && selectionData?.can_manage === true);
+      mountManageButton();
+    } catch (_) {
+      canManage = false;
+      googleConnected = false;
+    }
+  }
+
+  function mountManageButton() {
+    if (!canManage || !googleConnected) return;
+    const section = document.getElementById('gpfSection');
+    const actions = section?.querySelector('.gpf-actions');
+    if (!actions || actions.querySelector('[data-gpf-action="choose"]')) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn small primary';
+    button.dataset.gpfAction = 'choose';
+    button.textContent = tr('Vælg billeder', 'Choose photos');
+    actions.prepend(button);
+  }
+
   document.addEventListener('click', (event) => {
     const choose = event.target.closest('#gpfSection [data-gpf-action="choose"]');
     if (!choose) return;
@@ -299,4 +332,16 @@
     event.stopImmediatePropagation();
     openPicker();
   }, true);
+
+  window.addEventListener('message', (event) => {
+    if (event.origin !== window.location.origin) return;
+    if (event.data?.type === 'fjordlens-google-photo-frame') refreshManageCapability();
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refreshManageCapability, {once:true});
+  } else {
+    refreshManageCapability();
+  }
+  setInterval(mountManageButton, 1200);
 })();
