@@ -46,7 +46,7 @@ class GooglePhotoFrameTests(unittest.TestCase):
 
         app = Flask(__name__)
         app.secret_key = "test"
-        with app.test_request_context("/"):
+        with app.test_request_context("/"), mock.patch.object(gpf, "_is_admin", return_value=False):
             public = gpf._public_status(gpf._read_state())
         self.assertEqual(public["client_id"], "client-id")
         self.assertNotIn("client_secret", public)
