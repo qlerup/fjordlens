@@ -36,6 +36,16 @@ def migrate(conn):
     conn.execute("CREATE TABLE IF NOT EXISTS moment_place_cache (point TEXT PRIMARY KEY, result_json TEXT NOT NULL, expires REAL NOT NULL)")
     conn.execute("""CREATE TABLE IF NOT EXISTS moment_scan_state
         (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, started REAL, running INTEGER, result_json TEXT)""")
+    # Upgrade automatic suggestions without changing saved or manually edited titles.
+    for row in conn.execute("""SELECT id,title,evidence_json FROM moments
+            WHERE kind='event' AND status='suggested' AND user_edited=0
+            AND COALESCE(video_status,'none') NOT IN ('queued','running','rendering')""").fetchall():
+        attraction = json.loads(row['evidence_json'] or '{}').get('attraction')
+        title = moment_places.attraction_title(attraction) if attraction else None
+        if title and title != row['title']:
+            conn.execute("""UPDATE moments SET title=?,script_json=NULL,subtitle=NULL,
+                video_status='none',video_rel_path=NULL,video_error=NULL,revision=revision+1
+                WHERE id=?""", (title, row['id']))
 
 
 def scan_status(g):

@@ -236,6 +236,21 @@ class MomentEditingTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self.client.get('/api/moments/detect/status').get_json()['result']['created'], 2)
 
+    def test_attraction_title_upgrade_preserves_user_choices(self):
+        import moments_service
+        row = self.make_moment()
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            evidence = json.dumps({'attraction': {'name': 'Knuthenborg Safaripark', 'confidence': 'possible'}})
+            conn.execute("UPDATE moments SET kind='event',evidence_json=? WHERE id=?", (evidence, row['id']))
+            moments_service.migrate(conn)
+            self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0],
+                             'Måske en dag i Knuthenborg Safaripark')
+            for status, edited in [('accepted', 0), ('suggested', 1)]:
+                conn.execute('UPDATE moments SET title=?,status=?,user_edited=? WHERE id=?',
+                             ('Min egen titel', status, edited, row['id']))
+                moments_service.migrate(conn)
+                self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'Min egen titel')
+
     def test_viewer_cannot_see_moment_from_hidden_folders(self):
         row = self.make_moment()
         with self.client.session_transaction() as session:

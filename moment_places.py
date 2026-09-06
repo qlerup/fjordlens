@@ -17,6 +17,14 @@ ENDPOINT = 'https://overpass-api.de/api/interpreter'
 FALLBACK_ENDPOINT = 'https://overpass.private.coffee/api/interpreter'
 
 
+def attraction_title(attraction):
+    name = str(attraction.get('name') or '').strip()
+    if not name:
+        return None
+    prefix = 'En dag i' if attraction.get('confidence') == 'high' else 'Måske en dag i'
+    return f'{prefix} {name}'
+
+
 def lookup(lat, lon, *, deadline=None):
     lat, lon = float(lat), float(lon)
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
@@ -123,9 +131,9 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
         confident = selected['match'] == 'inside' and count > len(sample)/2 and not unresolved
         info = candidate['evidence']
         info['attraction'] = dict(selected, confidence='high' if confident else 'possible', sample_matches=count, sample_size=len(sample))
+        candidate['title'] = attraction_title(info['attraction'])
         if confident:
             candidate['primary_place'] = selected['name']
-            candidate['title'] = f"En dag i {selected['name']} · {candidate['start_date']}"
             info['reasons'].append(f"GPS-positionerne ligger i det kortlagte område for {selected['name']}. Steddata: © OpenStreetMap-bidragydere.")
         else:
             info['reasons'].append(f"Muligt besøg ved {selected['name']}; koordinaterne giver ikke et sikkert match. Steddata: © OpenStreetMap-bidragydere.")
