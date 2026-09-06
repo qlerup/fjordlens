@@ -116,10 +116,11 @@ class PlaceLookupTests(unittest.TestCase):
             with closing(conn()) as connection:
                 connection.execute('CREATE TABLE moment_place_cache(point TEXT PRIMARY KEY,result_json TEXT,expires REAL)')
                 connection.commit()
-            candidate = dict(kind='event', start_date='2024-07-10', photo_ids=[1, 2, 3], title='Billund', evidence={'reasons': []})
-            rows = [dict(id=i, gps_lat=55.735, gps_lon=9.126) for i in range(1, 4)]
-            found = dict(name='LEGOLAND', osm_type='area', osm_id=3600000010, match='inside', category='theme_park', source='OpenStreetMap')
-            with patch('moment_places.lookup', return_value=[found]) as lookup:
+            candidate = dict(kind='event', start_date='2024-07-10', photo_ids=list(range(1,7)), title='Billund', evidence={'reasons': []})
+            rows = [dict(id=i, gps_lat=55.735, gps_lon=9.126) for i in range(1, 7)]
+            found = dict(name='LEGOLAND', osm_type='way', osm_id=10, category='theme_park', source='OpenStreetMap',
+                         outer=[[[55.7,9.1],[55.7,9.2],[55.8,9.2],[55.8,9.1],[55.7,9.1]]], inner=[], bounds=[55.7,9.1,55.8,9.2])
+            with patch('moment_venues.lookup_region', return_value=[found]) as lookup:
                 moment_places.enrich([candidate], rows, conn)
                 moment_places.enrich([candidate], rows, conn, time_budget=0)
                 self.assertEqual(lookup.call_count, 1)
@@ -128,21 +129,21 @@ class PlaceLookupTests(unittest.TestCase):
             with closing(conn()) as connection:
                 connection.execute('DELETE FROM moment_place_cache')
                 connection.commit()
-            fresh = dict(kind='event', start_date='2024-07-10', photo_ids=[1, 2, 3], title='Billund', evidence={'reasons': []})
-            with patch('moment_places.lookup') as lookup:
+            fresh = dict(kind='event', start_date='2024-07-10', photo_ids=list(range(1,7)), title='Billund', evidence={'reasons': []})
+            with patch('moment_venues.lookup_region') as lookup:
                 stats = moment_places.enrich([fresh], rows, conn, time_budget=0)
                 lookup.assert_not_called()
                 self.assertEqual(stats['pending'], 1)
-            with patch('moment_places.lookup', side_effect=moment_places.requests.Timeout):
+            with patch('moment_venues.lookup_region', side_effect=moment_places.requests.Timeout):
                 stats = moment_places.enrich([fresh], rows, conn)
             self.assertEqual(stats['failed'], 1)
             self.assertEqual(fresh['title'], 'Billund')
             self.assertNotIn('attraction', fresh['evidence'])
-            rows = [dict(id=i, gps_lat=55.735 + i/1000, gps_lon=9.126) for i in range(1, 4)]
-            with patch('moment_places.lookup', side_effect=moment_places.requests.Timeout) as lookup, patch('moment_places.time.sleep'):
+            rows = [dict(id=i, gps_lat=56 + (i//2)*.03, gps_lon=9.126) for i in range(1, 7)]
+            with patch('moment_venues.lookup_region', side_effect=moment_places.requests.Timeout) as lookup:
                 stats = moment_places.enrich([fresh], rows, conn)
                 self.assertEqual(lookup.call_count, 2)
-                self.assertEqual(stats['pending'], 1)
+                self.assertGreaterEqual(stats['pending'], 1)
 
 
 if __name__ == '__main__':

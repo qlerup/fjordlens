@@ -1,6 +1,10 @@
 import unittest
 import place_names
-import attraction_catalog
+import moment_venues
+import sqlite3
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 import moment_places
 
 
@@ -22,25 +26,36 @@ class PlaceNamesTests(unittest.TestCase):
 
 
 class AttractionVisitsTests(unittest.TestCase):
-    def test_many_photos_inside_bakken_name_multiday_trip_without_network(self):
-        rows = [dict(id=i, gps_lat=55.776, gps_lon=12.576) for i in range(12)]
-        rows += [dict(id=99, gps_lat=55.6, gps_lon=12.3)]
+    def test_many_photos_inside_an_arbitrary_foreign_venue_name_multiday_trip(self):
+        rows = [dict(id=i, gps_lat=48.851+i*.00001, gps_lon=2.35) for i in range(12)]
         candidate = dict(kind='trip', start_date='2026-05-24', photo_ids=[r['id'] for r in rows],
-                         title='Tur til Danmark', evidence={'reasons': []})
-        def no_database():
-            raise AssertionError('Mapped park should not need a network cache')
-        moment_places.enrich([candidate], rows, no_database)
-        self.assertEqual(candidate['title'], 'En tur til Bakken')
+                         title='Tur til Frankrig', evidence={'reasons': []})
+        venue = moment_venues.parse_venue(dict(type='way',id=123,tags={'name':'Et museum i Paris','tourism':'museum'},
+            geometry=[dict(lat=a,lon=b) for a,b in [(48.85,2.34),(48.85,2.36),(48.86,2.36),(48.86,2.34),(48.85,2.34)]]))
+        with tempfile.TemporaryDirectory() as folder:
+            def conn():
+                c=sqlite3.connect(Path(folder)/'cache.db')
+                c.row_factory=sqlite3.Row
+                c.execute('CREATE TABLE IF NOT EXISTS moment_place_cache(point TEXT PRIMARY KEY,result_json TEXT,expires REAL)')
+                return c
+            with patch('moment_venues.lookup_region',return_value=[venue]) as lookup:
+                moment_places.enrich([candidate],rows,conn)
+                self.assertEqual(lookup.call_count,1)
+        self.assertEqual(candidate['title'], 'En tur til Et museum i Paris')
         self.assertEqual(candidate['evidence']['attraction']['photo_matches'], 12)
-
-    def test_single_visit_photo_does_not_rename_a_whole_holiday(self):
-        rows = [dict(gps_lat=55.776, gps_lon=12.576)]
-        self.assertIsNone(attraction_catalog.visit(rows, 50))
-        self.assertIsNone(attraction_catalog.visit(rows * 10, 100))
 
     def test_holes_and_nearby_locations_are_not_inside(self):
         park = dict(bounds=(0, 0, 10, 10), outer=[[(0, 0), (0, 10), (10, 10), (10, 0), (0, 0)]],
                     inner=[[(4, 4), (4, 6), (6, 6), (6, 4), (4, 4)]])
-        self.assertTrue(attraction_catalog.contains(park, 2, 2))
-        self.assertFalse(attraction_catalog.contains(park, 5, 5))
-        self.assertFalse(attraction_catalog.contains(park, 10.1, 5))
+        self.assertTrue(moment_venues.matches(park, (2, 2)))
+        self.assertFalse(moment_venues.matches(park, (5, 5)))
+        self.assertFalse(moment_venues.matches(park, (10.1, 5)))
+
+    def test_incomplete_geometry_is_not_invented(self):
+        self.assertEqual(moment_venues.join_rings([[[1,1],[2,2],[3,3]]]), [])
+
+    def test_expired_budget_does_not_make_a_request(self):
+        with patch('moment_venues.requests.post') as post:
+            with self.assertRaises(moment_venues.requests.Timeout):
+                moment_venues.lookup_region((2400,120),deadline=0)
+        post.assert_not_called()

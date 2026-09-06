@@ -1344,6 +1344,7 @@ const I18N = {
     momenter_finding: 'Leder efter momenter...',
     momenter_scan_grouping: 'Grupperer billeder efter dato og sted…',
     momenter_scan_places: 'Undersøger seværdigheder · moment {current} af {total}…',
+    momenter_scan_regions: '{photos} GPS-billeder · område {region} af {regions}',
     momenter_scan_saving: 'Gemmer og opdaterer momenter…',
     momenter_possible_place: 'Muligt besøg: {place}',
     momenter_find_done: 'Fandt {n} nye momenter',
@@ -2208,6 +2209,7 @@ const I18N = {
     momenter_finding: 'Looking for moments...',
     momenter_scan_grouping: 'Grouping photos by date and place…',
     momenter_scan_places: 'Checking attractions · moment {current} of {total}…',
+    momenter_scan_regions: '{photos} GPS photos · area {region} of {regions}',
     momenter_scan_saving: 'Saving and updating moments…',
     momenter_possible_place: 'Possible visit: {place}',
     momenter_find_done: 'Found {n} new moments',
@@ -3875,6 +3877,11 @@ async function pollMomentDetection() {
           statusEl.textContent = tr(`momenter_scan_${phase}`)
             .replace('{current}', String(progress.current || 0))
             .replace('{total}', String(progress.total || 0));
+          if (phase === 'places' && progress.regions) {
+            statusEl.textContent += ' ' + tr('momenter_scan_regions')
+              .replace('{photos}', String(progress.photos)).replace('{region}', String(progress.region))
+              .replace('{regions}', String(progress.regions));
+          }
           if (Number(data.elapsed_seconds) >= 3) statusEl.textContent += ` (${data.elapsed_seconds} s)`;
         }
         setTimeout(poll, 1500);
