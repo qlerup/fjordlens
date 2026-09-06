@@ -33,6 +33,8 @@ import exifread
 import requests
 import reverse_geocoder as rg
 import pycountry
+import moments_engine
+import moments_service
 import pyotp
 import qrcode
 import base64
@@ -4370,6 +4372,8 @@ def init_db() -> None:
             """
         )
         conn.commit()
+        moments_service.migrate(conn)
+        conn.commit()
         # Simple migration for old DBs
         # Add people.hidden if missing
         try:
@@ -6786,13 +6790,7 @@ _DA_MONTHS = [
 
 
 def _moment_parse_dt(value: Any) -> Optional[datetime]:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except Exception:
-        return None
+    return moments_engine.photo_date({"captured_at": value})
 
 
 def _moment_row_dt(r: sqlite3.Row) -> Optional[datetime]:
@@ -6803,233 +6801,21 @@ def _moment_row_dt(r: sqlite3.Row) -> Optional[datetime]:
     )
 
 
-def _moment_home_place(rows: list[sqlite3.Row]) -> Optional[str]:
-    counts: Dict[str, int] = {}
-    for r in rows:
-        name = str(r["gps_name"] or "").strip()
-        if name:
-            counts[name] = counts.get(name, 0) + 1
-    if not counts:
-        return None
-    return max(counts.items(), key=lambda kv: kv[1])[0]
-
-
 def _moment_pick_representative_rows(rows: list[sqlite3.Row], max_count: int) -> list[sqlite3.Row]:
-    """Pick up to max_count rows, favoring favorites and filling the rest with an even
-    temporal spread — used both for the yearly highlight reel and to cap long trips so the
-    slideshow stays a "short, nice" watch instead of running for tens of minutes."""
-    if len(rows) <= max_count:
-        return sorted(rows, key=lambda r: _moment_row_dt(r) or datetime.min)
-    favorites = [r for r in rows if r["favorite"]][:max_count]
-    remaining_slots = max_count - len(favorites)
-    rest_sorted = sorted((r for r in rows if not r["favorite"]), key=lambda r: _moment_row_dt(r) or datetime.min)
-    picked_rest: list[sqlite3.Row] = []
-    if remaining_slots > 0 and rest_sorted:
-        step = max(1, len(rest_sorted) // remaining_slots)
-        picked_rest = rest_sorted[::step][:remaining_slots]
-    combined = favorites + picked_rest
-    return sorted(combined, key=lambda r: _moment_row_dt(r) or datetime.min)
-
-
-def _existing_trip_date_ranges(statuses: tuple[str, ...] = ("suggested", "saved", "dismissed")) -> list[tuple[str, str]]:
-    placeholders = ",".join(["?"] * len(statuses))
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            f"SELECT start_date, end_date FROM moments WHERE kind='trip' AND status IN ({placeholders})",
-            statuses,
-        ).fetchall()
-    return [(r["start_date"], r["end_date"]) for r in rows if r["start_date"] and r["end_date"]]
-
-
-def _date_ranges_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
-    return a_start <= b_end and b_start <= a_end
-
-
-def _insert_moment(
-    *,
-    kind: str,
-    title: str,
-    start_date: str,
-    end_date: str,
-    primary_place: Optional[str],
-    cover_photo_id: Optional[int],
-    photo_ids: list[int],
-) -> int:
-    now = now_iso()
-    with closing(get_conn()) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO moments(
-                kind, status, title, subtitle, start_date, end_date, primary_place,
-                cover_photo_id, photo_ids_json, script_json,
-                video_status, video_rel_path, video_error, created_at, updated_at
-            ) VALUES (?, 'suggested', ?, NULL, ?, ?, ?, ?, ?, NULL, 'none', NULL, NULL, ?, ?)
-            """,
-            (
-                kind, title, start_date, end_date, primary_place,
-                cover_photo_id, json.dumps(photo_ids), now, now,
-            ),
-        )
-        conn.commit()
-        return int(cur.lastrowid)
+    return moments_engine.curate(rows, max_count)
 
 
 def _detect_moment_candidates() -> Dict[str, int]:
-    """Scan the library for date/place-gapped clusters ("trips") and insert suggested moments.
-
-    Returns diagnostic counters (not just a count) so a zero-result run can explain itself
-    in the UI instead of silently doing nothing.
-    """
-    stats: Dict[str, int] = {
-        "scanned": 0, "dated": 0, "segments": 0, "created": 0,
-        "rejected_too_few": 0, "rejected_too_short": 0, "rejected_home_only": 0,
-        "rejected_already_covered": 0,
-    }
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT id, rel_path, captured_at, modified_fs, created_fs, gps_name, favorite "
-            "FROM photos WHERE rel_path LIKE 'uploads/%' "
-            "ORDER BY COALESCE(captured_at, modified_fs, created_fs) ASC"
-        ).fetchall()
-    rows = _dedupe_upload_storage_rows(rows)
-    stats["scanned"] = len(rows)
-
-    timed: list[tuple[datetime, sqlite3.Row]] = []
-    for r in rows:
-        dt = _moment_row_dt(r)
-        if dt is not None:
-            timed.append((dt, r))
-    timed.sort(key=lambda t: t[0])
-    stats["dated"] = len(timed)
-    if not timed:
-        return stats
-
-    home_place = _moment_home_place([r for _, r in timed])
-    existing_ranges = _existing_trip_date_ranges()
-
-    segments: list[list[tuple[datetime, sqlite3.Row]]] = []
-    current: list[tuple[datetime, sqlite3.Row]] = []
-    gap = timedelta(hours=MOMENT_GAP_HOURS)
-    for dt, r in timed:
-        if current:
-            prev_dt, prev_row = current[-1]
-            prev_place = str(prev_row["gps_name"] or "").strip()
-            place = str(r["gps_name"] or "").strip()
-            place_changed = bool(prev_place and place and prev_place != place and place != (home_place or ""))
-            if (dt - prev_dt) > gap or place_changed:
-                segments.append(current)
-                current = []
-        current.append((dt, r))
-    if current:
-        segments.append(current)
-    stats["segments"] = len(segments)
-
-    for seg in segments:
-        seg_start_date = seg[0][0].date().isoformat()
-        seg_end_date = seg[-1][0].date().isoformat()
-        if any(_date_ranges_overlap(seg_start_date, seg_end_date, es, ee) for es, ee in existing_ranges):
-            # This time window is already covered by a suggested/saved/dismissed trip —
-            # avoids re-suggesting the same trip's leftover photos as a near-duplicate
-            # moment on the next "Find nye momenter" run.
-            stats["rejected_already_covered"] += 1
-            continue
-
-        seg_rows = [r for _, r in seg]
-        if len(seg_rows) < MOMENT_MIN_PHOTOS:
-            stats["rejected_too_few"] += 1
-            continue
-        span_hours = (seg[-1][0] - seg[0][0]).total_seconds() / 3600.0
-        if span_hours < MOMENT_MIN_SPAN_HOURS:
-            stats["rejected_too_short"] += 1
-            continue
-
-        gps_rows = seg_rows
-        gps_covered = sum(1 for r in gps_rows if str(r["gps_name"] or "").strip())
-        place_counts: Dict[str, int] = {}
-        for r in gps_rows:
-            name = str(r["gps_name"] or "").strip()
-            if name and name != home_place:
-                place_counts[name] = place_counts.get(name, 0) + 1
-        if home_place and gps_covered >= max(1, int(len(gps_rows) * 0.3)) and not place_counts:
-            # Segment has enough GPS coverage to judge, but every reading is the home place — skip.
-            stats["rejected_home_only"] += 1
-            continue
-        primary_place = max(place_counts.items(), key=lambda kv: kv[1])[0] if place_counts else None
-
-        # A long trip can easily hold hundreds/thousands of photos — curate down to a
-        # manageable highlight set (same cap+heuristic as the year-review) instead of
-        # letting the moment balloon to "every photo in the folder".
-        picked_rows = _moment_pick_representative_rows(seg_rows, MOMENT_MAX_SLIDES)
-        photo_ids = sorted(int(r["id"]) for r in picked_rows)
-
-        favorite_picked = [r for r in picked_rows if r["favorite"]]
-        cover_row = favorite_picked[len(favorite_picked) // 2] if favorite_picked else picked_rows[len(picked_rows) // 2]
-
-        start_dt, end_dt = seg[0][0], seg[-1][0]
-        month_da = _DA_MONTHS[start_dt.month - 1] if 1 <= start_dt.month <= 12 else ""
-        title = f"Tur til {primary_place}, {month_da} {start_dt.year}" if primary_place else f"{month_da} {start_dt.year}".strip()
-
-        _insert_moment(
-            kind="trip",
-            title=title,
-            start_date=start_dt.date().isoformat(),
-            end_date=end_dt.date().isoformat(),
-            primary_place=primary_place,
-            cover_photo_id=int(cover_row["id"]),
-            photo_ids=photo_ids,
-        )
-        stats["created"] += 1
-        # Also guards against two segments within this same run claiming overlapping dates.
-        existing_ranges.append((seg_start_date, seg_end_date))
-    return stats
+    return moments_service.detect(globals())
 
 
-def _detect_year_review_candidates() -> int:
-    """Create a yearly highlight-reel suggestion for each fully-elapsed calendar year not yet covered."""
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT id, captured_at, modified_fs, created_fs, favorite FROM photos WHERE rel_path LIKE 'uploads/%'"
-        ).fetchall()
-        existing_years = {
-            int(r["start_date"][:4])
-            for r in conn.execute("SELECT start_date FROM moments WHERE kind='year_review'").fetchall()
-            if r["start_date"]
-        }
-
-    by_year: Dict[int, list[sqlite3.Row]] = {}
-    for r in rows:
-        dt = _moment_row_dt(r)
-        if dt is not None:
-            by_year.setdefault(dt.year, []).append(r)
-
-    current_year = datetime.now().year
-    created = 0
-    for year, yrows in by_year.items():
-        if year >= current_year or year in existing_years:
-            continue
-        if len(yrows) < MOMENT_YEAR_REVIEW_MIN_PHOTOS:
-            continue
-
-        picked = _moment_pick_representative_rows(yrows, MOMENT_YEAR_REVIEW_MAX_PHOTOS)
-        combined_ids = sorted({int(r["id"]) for r in picked})
-        if len(combined_ids) < MOMENT_YEAR_REVIEW_MIN_PHOTOS:
-            continue
-        cover_id = combined_ids[len(combined_ids) // 2]
-        _insert_moment(
-            kind="year_review",
-            title=f"Året der gik {year}",
-            start_date=f"{year}-01-01",
-            end_date=f"{year}-12-31",
-            primary_place=None,
-            cover_photo_id=cover_id,
-            photo_ids=combined_ids,
-        )
-        created += 1
-    return created
+def _detect_year_review_candidates() -> Dict[str, int]:
+    return moments_service.detect_years(globals())
 
 
 def _moment_row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
+    d["evidence"] = json.loads(d.pop("evidence_json", "{}") or "{}")
     try:
         d["photo_ids"] = json.loads(d.pop("photo_ids_json", None) or "[]") or []
     except Exception:
@@ -7077,18 +6863,16 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
     if not photo_ids:
         return
 
-    placeholders = ",".join(["?"] * len(photo_ids))
     with closing(get_conn()) as conn:
-        rows = conn.execute(f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids).fetchall()
+        rows = moments_service._photos(conn, photo_ids, strict=False)
     by_id = {int(r["id"]): r for r in rows}
     ordered_rows = [by_id[pid] for pid in photo_ids if pid in by_id]
     ordered_rows.sort(key=lambda r: _moment_row_dt(r) or datetime.min)
     if not ordered_rows:
         return
-    if len(ordered_rows) > MOMENT_MAX_SLIDES:
-        # Keep the full membership on the moment row, but cap the actual slideshow length
-        # so a big trip doesn't turn into a 30+ minute watch.
-        ordered_rows = _moment_pick_representative_rows(ordered_rows, MOMENT_MAX_SLIDES)
+    # Membership is complete; playback is a short, varied selection.
+    limit = MOMENT_YEAR_REVIEW_MAX_PHOTOS if moment_row["kind"] == "year_review" else MOMENT_MAX_SLIDES
+    ordered_rows = _moment_pick_representative_rows(ordered_rows, limit)
 
     sample = ordered_rows
     if len(sample) > 40:
@@ -7122,7 +6906,8 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
     subtitle = None
     cards: list[str] = []
     if narration:
-        title = str(narration.get("title") or title).strip() or title
+        if not moment_row["user_edited"] and moment_row["status"] == "suggested":
+            title = str(narration.get("title") or title).strip() or title
         subtitle = str(narration.get("subtitle") or "").strip() or None
         cards = [str(c).strip() for c in (narration.get("cards") or []) if str(c or "").strip()]
 
@@ -7146,14 +6931,10 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
 
     with closing(get_conn()) as conn:
         conn.execute(
-            "UPDATE moments SET script_json=?, title=?, subtitle=?, updated_at=? WHERE id=?",
-            (json.dumps(script), title, subtitle, now_iso(), moment_id),
+            "UPDATE moments SET script_json=?, title=?, subtitle=? WHERE id=? AND revision=?",
+            (json.dumps(script), title, subtitle, moment_id, moment_row["revision"]),
         )
         conn.commit()
-
-
-moment_detect_thread: Optional[threading.Thread] = None
-last_moment_detect_result: Optional[Dict[str, Any]] = None
 
 
 def _run_moment_detection() -> Dict[str, Any]:
@@ -7165,9 +6946,11 @@ def _run_moment_detection() -> Dict[str, Any]:
         debug["min_span_hours"] = MOMENT_MIN_SPAN_HOURS
         res: Dict[str, Any] = {
             "ok": True,
-            "created": trip_stats["created"] + years,
+            "created": trip_stats["created"] + years["created"],
             "trips": trip_stats["created"],
-            "year_reviews": years,
+            "updated": trip_stats["updated"] + years["updated"],
+            "retired": trip_stats["retired"],
+            "year_reviews": years["created"],
             "debug": debug,
         }
     except Exception as e:
@@ -7185,29 +6968,14 @@ def api_moments_detect():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global moment_detect_thread, last_moment_detect_result
-    if moment_detect_thread and moment_detect_thread.is_alive():
-        return jsonify({"ok": False, "error": "Momentsøgning kører allerede"}), 409
-    last_moment_detect_result = None
-
-    def run() -> None:
-        global last_moment_detect_result
-        last_moment_detect_result = _run_moment_detection()
-
-    moment_detect_thread = threading.Thread(target=run, daemon=True)
-    moment_detect_thread.start()
-    return jsonify({"ok": True, "started": True})
+    result, status = moments_service.start_scan(globals())
+    return jsonify(result), status
 
 
 @app.route("/api/moments/detect/status")
 @login_required
 def api_moments_detect_status():
-    running = bool(moment_detect_thread and moment_detect_thread.is_alive())
-    return jsonify({
-        "ok": True,
-        "running": running,
-        "result": (last_moment_detect_result if not running else None),
-    })
+    return jsonify(moments_service.scan_status(globals()))
 
 
 @app.route("/api/moments")
@@ -7220,6 +6988,8 @@ def api_moments_list():
     suggested: list[Dict[str, Any]] = []
     saved: list[Dict[str, Any]] = []
     for r in rows:
+        if not moments_service.can_view(globals(), r):
+            continue
         pub = _moment_row_to_public(r)
         (suggested if pub["status"] == "suggested" else saved).append(pub)
     return jsonify({"ok": True, "suggested": suggested, "saved": saved})
@@ -7230,7 +7000,7 @@ def api_moments_list():
 def api_moment_detail(moment_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
-    if not row:
+    if not moments_service.can_view(globals(), row):
         return jsonify({"ok": False, "error": "Not found"}), 404
     if not row["script_json"]:
         try:
@@ -7241,7 +7011,7 @@ def api_moment_detail(moment_id: int):
             log_event("error", error=f"moment_script: {e}")
 
     pub = _moment_row_to_public(row)
-    photo_ids = pub.get("photo_ids") or []
+    photo_ids = sorted({item["photo_id"] for item in (pub.get("script") or []) if item.get("photo_id")})
     photos_by_id: Dict[str, Any] = {}
     if photo_ids:
         placeholders = ",".join(["?"] * len(photo_ids))
@@ -7261,19 +7031,22 @@ def api_moment_detail(moment_id: int):
 @app.route("/api/moments/<int:moment_id>/accept", methods=["POST"])
 @login_required
 def api_moment_accept(moment_id: int):
+    forbidden = _forbid_media_management()
+    if forbidden:
+        return jsonify(forbidden[0]), forbidden[1]
     data = request.get_json(silent=True) or {}
     title = str(data.get("title") or "").strip()
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id FROM moments WHERE id=?", (moment_id,)).fetchone()
+        row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "Not found"}), 404
         if title:
             conn.execute(
-                "UPDATE moments SET status='saved', title=?, updated_at=? WHERE id=?",
+                "UPDATE moments SET status='saved', title=?, user_edited=1, revision=revision+1, script_json=NULL, updated_at=? WHERE id=?",
                 (title, now_iso(), moment_id),
             )
         else:
-            conn.execute("UPDATE moments SET status='saved', updated_at=? WHERE id=?", (now_iso(), moment_id))
+            conn.execute("UPDATE moments SET status='saved', revision=revision+1, updated_at=? WHERE id=?", (now_iso(), moment_id))
         conn.commit()
     return jsonify({"ok": True})
 
@@ -7281,8 +7054,11 @@ def api_moment_accept(moment_id: int):
 @app.route("/api/moments/<int:moment_id>/dismiss", methods=["POST"])
 @login_required
 def api_moment_dismiss(moment_id: int):
+    forbidden = _forbid_media_management()
+    if forbidden:
+        return jsonify(forbidden[0]), forbidden[1]
     with closing(get_conn()) as conn:
-        conn.execute("UPDATE moments SET status='dismissed', updated_at=? WHERE id=?", (now_iso(), moment_id))
+        conn.execute("UPDATE moments SET status='dismissed', revision=revision+1, updated_at=? WHERE id=?", (now_iso(), moment_id))
         conn.commit()
     return jsonify({"ok": True})
 
@@ -7290,10 +7066,16 @@ def api_moment_dismiss(moment_id: int):
 @app.route("/api/moments/<int:moment_id>", methods=["DELETE"])
 @login_required
 def api_moment_delete(moment_id: int):
+    forbidden = _forbid_media_management()
+    if forbidden:
+        return jsonify(forbidden[0]), forbidden[1]
     with closing(get_conn()) as conn:
-        conn.execute("DELETE FROM moments WHERE id=?", (moment_id,))
+        conn.execute("UPDATE moments SET status='dismissed', user_edited=1, revision=revision+1, updated_at=? WHERE id=?", (now_iso(), moment_id))
         conn.commit()
     return jsonify({"ok": True})
+
+
+moments_service.register_routes(app, globals())
 
 
 # --- Moments: on-demand MP4 export (ffmpeg) ---
@@ -7515,8 +7297,8 @@ moment_video_threads: Dict[int, threading.Thread] = {}
 @login_required
 def api_moment_render_video(moment_id: int):
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id FROM moments WHERE id=?", (moment_id,)).fetchone()
-    if not row:
+        row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
+    if not moments_service.can_view(globals(), row):
         return jsonify({"ok": False, "error": "Not found"}), 404
     existing = moment_video_threads.get(moment_id)
     if existing and existing.is_alive():
@@ -7539,9 +7321,9 @@ def api_moment_render_video(moment_id: int):
 def api_moment_render_video_status(moment_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT video_status, video_rel_path, video_error FROM moments WHERE id=?", (moment_id,)
+            "SELECT * FROM moments WHERE id=?", (moment_id,)
         ).fetchone()
-    if not row:
+    if not moments_service.can_view(globals(), row):
         return jsonify({"ok": False, "error": "Not found"}), 404
     video_url = f"/api/moments/{moment_id}/video" if row["video_status"] == "done" and row["video_rel_path"] else None
     return jsonify({
@@ -7556,8 +7338,8 @@ def api_moment_render_video_status(moment_id: int):
 @login_required
 def api_moment_video(moment_id: int):
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT video_rel_path, video_status FROM moments WHERE id=?", (moment_id,)).fetchone()
-    if not row or row["video_status"] != "done" or not row["video_rel_path"]:
+        row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
+    if not moments_service.can_view(globals(), row) or row["video_status"] != "done" or not row["video_rel_path"]:
         return ("Not found", 404)
     return send_from_directory(str(CONVERT_DIR), row["video_rel_path"])
 

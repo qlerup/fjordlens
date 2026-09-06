@@ -115,7 +115,7 @@ class MomentDetectionTests(unittest.TestCase):
             count = conn.execute("SELECT COUNT(*) AS c FROM moments").fetchone()["c"]
         self.assertEqual(count, 1)
 
-    def test_large_trip_is_curated_not_dumped_whole(self):
+    def test_large_trip_keeps_all_photos_and_curates_playback(self):
         # MOMENT_MAX_SLIDES is patched to 10 in setUp; insert a single big cluster of 30.
         base = datetime(2024, 7, 10, 9, 0, 0)
         for i in range(30):
@@ -129,7 +129,10 @@ class MomentDetectionTests(unittest.TestCase):
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             row = conn.execute("SELECT * FROM moments").fetchone()
         photo_ids = fjordlens.json.loads(row["photo_ids_json"])
-        self.assertEqual(len(photo_ids), 10, "moment should be curated down to MOMENT_MAX_SLIDES, not all 30 photos")
+        self.assertEqual(len(photo_ids), 30, "membership must keep every photo")
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            photos = conn.execute("SELECT * FROM photos").fetchall()
+        self.assertEqual(len(fjordlens._moment_pick_representative_rows(photos, 10)), 10)
 
         # Re-running detection should not spawn a second moment from the 20 leftover,
         # un-picked photos of the same trip.

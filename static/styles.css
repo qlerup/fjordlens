@@ -4326,6 +4326,29 @@ body.view-momenter .topbar { display: none !important; }
 }
 .moment-card-actions { display: flex; gap: 8px; margin-top: 4px; }
 
+.moment-card-actions, .moment-editor-actions { flex-wrap: wrap; gap: 8px; }
+.moment-evidence { font-size: .85rem; color: var(--muted); }
+.moment-evidence summary { cursor: pointer; }
+.moment-evidence ol { padding-left: 20px; max-height: 180px; overflow: auto; }
+.moment-editor { width: min(960px, 94vw); max-height: 90vh; overflow: auto; box-sizing: border-box; border: 1px solid var(--border, #555); border-radius: 16px; padding: 24px; color: var(--text, #eee); background: var(--panel, #202329); }
+.moment-editor::backdrop { background: #000a; }
+.moment-editor header, .moment-editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.moment-editor header h2 { margin: 0; }
+.moment-editor-fields { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+.moment-editor label { display: grid; gap: 6px; font-size: .9rem; }
+.moment-editor input:not([type=checkbox]), .moment-editor select { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border, #555); border-radius: 8px; background: var(--bg, #17191d); color: inherit; }
+.moment-editor details { margin: 16px 0; }
+.moment-editor details summary { cursor: pointer; margin-bottom: 12px; }
+.moment-editor-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 12px; max-height: 45vh; overflow: auto; margin-bottom: 20px; padding: 4px; }
+.moment-editor-photo { position: relative; border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: var(--bg, #17191d); cursor: pointer; }
+.moment-editor-photo:has(input:checked) { border-color: var(--accent, #67b1ff); }
+.moment-editor-photo:focus-within { outline: 2px solid var(--accent, #67b1ff); }
+.moment-editor-photo input { position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; }
+.moment-editor-photo img, .moment-photo-placeholder { width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+.moment-editor-photo span { padding: 5px; overflow-wrap: anywhere; font-size: .75rem; }
+.moment-editor [data-status] { color: var(--text, #eee); }
+@media (max-width: 600px) { .moment-editor { padding: 16px; } .moment-editor-fields { grid-template-columns: 1fr 1fr; } .moment-editor-fields label:first-child { grid-column: 1 / -1; } }
+
 /* --- Moments slideshow player --- */
 .moment-player {
   position: fixed;

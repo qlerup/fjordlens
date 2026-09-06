@@ -1344,10 +1344,10 @@ const I18N = {
     momenter_finding: 'Leder efter momenter...',
     momenter_find_done: 'Fandt {n} nye momenter',
     momenter_find_failed: 'Kunne ikke finde momenter',
-    momenter_find_zero_debug: 'Fandt 0 nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} tidsklynger — ingen opfyldte kravene ({minPhotos}+ billeder over mindst {minSpan} timer). Afvist: {tooFew} for få billeder, {tooShort} for kort periode, {homeOnly} kun ét sted, {alreadyCovered} allerede dækket af et eksisterende moment.',
+    momenter_find_zero_debug: 'Ingen nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
     momenter_suggested_heading: 'Forslag',
     momenter_saved_heading: 'Gemte momenter',
-    momenter_empty: 'Ingen momenter endnu. Tryk «Find nye momenter» for at lede efter rejser og årsoverblik.',
+    momenter_empty: 'Ingen momenter endnu. En administrator kan bruge «Find nye momenter» til at finde ture, dagsoplevelser og årsoverblik.',
     momenter_empty_suggested: 'Ingen nye forslag lige nu.',
     momenter_accept: 'Gem',
     momenter_dismiss: 'Afvis',
@@ -2204,7 +2204,7 @@ const I18N = {
     momenter_finding: 'Looking for moments...',
     momenter_find_done: 'Found {n} new moments',
     momenter_find_failed: 'Could not find moments',
-    momenter_find_zero_debug: 'Found 0 new moments. Scanned {scanned} photos ({dated} dated) into {segments} time clusters — none met the requirements ({minPhotos}+ photos over at least {minSpan} hours). Rejected: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} single-place only, {alreadyCovered} already covered by an existing moment.',
+    momenter_find_zero_debug: 'No new moments. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
     momenter_suggested_heading: 'Suggestions',
     momenter_saved_heading: 'Saved moments',
     momenter_empty: 'No moments yet. Press "Find new moments" to look for trips and year reviews.',
@@ -3732,12 +3732,13 @@ function _momentDateRangeLabel(m) {
 }
 
 function _momentCardHtml(m, mode) {
+  const canEdit = ['admin', 'manager'].includes(state.currentUser?.role);
   const coverUrl = (m.cover && (m.cover.thumb_url || m.cover.original_url)) || '';
-  const kindLabel = m.kind === 'year_review' ? tr('momenter_kind_year_review') : tr('momenter_kind_trip');
+  const kindLabel = m.kind === 'year_review' ? tr('momenter_kind_year_review') : m.kind === 'event' ? 'Dagsoplevelse' : tr('momenter_kind_trip');
   const dateLabel = _momentDateRangeLabel(m);
   const count = Number(m.photo_count || 0);
   const countLabel = `${count} ${count === 1 ? 'element' : 'elementer'}`;
-  const actionsHtml = mode === 'suggested'
+  const actionsHtml = !canEdit ? `<button class="btn small" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>` : mode === 'suggested'
     ? `<button class="btn small" type="button" data-moment-action="accept">${escapeHtml(tr('momenter_accept'))}</button>
        <button class="btn small ghost" type="button" data-moment-action="dismiss">${escapeHtml(tr('momenter_dismiss'))}</button>`
     : `<button class="btn small primary" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>
@@ -3753,7 +3754,8 @@ function _momentCardHtml(m, mode) {
           <span>${escapeHtml(dateLabel)}</span>
           <span>${escapeHtml(countLabel)}</span>
         </div>
-        <div class="moment-card-actions">${actionsHtml}</div>
+        ${m.evidence?.reasons?.length ? `<details class="moment-evidence"><summary>Hvorfor dette moment?${m.evidence.confidence === 'low' ? ' · Tjek dato og sted' : ''}</summary><p>${escapeHtml(m.evidence.reasons.join(' '))}</p><p>${escapeHtml(m.evidence.date_basis || '')}</p>${m.evidence.chapters?.length ? `<ol>${m.evidence.chapters.map(c => `<li>${escapeHtml(c.place)} · ${escapeHtml(c.start_date)}${c.end_date !== c.start_date ? ' – ' + escapeHtml(c.end_date) : ''} · ${Number(c.photo_count)} billeder</li>`).join('')}</ol>` : ''}</details>` : ''}
+        <div class="moment-card-actions">${actionsHtml}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se moment</button>' : ''}</div>
       </div>
     </article>`;
 }
@@ -3769,7 +3771,8 @@ function renderMomentsPanel() {
   els.grid.innerHTML = `
     <div class="moments-panel">
       <div class="moments-panel-header">
-        <button id="momentsFindNewBtn" class="btn" type="button">${escapeHtml(tr('momenter_find_new'))}</button>
+        ${state.currentUser?.role === 'admin' ? `<button id="momentsFindNewBtn" class="btn" type="button">${escapeHtml(tr('momenter_find_new'))}</button>
+        <button id="momentsHomeBtn" class="btn ghost" type="button">Hjemområde</button>` : ''}
         <span id="momentsFindStatus" class="mini-label"></span>
       </div>
       ${(suggested.length || saved.length) ? '' : `<div class="moments-empty">${escapeHtml(tr('momenter_empty'))}</div>`}
@@ -3784,6 +3787,7 @@ function renderMomentsPanel() {
     </div>
   `;
 
+  document.getElementById('momentsHomeBtn')?.addEventListener('click', editMomentHome);
   const findBtn = document.getElementById('momentsFindNewBtn');
   if (findBtn) {
     findBtn.disabled = !!state.momentsDetecting;
@@ -3803,9 +3807,11 @@ function renderMomentsPanel() {
         else if (action === 'dismiss') dismissMoment(id);
         else if (action === 'play') playMoment(id);
         else if (action === 'delete') deleteMoment(id);
+        else if (action === 'edit') editMoment(id);
       });
     });
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('details, button')) return;
       const isSaved = (state.momentsSaved || []).some((m) => Number(m.id) === id);
       if (isSaved) playMoment(id);
     });
@@ -3838,7 +3844,7 @@ async function startMomentDetection() {
   try {
     const res = await fetch('/api/moments/detect', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_find_failed'));
+    if (res.status !== 409 && (!res.ok || !data.ok)) throw new Error(data.error || tr('momenter_find_failed'));
     await pollMomentDetection();
   } catch (error) {
     state.momentsDetecting = false;
@@ -3860,7 +3866,9 @@ async function pollMomentDetection() {
       const result = data && data.result;
       if (result && result.ok) {
         const created = Number(result.created || 0);
-        if (created === 0 && result.debug) {
+        if (Number(result.updated || 0) > 0 || Number(result.retired || 0) > 0) {
+          showStatus(`${created} nye momenter · ${result.updated || 0} opdateret · ${result.retired || 0} forældede forslag fjernet`, 'ok');
+        } else if (created === 0 && result.debug) {
           const d = result.debug;
           const msg = tr('momenter_find_zero_debug')
             .replace('{scanned}', String(d.scanned || 0))
