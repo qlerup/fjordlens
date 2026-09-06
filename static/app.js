@@ -4134,9 +4134,12 @@ function _momentPlayerRenderSlide(index) {
       setTimeout(() => old.remove(), 650);
     });
     stage.appendChild(wrap);
-    if (media?.tagName === 'VIDEO') media.play().catch(() => {});
-    _momentPlayerRunProgressBar(index, dwell);
-    p.timer = setTimeout(() => _momentPlayerAdvance(1), dwell);
+    if (media?.tagName === 'VIDEO') {
+      media.play().catch(() => { media.controls = true; });
+    } else {
+      _momentPlayerRunProgressBar(index, dwell);
+      p.timer = setTimeout(() => _momentPlayerAdvance(1), dwell);
+    }
     const next = p.script[index + 1];
     const nextPhoto = next && p.photos[String(next.photo_id || next.background_photo_id)];
     if (nextPhoto && !nextPhoto.is_video && (nextPhoto.original_url || nextPhoto.thumb_url)) {
@@ -4152,7 +4155,14 @@ function _momentPlayerRenderSlide(index) {
       media.playsInline = true;
       media.preload = 'auto';
       media.addEventListener('loadeddata', ready, { once: true });
-      // Keep the last frame until the shared timeline duration has elapsed.
+      media.addEventListener('ended', () => {
+        if (state.momentPlayer === p && p.renderToken === token) _momentPlayerAdvance(1);
+      }, { once: true });
+      media.addEventListener('timeupdate', () => {
+        if (state.momentPlayer !== p || p.renderToken !== token || !Number.isFinite(media.duration) || media.duration <= 0) return;
+        const bar = els.momentPlayerProgress?.querySelector(`.moment-player-progress-seg[data-index="${index}"] i`);
+        if (bar) { bar.style.transitionDuration = '0ms'; bar.style.width = `${Math.min(100, media.currentTime / media.duration * 100)}%`; }
+      });
     } else {
       media.alt = '';
       media.addEventListener('load', ready, { once: true });
@@ -4165,6 +4175,11 @@ function _momentPlayerRenderSlide(index) {
       }
     }
     media.addEventListener('error', () => {
+      if (media.tagName === 'VIDEO') {
+        clearTimeout(loadingTimeout);
+        if (state.momentPlayer === p && p.renderToken === token) _momentPlayerAdvance(1);
+        return;
+      }
       if (media.tagName === 'IMG' && photo.thumb_url && media.getAttribute('src') !== photo.thumb_url) media.src = photo.thumb_url;
       else ready();
     });

@@ -1,5 +1,6 @@
 """Shared cinematic timeline and typography for browser playback and MP4 export."""
 import subprocess
+import shutil
 from pathlib import Path
 import re
 
@@ -7,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
 from moments_engine import photo_date, location, DA_COUNTRIES
 
-VERSION = 4
+VERSION = 5
 MONTHS = ('januar februar marts april maj juni juli august september oktober november december').split()
 
 
@@ -63,7 +64,7 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
         clock = captured.strftime('%H:%M') if captured and index % 3 == 0 else ''
         label_date = date_label(day) if row.get('captured_at') else ''
         script.append(dict(type='video' if str(row.get('ext') or '').lower() in video_exts else 'photo',
-                           photo_id=row['id'], duration=7.0 if str(row.get('ext') or '').lower() in video_exts else 5.2,
+                           photo_id=row['id'], duration=None if str(row.get('ext') or '').lower() in video_exts else 5.2,
                            motion=index % 4, layout='right' if index % 2 else 'left',
                            fit='contain' if (row.get('height') or 0) > (row.get('width') or 0) else 'cover',
                            label=city if show_label else '', eyebrow=country if show_label else '',
@@ -182,14 +183,28 @@ def poster(item, size=(1920, 1080), src=None):
 
 def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, timeout=120):
     w, h = size
-    duration = float(item.get('duration', 5.2))
+    duration = float(item.get('duration') or 5.2)
     duration = min(12, max(2, duration))
     overlay_path = Path(out_path).with_suffix('.overlay.png')
     overlay(item, size).save(overlay_path)
     is_video = item.get('type') == 'video'
     if is_video:
+        probe = Path(ffmpeg).with_name('ffprobe.exe' if str(ffmpeg).endswith('.exe') else 'ffprobe')
+        probe = str(probe) if probe.exists() else shutil.which('ffprobe')
+        if probe:
+            result = subprocess.run([probe, '-v', 'error', '-show_entries', 'format=duration',
+                                     '-of', 'default=noprint_wrappers=1:nokey=1', str(src)],
+                                    check=True, capture_output=True, text=True, timeout=30)
+            duration = float(result.stdout.strip())
+        else:
+            result = subprocess.run([ffmpeg, '-hide_banner', '-i', str(src)], capture_output=True, text=True, timeout=30)
+            match = re.search(r'Duration: (\d+):(\d+):(\d+(?:\.\d+)?)', result.stderr)
+            if not match:
+                raise ValueError('Could not read video duration')
+            duration = sum(float(v)*scale for v,scale in zip(match.groups(), (3600,60,1)))
+        timeout = max(timeout, duration * 10 + 60)
         cmd = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', str(src)]
-        base_filter = f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x10232a,setsar=1,fps={fps},tpad=stop_mode=clone:stop_duration={duration}'
+        base_filter = f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x10232a,setsar=1,fps={fps},tpad=stop_mode=clone:stop_duration={1/fps}'
     else:
         background_path = Path(out_path).with_suffix('.background.jpg')
         backdrop(src, (w*2, h*2), item.get('fit') == 'contain').save(background_path, quality=94)
@@ -203,7 +218,10 @@ def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, ti
     # Short fades through charcoal provide a consistent transition between every
     # segment, including clips shorter than the usual photo duration.
     filters = f"[0:v]{base_filter}[base];[1:v]format=rgba,fade=t=in:st=0.2:d=0.8:alpha=1[type];[base][type]overlay=x=0:y='16*max(0,1-t/1.05)':shortest=1,fade=t=in:st=0:d=0.35:color=0x10232a,fade=t=out:st={duration-.35}:d=0.35:color=0x10232a,format=yuv420p[out]"
-    cmd += ['-filter_complex', filters, '-map', '[out]', '-t', str(duration), '-r', str(fps),
+    cmd += ['-filter_complex', filters, '-map', '[out]']
+    # For clips this is the probed source duration, never the still-image dwell.
+    cmd += ['-t', str(duration)]
+    cmd += ['-r', str(fps),
             '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-movflags', '+faststart', str(out_path)]
     subprocess.run(cmd, check=True, timeout=timeout, capture_output=True)
     return Path(out_path).exists() and Path(out_path).stat().st_size > 0

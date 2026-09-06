@@ -55,10 +55,16 @@ class CinemaTests(unittest.TestCase):
             output = root / 'photo.mp4'
             self.assertTrue(cinema.render_segment(ffmpeg, item, src, output, size=(640, 360)))
             clip = root / 'clip.mp4'
-            self.assertTrue(cinema.render_segment(ffmpeg, dict(item, type='video'), output, clip, size=(640, 360)))
+            self.assertTrue(cinema.render_segment(ffmpeg, dict(item, type='video', duration=9), output, clip, size=(640, 360)))
             # Decode the actual output and verify its dimensions/frame count.
             result = subprocess.run([ffmpeg, '-v', 'error', '-i', str(clip), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True)
             self.assertEqual(len(result.stdout), 640*360*3*50)
+            long_source = root / 'long.mp4'
+            subprocess.run([ffmpeg, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=320x180:r=25:d=13.4', str(long_source)], check=True, capture_output=True)
+            long_clip = root / 'long-clip.mp4'
+            self.assertTrue(cinema.render_segment(ffmpeg, dict(item, type='video', duration=2), long_source, long_clip, size=(320,180)))
+            result = subprocess.run([ffmpeg, '-v', 'error', '-i', str(long_clip), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True)
+            self.assertEqual(len(result.stdout), 320*180*3*335)
 
 
 class DayReconciliationTests(unittest.TestCase):
