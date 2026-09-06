@@ -12,6 +12,7 @@ from flask_login import login_required, current_user
 
 from moments_engine import discover, photo_date, country_for_name
 import moment_places
+import moment_folders
 
 _scan_context = threading.local()
 
@@ -41,6 +42,7 @@ def migrate(conn):
             conn.execute(f"ALTER TABLE moments ADD COLUMN {name} {definition}")
     conn.execute("CREATE TABLE IF NOT EXISTS moment_settings (id INTEGER PRIMARY KEY CHECK(id=1), home_json TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS moment_place_cache (point TEXT PRIMARY KEY, result_json TEXT NOT NULL, expires REAL NOT NULL)")
+    moment_folders.upgrade_suggestions(conn)
     conn.execute("""CREATE TABLE IF NOT EXISTS moment_scan_state
         (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, started REAL, running INTEGER, result_json TEXT)""")
     # Upgrade automatic suggestions without changing saved or manually edited titles.
@@ -209,6 +211,7 @@ def detect(g):
                                     min_hours=g["MOMENT_MIN_SPAN_HOURS"], gap_hours=g["MOMENT_GAP_HOURS"], manual_home=home)
     place_stats = moment_places.enrich(candidates, rows, g['get_conn'],
                                        progress=lambda progress: _report_progress(g, progress))
+    moment_folders.apply(candidates, rows)
     stats.update({f'poi_{key}': value for key, value in place_stats.items()})
     _report_progress(g, dict(phase='saving'))
     with closing(g["get_conn"]()) as conn:
@@ -236,6 +239,9 @@ def detect(g):
                         and not candidate['evidence'].get('attraction') and previous.get('attraction')):
                     # An unavailable map service must not erase an already discovered visit.
                     candidate['evidence']['attraction'] = previous['attraction']
+                    candidate['evidence']['title_source'] = 'attraction'
+                    candidate['evidence'].pop('folder_title', None)
+                    candidate['evidence']['reasons'] = [r for r in candidate['evidence']['reasons'] if not r.startswith('Titlen kommer fra mappen')]
                     candidate['title'] = target['title']
                     candidate['primary_place'] = target['primary_place']
                     candidate['evidence']['reasons'].extend(r for r in previous.get('reasons', []) if 'OpenStreetMap' in r)

@@ -351,9 +351,11 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
         primary = " og ".join(country_names) if not single_day and countries else (places[0] if places else None)
         kind = "event" if single_day else "trip"
         title = (f"En dag i {primary}" if single_day else f"Tur til {primary}") if primary else ("Dagens oplevelser" if single_day else "Oplevelser")
+        title_source = 'trip' if not single_day and primary else 'place' if primary else 'generic'
         abroad = bool(segment_home and segment_home.get('country') and countries
                       and all(c != segment_home['country'] for c in countries))
         if abroad:
+            title_source = 'journey'
             title = f"Rejse til {' og '.join(country_names)}"
         # Existing descriptions can suggest an activity, only with repeated explicit evidence.
         themes = {"zoo": ("zoo", "zoologisk"), "stranden": ("strand", "beach"), "skoven": ("skov", "forest")}
@@ -361,11 +363,13 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
             for label, words in themes.items():
                 matches = sum(any(re.search(r"\b" + re.escape(w) + r"\b", str(r.get("ai_desc_caption") or "").casefold() + " " + str(r.get("ai_desc_tags") or "").casefold()) for w in words) for r in segment)
                 if matches >= max(3, len(segment)*.4):
+                    title_source = 'activity'
                     title = f"En dag i {label}" if label == "zoo" else f"En dag ved {label}" if label == "stranden" else "En dag i skoven"
                     break
         title += f" · {start.strftime('%d.%m.%Y')}"
         if occasion:
             title = title_for(occasion)
+            title_source = 'occasion'
         located = sum(bool(r["_loc"]["name"] or r["_loc"]["lat"] is not None) for r in segment)
         reasons = [f"{len(segment)} billeder fra {start.date().isoformat()} til {end.date().isoformat()}."]
         if occasion:
@@ -401,7 +405,7 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
         candidates.append(dict(kind=kind, title=title, start_date=start.date().isoformat(), end_date=end.date().isoformat(),
                                primary_place=primary, photo_ids=[r["id"] for r in segment],
                                cover_photo_id=next((r["id"] for r in segment if r.get("favorite")), segment[len(segment)//2]["id"]),
-                               evidence=dict(version=2, reasons=reasons, places=places, countries=countries, chapters=chapters,
+                               evidence=dict(version=2, title_source=title_source, reasons=reasons, places=places, countries=countries, chapters=chapters,
                                              confidence="high" if located/len(segment) >= .7 and not uncertain_dates and not day_inferred else "medium" if located else "low",
                                              date_basis="Billeddatoer; afrejse og hjemkomst kan ligge uden for intervallet.",
                                              home=segment_home, inferred_photo_count=inferred, occasion=occasion)))
