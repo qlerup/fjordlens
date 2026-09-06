@@ -1589,6 +1589,7 @@ const I18N = {
     person_show_face_boxes: 'Vis ansigtsbokse',
     person_btn_accept_maybe: 'Ja',
     person_btn_rename: 'Navngiv',
+    person_btn_edit_name: 'Omd?b',
     person_btn_hide: 'Skjul',
     person_btn_unhide: 'Vis',
     person_hide_confirm: 'Skjul denne person fra listen?',
@@ -2455,6 +2456,7 @@ const I18N = {
     person_show_face_boxes: 'Show face boxes',
     person_btn_accept_maybe: 'Yes',
     person_btn_rename: 'Rename',
+    person_btn_edit_name: 'Rename',
     person_btn_hide: 'Hide',
     person_btn_unhide: 'Show',
     person_hide_confirm: 'Hide this person from the list?',
@@ -5919,7 +5921,7 @@ function personCardBodyHtml(p) {
     <div class="pills">${maybePill}${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
     <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
       ${hasMaybeName && p.id !== 'unknown' ? `<button class="btn tiny primary" data-act="accept-maybe">${escapeHtml(tr('person_btn_accept_maybe'))}</button>` : ''}
-      <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
+      <button class="btn tiny" data-act="rename">${escapeHtml(tr(personHasName(p) ? 'person_btn_edit_name' : 'person_btn_rename'))}</button>
       ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
     </div>
   `;
@@ -6463,7 +6465,8 @@ function renderGrid() {
         const renameBtn = document.createElement('button');
         renameBtn.type = 'button';
         renameBtn.className = 'btn tiny';
-        renameBtn.textContent = tr('person_btn_rename');
+        person.name = state.personView.personName || person.name;
+        renameBtn.textContent = tr(personHasName(person) ? 'person_btn_edit_name' : 'person_btn_rename');
         renameBtn.addEventListener('click', e => {
           e.preventDefault();
           e.stopPropagation();
@@ -7025,6 +7028,11 @@ function replaceMapperFolderCard(oldPath, newPath, opts) {
   return true;
 }
 
+function personHasName(person) {
+  const name = String(person?.name || '').trim();
+  return person?.id !== 'unknown' && !!name && !/^(?:ukendt|unknown)(?:-\d+)?$/i.test(name);
+}
+
 let personRenameMenuEl = null;
 
 function closePersonRenameMenu() {
@@ -7169,6 +7177,7 @@ function openPersonRenameMenu(anchorBtn, person) {
   }
 
   const input = menu.querySelector('.person-rename-input');
+  if (input && personHasName(person)) input.value = String(person.name).trim();
   const createBtn = menu.querySelector('[data-act="create"]');
   let createBusy = false;
   const createNow = async () => {
@@ -7215,7 +7224,7 @@ function openPersonRenameMenu(anchorBtn, person) {
   menu.style.left = `${left}px`;
   personRenameMenuEl = menu;
   if (input) {
-    try { input.focus(); } catch {}
+    try { input.focus(); input.select(); } catch {}
   }
 
   window.setTimeout(() => {
@@ -7244,7 +7253,7 @@ function appendPersonCard(p) {
       <div class="card-meta"><span>${p.count||0} ${escapeHtml(tr('person_count_suffix'))}</span></div>
       <div class="pills">${p.hidden ? `<span class="pill">${escapeHtml(tr('person_hidden_badge'))}</span>` : ''}</div>
       <div class="actions" style="margin-top:6px;display:flex;gap:6px;">
-        <button class="btn tiny" data-act="rename">${escapeHtml(tr('person_btn_rename'))}</button>
+        <button class="btn tiny" data-act="rename">${escapeHtml(tr(personHasName(p) ? 'person_btn_edit_name' : 'person_btn_rename'))}</button>
         ${p.id==='unknown' ? '' : `<button class="btn tiny ${p.hidden?'':'danger'}" data-act="${p.hidden?'unhide':'hide'}">${escapeHtml(p.hidden ? tr('person_btn_unhide') : tr('person_btn_hide'))}</button>`}
       </div>
     </div>
