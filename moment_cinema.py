@@ -3,12 +3,14 @@ import subprocess
 import shutil
 from pathlib import Path
 import re
+import json
+import math
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
 from moments_engine import photo_date, location, DA_COUNTRIES
 
-VERSION = 5
+VERSION = 6
 MONTHS = ('januar februar marts april maj juni juli august september oktober november december').split()
 
 
@@ -25,9 +27,20 @@ def needs_upgrade(script_json):
     import json
     try:
         script = json.loads(script_json or '[]')
-        return not script or script[0].get('design_version') != VERSION
+        return not script or (not script[0].get('script_edited') and script[0].get('design_version') != VERSION)
     except (ValueError, TypeError, AttributeError, IndexError):
         return True
+
+
+def weather_label(row):
+    try:
+        weather = json.loads(row.get('metadata_json') or '{}').get('weather') or {}
+        label = str(weather.get('weather_label_da') or '').strip()
+        temperature = weather.get('temperature_2m')
+        degrees = f'{float(temperature):.0f} °C' if temperature is not None and math.isfinite(float(temperature)) else ''
+        return ' · '.join(filter(None, (label, degrees)))
+    except (ValueError, TypeError, AttributeError):
+        return ''
 
 
 def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()):
@@ -69,6 +82,7 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
                            fit='contain' if (row.get('height') or 0) > (row.get('width') or 0) else 'cover',
                            label=city if show_label else '', eyebrow=country if show_label else '',
                            detail=' · '.join(filter(None, (label_date, clock))) if show_label else '',
+                           weather=weather_label(row) if show_label else '',
                            design_version=VERSION))
         if index and index % 12 == 0 and quotes:
             script.append(dict(type='text', style='quote', text=quotes.pop(0), eyebrow='ET ØJEBLIK UNDERVEJS',
@@ -77,7 +91,23 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
     script.append(dict(type='text', style='outro', text='Minder at vende tilbage til',
                        eyebrow=moment['primary_place'] or 'DIT MOMENT', detail=period,
                        background_photo_id=rows[-1]['id'], duration=3.8, design_version=VERSION))
-    return script
+    # Pair occasional adjacent portraits from the same part of an outing.
+    # Keep the opening/closing photographs and chronological selection intact.
+    by_id = {r['id']: r for r in rows}
+    paired, index, last_pair = [], 0, -3
+    while index < len(script):
+        slide = script[index]
+        following = script[index+1] if index+1 < len(script) else {}
+        if index-last_pair >= 6 and following.get('photo_id') != rows[-1]['id'] and slide.get('type') == following.get('type') == 'photo' and slide.get('fit') == following.get('fit') == 'contain':
+            a, b = by_id[slide['photo_id']], by_id[following['photo_id']]
+            da, db = photo_date(a), photo_date(b)
+            if da and db and da.date() == db.date() and 0 <= (db-da).total_seconds() <= 1800 and location(a)['name'] == location(b)['name']:
+                slide = dict(slide, type='pair', second_photo_id=following['photo_id'], duration=6.5, fit='contain')
+                index += 1
+                last_pair = index
+        paired.append(slide)
+        index += 1
+    return paired
 
 
 def _font(size, serif=False):
@@ -120,15 +150,17 @@ def overlay(item, size):
     right = item.get('layout') == 'right' and not card
     text = str(item.get('text') if card else item.get('label') or '')[:500]
     eyebrow = str(item.get('eyebrow') or '')[:100].upper()
-    detail = str(item.get('detail') or '')[:180]
+    detail = ' · '.join(filter(None, (str(item.get('detail') or '')[:180], str(item.get('weather') or '')[:180])))
+    side = not card and item.get('fit') == 'contain' and item.get('type') != 'pair'
     if not any((text, eyebrow, detail)):
         return canvas
     # Dark photographic scrim keeps white type readable over bright snow/sky.
     for y in range(h):
-        alpha = 110 if card else int(175 * max(0, (y/h-.40)/.60))
-        draw.line((0, y, w, y), fill=(7, 14, 18, alpha))
-    margin, max_width = int(w*.08), int(w*(.78 if card else .66))
-    font_size = h * (.085 if card else .061)
+        alpha = 110 if card else 90 if side else int(145 * max(0, (y/h-.7)/.3))
+        left, edge = (int(w*.74), w) if right else (0, int(w*.26))
+        draw.line((left if side else 0, y, edge if side else w, y), fill=(7, 14, 18, alpha))
+    margin, max_width = int(w*(.035 if side else .06)), int(w*(.78 if card else .20 if side else .75))
+    font_size = h * (.085 if card else .052 if side else .027)
     while True:
         font = _font(font_size, serif=True)
         lines = _wrap(draw, text, font, max_width)
@@ -141,7 +173,7 @@ def overlay(item, size):
     eyebrows = _wrap(draw, eyebrow, small, max_width)
     small_h = int(h*.035)
     block_h = len(lines)*line_h + (len(details)+len(eyebrows))*small_h + int(h*.07)
-    y = int((h-block_h)/2) if card else int(h*.85-block_h)
+    y = int((h-block_h)/2) if card or side else int(h*.91-block_h)
 
     def line_at(value, selected_font, color):
         length = draw.textlength(value, font=selected_font)
@@ -162,7 +194,17 @@ def overlay(item, size):
     return canvas
 
 
-def backdrop(src, size, contain=False):
+def backdrop(src, size, contain=False, second_src=None):
+    if second_src:
+        background = Image.new('RGB', size, '#10232a')
+        gap, margin = int(size[0]*.025), int(size[0]*.05)
+        cell = ((size[0]-2*margin-gap)//2, int(size[1]*.82))
+        for index, path in enumerate((src, second_src)):
+            with Image.open(path) as opened:
+                photo = ImageOps.contain(ImageOps.exif_transpose(opened).convert('RGB'), cell)
+                x = margin + index*(cell[0]+gap) + (cell[0]-photo.width)//2
+                background.paste(photo, (x, int(size[1]*.04)+(cell[1]-photo.height)//2))
+        return background
     if src:
         with Image.open(src) as opened:
             photo = ImageOps.exif_transpose(opened).convert('RGB')
@@ -175,16 +217,16 @@ def backdrop(src, size, contain=False):
     return Image.new('RGB', size, '#10232a')
 
 
-def poster(item, size=(1920, 1080), src=None):
-    base = backdrop(src, size, item.get('fit') == 'contain').convert('RGBA')
+def poster(item, size=(1920, 1080), src=None, second_src=None):
+    base = backdrop(src, size, item.get('fit') == 'contain', second_src=second_src).convert('RGBA')
     base.alpha_composite(overlay(item, size))
     return base.convert('RGB')
 
 
-def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, timeout=120):
+def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, timeout=120, second_src=None):
     w, h = size
     duration = float(item.get('duration') or 5.2)
-    duration = min(12, max(2, duration))
+    duration = min(60, max(1, duration))
     overlay_path = Path(out_path).with_suffix('.overlay.png')
     overlay(item, size).save(overlay_path)
     is_video = item.get('type') == 'video'
@@ -207,7 +249,7 @@ def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, ti
         base_filter = f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x10232a,setsar=1,fps={fps},tpad=stop_mode=clone:stop_duration={1/fps}'
     else:
         background_path = Path(out_path).with_suffix('.background.jpg')
-        backdrop(src, (w*2, h*2), item.get('fit') == 'contain').save(background_path, quality=94)
+        backdrop(src, (w*2, h*2), item.get('fit') == 'contain', second_src=second_src).save(background_path, quality=94)
         cmd = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', str(background_path)]
         frames = int(round(duration*fps))
         variant = int(item.get('motion', 0)) % 4

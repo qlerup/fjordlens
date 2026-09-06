@@ -65,6 +65,13 @@ class CinemaTests(unittest.TestCase):
             self.assertTrue(cinema.render_segment(ffmpeg, dict(item, type='video', duration=2), long_source, long_clip, size=(320,180)))
             result = subprocess.run([ffmpeg, '-v', 'error', '-i', str(long_clip), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True)
             self.assertEqual(len(result.stdout), 320*180*3*335)
+            pair = root / 'pair.mp4'
+            second = root / 'second.jpg'
+            Image.new('RGB', (240,400), '#d6ab77').save(second)
+            self.assertTrue(cinema.render_segment(ffmpeg, dict(type='pair',duration=1), src, pair, second_src=second, size=(640,360)))
+            result = subprocess.run([ffmpeg, '-v', 'error', '-ss', '0.5', '-i', str(pair), '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True)
+            frame = Image.frombytes('RGB',(640,360),result.stdout)
+            self.assertGreater(frame.getpixel((480,160))[0],frame.getpixel((160,160))[0]+40)
 
 
 class DayReconciliationTests(unittest.TestCase):

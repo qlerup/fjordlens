@@ -327,12 +327,13 @@ def _manual_evidence(row, ids, reason):
 
 
 def _update(conn, row, *, title, start, end, ids, now, info):
+    from moment_slideshow import retain_edited_script
     conn.execute("""UPDATE moments SET title=?,start_date=?,end_date=?,photo_ids_json=?,
-        cover_photo_id=?,evidence_json=?,user_edited=1,revision=revision+1,updated_at=?,script_json=NULL,
+        cover_photo_id=?,evidence_json=?,user_edited=1,revision=revision+1,updated_at=?,script_json=?,
         subtitle=NULL,video_status='none',video_rel_path=NULL,video_error=NULL,
         kind=CASE WHEN kind='year_review' THEN kind ELSE ? END WHERE id=?""",
         (title, start, end, json.dumps(ids), row["cover_photo_id"] if row["cover_photo_id"] in ids else ids[0],
-         json.dumps(info, ensure_ascii=False), now, "event" if start == end else "trip", row["id"]))
+         json.dumps(info, ensure_ascii=False), now, retain_edited_script(row['script_json'], ids), "event" if start == end else "trip", row["id"]))
 
 
 def register_routes(app, g):
@@ -350,6 +351,8 @@ def register_routes(app, g):
 
     from moment_sharing import register as register_sharing
     register_sharing(app, g, managed)
+    from moment_slideshow import register as register_slideshow
+    register_slideshow(app, g, managed)
 
     @app.route("/api/moments/settings", methods=["GET", "PUT"])
     @managed
@@ -396,7 +399,10 @@ def register_routes(app, g):
         pub = g["row_to_public"](p)
         dt = photo_date(p)
         return {"id": p["id"], "thumb_url": pub.get("thumb_url"), "date": dt.isoformat() if dt else None,
-                "place": p.get("gps_name"), "filename": p.get("filename")}
+                "place": p.get("gps_name"), "filename": p.get("filename"),
+                "original_url": pub.get("original_url"), "is_video": pub.get("is_video"),
+                "width": p.get("width"), "height": p.get("height"),
+                "weather": __import__('moment_cinema').weather_label(p)}
 
     @app.get("/api/moments/photo-search")
     @managed

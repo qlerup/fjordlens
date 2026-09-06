@@ -1310,6 +1310,7 @@
     <div class="moment-player-footer">
       <div class="moment-player-title" id="momentPlayerFooterTitle"></div>
       <button class="btn moment-player-video-btn hidden" id="momentPlayerVideoBtn" type="button">🎬 Lav video</button>
+      <button class="btn hidden" id="momentPlayerEditBtn" type="button">Rediger diasshow</button>
     </div>
   </div>
   <!-- Bootstrap data (avoids inline JS parse issues) -->
@@ -1331,6 +1332,7 @@
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_player.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='moment_editor.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='theme-design.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='fl-select.js', v=app_build) }}"></script>
   <script>

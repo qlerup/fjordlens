@@ -7004,7 +7004,7 @@ def api_moment_detail(moment_id: int):
             log_event("error", error=f"moment_script: {e}")
 
     pub = _moment_row_to_public(row)
-    photo_ids = sorted({pid for item in (pub.get("script") or []) for pid in (item.get("photo_id"), item.get("background_photo_id")) if pid})
+    photo_ids = sorted({pid for item in (pub.get("script") or []) for pid in (item.get("photo_id"), item.get("background_photo_id"), item.get("second_photo_id")) if pid})
     photos_by_id: Dict[str, Any] = {}
     if photo_ids:
         placeholders = ",".join(["?"] * len(photo_ids))
@@ -7109,7 +7109,7 @@ def _render_moment_video(moment_id: int) -> None:
         _set_moment_video_status(moment_id, "error", error="ffmpeg ikke tilgængelig")
         return
 
-    photo_ids = sorted({pid for item in script for pid in (item.get("photo_id"), item.get("background_photo_id")) if pid})
+    photo_ids = sorted({pid for item in script for pid in (item.get("photo_id"), item.get("background_photo_id"), item.get("second_photo_id")) if pid})
     photos_by_id: Dict[int, sqlite3.Row] = {}
     if photo_ids:
         placeholders = ",".join(["?"] * len(photo_ids))
@@ -7136,9 +7136,16 @@ def _render_moment_video(moment_id: int) -> None:
                         src = ensure_viewable_copy(candidate, rel)
             if src is None and item_type != "text":
                 continue
+            second_src = None
+            second = photos_by_id.get(item.get('second_photo_id'))
+            if item_type == 'pair':
+                if second is None:
+                    raise ValueError('Det andet billede på en slide mangler.')
+                candidate = _disk_path_from_rel_path(second['rel_path'])
+                second_src = ensure_viewable_copy(candidate, second['rel_path'])
             ok = moment_cinema.render_segment(ffmpeg_bin, item, src, seg_path,
                 size=(MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT), fps=MOMENT_VIDEO_FPS,
-                timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC)
+                timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC, second_src=second_src)
             if ok:
                 segment_paths.append(seg_path)
 
