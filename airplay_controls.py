@@ -298,12 +298,7 @@ video { width:100%; height:100%; object-fit:contain; background:#000; }
     }
   }
 
-  prev.addEventListener('click', async () => {
-    const index = currentIndex();
-    const entry = entryFor(index);
-    const into = entry ? Number(video.currentTime || 0) - Number(entry.start || 0) : 0;
-    await seekToIndex(into > 1.5 ? index : index - 1);
-  });
+  prev.addEventListener('click', () => seekToIndex(currentIndex() - 1));
   next.addEventListener('click', () => seekToIndex(currentIndex() + 1));
   scrub.addEventListener('input', () => {
     scrubbing = true;
