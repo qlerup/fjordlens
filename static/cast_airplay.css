@@ -100,7 +100,8 @@
   font-size: 13px;
   font-weight: 650;
 }
-.cast-airplay-field input {
+.cast-airplay-field input,
+.cast-airplay-field select {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border, rgba(255,255,255,.14));
@@ -109,8 +110,9 @@
   color: inherit;
   padding: 11px;
   font: inherit;
-  text-transform: uppercase;
 }
+.cast-airplay-field input { text-transform: uppercase; }
+.cast-airplay-field select { min-height: 44px; }
 .cast-airplay-casting {
   display: grid;
   justify-items: center;
