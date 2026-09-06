@@ -180,23 +180,34 @@ async function shareMoment(id) {
   const dialog = momentDialog('Del moment');
   const body = dialog.querySelector('[data-body]');
   const status = dialog.querySelector('[data-status]');
-  status.textContent = 'Opretter link…';
-  try {
-    const data = await momentRequest(`/api/moments/${id}/share`, 'POST', {});
-    if (!dialog.isConnected) return;
-    const url = new URL(data.url, window.location.origin).href;
-    body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet. Linket gælder i 7 dage. Du kan forlænge eller ophæve det under Indstillinger → Delte.</p><input readonly aria-label="Delelink" style="width:100%"><p><button class="btn primary" data-copy>Kopiér link</button> <button class="btn ghost" data-revoke>Stop deling</button></p>`;
-    body.querySelector('input').value = url;
-    body.querySelector('[data-copy]').onclick = async () => {
-      try { await navigator.clipboard.writeText(url); status.textContent='Link kopieret'; }
-      catch { body.querySelector('input').select(); status.textContent='Kopiér det markerede link.'; }
-    };
-    body.querySelector('[data-revoke]').onclick = async () => {
-      try { await momentRequest(`/api/moments/${id}/share`, 'DELETE'); body.innerHTML=''; status.textContent='Alle delelinks til momentet er lukket.'; }
-      catch(error) { status.textContent=error.message; }
-    };
-    status.textContent='';
-  } catch(error) { status.textContent=error.message; }
+  body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet.</p><div class="moment-editor-fields"><label>Gyldighed<input data-expire-value type="number" min="1" max="3650" step="1" value="7" required></label><label>Enhed<select data-expire-unit><option value="days">Dage</option><option value="hours">Timer</option></select></label></div><label><input data-never type="checkbox"> Uden udløb</label><p class="mini-label">Du kan senere forlænge eller ophæve linket under Indstillinger → Delte.</p><button type="button" class="btn primary" data-create>Opret delelink</button>`;
+  const value = body.querySelector('[data-expire-value]');
+  const unit = body.querySelector('[data-expire-unit]');
+  const never = body.querySelector('[data-never]');
+  never.onchange = () => { value.disabled = never.checked; unit.disabled = never.checked; };
+  body.querySelector('[data-create]').onclick = async () => {
+    if (!never.checked && !value.reportValidity()) return;
+    const create = body.querySelector('[data-create]');
+    create.disabled = true;
+    status.textContent = 'Opretter link…';
+    try {
+      const data = await momentRequest(`/api/moments/${id}/share`, 'POST', {expires_value: never.checked ? 0 : Number(value.value), expires_unit: unit.value});
+      if (!dialog.isConnected) return;
+      const url = new URL(data.url, window.location.origin).href;
+      const expiry = data.expires_at ? `Udløber ${new Intl.DateTimeFormat('da-DK', {dateStyle:'medium', timeStyle:'short'}).format(new Date(data.expires_at))}.` : 'Linket har intet udløb.';
+      body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet.</p><p>${escapeHtml(expiry)}</p><input readonly aria-label="Delelink" style="width:100%"><p><button class="btn primary" data-copy>Kopiér link</button> <button class="btn ghost" data-revoke>Stop deling</button></p>`;
+      body.querySelector('input').value = url;
+      body.querySelector('[data-copy]').onclick = async () => {
+        try { await navigator.clipboard.writeText(url); status.textContent='Link kopieret'; }
+        catch { body.querySelector('input').select(); status.textContent='Kopiér det markerede link.'; }
+      };
+      body.querySelector('[data-revoke]').onclick = async () => {
+        try { await momentRequest(`/api/moments/${id}/share`, 'DELETE'); body.innerHTML=''; status.textContent='Alle delelinks til momentet er lukket.'; }
+        catch(error) { status.textContent=error.message; }
+      };
+      status.textContent='';
+    } catch(error) { status.textContent=error.message; create.disabled = false; }
+  };
 }
 
 function editMomentShare(id) {

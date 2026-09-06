@@ -69,7 +69,7 @@ def register(app, g, managed):
             conn.execute('INSERT INTO moment_shares (token_hash,moment_id,title,script_json,created_at,token_plain,expires_at) VALUES(?,?,?,?,?,?,?)',
                          (hashlib.sha256(token.encode()).hexdigest(), moment_id, row['title'], json.dumps(script, ensure_ascii=False), g['now_iso'](), token, expires_at))
             conn.commit()
-        return jsonify(ok=True, url=url_for('shared_moment_view', token=token))
+        return jsonify(ok=True, url=url_for('shared_moment_view', token=token), expires_at=expires_at)
 
     @app.get('/m/<token>')
     def shared_moment_view(token):
