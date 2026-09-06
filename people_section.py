@@ -8,6 +8,7 @@ from flask_login import current_user
 
 
 PEOPLE_FAST_ASSET = "/static/people_fast.js?v=4"
+PEOPLE_CACHE_ASSET = "/static/people_cache.js?v=1"
 
 
 def _allow_manager_for_people_action(original):
@@ -121,13 +122,12 @@ def _inject_people_fast_asset(app) -> None:
             if (
                 'data-view="personer"' not in html
                 or "app.js" not in html
-                or PEOPLE_FAST_ASSET in html
                 or "</body>" not in html
             ):
                 return response
 
-            # Remove an older injected people_fast.js tag if a cached template or
-            # earlier extension version supplied one, then inject the current asset.
+            # Remove older injected People helper tags, then inject the current
+            # versions in dependency order: UI helpers first, instant cache second.
             import re
             html = re.sub(
                 r'<script\s+src="/static/people_fast\.js\?v=\d+"></script>\s*',
@@ -135,17 +135,26 @@ def _inject_people_fast_asset(app) -> None:
                 html,
                 flags=re.IGNORECASE,
             )
-            tag = f'<script src="{PEOPLE_FAST_ASSET}"></script>'
-            response.set_data(html.replace("</body>", f"{tag}\n</body>", 1))
+            html = re.sub(
+                r'<script\s+src="/static/people_cache\.js\?v=\d+"></script>\s*',
+                "",
+                html,
+                flags=re.IGNORECASE,
+            )
+            tags = (
+                f'<script src="{PEOPLE_FAST_ASSET}"></script>\n'
+                f'<script src="{PEOPLE_CACHE_ASSET}"></script>'
+            )
+            response.set_data(html.replace("</body>", f"{tags}\n</body>", 1))
             response.headers["Content-Length"] = str(len(response.get_data()))
         except Exception:
-            app.logger.exception("Could not inject People fast-loader asset")
+            app.logger.exception("Could not inject People helper assets")
         return response
 
 
 def init_people_section(app) -> None:
     """Install People UX/access fixes once per Flask app."""
-    if app.extensions.get("fjordlens_people_section_v4"):
+    if app.extensions.get("fjordlens_people_section_v5"):
         return
 
     import app as fjordlens
@@ -166,4 +175,4 @@ def init_people_section(app) -> None:
 
     _register_bulk_hide_route(app, fjordlens)
     _inject_people_fast_asset(app)
-    app.extensions["fjordlens_people_section_v4"] = True
+    app.extensions["fjordlens_people_section_v5"] = True
