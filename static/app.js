@@ -1589,7 +1589,7 @@ const I18N = {
     person_show_face_boxes: 'Vis ansigtsbokse',
     person_btn_accept_maybe: 'Ja',
     person_btn_rename: 'Navngiv',
-    person_btn_edit_name: 'Omd?b',
+    person_btn_edit_name: 'Omdøb',
     person_btn_hide: 'Skjul',
     person_btn_unhide: 'Vis',
     person_hide_confirm: 'Skjul denne person fra listen?',
@@ -7157,7 +7157,7 @@ function openNamedPersonDialog(anchorBtn, person) {
     </form>
     <hr>
     <form data-merge>
-      <label>${en ? 'Merge with an existing person' : 'Flet med eksisterende person'}<select name="target" required><option value="">${en ? 'Choose person' : 'V?lg person'}</option></select></label>
+      <label>${en ? 'Merge with an existing person' : 'Flet med eksisterende person'}<select name="target" required><option value="">${en ? 'Choose person' : 'Vælg person'}</option></select></label>
       <p>${en ? 'All face matches for this person will be combined with the selected person.' : 'Alle ansigtsfund for denne person samles under den valgte person.'}</p>
       <button class="btn" type="submit">${en ? 'Merge people' : 'Flet personer'}</button>
     </form>
@@ -7175,7 +7175,7 @@ function openNamedPersonDialog(anchorBtn, person) {
       if (await renameOrMergePerson(person.id, name, options)) dialog.close();
       else dialog.querySelector('[data-error]').textContent = options.action === 'rename'
         ? (en ? 'Could not save. If the name exists, use Merge people.' : 'Navnet kunne ikke gemmes. Hvis navnet allerede findes, skal du bruge Flet personer.')
-        : (en ? 'Could not merge people. Try again.' : 'Personerne kunne ikke flettes. Pr?v igen.');
+        : (en ? 'Could not merge people. Try again.' : 'Personerne kunne ikke flettes. Prøv igen.');
     } finally { busy = false; dialog.querySelectorAll('button').forEach(b => b.disabled = false); }
   };
   dialog.querySelector('[data-rename]').addEventListener('submit', e => {
