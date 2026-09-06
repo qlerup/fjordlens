@@ -1,6 +1,7 @@
 from app import app as application
 from airplay_controls import init_airplay_controls
 from airplay_hls import init_airplay_hls
+from airplay_seek_fix import init_airplay_seek_fix
 from cast_airplay import init_cast_airplay
 from google_photo_frame import init_google_photo_frame
 from google_photo_frame_picker import init_google_photo_frame_picker
@@ -33,6 +34,9 @@ init_airplay_hls(application)
 
 # Slideshow duration settings and phone-side seek/previous/next controls.
 init_airplay_controls(application)
+
+# Safari/WebKit needs a more defensive HLS seek implementation around discontinuities.
+init_airplay_seek_fix(application)
 
 # Safe mobile clients: no global MutationObserver and no monkey-patching window.fetch.
 init_safe_airplay_assets(application)
