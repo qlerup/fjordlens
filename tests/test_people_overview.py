@@ -51,6 +51,17 @@ class PeopleOverviewTests(unittest.TestCase):
         self.assertNotIn(1, self.items())
         self.assertTrue(self.items(query='?include_hidden=1')[1]['single_find'])
 
+    def test_explicit_rename_never_merges_an_existing_name(self):
+        self.seed()
+        with app.app.test_request_context('/api/people/1/rename', method='POST', json={'name':'Anna','action':'rename'}), patch.object(app, '_forbid_user_role_for_maintenance', return_value=None):
+            response, status = app.api_people_rename(1)
+            self.assertEqual(status, 409)
+        with app.closing(app.get_conn()) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM people').fetchone()[0], 2)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM faces WHERE person_id=1').fetchone()[0], 3)
+        with app.app.test_request_context('/api/people/1/rename', method='POST', json={'name':'Peter','action':'rename'}), patch.object(app, '_forbid_user_role_for_maintenance', return_value=None):
+            self.assertEqual(app.api_people_rename(1).get_json()['name'], 'Peter')
+
 
 class FastPeopleOverviewTests(PeopleOverviewTests):
     def setUp(self):

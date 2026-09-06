@@ -5143,3 +5143,12 @@ body.compact-settings .settings-header { display: none !important; }
   color: #000 !important;
   text-shadow: none !important;
 }
+dialog.person-edit-dialog { width:min(460px,calc(100vw - 32px)); box-sizing:border-box; padding:24px; border:1px solid #29424b; border-radius:18px; background:#102128; color:#edf5f6; max-height:90vh; overflow:auto; }
+dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
+.person-edit-dialog header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
+.person-edit-dialog h2 { margin:0; font-size:1.3rem; }
+.person-edit-dialog form, .person-edit-dialog label { display:grid; gap:12px; }
+.person-edit-dialog input, .person-edit-dialog select { box-sizing:border-box; width:100%; padding:11px; border:1px solid #36505a; border-radius:10px; color:inherit; background:#172e37; font:inherit; }
+.person-edit-dialog hr { border:0; border-top:1px solid #29424b; margin:24px 0; }
+.person-edit-dialog p { font-size:.9rem; line-height:1.5; margin:0; }
+.person-edit-dialog [data-error] { color:#ffa3a3; margin-top:14px; }

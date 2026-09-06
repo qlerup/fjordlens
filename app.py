@@ -14652,7 +14652,13 @@ def api_people_rename(pid: int):
                 return jsonify({"ok": False, "error": "Person not found"}), 404
 
             existing = conn.execute("SELECT id, name FROM people WHERE LOWER(name)=LOWER(?)", (new_name,)).fetchone()
+            if data.get('action') == 'merge':
+                existing = conn.execute('SELECT id,name FROM people WHERE id=?', (data.get('target_id'),)).fetchone()
+                if not existing or int(existing['id']) == pid:
+                    return jsonify(ok=False, error='Vælg en anden eksisterende person.'), 400
             if existing and int(existing["id"]) != int(pid):
+                if data.get('action') == 'rename':
+                    return jsonify(ok=False, error='Navnet findes allerede. Brug Flet med eksisterende person.'), 409
                 target_id = int(existing["id"])
                 _merge_person_rows(conn, pid, target_id)
                 return jsonify({

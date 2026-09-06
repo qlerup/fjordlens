@@ -3096,7 +3096,9 @@ function _readRouteStateFromUrl() {
     const view = APP_VIEW_KEYS.has(viewRaw) ? viewRaw : null;
     const mapperPath = _normalizeMapperPath(url.searchParams.get('mappe') || url.searchParams.get('folder') || '');
     const settingsTab = _normalizeSettingsTab(url.searchParams.get('tab') || url.searchParams.get('settings_tab') || '');
-    return { view, mapperPath, settingsTab };
+    const personRaw = url.searchParams.get('person') || '';
+    const personId = /^(?:[1-9]\d*|unknown)$/.test(personRaw) ? personRaw : null;
+    return { view, mapperPath, settingsTab, personId };
   } catch {
     return { view: null, mapperPath: '', settingsTab: '' };
   }
@@ -3125,6 +3127,11 @@ function _syncRouteStateToUrl() {
     } else {
       url.searchParams.delete('mappe');
       url.searchParams.delete('folder');
+    }
+    if (state.view === 'personer' && state.personView.mode === 'photos') {
+      url.searchParams.set('person', String(state.personView.personId));
+    } else {
+      url.searchParams.delete('person');
     }
     if (state.view === 'settings') {
       const activeSettingsTab = _activeSettingsTabFromUi() || _normalizeSettingsTab(state.settingsTab);
@@ -6457,7 +6464,7 @@ function renderGrid() {
       const backLabel = document.createElement('span');
       backLabel.style.cursor = 'pointer';
       backLabel.textContent = `← ${state.personView.personName || 'Person'}`;
-      backLabel.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
+      backLabel.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; _syncRouteStateToUrl(); loadPeople(); });
       head.appendChild(backLabel);
       if (state.personView.personId !== 'unknown') {
         const person = (state.people || []).find(p => String(p.id) === String(state.personView.personId))
@@ -6485,7 +6492,7 @@ function renderGrid() {
       boxToggleWrap.querySelector('input').addEventListener('change', (e)=>{
         state.showFaceBoxes = !!e.target.checked;
         try { localStorage.setItem('fl_show_face_boxes', state.showFaceBoxes ? '1' : '0'); } catch {}
-        renderGrid();
+        els.grid.querySelectorAll('.person-face-box').forEach(box => { box.style.display = state.showFaceBoxes ? '' : 'none'; });
       });
       head.appendChild(boxToggleWrap);
       els.grid.appendChild(head);
@@ -6672,7 +6679,7 @@ function appendCardTo(item, container) {
   }
   // In a person's photo grid, optionally overlay their detected face box(es)
   try {
-    if (state.view === 'personer' && state.personView && state.personView.mode === 'photos' && state.showFaceBoxes && item && Array.isArray(item.faces) && item.faces.length) {
+    if (state.view === 'personer' && state.personView && state.personView.mode === 'photos' && item && Array.isArray(item.faces) && item.faces.length) {
       const thumb = card.querySelector('.card-thumb');
       const img = thumb && thumb.querySelector('img');
       if (thumb && img) {
@@ -6682,6 +6689,8 @@ function appendCardTo(item, container) {
         const faces = item.faces.slice(0, 2);
         const draw = () => {
           try {
+            if (!card.isConnected) return;
+            thumb.querySelectorAll('.person-face-box').forEach(box => box.remove());
             const cw = thumb.clientWidth; const ch = thumb.clientHeight;
             const iw = img.naturalWidth || (item.width||1); const ih = img.naturalHeight || (item.height||1);
             const scale = Math.min(cw/iw, ch/ih);
@@ -6689,6 +6698,8 @@ function appendCardTo(item, container) {
             const offX = (cw - dw)/2; const offY = (ch - dh)/2;
             faces.forEach(fc => {
               const box = document.createElement('div');
+              box.className = 'person-face-box';
+              box.style.display = state.showFaceBoxes ? '' : 'none';
               box.style.position = 'absolute';
               box.style.left = `${offX + (fc.x*dw)}px`;
               box.style.top = `${offY + (fc.y*dh)}px`;
@@ -6701,7 +6712,8 @@ function appendCardTo(item, container) {
             });
           } catch {}
         };
-        if (img.complete) draw(); else img.addEventListener('load', draw, { once: true });
+        if (img.complete) requestAnimationFrame(draw);
+        else img.addEventListener('load', () => requestAnimationFrame(draw), { once: true });
       }
     }
   } catch {}
@@ -7042,19 +7054,19 @@ function closePersonRenameMenu() {
   personRenameMenuEl = null;
 }
 
-async function renameOrMergePerson(pid, name) {
+async function renameOrMergePerson(pid, name, options = {}) {
   const nv = String(name || '').trim();
   if (!nv) return;
   try {
     const r = await fetch(`/api/people/${pid}/rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: nv }),
+      body: JSON.stringify({ name: nv, ...options }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) {
       showStatus(d.error || tr('person_rename_save_failed'), 'err');
-      return;
+      return false;
     }
     if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
     else showStatus(tr('person_name_updated'), 'ok');
@@ -7084,8 +7096,10 @@ async function renameOrMergePerson(pid, name) {
       const pd = await pr.json();
       reconcilePeopleGrid(pd.items || []);
     } catch {}
+    return true;
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
+    return false;
   }
 }
 
@@ -7130,8 +7144,59 @@ async function matchUnknownFaces(limit = 1000) {
   }
 }
 
+function openNamedPersonDialog(anchorBtn, person) {
+  const en = state.uiLanguage === 'en';
+  const dialog = document.createElement('dialog');
+  dialog.className = 'person-edit-dialog';
+  dialog.setAttribute('aria-label', tr('person_btn_edit_name'));
+  dialog.innerHTML = `
+    <header><h2>${escapeHtml(tr('person_btn_edit_name'))}</h2><button type="button" class="btn tiny" data-close>${en ? 'Close' : 'Luk'}</button></header>
+    <form data-rename>
+      <label>${en ? 'Name' : 'Navn'}<input name="name" required autocomplete="off" value="${escapeHtml(person.name)}"></label>
+      <button class="btn primary" type="submit">${en ? 'Save name' : 'Gem navn'}</button>
+    </form>
+    <hr>
+    <form data-merge>
+      <label>${en ? 'Merge with an existing person' : 'Flet med eksisterende person'}<select name="target" required><option value="">${en ? 'Choose person' : 'V?lg person'}</option></select></label>
+      <p>${en ? 'All face matches for this person will be combined with the selected person.' : 'Alle ansigtsfund for denne person samles under den valgte person.'}</p>
+      <button class="btn" type="submit">${en ? 'Merge people' : 'Flet personer'}</button>
+    </form>
+    <p data-error role="alert"></p>`;
+  const targets = (state.people || []).filter(p => personHasName(p) && String(p.id) !== String(person.id))
+    .sort((a,b) => (Number(b.count)||0)-(Number(a.count)||0) || String(a.name).localeCompare(String(b.name), 'da-DK'));
+  const select = dialog.querySelector('select');
+  for (const target of targets) select.add(new Option(target.name, String(target.id)));
+  let busy = false;
+  const submit = async (name, options) => {
+    if (busy) return;
+    busy = true;
+    dialog.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      if (await renameOrMergePerson(person.id, name, options)) dialog.close();
+      else dialog.querySelector('[data-error]').textContent = options.action === 'rename'
+        ? (en ? 'Could not save. If the name exists, use Merge people.' : 'Navnet kunne ikke gemmes. Hvis navnet allerede findes, skal du bruge Flet personer.')
+        : (en ? 'Could not merge people. Try again.' : 'Personerne kunne ikke flettes. Pr?v igen.');
+    } finally { busy = false; dialog.querySelectorAll('button').forEach(b => b.disabled = false); }
+  };
+  dialog.querySelector('[data-rename]').addEventListener('submit', e => {
+    e.preventDefault(); submit(dialog.querySelector('input').value.trim(), {action:'rename'});
+  });
+  dialog.querySelector('[data-merge]').addEventListener('submit', e => {
+    e.preventDefault();
+    const target = targets.find(p => String(p.id) === select.value);
+    if (target) submit(target.name, {action:'merge', target_id:target.id});
+  });
+  dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('cancel', e => { if (busy) e.preventDefault(); });
+  dialog.addEventListener('close', () => { dialog.remove(); if (anchorBtn?.isConnected) anchorBtn.focus(); }, {once:true});
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  dialog.querySelector('input').select();
+}
+
 function openPersonRenameMenu(anchorBtn, person) {
   closePersonRenameMenu();
+  if (personHasName(person)) { openNamedPersonDialog(anchorBtn, person); return; }
   if (!anchorBtn || !person || person.id === 'unknown') {
     if (person && person.id === 'unknown') showStatus(tr('person_unknown_cannot_rename'), 'err');
     return;
@@ -8074,6 +8139,7 @@ async function loadPersonPhotos(pid, name) {
     const data = await res.json();
     state.items = data.items || [];
     state.personView = { mode: 'photos', personId: pid, personName: name };
+    _syncRouteStateToUrl();
   } catch { state.items = []; }
   renderGrid();
 }
@@ -13345,7 +13411,11 @@ async function setView(view, opts = {}) {
     await loadPhotoframeStatus();
   } else if (nextView === 'personer') {
     state.personView = { mode: 'list', personId: null, personName: null };
-    await loadPeople();
+    await loadPeople(opts.personId ? false : true);
+    if (opts.personId) {
+      const person = (state.people || []).find(p => String(p.id) === String(opts.personId));
+      await loadPersonPhotos(opts.personId, person?.name || tr('person_unknown'));
+    } else if (syncUrl) _syncRouteStateToUrl();
   } else if (nextView === 'momenter') {
     state.items = [];
     await loadMoments();
@@ -18292,7 +18362,7 @@ async function startExistingConversion(type, btn = null) {
   } catch {}
 })();
 
-setView(state.view, { syncUrl: false }).then(async () => {
+setView(state.view, { syncUrl: false, personId: _initialRoute.personId }).then(async () => {
   // Start with a quick status check in case scan was running
   if (SCAN_FEATURES_ENABLED) {
     fetch("/api/scan/status").then(r => r.json()).then(d => {
