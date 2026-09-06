@@ -756,7 +756,7 @@ except Exception:
     PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = 1800
 PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC = max(60, min(7200, PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC))
 THUMB_SIZE = (600, 600)
-FACE_THUMB_VERSION = 6
+FACE_THUMB_VERSION = 7
 PHASH_MATCH_THRESHOLD = int(os.environ.get("PHASH_MATCH_THRESHOLD", "8"))
 GEOCODE_ENABLE = os.environ.get("GEOCODE_ENABLE", "1") not in {"0", "false", "False"}
 GEOCODE_EMAIL = os.environ.get("GEOCODE_EMAIL", "fjordlens@example.com")
@@ -14518,14 +14518,11 @@ def _build_face_thumb(face_id: int) -> bool:
 
         # First attempt: crop from original/viewable source.
         try:
-            # IMPORTANT:
-            # Face bbox coordinates are produced by ai_service/app.py using
-            # Image.open(...).convert("RGB") without EXIF transpose.
-            # So crop in the same pixel space (no exif_transpose here), otherwise
-            # some rotated images get wrong crops.
+            # _ai_detect_faces_path transposes before detection. Stored boxes
+            # therefore refer to display orientation, including mirrored EXIF.
             with Image.open(view_path) as im_src:
                 if _crop_and_save(
-                    im_src,
+                    ImageOps.exif_transpose(im_src),
                     int(r["bbox_x"] or 0),
                     int(r["bbox_y"] or 0),
                     int(r["bbox_w"] or 1),
