@@ -1,30 +1,29 @@
-﻿
 # FjordLens
 
-FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with built-in photoframe management for Raspberry Pi devices.
+FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with built-in photoframe management for Raspberry Pi devices, Google Photos/Nest Hub photo-frame integration, and mobile AirPlay/Google Cast slideshow support.
 
-This repository contains two parts:
-
-- `fjordlens/`: the main web app and API (Flask + JS)
-- `photoframe/`: Raspberry Pi client (fullscreen viewer + local setup app)
+This repository contains the FjordLens web app/API plus the Raspberry Pi photoframe client.
 
 ---
 
 ## Feature Matrix
 
-| Feature                        | Requires Ollama | Requires Photoframe | Requires External Worker |
-|--------------------------------|:---------------:|:-------------------:|:-----------------------:|
-| Timeline/Folders/Places        |                 |                     |                         |
-| Metadata indexing              |                 |                     |                         |
-| Weather enrichment             |                 |                     |                         |
-| Thumbnail generation           |                 |                     |                         |
-| AI embedding/search/similarity |                 |                     |                         |
-| AI image description           |       X*        |                     |      X                  |
-| Face detection/indexing        |                 |                     |                         |
-| Public share links             |                 |                     |                         |
-| Photoframe management          |                 |         X           |                         |
-| Remote photoframe update       |                 |         X           |                         |
-| External AI queue              |       X         |                     |           X             |
+| Feature | Requires Ollama | Requires Photoframe | Requires External Worker | External account/service |
+|---|:---:|:---:|:---:|:---:|
+| Timeline/Folders/Places | | | | |
+| Metadata indexing | | | | |
+| Weather enrichment | | | | Open-Meteo |
+| Thumbnail generation | | | | |
+| AI embedding/search/similarity | | | | |
+| AI image description | X* | | X | |
+| Face detection/indexing | | | | |
+| Public share links | | | | |
+| Raspberry Pi photoframe management | | X | | |
+| Remote photoframe update | | X | | |
+| Google Photos / Nest Hub Photo Frame | | | | Google Photos OAuth |
+| AirPlay slideshow from iPhone/iPad | | | | Apple AirPlay |
+| Google Cast custom receiver | | | | Google Cast Receiver App ID |
+| External AI queue | X | | X | |
 
 *Ollama is only required if you use the external AI describer/worker.
 
@@ -77,9 +76,15 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 - Public share links for folders
 - Share permissions (`view`, `download`, `upload`, `manage`)
 - Optional password protection
-- Expiry and admin management (extend/revoke/activate/edit)
+- Expiry and management (extend/revoke/activate/edit)
+- Managers can create and manage share links without receiving unrelated admin maintenance permissions
+- The configured public/DNS base URL is used automatically when available, with normal URL fallback
+- Visitor-name requirements are set automatically by permission:
+  - `view`: name not required
+  - `upload`: name required
+  - `manage`: name required
 
-### Photoframe platform
+### Raspberry Pi photoframe platform
 
 - Create and manage photoframe tokens from FjordLens
 - Remote status cards (online, IP/local IP, version, sync, update state)
@@ -87,6 +92,51 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 - Proxy access to frame settings from FjordLens
 - Frame update rollout via uploaded ZIP (single frame or all)
 - Restart/cancel commands and update progress reporting
+
+### Google Photos / Nest Hub Photo Frame
+
+FjordLens can maintain an app-created Google Photos album intended for use with Google Nest Hub / Google Home ambient Photo Frame.
+
+- Default album title: `FjordLens Photo Frame`
+- Select individual FjordLens photos through the built-in picker
+- Existing album selections are loaded back into the picker when reopened
+- Add/remove changes are synchronized against the shared FjordLens selection
+- The Google Photo Frame selection is shared across FjordLens users, rather than being user-specific
+- Managers can choose/manage the photos in the album
+- Google OAuth credentials, connect/disconnect and integration settings remain admin-only
+- FjordLens includes a `/privacy` page suitable for the OAuth app configuration
+
+The integration uses the Google Photos Library API with app-created-data permissions. It does **not** take over the Nest Hub with Cast; instead, the resulting Google Photos album can be selected in the normal Google Home/Nest Hub ambient Photo Frame settings.
+
+### Mobile AirPlay / Google Cast
+
+In phone selection mode, FjordLens adds an **AirPlay / Cast** action for selected photos, videos, or complete folders.
+
+#### AirPlay on iPhone/iPad
+
+AirPlay uses a server-generated HLS slideshow rather than screen mirroring:
+
+- Selected images/videos are normalized into an HLS stream
+- Rendering happens progressively in the background
+- Playback can start once the first HLS segments are ready instead of waiting for the complete slideshow
+- Images and videos can be mixed in the same slideshow
+- Complete selected folders are expanded into the slideshow
+- Videos retain their own playback length
+- Image duration is selectable: **3, 5, 8, 10 or 15 seconds**
+- Default image duration is **5 seconds** and the last choice is remembered on the phone
+- The controller shows current item / total items
+- A seek slider is available for the part of the slideshow that has been prepared
+- **Forrige** and **Næste** jump between media items
+- Safari-specific seek handling retries around HLS discontinuities so previous/next and manual seeking remain reliable
+- The web player exposes Apple's AirPlay picker through the HLS video element
+
+The HLS output is currently normalized to a 16:9 `1280x720` canvas with the original media contained inside it. Portrait photos can therefore have side bars on a 16:9 TV. On a portrait phone, the 16:9 preview itself can also appear small because the preview represents the TV-shaped output.
+
+#### Google Cast
+
+FjordLens includes a custom Google Cast Web Receiver and sender flow for Android/mobile use. The backend can create tokenized sessions and serve mixed image/video playlists to the receiver.
+
+Google Cast requires a configured **Custom Web Receiver App ID**. Until an App ID has been registered/configured, the Cast backend and receiver page are present but Android Cast cannot start a real receiver session.
 
 ### Admin and security
 
@@ -207,7 +257,7 @@ For Proxmox LXC environments (where host bind mounts and GPU passthrough are con
 sh scripts/fresh_setup_lxc.sh
 ```
 
-`scripts/fresh_setup_lxc.sh` now includes optional guided GPU setup (`ENABLE_GPU_GUIDE=1`):
+`scripts/fresh_setup_lxc.sh` includes optional guided GPU setup (`ENABLE_GPU_GUIDE=1`):
 
 - asks for GPU as its own setup step before container start
 - checks `/dev/nvidia*` visibility inside the LXC
@@ -262,6 +312,43 @@ Then use these in setup when relevant:
 - `UPLOADS_HOST_DIR=/mnt/fjordlens-nfs/uploads`
 - `PHOTO_DIR=/mnt/fjordlens-nfs/photos` (only if `ENABLE_LIBRARY_SOURCE=1`)
 
+## Google Photos / Nest Hub Setup
+
+1. Create or choose a Google Cloud project.
+2. Enable **Google Photos Library API**.
+3. Create a Web OAuth client.
+4. Add this redirect URI, using your own public FjordLens host:
+
+```text
+https://<your-fjordlens-domain>/api/google-photo-frame/oauth/callback
+```
+
+5. Configure the OAuth consent screen. FjordLens exposes a privacy page at:
+
+```text
+https://<your-fjordlens-domain>/privacy
+```
+
+6. Configure the client ID/client secret in FjordLens (or through the environment variables listed below), connect Google Photos as an admin, and let FjordLens create/use the app-owned `FjordLens Photo Frame` album.
+7. In Google Home/Nest Hub settings, choose that album for Ambient/Photo Frame display.
+
+The integration requests only the app-created Google Photos scopes required to append media and manage/read app-created album data.
+
+## Mobile AirPlay Quick Start
+
+On iPhone/iPad:
+
+1. Open the mobile FjordLens mapper/gallery selection mode.
+2. Select individual photos/videos or a folder.
+3. Open **AirPlay / Cast**.
+4. Choose the desired **Tid pr. billede** if images are included.
+5. Press **AirPlay**.
+6. FjordLens prepares the first HLS segments and opens the slideshow controller.
+7. Press **Vælg AirPlay** and choose the TV/Apple TV.
+8. Use **Forrige**, **Næste** or the seek slider from the phone while the slideshow continues.
+
+FFmpeg is required for the HLS conversion and is installed by the provided Dockerfile.
+
 ## Photoframe Quick Start
 
 ### 1) Create a frame token in FjordLens
@@ -297,7 +384,7 @@ In each photoframe card, `Settings` opens a proxied settings session through Fjo
 Notes:
 
 - FjordLens needs a recent frame heartbeat with local IP
-- If `:5001` is temporarily unavailable, FjordLens now attempts wake/retry behavior automatically
+- If `:5001` is temporarily unavailable, FjordLens attempts wake/retry behavior automatically
 - If your reverse proxy or Cloudflare is used, allow frame API paths (see below)
 
 ## External AI Worker (Windows)
@@ -315,7 +402,7 @@ Quick flow:
 1. In FjordLens, open `Indstillinger` -> `AI` and enable external AI descriptions.
 2. Copy the generated connection link.
 3. On Windows, open `external_worker/windows/README.md` and run the setup steps.
-4. Start the GUI, paste the link, and click `Kor ekstern ko`.
+4. Start the GUI, paste the link, and start the external queue.
 
 The worker uses your local Ollama runtime and posts caption/tags back to FjordLens over the tokenized external API endpoints.
 
@@ -326,7 +413,20 @@ For photoframe feeds and media delivery, exclude these paths from bot/challenge 
 - `/api/frame/*`
 - `/api/frame/*/view/*`
 
-If Cloudflare challenge pages are returned, frames cannot parse feed JSON.
+AirPlay and Cast receivers must also be able to fetch their tokenized stream/media routes without a Cloudflare challenge page. When those features are used externally, make sure these public routes remain directly reachable:
+
+- `/cast/session/*`
+- `/cast/media/*`
+- `/cast/receiver`
+- `/airplay/hls/*`
+
+The authenticated controller/status API routes can remain behind normal FjordLens login protection.
+
+Google OAuth also needs the callback route to reach FjordLens normally:
+
+- `/api/google-photo-frame/oauth/callback`
+
+If Cloudflare challenge pages are returned instead of media/JSON/HLS, frames, TVs and receivers cannot parse the response.
 
 ## Updating
 
@@ -406,7 +506,17 @@ See `.env.example` for defaults. Most-used variables:
 - `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
 - `PHOTOFRAME_TEXT_ONLY`: frame feed test card mode
 - `PHOTOFRAME_UPDATE_UPLOAD_MAX_BYTES`: max uploaded frame ZIP size
-- `SHARE_DUCKDNS_BASE_URL`: optional external base URL for share links
+- `SHARE_DUCKDNS_BASE_URL`: optional external base URL used for share links and preferred public Cast/AirPlay URLs
+- `GOOGLE_PHOTOS_CLIENT_ID`: optional Google Photos OAuth client ID override
+- `GOOGLE_PHOTOS_CLIENT_SECRET`: optional Google Photos OAuth client secret override
+- `GOOGLE_PHOTOS_REDIRECT_URI`: optional fixed Google Photos OAuth callback URL
+- `GOOGLE_PHOTOS_ALBUM_TITLE`: optional app-created album title (default `FjordLens Photo Frame`)
+- `GOOGLE_CAST_RECEIVER_APP_ID`: optional Google Cast Custom Web Receiver App ID
+- `CAST_SESSION_TTL_SECONDS`: lifetime of tokenized Cast/AirPlay sessions (default 4 hours)
+- `AIRPLAY_IMAGE_DURATION_SECONDS`: backend fallback image duration (UI sessions can choose their own supported duration)
+- `AIRPLAY_HLS_SEGMENT_SECONDS`: HLS segment duration (default 4 seconds)
+- `AIRPLAY_MAX_ITEMS`: maximum HLS items allowed in one AirPlay slideshow
+- `AIRPLAY_HLS_ITEM_TIMEOUT_SECONDS`: per-item FFmpeg timeout
 
 Common advanced settings in code/env:
 
@@ -423,9 +533,39 @@ Common advanced settings in code/env:
 - AI jobs: `/api/ai/ingest`, `/api/ai/describe/ingest`, `/api/faces/index`
 - Photos: `/api/photos`, `/api/photos/<id>`, `/api/photos/download-zip`
 - Shares: `/api/shares`, `/api/share/<token>/*`
-- Photoframes: `/api/photoframes/*`, `/api/frame/<token>/*`
+- Raspberry Pi photoframes: `/api/photoframes/*`, `/api/frame/<token>/*`
+- Google Photo Frame: `/api/google-photo-frame/*`
+- AirPlay/Cast session: `POST /api/cast-airplay/session`
+- AirPlay HLS prepare/status: `/api/airplay-hls/<token>/prepare`, `/api/airplay-hls/<token>/status`
+- AirPlay controls/status: `/api/airplay-controls/<token>/status`
+- AirPlay controller: `/airplay/control/<token>/play`
+- Public HLS stream: `/airplay/hls/<token>/index.m3u8`
+- Cast receiver: `/cast/receiver`
 
 ## Troubleshooting
+
+### AirPlay opens but Forrige/Næste or seek does not move
+
+FjordLens includes Safari-specific HLS seek handling because WebKit can ignore a direct `currentTime` update around HLS `EXT-X-DISCONTINUITY` boundaries. Make sure you are running the latest FjordLens build, then create a fresh AirPlay session.
+
+If an old controller page is still open after an update, close it and start the AirPlay flow again so Safari receives the newest controller logic.
+
+### AirPlay preview looks small on the phone
+
+The HLS stream represents a 16:9 TV canvas. When that canvas is shown inside a portrait phone screen, it can look small with black space around it. The TV output uses the full 16:9 stream area; portrait source photos may still have side bars because FjordLens preserves the entire photo instead of cropping it.
+
+### Google Cast is not available
+
+A Google Cast Custom Web Receiver App ID must be configured before Android/mobile Cast can start a real receiver session. The receiver endpoint being reachable by itself is not enough.
+
+### Google Photo Frame cannot connect
+
+Check that:
+
+- Google Photos Library API is enabled for the OAuth project
+- the exact redirect URI matches `/api/google-photo-frame/oauth/callback`
+- the OAuth test/published user is allowed by the Google consent configuration
+- the public FjordLens URL is HTTPS when required by Google OAuth
 
 ### Frame settings returns "connection refused"
 
@@ -449,7 +589,7 @@ SQLITE_BUSY_TIMEOUT_MS=15000
 ```
 
 Then restart the container. `WAL` often causes locking instability on network filesystems.
-If `SQLITE_JOURNAL_MODE` is not set, FjordLens now auto-selects `DELETE` on detected network filesystems and `WAL` on local disks.
+If `SQLITE_JOURNAL_MODE` is not set, FjordLens auto-selects `DELETE` on detected network filesystems and `WAL` on local disks.
 
 ### Upload issues behind reverse proxy
 
@@ -484,18 +624,25 @@ Manual recovery checklist is available in:
 
 ## Project Layout
 
-```txt
-fjordlens_synology_github_ready/
-|- fjordlens/
-|  |- app.py
-|  |- Dockerfile
-|  |- docker-compose.yml
-|  |- docker-compose.gpu.yml
-|  |- docker-compose.no-library.yml
-|  |- ai_service/
-|  |- static/
-|  |- templates/
-|  `- scripts/
+```text
+fjordlens/
+|- app.py
+|- wsgi.py
+|- Dockerfile
+|- docker-compose.yml
+|- docker-compose.gpu.yml
+|- docker-compose.no-library.yml
+|- cast_airplay.py
+|- airplay_hls.py
+|- airplay_controls.py
+|- google_photo_frame.py
+|- google_photo_frame_picker.py
+|- google_photo_frame_selection.py
+|- static/
+|- templates/
+|- ai_service/
+|- external_worker/
+|- scripts/
 `- photoframe/
    |- app/
    |- viewer/
@@ -512,9 +659,8 @@ fjordlens_synology_github_ready/
 - Use strong admin passwords
 - Enable 2FA for admin accounts
 - Keep `DATA_DIR` on persistent storage
-
----
-
+- Treat Google OAuth client secrets and refresh tokens as secrets
+- Keep tokenized AirPlay/Cast session URLs private while they are valid
 
 ---
 
@@ -523,10 +669,12 @@ fjordlens_synology_github_ready/
 ### Backup
 
 - Backup your persistent data directory (`DATA_DIR`), uploads, thumbs, and optionally your `.env` file.
+- `DATA_DIR` also contains optional integration state such as Google Photo Frame and Cast/AirPlay session/cache state.
 - Example (from host):
-   ```bash
-   tar czf fjordlens-backup-$(date +%Y%m%d).tar.gz /path/to/data_dir /path/to/uploads /path/to/thumbs /path/to/fjordlens/.env
-   ```
+
+```bash
+tar czf fjordlens-backup-$(date +%Y%m%d).tar.gz /path/to/data_dir /path/to/uploads /path/to/thumbs /path/to/fjordlens/.env
+```
 
 ### Restore
 
@@ -538,6 +686,4 @@ fjordlens_synology_github_ready/
 
 ## Screenshots & GIFs
 
-To improve onboarding, consider adding screenshots or GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Settings`).
-
----
+To improve onboarding, consider adding screenshots or GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Google Photo Frame`, `AirPlay`, `Settings`).
