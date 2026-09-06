@@ -270,6 +270,7 @@
   appendPeopleInChunks = function appendPeopleInChunksFast(people, chunkSize = 48) {
     if (!els.grid) return;
 
+    const currentEpoch = peopleRenderEpoch;
     let index = 0;
     const pendingImgs = [];
     let activeLoads = 0;
@@ -389,6 +390,7 @@
     }
 
     function step() {
+      if (currentEpoch !== peopleRenderEpoch || !isPeopleList()) return;
       if (!els.grid || state.view !== 'personer') return;
 
       const end = Math.min(index + chunkSize, people.length);

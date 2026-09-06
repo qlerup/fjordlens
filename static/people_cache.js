@@ -3,7 +3,7 @@
 
   if (typeof loadPeople !== 'function' || typeof renderGrid !== 'function') return;
 
-  const STORAGE_PREFIX = 'fjordlens:people-list:v1:';
+  const STORAGE_PREFIX = 'fjordlens:people-list:v2:';
   const FRESH_MS = 60 * 1000;
   const MAX_STALE_MS = 30 * 60 * 1000;
   const inflight = new Map();

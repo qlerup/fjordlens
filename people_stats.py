@@ -1,6 +1,7 @@
 """Materialized People list statistics for fast /api/people responses."""
 from __future__ import annotations
 
+import re
 import threading
 import time
 from typing import Any
@@ -11,9 +12,12 @@ _STATS_WORKER_LOCK = threading.Lock()
 _STATS_WORKER_STARTED = False
 
 
+_STILL_SQL = "f.frame_sec IS NULL AND " + " AND ".join(
+    f"LOWER(COALESCE(ph.ext,'')) != '{ext}' AND LOWER(ph.rel_path) NOT LIKE '%{ext}'"
+    for ext in ('.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.3gp'))
+
 _COVER_ORDER_SQL = """
     CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
-    CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
     CASE
       WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
            AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0))
@@ -38,6 +42,7 @@ def _ensure_people_stats_columns(conn) -> bool:
     changed = False
 
     for name, ddl in (
+        ("cover_policy_version", "ALTER TABLE people ADD COLUMN cover_policy_version INTEGER NOT NULL DEFAULT 0"),
         ("face_count", "ALTER TABLE people ADD COLUMN face_count INTEGER NOT NULL DEFAULT 0"),
         ("cover_face_id", "ALTER TABLE people ADD COLUMN cover_face_id INTEGER"),
         ("cover_dirty", "ALTER TABLE people ADD COLUMN cover_dirty INTEGER NOT NULL DEFAULT 1"),
@@ -78,9 +83,7 @@ def _ensure_people_stats_columns(conn) -> bool:
         """
         SELECT 1
         FROM people
-        WHERE COALESCE(face_count,0) > 0
-          AND cover_face_id IS NULL
-          AND COALESCE(cover_dirty,0)=0
+        WHERE COALESCE(cover_policy_version,0) != 2
         LIMIT 1
         """
     ).fetchone()
@@ -147,6 +150,14 @@ def _install_people_stats_triggers(conn) -> None:
           UPDATE people SET cover_dirty = 1 WHERE id = NEW.person_id;
         END;
 
+        CREATE TRIGGER IF NOT EXISTS fjordlens_people_stats_photo_type_change
+        AFTER UPDATE OF ext, rel_path ON photos
+        BEGIN
+          UPDATE people SET cover_dirty=1 WHERE id IN (
+            SELECT person_id FROM faces WHERE photo_id=NEW.id AND person_id IS NOT NULL
+          );
+        END;
+
         CREATE TRIGGER IF NOT EXISTS fjordlens_people_stats_photo_dims_change
         AFTER UPDATE OF width, height ON photos
         BEGIN
@@ -166,7 +177,7 @@ def _install_people_stats_triggers(conn) -> None:
 def _backfill_people_stats(conn) -> None:
     """One-time migration: compute all counts and best cover faces in batch."""
     conn.execute(
-        "UPDATE people SET face_count=0, cover_face_id=NULL, cover_dirty=0"
+        "UPDATE people SET face_count=0, cover_face_id=NULL, cover_dirty=0, cover_policy_version=2"
     )
 
     count_rows = conn.execute(
@@ -196,7 +207,7 @@ def _backfill_people_stats(conn) -> None:
             ) AS rn
           FROM faces f
           LEFT JOIN photos ph ON ph.id = f.photo_id
-          WHERE f.person_id IS NOT NULL
+          WHERE f.person_id IS NOT NULL AND ({_STILL_SQL})
         )
         SELECT person_id, face_id
         FROM ranked
@@ -245,7 +256,7 @@ def _refresh_dirty_covers(fjordlens, limit: int = 96) -> int:
                 ) AS rn
               FROM faces f
               LEFT JOIN photos ph ON ph.id=f.photo_id
-              WHERE f.person_id IN ({placeholders})
+              WHERE f.person_id IN ({placeholders}) AND ({_STILL_SQL})
             )
             SELECT person_id, face_id
             FROM ranked
@@ -304,7 +315,7 @@ def _unknown_bucket(conn) -> dict[str, Any] | None:
         SELECT f.id
         FROM faces f
         LEFT JOIN photos ph ON ph.id=f.photo_id
-        WHERE f.person_id IS NULL
+        WHERE f.person_id IS NULL AND ({_STILL_SQL})
         ORDER BY {_COVER_ORDER_SQL}
         LIMIT 1
         """
@@ -348,14 +359,27 @@ def _make_fast_people_view(app, fjordlens, original):
                 """
             ).fetchall()
 
+            # One grouped query counts distinct source images, not detections or frames.
+            counts = {int(r['person_id']): r for r in conn.execute(f"""
+                SELECT f.person_id, COUNT(DISTINCT f.photo_id) AS media_count,
+                       COUNT(DISTINCT CASE WHEN {_STILL_SQL} THEN f.photo_id END) AS image_count
+                FROM faces f JOIN photos ph ON ph.id=f.photo_id
+                WHERE f.person_id IS NOT NULL GROUP BY f.person_id
+            """).fetchall()}
             people = []
             for row in rows:
                 cover_id = int(row["cover_face_id"]) if row["cover_face_id"] is not None else None
+                count = counts.get(int(row['id']))
+                image_count = int(count['image_count']) if count else 0
+                name = str(row['name'] or '').strip()
+                unnamed = not name or bool(re.fullmatch(r'(?:Ukendt|Unknown)(?:-\d+)?', name, re.I))
                 people.append(
                     {
                         "id": int(row["id"]),
                         "name": row["name"],
-                        "count": int(row["face_count"] or 0),
+                        "count": int(count["media_count"]) if count else 0,
+                        "image_count": image_count,
+                        "single_find": unnamed and image_count <= 1,
                         "thumb_url": f"/api/face-thumb/{cover_id}" if cover_id else None,
                         "hidden": bool(int(row["hidden"] or 0)),
                     }

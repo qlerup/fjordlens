@@ -2,6 +2,7 @@ from unittest.mock import patch
 import unittest
 
 import app
+import people_stats
 from tests.test_moments import MomentDetectionTests
 
 
@@ -49,3 +50,28 @@ class PeopleOverviewTests(unittest.TestCase):
             conn.commit()
         self.assertNotIn(1, self.items())
         self.assertTrue(self.items(query='?include_hidden=1')[1]['single_find'])
+
+
+class FastPeopleOverviewTests(PeopleOverviewTests):
+    def setUp(self):
+        super().setUp()
+        with app.closing(app.get_conn()) as conn:
+            people_stats._ensure_people_stats_columns(conn)
+            people_stats._install_people_stats_triggers(conn)
+            people_stats._backfill_people_stats(conn)
+
+    def items(self, acl=None, query=''):
+        people_stats._refresh_dirty_covers(app)
+        view = people_stats._make_fast_people_view(app.app, app, app.api_people_list)
+        with app.app.test_request_context('/api/people'+query), patch.object(app, '_current_user_acl_prefixes', return_value=acl), patch.object(app, '_enqueue_face_thumb_generation'), patch.dict(app.app.view_functions, api_people_list=view):
+            return {x['id']: x for x in app.app.dispatch_request().get_json()['items']}
+
+    def test_backfill_replaces_old_video_covers(self):
+        self.seed()
+        with app.closing(app.get_conn()) as conn:
+            conn.execute('UPDATE people SET cover_face_id=3,cover_policy_version=0')
+            conn.commit()
+            self.assertTrue(people_stats._ensure_people_stats_columns(conn))
+            people_stats._backfill_people_stats(conn)
+            self.assertFalse(people_stats._ensure_people_stats_columns(conn))
+        self.assertEqual(self.items()[1]['thumb_url'], '/api/face-thumb/2')
