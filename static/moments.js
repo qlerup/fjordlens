@@ -1,4 +1,12 @@
 // Moment editing uses a revision to avoid overwriting another tab or a new scan.
+function momentEvidenceHtml(moment) {
+  const info = moment.evidence;
+  if (!info?.reasons?.length) return '';
+  const chapters = info.chapters?.length ? `<ol>${info.chapters.map(c => `<li>${escapeHtml(c.place)} · ${escapeHtml(c.start_date)}${c.end_date !== c.start_date ? ' – ' + escapeHtml(c.end_date) : ''} · ${Number(c.photo_count)} billeder</li>`).join('')}</ol>` : '';
+  const attribution = info.attraction ? '<p><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Steddata © OpenStreetMap-bidragydere</a></p>' : '';
+  return `<details class="moment-evidence"><summary>Hvorfor dette moment?${info.confidence === 'low' ? ' · Tjek dato og sted' : ''}</summary><p>${escapeHtml(info.reasons.join(' '))}</p><p>${escapeHtml(info.date_basis || '')}</p>${chapters}${attribution}</details>`;
+}
+
 async function momentRequest(url, method = 'GET', body) {
   const response = await fetch(url, {
     method, headers: body ? { 'Content-Type': 'application/json' } : {},

@@ -33,6 +33,7 @@ import exifread
 import requests
 import reverse_geocoder as rg
 import pycountry
+import moment_cinema
 import moments_engine
 import moments_service
 import pyotp
@@ -687,8 +688,8 @@ try:
     MOMENT_MAX_SLIDES = int(os.environ.get("MOMENT_MAX_SLIDES", "60") or 60)
 except Exception:
     MOMENT_MAX_SLIDES = 60
-MOMENT_VIDEO_WIDTH = 1280
-MOMENT_VIDEO_HEIGHT = 720
+MOMENT_VIDEO_WIDTH = 1920
+MOMENT_VIDEO_HEIGHT = 1080
 MOMENT_VIDEO_FPS = 25
 try:
     MOMENT_VIDEO_RENDER_TIMEOUT_SEC = int(os.environ.get("MOMENT_VIDEO_RENDER_TIMEOUT_SEC", "120") or 120)
@@ -6906,32 +6907,19 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
     subtitle = None
     cards: list[str] = []
     if narration:
-        if not moment_row["user_edited"] and moment_row["status"] == "suggested":
+        if not moment_row["user_edited"] and moment_row["status"] == "suggested" and not moment_row["primary_place"]:
             title = str(narration.get("title") or title).strip() or title
         subtitle = str(narration.get("subtitle") or "").strip() or None
         cards = [str(c).strip() for c in (narration.get("cards") or []) if str(c or "").strip()]
 
-    script: list[Dict[str, Any]] = []
-    if subtitle:
-        script.append({"type": "text", "text": subtitle})
-    elif cards:
-        script.append({"type": "text", "text": cards.pop(0)})
-
-    card_every = max(4, len(ordered_rows) // max(1, len(cards) + 1)) if cards else 0
-    card_idx = 0
-    for i, r in enumerate(ordered_rows):
-        ext = str(r["ext"] or "").lower()
-        script.append({"type": ("video" if ext in VIDEO_EXTS else "photo"), "photo_id": int(r["id"])})
-        if cards and card_every and (i + 1) % card_every == 0 and card_idx < len(cards):
-            script.append({"type": "text", "text": cards[card_idx]})
-            card_idx += 1
-    while card_idx < len(cards):
-        script.append({"type": "text", "text": cards[card_idx]})
-        card_idx += 1
+    script = moment_cinema.timeline(dict(moment_row), ordered_rows, title=title,
+                                    subtitle=subtitle, cards=cards, video_exts=VIDEO_EXTS)
 
     with closing(get_conn()) as conn:
         conn.execute(
-            "UPDATE moments SET script_json=?, title=?, subtitle=? WHERE id=? AND revision=?",
+            "UPDATE moments SET script_json=?, title=?, subtitle=?, "
+            "video_status=CASE WHEN video_status='done' THEN 'none' ELSE video_status END "
+            "WHERE id=? AND revision=?",
             (json.dumps(script), title, subtitle, moment_id, moment_row["revision"]),
         )
         conn.commit()
@@ -7002,7 +6990,7 @@ def api_moment_detail(moment_id: int):
         row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
     if not moments_service.can_view(globals(), row):
         return jsonify({"ok": False, "error": "Not found"}), 404
-    if not row["script_json"]:
+    if moment_cinema.needs_upgrade(row["script_json"]):
         try:
             _generate_moment_script(row)
             with closing(get_conn()) as conn:
@@ -7011,7 +6999,7 @@ def api_moment_detail(moment_id: int):
             log_event("error", error=f"moment_script: {e}")
 
     pub = _moment_row_to_public(row)
-    photo_ids = sorted({item["photo_id"] for item in (pub.get("script") or []) if item.get("photo_id")})
+    photo_ids = sorted({pid for item in (pub.get("script") or []) for pid in (item.get("photo_id"), item.get("background_photo_id")) if pid})
     photos_by_id: Dict[str, Any] = {}
     if photo_ids:
         placeholders = ",".join(["?"] * len(photo_ids))
@@ -7080,101 +7068,6 @@ moments_service.register_routes(app, globals())
 
 # --- Moments: on-demand MP4 export (ffmpeg) ---
 
-def _moment_text_card_png(text: str) -> bytes:
-    width, height = MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT
-    img = Image.new("RGB", (width, height), (10, 14, 24))
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 54)
-    except Exception:
-        font = ImageFont.load_default()
-    words = str(text or "").split()
-    lines: list[str] = []
-    line = ""
-    max_width = width - 160
-    for w in words:
-        cand = f"{line} {w}".strip()
-        try:
-            w_px = draw.textlength(cand, font=font)
-        except Exception:
-            w_px = len(cand) * 24
-        if w_px > max_width and line:
-            lines.append(line)
-            line = w
-        else:
-            line = cand
-    if line:
-        lines.append(line)
-    line_h = 68
-    total_h = line_h * max(1, len(lines))
-    y = (height - total_h) // 2
-    for ln in lines:
-        try:
-            w_px = draw.textlength(ln, font=font)
-        except Exception:
-            w_px = len(ln) * 24
-        x = (width - w_px) / 2
-        draw.text((x, y), ln, fill=(240, 244, 255), font=font)
-        y += line_h
-    out = io.BytesIO()
-    img.save(out, format="PNG")
-    return out.getvalue()
-
-
-def _moment_render_static_segment(ffmpeg_bin: str, src: Path, dwell_sec: float, out_path: Path, *, fit: bool = False) -> bool:
-    w, h = MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT
-    vf = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2" if fit else None
-    cmd = [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-i", str(src)]
-    if vf:
-        cmd += ["-vf", vf]
-    cmd += ["-t", str(dwell_sec), "-pix_fmt", "yuv420p", "-an", str(out_path)]
-    try:
-        subprocess.run(cmd, check=True, timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC)
-        return out_path.exists() and out_path.stat().st_size > 0
-    except Exception:
-        return False
-
-
-def _moment_render_photo_segment(ffmpeg_bin: str, src: Path, dwell_sec: float, out_path: Path) -> bool:
-    w, h = MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT
-    frames = max(1, int(round(dwell_sec * MOMENT_VIDEO_FPS)))
-    vf = (
-        f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},"
-        f"zoompan=z='min(zoom+0.0015,1.15)':d={frames}:s={w}x{h}:fps={MOMENT_VIDEO_FPS}"
-    )
-    cmd = [
-        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-        "-loop", "1", "-i", str(src),
-        "-vf", vf, "-t", str(dwell_sec), "-pix_fmt", "yuv420p", "-an",
-        str(out_path),
-    ]
-    try:
-        subprocess.run(cmd, check=True, timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC)
-        if out_path.exists() and out_path.stat().st_size > 0:
-            return True
-    except Exception:
-        pass
-    # Ken Burns filter can be fragile across ffmpeg builds — fall back to a static frame
-    # so one photo doesn't fail the whole render.
-    return _moment_render_static_segment(ffmpeg_bin, src, dwell_sec, out_path, fit=True)
-
-
-def _moment_render_video_segment(ffmpeg_bin: str, src: Path, dwell_sec: float, out_path: Path) -> bool:
-    w, h = MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT
-    cmd = [
-        ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(src), "-t", str(dwell_sec),
-        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
-        "-pix_fmt", "yuv420p", "-an",
-        str(out_path),
-    ]
-    try:
-        subprocess.run(cmd, check=True, timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC)
-        return out_path.exists() and out_path.stat().st_size > 0
-    except Exception:
-        return False
-
-
 def _set_moment_video_status(
     moment_id: int, status: str, *, video_rel_path: Optional[str] = None, error: Optional[str] = None
 ) -> None:
@@ -7191,7 +7084,7 @@ def _render_moment_video(moment_id: int) -> None:
         row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
     if not row:
         return
-    if not row["script_json"]:
+    if moment_cinema.needs_upgrade(row["script_json"]):
         try:
             _generate_moment_script(row)
             with closing(get_conn()) as conn:
@@ -7211,10 +7104,7 @@ def _render_moment_video(moment_id: int) -> None:
         _set_moment_video_status(moment_id, "error", error="ffmpeg ikke tilgængelig")
         return
 
-    photo_ids = sorted({
-        int(it["photo_id"]) for it in script
-        if it.get("type") in {"photo", "video"} and it.get("photo_id")
-    })
+    photo_ids = sorted({pid for item in script for pid in (item.get("photo_id"), item.get("background_photo_id")) if pid})
     photos_by_id: Dict[int, sqlite3.Row] = {}
     if photo_ids:
         placeholders = ",".join(["?"] * len(photo_ids))
@@ -7228,24 +7118,22 @@ def _render_moment_video(moment_id: int) -> None:
         for i, item in enumerate(script):
             seg_path = work_dir / f"seg_{i:04d}.mp4"
             item_type = item.get("type")
-            ok = False
-            if item_type == "text":
-                png_path = work_dir / f"seg_{i:04d}.png"
-                png_path.write_bytes(_moment_text_card_png(str(item.get("text") or "")))
-                ok = _moment_render_static_segment(ffmpeg_bin, png_path, 2.8, seg_path)
-            elif item_type in {"photo", "video"}:
-                prow = photos_by_id.get(int(item.get("photo_id") or 0))
-                if prow is None:
-                    continue
+            photo_id = item.get("photo_id") or item.get("background_photo_id")
+            prow = photos_by_id.get(int(photo_id or 0))
+            src = None
+            if prow is not None:
                 rel = str(prow["rel_path"] or "")
-                src = _disk_path_from_rel_path(rel)
-                if not src.exists():
-                    continue
-                if item_type == "video":
-                    ok = _moment_render_video_segment(ffmpeg_bin, src, 7.0, seg_path)
-                else:
-                    viewable = ensure_viewable_copy(src, rel)
-                    ok = _moment_render_photo_segment(ffmpeg_bin, viewable, 4.5, seg_path)
+                candidate = _disk_path_from_rel_path(rel)
+                if candidate.exists():
+                    if item_type == "video":
+                        src = candidate
+                    elif str(prow["ext"] or "").lower() not in VIDEO_EXTS:
+                        src = ensure_viewable_copy(candidate, rel)
+            if src is None and item_type != "text":
+                continue
+            ok = moment_cinema.render_segment(ffmpeg_bin, item, src, seg_path,
+                size=(MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT), fps=MOMENT_VIDEO_FPS,
+                timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC)
             if ok:
                 segment_paths.append(seg_path)
 
@@ -7263,8 +7151,7 @@ def _render_moment_video(moment_id: int) -> None:
         cmd = [
             ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
             "-f", "concat", "-safe", "0", "-i", str(list_path),
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-c:v", "copy", "-an", "-movflags", "+faststart", "-f", "mp4",
             str(tmp),
         ]
         subprocess.run(cmd, check=True, timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC * 3)

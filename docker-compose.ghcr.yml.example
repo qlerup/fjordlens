@@ -10,6 +10,7 @@ services:
       DATA_DIR: /data
       TZ: ${TZ:-Europe/Copenhagen}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOMENT_POI_LOOKUP: ${MOMENT_POI_LOOKUP:-1}
     volumes:
       - "${PHOTO_DIR:-/volume1/photos}:/photos:ro"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"

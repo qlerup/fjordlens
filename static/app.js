@@ -3754,7 +3754,7 @@ function _momentCardHtml(m, mode) {
           <span>${escapeHtml(dateLabel)}</span>
           <span>${escapeHtml(countLabel)}</span>
         </div>
-        ${m.evidence?.reasons?.length ? `<details class="moment-evidence"><summary>Hvorfor dette moment?${m.evidence.confidence === 'low' ? ' · Tjek dato og sted' : ''}</summary><p>${escapeHtml(m.evidence.reasons.join(' '))}</p><p>${escapeHtml(m.evidence.date_basis || '')}</p>${m.evidence.chapters?.length ? `<ol>${m.evidence.chapters.map(c => `<li>${escapeHtml(c.place)} · ${escapeHtml(c.start_date)}${c.end_date !== c.start_date ? ' – ' + escapeHtml(c.end_date) : ''} · ${Number(c.photo_count)} billeder</li>`).join('')}</ol>` : ''}</details>` : ''}
+        ${momentEvidenceHtml(m)}
         <div class="moment-card-actions">${actionsHtml}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se moment</button>' : ''}</div>
       </div>
     </article>`;
@@ -3884,6 +3884,11 @@ async function pollMomentDetection() {
         } else {
           showStatus(tr('momenter_find_done').replace('{n}', String(created)), 'ok');
         }
+        const pendingPlaces = Number(result.debug?.poi_pending || 0);
+        const failedPlaces = Number(result.debug?.poi_failed || 0);
+        if (pendingPlaces || failedPlaces) {
+          showStatus(`${created} nye momenter · ${result.updated || 0} opdateret. ${pendingPlaces ? 'Flere steder kan undersøges ved næste scanning. ' : ''}${failedPlaces ? 'Nogle stedsopslag kunne ikke gennemføres; de forsøges igen senere.' : ''}`, 'ok');
+        }
       } else {
         showStatus((result && result.error) || tr('momenter_find_failed'), 'err');
       }
@@ -3962,6 +3967,7 @@ async function playMoment(id) {
       title: item.title || '',
       photos: item.photos || {},
       script,
+      videoUrl: item.video_status === 'done' ? `/api/moments/${id}/video` : null,
       index: 0,
       timer: null,
     };
@@ -3983,7 +3989,7 @@ function _momentPlayerOpen() {
   if (els.momentPlayerFooterTitle) els.momentPlayerFooterTitle.textContent = (state.momentPlayer && state.momentPlayer.title) || '';
   if (els.momentPlayerVideoBtn) {
     els.momentPlayerVideoBtn.classList.remove('hidden');
-    els.momentPlayerVideoBtn.textContent = tr('momenter_make_video');
+    els.momentPlayerVideoBtn.textContent = tr(state.momentPlayer?.videoUrl ? 'momenter_video_download' : 'momenter_make_video');
     els.momentPlayerVideoBtn.disabled = false;
   }
   _momentPlayerBuildProgress();
@@ -4046,48 +4052,92 @@ function _momentPlayerRenderSlide(index) {
   const item = p.script[index];
   const stage = els.momentPlayerStage;
   if (!stage) return;
-  stage.innerHTML = '';
+  const token = (p.renderToken || 0) + 1;
+  p.renderToken = token;
+  stage.setAttribute('aria-busy', 'true');
+  if (!stage.children.length) {
+    const loading = document.createElement('div');
+    loading.className = 'cinema-loading';
+    loading.textContent = 'Henter billedet i fuld kvalitet…';
+    stage.appendChild(loading);
+  }
   _momentPlayerUpdateProgressUi(index);
-
-  let dwell = MOMENT_PHOTO_DWELL_MS;
-
-  if (item.type === 'text') {
-    dwell = MOMENT_TEXT_DWELL_MS;
-    const wrap = document.createElement('div');
-    wrap.className = 'moment-slide moment-slide-text';
-    const card = document.createElement('div');
-    card.className = 'moment-text-card';
-    card.textContent = item.text || '';
-    wrap.appendChild(card);
+  const dwell = Math.max(2000, Math.min(12000, Number(item.duration || 5.2) * 1000));
+  const wrap = document.createElement('div');
+  const card = item.type === 'text';
+  wrap.className = `moment-slide cinema-slide cinema-${card ? item.style || 'intro' : item.type} cinema-${item.layout || 'left'} cinema-motion-${Number(item.motion || 0) % 4}${item.fit === 'contain' ? ' cinema-contain' : ''}`;
+  wrap.style.setProperty('--cinema-duration', `${dwell}ms`);
+  const photo = p.photos[String(item.photo_id || item.background_photo_id)] || {};
+  const src = photo.original_url || photo.thumb_url;
+  let media;
+  let loadingTimeout;
+  let started = false;
+  function ready() {
+    if (started) return;
+    started = true;
+    clearTimeout(loadingTimeout);
+    if (state.momentPlayer !== p || p.renderToken !== token) return;
+    stage.querySelector('.cinema-loading')?.remove();
+    stage.setAttribute('aria-busy', 'false');
+    stage.querySelectorAll('.moment-slide').forEach(old => {
+      old.querySelectorAll('video').forEach(video => video.pause());
+      old.classList.add('cinema-leaving');
+      setTimeout(() => old.remove(), 650);
+    });
     stage.appendChild(wrap);
-  } else {
-    const photo = p.photos[String(item.photo_id)] || {};
-    if (item.type === 'video' && photo.original_url) {
-      dwell = MOMENT_VIDEO_MAX_MS;
-      const wrap = document.createElement('div');
-      wrap.className = 'moment-slide moment-slide-video';
-      const video = document.createElement('video');
-      video.src = photo.original_url;
-      video.muted = true;
-      video.autoplay = true;
-      video.playsInline = true;
-      video.addEventListener('ended', () => _momentPlayerAdvance(1));
-      wrap.appendChild(video);
-      stage.appendChild(wrap);
-    } else {
-      const variant = 'kb-' + (1 + Math.floor(Math.random() * 4));
-      const wrap = document.createElement('div');
-      wrap.className = `moment-slide moment-slide-photo ${variant}`;
-      const img = document.createElement('img');
-      img.src = photo.thumb_url || photo.original_url || '';
-      img.alt = '';
-      wrap.appendChild(img);
-      stage.appendChild(wrap);
+    if (media?.tagName === 'VIDEO') media.play().catch(() => {});
+    _momentPlayerRunProgressBar(index, dwell);
+    p.timer = setTimeout(() => _momentPlayerAdvance(1), dwell);
+    const next = p.script[index + 1];
+    const nextPhoto = next && p.photos[String(next.photo_id || next.background_photo_id)];
+    if (nextPhoto && !nextPhoto.is_video && (nextPhoto.original_url || nextPhoto.thumb_url)) {
+      const preload = new Image();
+      preload.src = nextPhoto.original_url || nextPhoto.thumb_url;
     }
   }
-
-  _momentPlayerRunProgressBar(index, dwell);
-  p.timer = setTimeout(() => _momentPlayerAdvance(1), dwell);
+  if (src && !(card && photo.is_video)) {
+    media = document.createElement(item.type === 'video' ? 'video' : 'img');
+    media.className = 'cinema-media';
+    if (item.type === 'video') {
+      media.muted = true;
+      media.playsInline = true;
+      media.preload = 'auto';
+      media.addEventListener('loadeddata', ready, { once: true });
+      // Keep the last frame until the shared timeline duration has elapsed.
+    } else {
+      media.alt = '';
+      media.addEventListener('load', ready, { once: true });
+      if (item.fit === 'contain') {
+        const blurred = document.createElement('img');
+        blurred.className = 'cinema-blur';
+        blurred.alt = '';
+        blurred.src = src;
+        wrap.appendChild(blurred);
+      }
+    }
+    media.addEventListener('error', () => {
+      if (media.tagName === 'IMG' && photo.thumb_url && media.getAttribute('src') !== photo.thumb_url) media.src = photo.thumb_url;
+      else ready();
+    });
+    wrap.appendChild(media);
+  }
+  const title = card ? item.text : item.label;
+  if (title || item.eyebrow || item.detail) {
+    const text = document.createElement('div');
+    text.className = 'cinema-type';
+    for (const [className, value] of [['cinema-eyebrow', item.eyebrow], ['cinema-heading', title], ['cinema-detail', item.detail]]) {
+      if (!value) continue;
+      const line = document.createElement('div');
+      line.className = className;
+      line.textContent = value;
+      text.appendChild(line);
+    }
+    wrap.appendChild(text);
+  }
+  if (media) {
+    loadingTimeout = setTimeout(ready, 10000);
+    media.src = src;
+  } else ready();
 }
 
 function _momentPlayerAdvance(delta) {
@@ -4100,7 +4150,10 @@ function _momentPlayerClose() {
   _momentPlayerClearTimer();
   if (els.momentPlayerOverlay) els.momentPlayerOverlay.classList.add('hidden');
   document.body.classList.remove('moment-player-open');
-  if (els.momentPlayerStage) els.momentPlayerStage.innerHTML = '';
+  if (els.momentPlayerStage) {
+    els.momentPlayerStage.querySelectorAll('video').forEach(video => { video.pause(); video.removeAttribute('src'); video.load(); });
+    els.momentPlayerStage.innerHTML = '';
+  }
   state.momentPlayer = null;
 }
 
@@ -4121,7 +4174,8 @@ document.addEventListener('keydown', (e) => {
 });
 if (els.momentPlayerVideoBtn) {
   els.momentPlayerVideoBtn.addEventListener('click', () => {
-    if (state.momentPlayer && state.momentPlayer.id) startMomentVideoRender(state.momentPlayer.id);
+    if (state.momentPlayer?.videoUrl) window.open(state.momentPlayer.videoUrl, '_blank', 'noopener');
+    else if (state.momentPlayer && state.momentPlayer.id) startMomentVideoRender(state.momentPlayer.id);
   });
 }
 
@@ -4156,7 +4210,7 @@ function _momentVideoPoll(id) {
       if (status === 'done' && data.video_url) {
         els.momentPlayerVideoBtn.disabled = false;
         els.momentPlayerVideoBtn.textContent = tr('momenter_video_download');
-        els.momentPlayerVideoBtn.onclick = () => window.open(data.video_url, '_blank');
+        state.momentPlayer.videoUrl = data.video_url;
         showStatus(tr('momenter_video_done'), 'ok');
       } else {
         els.momentPlayerVideoBtn.disabled = false;

@@ -54,8 +54,9 @@ class DiscoveryTests(unittest.TestCase):
                 photo(3, '2024-07-01T12:00:00', 'Berlin, Germany', camera_model='Camera A'),
                 photo(4, '2024-07-01T11:30:00', camera_model='Camera B')]
         result = self.scan(rows)
-        self.assertEqual(result[0]['photo_ids'], [1, 2, 3])
+        self.assertEqual(result[0]['photo_ids'], [1, 2, 4, 3])
         self.assertEqual(result[0]['evidence']['inferred_photo_count'], 1)
+        self.assertIn('dagens eneste', ' '.join(result[0]['evidence']['reasons']))
 
     def test_separate_uploaders_do_not_interrupt_each_other(self):
         rows = [photo(i, f'2024-07-0{i}T10:00:00', 'Berlin, Germany', uploaded_by='a') for i in range(1, 4)]
@@ -248,7 +249,9 @@ class MomentEditingTests(unittest.TestCase):
         self.assertEqual(item['title'], 'Min titel')
         self.assertEqual(len(item['photo_ids']), 4)
         self.assertEqual(len(item['photos']), 2)
-        self.assertEqual(len(item['script']), 2)
+        self.assertEqual(sum(s['type'] in ('photo', 'video') for s in item['script']), 2)
+        self.assertEqual(item['script'][0]['style'], 'intro')
+        self.assertEqual(item['script'][-1]['style'], 'outro')
 
     def test_migration_is_repeatable_and_keeps_existing_data(self):
         row = self.make_moment()
@@ -264,6 +267,28 @@ class MomentEditingTests(unittest.TestCase):
         result = fjordlens._detect_moment_candidates()
         self.assertEqual(result['retired'], 1)
         self.assertEqual(self.client.get('/api/moments').get_json()['suggested'], [])
+
+    def test_complete_video_export_writes_playable_mp4(self):
+        import shutil
+        from PIL import Image
+        ffmpeg = shutil.which('ffmpeg')
+        if not ffmpeg:
+            try:
+                import imageio_ffmpeg
+                ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            except ImportError:
+                self.skipTest('ffmpeg is not installed')
+        row = self.make_moment()
+        directory = self.uploads / 'originals'
+        directory.mkdir(exist_ok=True)
+        for i in range(4):
+            Image.new('RGB', (800, 600), '#709181').save(directory / f'10_{i}.jpg')
+        with patch.object(fjordlens.shutil, 'which', return_value=ffmpeg), patch.object(fjordlens, '_ai_narrate_moment', return_value=None), patch.object(fjordlens, 'MOMENT_MAX_SLIDES', 2), patch.object(fjordlens, 'MOMENT_VIDEO_WIDTH', 640), patch.object(fjordlens, 'MOMENT_VIDEO_HEIGHT', 360):
+            fjordlens._render_moment_video(row['id'])
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            result = conn.execute('SELECT * FROM moments WHERE id=?', (row['id'],)).fetchone()
+        self.assertEqual(result['video_status'], 'done', result['video_error'])
+        self.assertTrue((self.converted / result['video_rel_path']).is_file())
 
 
 if __name__ == '__main__':

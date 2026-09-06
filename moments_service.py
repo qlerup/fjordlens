@@ -11,6 +11,7 @@ from flask import jsonify, request
 from flask_login import login_required, current_user
 
 from moments_engine import discover, photo_date, country_for_name
+import moment_places
 
 
 def migrate(conn):
@@ -21,6 +22,7 @@ def migrate(conn):
         if name not in columns:
             conn.execute(f"ALTER TABLE moments ADD COLUMN {name} {definition}")
     conn.execute("CREATE TABLE IF NOT EXISTS moment_settings (id INTEGER PRIMARY KEY CHECK(id=1), home_json TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS moment_place_cache (point TEXT PRIMARY KEY, result_json TEXT NOT NULL, expires REAL NOT NULL)")
     conn.execute("""CREATE TABLE IF NOT EXISTS moment_scan_state
         (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, started REAL, running INTEGER, result_json TEXT)""")
 
@@ -148,6 +150,8 @@ def detect(g):
     rows = g["_dedupe_upload_storage_rows"](rows)
     candidates, stats, _ = discover(rows, min_photos=g["MOMENT_MIN_PHOTOS"],
                                     min_hours=g["MOMENT_MIN_SPAN_HOURS"], gap_hours=g["MOMENT_GAP_HOURS"], manual_home=home)
+    place_stats = moment_places.enrich(candidates, rows, g['get_conn'])
+    stats.update({f'poi_{key}': value for key, value in place_stats.items()})
     with closing(g["get_conn"]()) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if settings(conn) != home:

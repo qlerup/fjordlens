@@ -145,6 +145,63 @@ def curate(rows, limit):
     return sorted(chosen, key=lambda r: photo_date(r) or datetime.min)
 
 
+def combine_day_segments(segments):
+    """Reconcile camera/uploader lanes after segmentation, before minimum counts.
+
+    Unknown-place photos can join exactly one overlapping destination that day.
+    They never inherit GPS, and two geographically conflicting events stay apart.
+    """
+    days, result = defaultdict(list), []
+    for segment, home in segments:
+        if segment[0]['_dt'].date() == segment[-1]['_dt'].date():
+            days[segment[0]['_dt'].date()].append((segment, home))
+        else:
+            result.append((segment, home))
+    for groups in days.values():
+        known, unknown = [], []
+        for segment, home in groups:
+            locs = [r['_loc'] for r in segment if r['_loc']['name'] or r['_loc']['lat'] is not None]
+            (known if locs else unknown).append((segment, home))
+
+        def close_in_time(a, b, hours):
+            return max(a[0]['_dt'], b[0]['_dt']) - min(a[-1]['_dt'], b[-1]['_dt']) <= timedelta(hours=hours)
+
+        merged = []
+        for segment, home in sorted(known, key=lambda pair: pair[0][0]['_dt']):
+            locs = [r['_loc'] for r in segment if r['_loc']['name'] or r['_loc']['lat'] is not None]
+            target = None
+            for existing, _ in merged:
+                other = [r['_loc'] for r in existing if r['_loc']['name'] or r['_loc']['lat'] is not None]
+                if close_in_time(segment, existing, 6) and all(any(nearby(a, b, 8) for b in other) for a in locs):
+                    target = existing
+                    break
+            if target is None:
+                merged.append((list(segment), home))
+            else:
+                target.extend(segment)
+                target.sort(key=lambda r: (r['_dt'], r['id']))
+        for segment, home in unknown:
+            matches = [existing for existing, _ in merged if close_in_time(segment, existing, 1)]
+            if len(matches) == 1:
+                for r in segment:
+                    r['_day_inferred'] = True
+                matches[0].extend(segment)
+                matches[0].sort(key=lambda r: (r['_dt'], r['id']))
+            else:
+                # Keep ambiguous/no-destination events separate, but reconcile
+                # overlapping unknown-camera groups from the same day.
+                target = next((existing for existing, _ in result if existing[0]['_dt'].date() == segment[0]['_dt'].date()
+                               and all(not r['_loc']['name'] and r['_loc']['lat'] is None for r in existing)
+                               and close_in_time(segment, existing, 1)), None)
+                if target is None:
+                    result.append((list(segment), home))
+                else:
+                    target.extend(segment)
+                    target.sort(key=lambda r: (r['_dt'], r['id']))
+        result.extend(merged)
+    return sorted(result, key=lambda pair: pair[0][0]['_dt'])
+
+
 def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=None):
     stats = dict(scanned=len(raw_rows), dated=0, segments=0, created=0, updated=0, retired=0,
                  rejected_too_few=0, rejected_too_short=0, rejected_home_only=0,
@@ -239,6 +296,7 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
                 current.append(r)
             if current:
                 segments.append((current, home_here))
+    segments = combine_day_segments(segments)
     stats["segments"] = len(segments)
     candidates = []
     for segment, segment_home in segments:
@@ -288,6 +346,9 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
         inferred = sum(bool(r.get("_inferred")) for r in segment)
         if inferred:
             reasons.append(f"{inferred} billeder uden GPS er knyttet til turen via samme kilde og nærliggende billeder.")
+        day_inferred = sum(bool(r.get('_day_inferred')) for r in segment)
+        if day_inferred:
+            reasons.append(f"{day_inferred} billeder uden sted er samlet med dagens eneste tidsmæssigt sammenfaldende sted. Kontrollér, at de hører til samme oplevelse.")
         chapters = []
         for r in segment:
             place = r["_loc"]["name"]
@@ -303,7 +364,7 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
                                primary_place=primary, photo_ids=[r["id"] for r in segment],
                                cover_photo_id=next((r["id"] for r in segment if r.get("favorite")), segment[len(segment)//2]["id"]),
                                evidence=dict(version=2, reasons=reasons, places=places, countries=countries, chapters=chapters,
-                                             confidence="high" if located/len(segment) >= .7 and not uncertain_dates else "medium" if located else "low",
+                                             confidence="high" if located/len(segment) >= .7 and not uncertain_dates and not day_inferred else "medium" if located else "low",
                                              date_basis="Billeddatoer; afrejse og hjemkomst kan ligge uden for intervallet.",
                                              home=segment_home, inferred_photo_count=inferred)))
     return candidates, stats, home
