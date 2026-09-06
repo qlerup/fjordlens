@@ -7150,7 +7150,8 @@ function openPersonRenameMenu(anchorBtn, person) {
   const existing = (Array.isArray(state.people) ? state.people : [])
     .filter((it) => it && it.id !== 'unknown' && Number(it.id) !== Number(person.id)
       && String(it.name || '').trim() && !_isAutoUnknown(it.name))
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
+    .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0)
+      || String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
 
   if (!existing.length) {
     listEl.innerHTML = `<div class="person-rename-empty">${escapeHtml(tr('person_rename_none'))}</div>`;
