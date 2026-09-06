@@ -116,6 +116,7 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
                 points.append((float(loc['lat']),float(loc['lon'])))
         cells = Counter((min(4499,math.floor(lat/CELL)),min(8999,math.floor(lon/CELL))) for lat,lon in points)
         venues = {}
+        incomplete = False
         for cell_index, (cell, _) in enumerate(cells.most_common(),1):
             if progress:
                 progress(dict(phase='places',current=index,total=len(events),region=cell_index,regions=len(cells),photos=len(points)))
@@ -140,12 +141,16 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
                         conn.commit()
                 else:
                     stats['pending'] += 1
+                    incomplete = True
                     continue
             if memory[key] is None:
                 stats['failed'] += 1
+                incomplete = True
                 continue
             for venue in memory[key]:
                 venues[(venue['osm_type'],venue['osm_id'])] = venue
+        if incomplete:
+            candidate['evidence']['attraction_lookup_pending'] = True
         if not venues or not points:
             continue
         # Count photos, not a handful of representative coordinate samples.

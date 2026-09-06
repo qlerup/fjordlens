@@ -203,6 +203,14 @@ def detect(g):
             if matches:
                 target = max(matches, key=lambda r: len(ids & members(r)))
                 retained.add(target["id"])
+                previous = evidence(target)
+                if (members(target) == ids and candidate['evidence'].get('attraction_lookup_pending')
+                        and not candidate['evidence'].get('attraction') and previous.get('attraction')):
+                    # An unavailable map service must not erase an already discovered visit.
+                    candidate['evidence']['attraction'] = previous['attraction']
+                    candidate['title'] = target['title']
+                    candidate['primary_place'] = target['primary_place']
+                    candidate['evidence']['reasons'].extend(r for r in previous.get('reasons', []) if 'OpenStreetMap' in r)
                 if members(target) == ids and evidence(target) == candidate["evidence"] and target["kind"] == candidate["kind"]:
                     stats["rejected_already_covered"] += 1
                     continue

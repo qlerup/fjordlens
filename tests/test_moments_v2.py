@@ -258,11 +258,13 @@ class MomentEditingTests(unittest.TestCase):
             conn.execute("DELETE FROM settings WHERE key='native_place_names_v1'")
             conn.execute("UPDATE photos SET gps_name='Naestved, Denmark',metadata_json=?",
                          (json.dumps({'geo': {'city': 'Naestved', 'country': 'Denmark'}}),))
+            conn.execute("INSERT INTO geo_cache(lat_rounded,lon_rounded,country,city,created_at) VALUES(1,2,'Denmark','Naestved','2026-09-06')")
             conn.execute("UPDATE moments SET primary_place='Naestved, Denmark',title='En dag i Naestved, Denmark' WHERE id=?", (row['id'],))
             place_names.migrate(conn)
             photo = conn.execute('SELECT gps_name,metadata_json FROM photos LIMIT 1').fetchone()
             self.assertEqual(photo['gps_name'], 'Næstved, Denmark')
             self.assertEqual(json.loads(photo['metadata_json'])['geo']['city'], 'Næstved')
+            self.assertEqual(conn.execute('SELECT city FROM geo_cache WHERE lat_rounded=1').fetchone()[0], 'Næstved')
             self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'En dag i Næstved, Denmark')
             place_names.migrate(conn)  # Idempotent on subsequent startup.
 

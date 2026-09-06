@@ -58,10 +58,10 @@ def migrate(conn):
             conn.execute('UPDATE photos SET gps_name=?,metadata_json=? WHERE id=?',
                          (fixed['gps_name'], encoded if encoded != original else row['metadata_json'], row['id']))
     for table in ('geo_cache', 'place_geocode_cache'):
-        for row in conn.execute(f'SELECT rowid,city,country FROM {table}').fetchall():
+        for row in conn.execute(f'SELECT rowid AS cache_rowid,city,country FROM {table}').fetchall():
             city = city_name(row['city'], row['country'])
             if city != row['city']:
-                conn.execute(f'UPDATE {table} SET city=? WHERE rowid=?', (city, row['rowid']))
+                conn.execute(f'UPDATE {table} SET city=? WHERE rowid=?', (city, row['cache_rowid']))
     for row in conn.execute("SELECT * FROM moments WHERE COALESCE(video_status,'none') NOT IN ('queued','running','rendering')").fetchall():
         old = row['primary_place']
         new = place_name(old)
