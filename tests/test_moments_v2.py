@@ -20,6 +20,27 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(len(moments), int(count >= 10))
             self.assertEqual(stats['rejected_too_few'], int(count < 10))
 
+    def test_previous_day_other_folder_does_not_split_event_by_missing_gps(self):
+        rows = [photo(100, '2020-06-12T17:28:40', rel_path='uploads/originals/Bil/car.jpg')]
+        for i in range(12):
+            rows.append(photo(i, f'2020-06-13T{12+i//2:02}:{(i%2)*30:02}:00',
+                              'Koge, Denmark' if i % 2 == 0 else None,
+                              rel_path=f"uploads/{'converted' if i % 2 == 0 else 'originals'}/Konfirmation/{i}.jpg"))
+        moments, _, _ = discover(rows)
+        self.assertEqual(len(moments), 1)
+        self.assertEqual(set(moments[0]['photo_ids']), set(range(12)))
+        self.assertEqual(moments[0]['kind'], 'event')
+        self.assertEqual(moments[0]['start_date'], '2020-06-13')
+        self.assertEqual(moments[0]['end_date'], '2020-06-13')
+
+    def test_same_folder_unknown_multiday_trip_remains_together(self):
+        rows = [photo(i, f'2020-06-{12+i//5:02}T{12+i%5:02}:00:00',
+                      rel_path=f'uploads/originals/Ferie/{i}.jpg') for i in range(10)]
+        moments, _, _ = discover(rows)
+        self.assertEqual(len(moments), 1)
+        self.assertEqual(len(moments[0]['photo_ids']), 10)
+        self.assertEqual(moments[0]['kind'], 'trip')
+
     def scan(self, rows, **kwargs):
         return discover(rows, min_photos=3, min_hours=1, **kwargs)[0]
 

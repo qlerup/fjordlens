@@ -223,6 +223,7 @@ def combine_day_segments(segments):
 
 
 def discover(raw_rows, *, min_photos=10, min_hours=4, gap_hours=30, manual_home=None):
+    from moment_folders import folder_key
     stats = dict(scanned=len(raw_rows), dated=0, segments=0, created=0, updated=0, retired=0,
                  rejected_too_few=0, rejected_too_short=0, rejected_home_only=0,
                  rejected_already_covered=0)
@@ -312,6 +313,13 @@ def discover(raw_rows, *, min_photos=10, min_hours=4, gap_hours=30, manual_home=
                     # Without home/country/coordinate evidence, a different place is a separate event.
                     place_break = both_away and not continuity and loc["name"] != prev_loc["name"]
                     split = hours > allowed_gap or r["_home"] != prev["_home"] or place_break
+                    # Unlocated photos from a different folder on a different day
+                    # are not evidence of a continuous trip. Otherwise one stray
+                    # photo prevents the next day's event from joining its GPS lane.
+                    if not (r['_away'] or r['_home'] or prev['_away'] or prev['_home']):
+                        folder, previous_folder = folder_key(r.get('rel_path')), folder_key(prev.get('rel_path'))
+                        if folder and previous_folder and folder != previous_folder and r['_dt'].date() != prev['_dt'].date():
+                            split = True
                     if not foreign and km is not None and km > 80 and (hours > 6 or r['_dt'].date() != prev['_dt'].date()):
                         split = True
                     if r["_home"] and r["_dt"].date() != prev["_dt"].date():
