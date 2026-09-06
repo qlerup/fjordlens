@@ -82,6 +82,20 @@ def validate(script, photos, video_exts):
             item[key] = value
         motion = source.get('motion', 0)
         position = source.get('text_position')
+        elements = source.get('text_elements')
+        if elements is not None:
+            if not isinstance(elements, dict) or set(elements) - {'heading','eyebrow','detail','weather'}:
+                raise service.EditError('Ugyldige tekstfelter.')
+            item['text_elements'] = {}
+            for key, box in elements.items():
+                if (not isinstance(box, dict) or set(box) != {'x','y','width','height','font_size'} or
+                    any(type(v) not in (int,float) or not math.isfinite(v) for v in box.values()) or
+                    not 0 <= box['x'] <= 1 or not 0 <= box['y'] <= 1 or
+                    not .005 <= box['width'] <= 1 or not .005 <= box['height'] <= 1 or
+                    not .003 <= box['font_size'] <= .3 or
+                    box['x'] + box['width'] > 1.00001 or box['y'] + box['height'] > 1.00001):
+                    raise service.EditError('Teksten skal have en gyldig størrelse og være inden for billedet.')
+                item['text_elements'][key] = {k:round(v,6) for k,v in box.items()}
         if position is not None:
             if (not isinstance(position, dict) or set(position) != {'x', 'y'} or
                     any(type(position[k]) not in (int, float) or not math.isfinite(position[k])

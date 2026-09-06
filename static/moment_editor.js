@@ -74,7 +74,7 @@ async function editMomentSlideshow(id) {
     const preview = root.querySelector('[data-preview]');
     const placement = document.createElement('div');
     placement.className = 'slideshow-placement';
-    placement.innerHTML = '<p class="mini-label">Træk teksten på billedet for at flytte den. Du kan også bruge piletasterne, når teksten er valgt.</p><button class="btn small" type="button" data-reset-position>Nulstil placering</button>';
+    placement.innerHTML = '<p class="mini-label">Vælg og flyt hver tekst separat. Træk i kanterne for bredde/højde eller i hjørnerne for samme skalering i begge retninger. Hold Alt nede for at flytte uden snap. Piletaster flytter den valgte tekst.</p><button class="btn small" type="button" data-reset-position>Nulstil placering</button>';
     root.querySelector('.slideshow-inspector').append(placement);
     const timeline = root.querySelector('[data-timeline]');
     const fields = [...root.querySelectorAll('[data-field]')];
@@ -115,69 +115,19 @@ async function editMomentSlideshow(id) {
       }
       const text = momentSlideText(s);
       if (text) {
-        text.tabIndex = 0;
-        text.setAttribute('role', 'button');
-        text.setAttribute('aria-label', 'Flyt teksten med musen eller piletasterne');
+        textTools.decorate(text);
         wrap.append(text);
       }
       preview.append(wrap);
     }
-    function positionForDrag(text) {
-      if (slides[selected].text_position) return {...slides[selected].text_position};
-      const bounds = [...text.children].map(e => e.getBoundingClientRect());
-      const stage = preview.getBoundingClientRect();
-      const left = Math.min(...bounds.map(r => r.left)), top = Math.min(...bounds.map(r => r.top));
-      momentPositionText(text, {x:0, y:0});
-      const box = text.getBoundingClientRect();
-      return {x:Math.max(0, Math.min(1, (left-stage.left)/Math.max(1,stage.width-box.width))),
-              y:Math.max(0, Math.min(1, (top-stage.top)/Math.max(1,stage.height-box.height)))};
-    }
     const resetPosition = root.querySelector('[data-reset-position]');
-    resetPosition.onclick = () => mutate(() => { delete slides[selected].text_position; });
-    preview.onpointerdown = e => {
-      const text = e.target.closest('.cinema-type');
-      if (!text || e.button !== 0 || !e.isPrimary) return;
-      e.preventDefault();
-      const startX = e.clientX, startY = e.clientY, original = {...slides[selected]};
-      const previousRedo = redo, previousDirty = dirty, previousStatus = status.textContent;
-      let start = null;
-      text.setPointerCapture(e.pointerId);
-      text.focus({preventScroll:true});
-      text.onpointermove = event => {
-        if (event.pointerId !== e.pointerId) return;
-        if (!start && Math.hypot(event.clientX-startX,event.clientY-startY) < 3) return;
-        if (!start) { checkpoint(); editingField = null; start = positionForDrag(text); text.classList.add('is-dragging'); }
-        const stage = preview.getBoundingClientRect(), box = text.getBoundingClientRect();
-        slides[selected].text_position = {
-          x:Math.max(0,Math.min(1,start.x+(event.clientX-startX)/Math.max(1,stage.width-box.width))),
-          y:Math.max(0,Math.min(1,start.y+(event.clientY-startY)/Math.max(1,stage.height-box.height)))};
-        momentPositionText(text, slides[selected].text_position);
-        changed(); resetPosition.disabled = false;
-      };
-      const finish = event => {
-        if (event.pointerId !== e.pointerId) return;
-        text.onpointermove = text.onpointerup = text.onpointercancel = text.onlostpointercapture = null;
-        if (start) {
-          if (event.type === 'pointercancel') {
-            slides[selected] = original; undo.pop(); redo = previousRedo;
-            dirty = previousDirty; status.textContent = previousStatus;
-          }
-          render();
-          preview.querySelector('.cinema-type')?.focus({preventScroll:true});
-        }
-      };
-      text.onpointerup = text.onpointercancel = text.onlostpointercapture = finish;
-    };
-    preview.onkeydown = e => {
-      const text = e.target.closest('.cinema-type');
-      const delta = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
-      if (!text || !delta) return;
-      e.preventDefault();
-      const start = positionForDrag(text), step = e.shiftKey ? .05 : .01;
-      mutate(() => { slides[selected].text_position = {
-        x:Math.max(0,Math.min(1,start.x+delta[0]*step)),y:Math.max(0,Math.min(1,start.y+delta[1]*step))}; });
-      preview.querySelector('.cinema-type')?.focus({preventScroll:true});
-    };
+    resetPosition.onclick = () => mutate(() => { delete slides[selected].text_position; delete slides[selected].text_elements; });
+    const textTools = momentTextEditor({preview, panel:placement, getSlide:()=>slides[selected], changed, render,
+      begin:()=>{
+        const original=structuredClone(slides[selected]), previousRedo=redo, previousDirty=dirty, previousStatus=status.textContent;
+        checkpoint(); editingField=null;
+        return ()=>{slides[selected]=original;undo.pop();redo=previousRedo;dirty=previousDirty;status.textContent=previousStatus;};
+      }});
     function drawTimeline() {
       const scroll = timeline.scrollLeft;
       timeline.replaceChildren();
@@ -225,7 +175,7 @@ async function editMomentSlideshow(id) {
       root.querySelector('[data-left]').disabled = selected === 0;
       root.querySelector('[data-right]').disabled = selected === slides.length-1;
       root.querySelector('[data-remove]').disabled = slides.length <= 1;
-      resetPosition.disabled = !s.text_position;
+      resetPosition.disabled = !s.text_position && !s.text_elements;
       drawPreview(); drawTimeline();
     }
     fields.forEach(field => {

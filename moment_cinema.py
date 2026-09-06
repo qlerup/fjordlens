@@ -151,6 +151,30 @@ def overlay(item, size):
     w, h = size
     canvas = Image.new('RGBA', size)
     draw = ImageDraw.Draw(canvas)
+    if item.get('text_elements'):
+        draw.rectangle((0,0,w,h),fill=(7,14,18,110 if item.get('type')=='text' else 85))
+        values = dict(eyebrow=item.get('eyebrow'),
+                      heading=item.get('text') if item.get('type')=='text' else item.get('label'),
+                      detail=item.get('detail'),weather=item.get('weather'))
+        for index,(key,value) in enumerate((k,v) for k,v in values.items() if v):
+            box=item['text_elements'].get(key,dict(x=.15,y=.15+index*.16,width=.7,height=.12,font_size=.035))
+            value=str(value).upper() if key=='eyebrow' else str(value)
+            font_size=w*box['font_size']
+            font=_font(font_size,serif=key=='heading')
+            bounds=draw.multiline_textbbox((0,0),value,font=font,spacing=0)
+            if bounds[2]-bounds[0]>4096 or bounds[3]-bounds[1]>4096:
+                font_size*=min(4096/max(1,bounds[2]-bounds[0]),4096/max(1,bounds[3]-bounds[1]))
+                font=_font(font_size,serif=key=='heading')
+                bounds=draw.multiline_textbbox((0,0),value,font=font,spacing=0)
+            # Fit each independent text image to the editor's exact normalized box.
+            glyph_height=max(1,int(bounds[3]-bounds[1]))
+            layer_height=max(glyph_height+2,round(font_size*(1.13 if key=='heading' else 1.5)*len(value.split('\n'))))
+            layer=Image.new('RGBA',(max(1,int(bounds[2]-bounds[0])+2),layer_height))
+            ImageDraw.Draw(layer).multiline_text((-bounds[0],-bounds[1]+(layer_height-glyph_height)/2),value,font=font,spacing=0,
+                fill='#ddc29a' if key in ('eyebrow','weather') else '#fff9ef')
+            layer=layer.resize((max(1,round(w*box['width'])),max(1,round(h*box['height']))),Image.Resampling.LANCZOS)
+            canvas.alpha_composite(layer,(round(w*box['x']),round(h*box['y'])))
+        return canvas
     card = item.get('type') == 'text'
     right = item.get('layout') == 'right' and not card
     text = str(item.get('text') if card else item.get('label') or '')[:500]

@@ -107,6 +107,13 @@ tekstfelter, ekstra billeder/videoer og par af billeder. Teksten kan trækkes
 direkte på forhåndsvisningen og flyttes med piletasterne. Fortryd, gentag og
 nulstil placering understøttes. Videoer afspilles i deres fulde længde.
 
+Overskrift, sted, dato og vejr er selvstændige tekstfelter. Vælg et felt og træk
+det separat. Sidehåndtag ændrer bredde eller højde; hjørner skalerer begge
+retninger proportionelt. **Snap til midte og andre tekster** viser hjælpelinjer
+ved billedets midte/kanter og de andre teksters midterlinjer/kanter. Hold **Alt**
+nede for midlertidigt at flytte frit. Størrelser og placeringer gemmes sammen
+med tidslinjen og bruges også i delingslinks og MP4.
+
 Vælg blandt [16 musiknumre i otte stemninger](music/README.md), lyt til dem og
 indstil lydstyrken, eller vælg **Ingen musik**. Musikken fortsætter på tværs af
 slides med seks sekunders krydsfade ved gentagelse. MP4 bruger samme musikvalg

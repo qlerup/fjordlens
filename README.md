@@ -64,6 +64,7 @@ music, public links and MP4 export.
 - One **16:9 widescreen player** hides navigation and preserves the same layout on phones, computers and TVs
 - Shared moments wait for **Afspil**; phones show a three-second rotation hint before slides and music start. The player requests fullscreen/landscape where supported and otherwise rotates its canvas sideways in an upright phone viewport
 - **Rediger diasshow** opens a saved timeline: reorder slides, adjust photo duration, edit/add text and media, pair photos, drag text in the preview, undo/redo and reset placement
+- Move the heading, location, date and weather independently. Edge handles resize one dimension; corner handles preserve proportions. Optional snap guides align each text with the slide's center/edges or other texts' centers/edges; hold Alt to bypass snapping. Positions and sizes persist in playback, shared links and MP4 exports
 - **Lav video** exports **1920×1080 (16:9)** MP4 with the saved timeline and music; phones use the same video, viewed sideways
 
 ### Background music

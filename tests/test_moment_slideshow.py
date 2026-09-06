@@ -59,6 +59,22 @@ class SlideshowEditingTests(unittest.TestCase):
         result = moment_slideshow.validate([dict(type='video',photo_id=1,duration=2)],{1:dict(ext='.mp4')},{'.mp4'})
         self.assertIsNone(result[0]['duration'])
 
+    def test_independent_text_boxes_validate_and_export_separately(self):
+        import moments_service
+        boxes=dict(heading=dict(x=.1,y=.1,width=.3,height=.12,font_size=.05),
+                   detail=dict(x=.55,y=.7,width=.3,height=.08,font_size=.02))
+        script=[dict(type='text',text='Bryllup',detail='26. juni',text_elements=boxes)]
+        result=moment_slideshow.validate(script,{},set())
+        self.assertEqual(result[0]['text_elements'],boxes)
+        rendered=moment_cinema.overlay(result[0],(1000,600))
+        self.assertTrue(any(max(p[:3])>150 for p in rendered.crop((100,60,400,132)).getdata()))
+        self.assertTrue(any(max(p[:3])>150 for p in rendered.crop((550,420,850,468)).getdata()))
+        self.assertFalse(any(max(p[:3])>150 for p in rendered.crop((410,150,540,400)).getdata()))
+        for changes in (dict(x=.9),dict(width=-1),dict(height=float('nan')),dict(font_size=True)):
+            bad=dict(boxes,heading=dict(boxes['heading'],**changes))
+            with self.assertRaises(moments_service.EditError):
+                moment_slideshow.validate([dict(script[0],text_elements=bad)],{},set())
+
     def test_invalid_text_positions_rejected(self):
         import moments_service
         for position in ({'x':-1,'y':.5},{'x':.5,'y':1.1},{'x':True,'y':.5},

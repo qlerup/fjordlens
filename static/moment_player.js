@@ -300,12 +300,43 @@ function momentSlideText(item) {
       if (!value) continue;
       const line = document.createElement('div');
       line.className = className;
+      line.dataset.textKey = className.replace('cinema-', '');
       line.textContent = value;
       text.appendChild(line);
     }
+    if (item.text_elements) momentApplyTextElements(text, item.text_elements);
     return text;
   }
   return null;
+}
+
+function momentApplyTextElements(text, elements) {
+  text.classList.remove('cinema-positioned');
+  text.classList.add('cinema-separated');
+  for (const [index, line] of [...text.querySelectorAll('[data-text-key]')].entries()) {
+    const box = elements[line.dataset.textKey] || {x:.15,y:.15+index*.16,width:.7,height:.12,font_size:.035};
+    line.classList.add('cinema-text-layer');
+    for (const [key, property] of [['x','left'],['y','top'],['width','width'],['height','height']]) line.style[property] = `${box[key]*100}%`;
+    line.style.fontSize = `${box.font_size*100}cqw`;
+    let ink = line.querySelector('.cinema-text-ink');
+    if (!ink) {
+      ink = document.createElement('span'); ink.className = 'cinema-text-ink';
+      ink.textContent = line.textContent; line.replaceChildren(ink);
+      const observer = new ResizeObserver(() => {
+        if (!line.isConnected) { observer.disconnect(); return; }
+        momentFitTextInk(line);
+      });
+      observer.observe(line); observer.observe(ink);
+      // The parent is frequently replaced between slides; disconnect on removal.
+      line._textResizeObserver = observer;
+    }
+    momentFitTextInk(line);
+  }
+}
+
+function momentFitTextInk(line) {
+  const ink = line.querySelector('.cinema-text-ink');
+  if (ink?.offsetWidth && ink.offsetHeight) ink.style.transform = `scale(${line.clientWidth/ink.offsetWidth},${line.clientHeight/ink.offsetHeight})`;
 }
 
 function _momentPlayerAdvance(delta) {

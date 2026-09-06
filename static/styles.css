@@ -5324,3 +5324,22 @@ dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
 .shared-moment-start .mini-label { color:#ddc29a; letter-spacing:.18em; font-size:11px; }
 .shared-moment-start .btn { margin-top:24px; background:#46dbc5; color:#062720; border:0; border-radius:30px; padding:16px 36px; font-size:17px; cursor:pointer; }
 .shared-moment-start .btn:disabled { opacity:.4; cursor:wait; }
+
+/* Separate text layers share normalized geometry with exported typography. */
+.cinema-slide .cinema-type.cinema-separated { inset:0!important; width:100%!important; height:100%; max-width:none; max-height:none; padding:0!important; transform:none; background:#07121755!important; }
+.cinema-slide .cinema-separated .cinema-text-layer { position:absolute!important; margin:0!important; padding:0!important; max-width:none!important; max-height:none; animation:none; pointer-events:none; }
+.cinema-text-ink { position:absolute; top:0; left:0; display:block; width:max-content; max-width:none; white-space:pre; transform-origin:0 0; text-align:left; }
+.slideshow-preview [data-text-key] { position:relative; touch-action:none; user-select:none; }
+.slideshow-preview .cinema-separated .cinema-text-layer { pointer-events:auto; }
+.slideshow-preview [data-text-key].text-selected { outline:1px solid #56e1d1; outline-offset:4px; z-index:4; }
+.slideshow-preview [data-text-key] .cinema-text-ink { outline:none!important; pointer-events:none; }
+.text-resize-handle { display:none; }
+.slideshow-preview .text-resize-handle { position:absolute; display:block; width:10px; height:10px; background:#e7fff9; border:1px solid #108a7b; border-radius:2px; z-index:6; transform:translate(-50%,-50%); pointer-events:auto; touch-action:none; }
+.handle-n { left:50%; top:0; cursor:ns-resize; }.handle-s { left:50%; top:100%; cursor:ns-resize; }
+.handle-e { left:100%; top:50%; cursor:ew-resize; }.handle-w { left:0; top:50%; cursor:ew-resize; }
+.handle-ne { left:100%; top:0; cursor:nesw-resize; }.handle-nw { left:0; top:0; cursor:nwse-resize; }
+.handle-se { left:100%; top:100%; cursor:nwse-resize; }.handle-sw { left:0; top:100%; cursor:nesw-resize; }
+.text-snap-guide { position:absolute; z-index:8; pointer-events:none; background:#f0be75; box-shadow:0 0 3px #0008; }
+.text-snap-guide.snap-x { width:1px; top:0; bottom:0; }.text-snap-guide.snap-y { height:1px; left:0; right:0; }
+.slideshow-editor .slideshow-snap-toggle { display:flex; align-items:center; gap:8px; margin-top:14px; }
+.slideshow-editor .slideshow-snap-toggle input { width:auto; accent-color:#38d9c9; }
