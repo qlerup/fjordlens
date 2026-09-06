@@ -10,12 +10,21 @@ import moment_places
 
 class PlaceNamesTests(unittest.TestCase):
     def test_native_names_and_safe_unchanged_text(self):
-        for old, new in [('Naestved, Denmark', 'Næstved, Denmark'), ('Koge, Denmark', 'Køge, Denmark'),
-                         ('Solrod, Denmark', 'Solrød, Denmark'), ('Praesto, Denmark', 'Præstø, Denmark'),
-                         ('Loddekopinge, Sweden', 'Löddeköpinge, Sweden'), ('Copenhagen, Denmark', 'København, Denmark')]:
+        for old, new in [('Naestved, Denmark', 'N\u00e6stved, Danmark'), ('Koge, Denmark', 'K\u00f8ge, Danmark'),
+                         ('Solrod, Denmark', 'Solr\u00f8d, Danmark'), ('Praesto, Denmark', 'Pr\u00e6st\u00f8, Danmark'),
+                         ('Loddekopinge, Sweden', 'L\u00f6ddek\u00f6pinge, Sverige'), ('Copenhagen, Denmark', 'K\u00f8benhavn, Danmark'),
+                         ('Berlin, Germany','Berlin, Tyskland'), ('Naestved, Germany','Naestved, Tyskland')]:
             self.assertEqual(place_names.place_name(old), new)
-        for value in ['Aalborg, Denmark', 'Aarhus, Denmark', 'Berlin, Germany', 'Naestved, Germany', 'Naestved']:
+        for value in ['Aalborg, Danmark', 'Aarhus, Danmark', 'Naestved']:
             self.assertEqual(place_names.place_name(value), value)
+
+    def test_country_aliases_and_danish_roundtrip(self):
+        for value in ('TR', 'TUR', 'Turkey', 'T\u00fcrkiye', 'Tyrkiet'):
+            self.assertEqual(place_names.country_name(value), 'Tyrkiet')
+        self.assertEqual(place_names.place_name('Antalya, T\u00fcrkiye'), 'Antalya, Tyrkiet')
+        self.assertEqual(place_names.country_name('Japan'), 'Japan')
+        for code,name in place_names.country_names().items():
+            self.assertEqual(place_names.country_code(name), code)
 
     def test_photo_location_does_not_rewrite_captions(self):
         photo = {'gps_name': 'Koge, Denmark', 'metadata_json': {'geo': {'city': 'Koge', 'country': 'Denmark'},

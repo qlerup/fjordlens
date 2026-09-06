@@ -30,7 +30,7 @@ class DiscoveryTests(unittest.TestCase):
         rows = [photo(i+1, f'2024-0{i+1}-01T12:00:00', 'Aarhus, Denmark') for i in range(5)]
         rows += [photo(100+i, f'2024-07-12T{9+i//60:02}:{i%60:02}:00', 'Berlin, Germany') for i in range(180)]
         _, _, home = discover(rows, min_photos=3)
-        self.assertEqual(home['name'], 'Aarhus, Denmark')
+        self.assertEqual(home['name'], 'Aarhus, Danmark')
 
     def test_return_home_splits_two_visits(self):
         rows = []
@@ -271,17 +271,17 @@ class MomentEditingTests(unittest.TestCase):
         import place_names
         row = self.make_moment()
         with fjordlens.closing(fjordlens.get_conn()) as conn:
-            conn.execute("DELETE FROM settings WHERE key='native_place_names_v1'")
+            conn.execute("DELETE FROM settings WHERE key='native_place_names_v2_danish_countries'")
             conn.execute("UPDATE photos SET gps_name='Naestved, Denmark',metadata_json=?",
                          (json.dumps({'geo': {'city': 'Naestved', 'country': 'Denmark'}}),))
             conn.execute("INSERT INTO geo_cache(lat_rounded,lon_rounded,country,city,created_at) VALUES(1,2,'Denmark','Naestved','2026-09-06')")
             conn.execute("UPDATE moments SET primary_place='Naestved, Denmark',title='En dag i Naestved, Denmark' WHERE id=?", (row['id'],))
             place_names.migrate(conn)
             photo = conn.execute('SELECT gps_name,metadata_json FROM photos LIMIT 1').fetchone()
-            self.assertEqual(photo['gps_name'], 'Næstved, Denmark')
+            self.assertEqual(photo['gps_name'], 'Næstved, Danmark')
             self.assertEqual(json.loads(photo['metadata_json'])['geo']['city'], 'Næstved')
             self.assertEqual(conn.execute('SELECT city FROM geo_cache WHERE lat_rounded=1').fetchone()[0], 'Næstved')
-            self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'En dag i Næstved, Denmark')
+            self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'En dag i Næstved, Danmark')
             place_names.migrate(conn)  # Idempotent on subsequent startup.
 
     def test_viewer_cannot_see_moment_from_hidden_folders(self):

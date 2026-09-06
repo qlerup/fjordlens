@@ -12,7 +12,7 @@ from functools import lru_cache
 import re
 
 import pycountry
-from place_names import place_name, city_name
+from place_names import place_name, city_name, country_names, country_code
 from moment_calendar import occasion_for_dates, title_for
 
 
@@ -26,10 +26,7 @@ COUNTRIES = {
     "grækenland": "GR", "greece": "GR", "portugal": "PT", "polen": "PL",
     "poland": "PL", "usa": "US", "united states": "US",
 }
-DA_COUNTRIES = dict(zip(
-    ["DK", "DE", "SE", "NO", "IT", "ES", "FR", "AT", "CH", "NL", "GB", "GR", "PT", "PL", "US"],
-    ["Danmark", "Tyskland", "Sverige", "Norge", "Italien", "Spanien", "Frankrig", "Østrig", "Schweiz", "Nederlandene", "Storbritannien", "Grækenland", "Portugal", "Polen", "USA"],
-))
+DA_COUNTRIES = country_names()
 
 
 def photo_date(row):
@@ -47,7 +44,7 @@ def country_for_name(name):
     country = None
     for part in reversed(re.split(r"[,;/|]", name)):
         part = part.strip()
-        country = COUNTRIES.get(part.casefold())
+        country = country_code(part) or COUNTRIES.get(part.casefold())
         if not country and part:
             try:
                 country = pycountry.countries.lookup(part).alpha_2

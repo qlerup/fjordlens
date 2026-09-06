@@ -11801,10 +11801,11 @@ def reverse_geocode_with_cache(lat: float, lon: float) -> tuple[Optional[str], O
             (lat_r, lon_r),
         ).fetchone()
     if row and (row["country"] or row["city"]):
-        return row["country"], place_names.city_name(row["city"], row["country"])
+        return place_names.country_name(row["country"]), place_names.city_name(row["city"], row["country"])
 
     country, city = reverse_geocode_providers(lat, lon)
     city = place_names.city_name(city, country)
+    country = place_names.country_name(country)
     if country or city:
         with closing(get_conn()) as conn:
             conn.execute(
@@ -11949,7 +11950,7 @@ def _place_geocode_from_cache(query_key: str) -> Optional[Tuple[float, float, Di
             {
                 "location_source": "city",
                 "location_city": row["city"],
-                "location_country": row["country"],
+                "location_country": place_names.country_name(row["country"]),
                 "geocoded_latitude": lat,
                 "geocoded_longitude": lon,
             }
@@ -12050,9 +12051,9 @@ def _geocode_city_for_weather(city: Any, country: Any = None) -> Tuple[float, fl
     context: Dict[str, Any] = {
         "location_source": "city",
         "location_city": city_txt,
-        "location_country": country_txt or best.get("country"),
+        "location_country": place_names.country_name(country_txt or best.get("country")),
         "geocoded_name": best.get("name"),
-        "geocoded_country": best.get("country"),
+        "geocoded_country": place_names.country_name(best.get("country")),
         "geocoded_country_code": best.get("country_code"),
         "geocoded_admin1": best.get("admin1"),
         "geocoded_latitude": lat,
