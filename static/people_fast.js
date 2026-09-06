@@ -29,6 +29,29 @@
         color: transparent;
       }
       #peopleBulkHideBtn:disabled { opacity: .5; cursor: default; }
+      #peopleBulkCountBubble {
+        position: fixed;
+        z-index: 1600;
+        top: calc(env(safe-area-inset-top, 0px) + 12px);
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 94px;
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, .16);
+        background: rgba(9, 27, 34, .92);
+        color: #fff;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, .32);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        font-size: 14px;
+        font-weight: 750;
+        line-height: 1;
+        text-align: center;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      #peopleBulkCountBubble[hidden] { display: none !important; }
     `;
     document.head.appendChild(style);
   }
@@ -80,11 +103,25 @@
     els.grid.querySelectorAll('.photo-card[data-person-id]').forEach(syncPersonCardSelection);
   }
 
+  function ensureBulkCountBubble() {
+    let bubble = document.getElementById('peopleBulkCountBubble');
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.id = 'peopleBulkCountBubble';
+      bubble.setAttribute('role', 'status');
+      bubble.setAttribute('aria-live', 'polite');
+      bubble.hidden = true;
+      document.body.appendChild(bubble);
+    }
+    return bubble;
+  }
+
   function updateBulkButtons() {
     const selectBtn = document.getElementById('peopleBulkSelectBtn');
     const hideBtn = document.getElementById('peopleBulkHideBtn');
     const cancelBtn = document.getElementById('peopleBulkCancelBtn');
     const matchBtn = document.getElementById('peopleMatchScanBtn');
+    const bubble = ensureBulkCountBubble();
     const count = bulkPeople.selected.size;
 
     if (selectBtn) selectBtn.style.display = bulkPeople.active ? 'none' : '';
@@ -98,6 +135,10 @@
       cancelBtn.disabled = bulkPeople.busy;
     }
     if (matchBtn) matchBtn.style.display = bulkPeople.active ? 'none' : '';
+    if (bubble) {
+      bubble.textContent = count === 1 ? '1 valgt' : `${count} valgte`;
+      bubble.hidden = !bulkPeople.active;
+    }
   }
 
   function finishBulkSelect() {
