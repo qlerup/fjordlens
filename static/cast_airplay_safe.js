@@ -4,6 +4,7 @@
   const API = '/api/cast-airplay';
   const ACTION_ID = 'mapperHeaderCastAirplayAction';
   const DEFAULT_NS = 'urn:x-cast:dk.glerup.fjordlens.gallery';
+  const IMAGE_DURATIONS = [3, 5, 8, 10, 15];
   let lastSession = null;
   let castSdkPromise = null;
   let castSession = null;
@@ -31,6 +32,16 @@
     if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
     if (/Android/i.test(ua)) return 'android';
     return 'mobile';
+  }
+  function preferredImageDuration() {
+    try {
+      const value = Number(localStorage.getItem('fjordlensAirplayImageDuration') || 5);
+      if (IMAGE_DURATIONS.includes(value)) return value;
+    } catch (_) {}
+    return 5;
+  }
+  function rememberImageDuration(value) {
+    try { localStorage.setItem('fjordlensAirplayImageDuration', String(value)); } catch (_) {}
   }
   async function api(path, options = {}, timeoutMs = 15000) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -135,6 +146,9 @@
       if (event.target.closest('[data-cast-next]')) return sendCastCommand('NEXT');
       if (event.target.closest('[data-cast-reload]')) return sendCastLoad();
     });
+    modal.addEventListener('change', event => {
+      if (event.target?.matches?.('[data-image-duration]')) saveImageDuration(event.target);
+    });
     return modal;
   }
   function openModal() { const m = ensureModal(); m.classList.remove('hidden'); return m; }
@@ -164,7 +178,15 @@
     setSub(tr('Klargør valget…', 'Preparing selection…'));
     setBody(`<div class="cast-airplay-loading">${esc(tr('Opretter afspilningssession…', 'Creating playback session…'))}</div>`);
     try {
+      const requestedDuration = preferredImageDuration();
       lastSession = await api('/session', {method:'POST', body:JSON.stringify({...sel, title:selectionTitle(sel)})});
+      if (lastSession?.contains_images && lastSession?.token) {
+        const durationResult = await api(`/session/${encodeURIComponent(lastSession.token)}/duration`, {
+          method:'POST',
+          body:JSON.stringify({image_duration: requestedDuration}),
+        });
+        lastSession.image_duration = Number(durationResult.image_duration || requestedDuration);
+      }
       window.__fjordlensCastSession = lastSession;
       window.dispatchEvent(new CustomEvent('fjordlens:cast-session', {detail:lastSession}));
       renderReady();
@@ -177,22 +199,53 @@
     }
   }
 
+  function imageDurationField() {
+    if (!lastSession?.contains_images) return '';
+    const selected = Number(lastSession.image_duration || preferredImageDuration());
+    const options = IMAGE_DURATIONS.map(value => `<option value="${value}"${value === selected ? ' selected' : ''}>${value} ${tr('sek.', 'sec.')}</option>`).join('');
+    return `<label class="cast-airplay-field"><span>${esc(tr('Tid pr. billede', 'Time per photo'))}</span><select data-image-duration>${options}</select></label>`;
+  }
+
+  async function saveImageDuration(select) {
+    if (!lastSession?.token) return;
+    const previous = Number(lastSession.image_duration || preferredImageDuration());
+    const value = Number(select?.value || previous);
+    if (!IMAGE_DURATIONS.includes(value)) return;
+    select.disabled = true;
+    setError('');
+    try {
+      const result = await api(`/session/${encodeURIComponent(lastSession.token)}/duration`, {
+        method:'POST',
+        body:JSON.stringify({image_duration:value}),
+      });
+      lastSession.image_duration = Number(result.image_duration || value);
+      rememberImageDuration(lastSession.image_duration);
+      window.__fjordlensCastSession = lastSession;
+    } catch (error) {
+      select.value = String(previous);
+      setError(error?.message || error);
+    } finally {
+      select.disabled = false;
+    }
+  }
+
   function renderReady() {
     if (!lastSession) return;
     const count = Number(lastSession.item_count || 0);
     setSub(`${count} ${count === 1 ? tr('medie', 'item') : tr('medier', 'items')}`);
     setError('');
+    const durationField = imageDurationField();
     if (platform() === 'ios') {
       const note = tr(
-        'FjordLens streamer de valgte billeder og videoer løbende til AirPlay. Afspilningen kan starte, så snart de første HLS-segmenter er klar.',
-        'FjordLens streams the selected photos and videos progressively to AirPlay. Playback can start as soon as the first HLS segments are ready.'
+        'FjordLens streamer de valgte billeder og videoer løbende til AirPlay. Du kan spole samt bruge Forrige/Næste fra telefonen under afspilning.',
+        'FjordLens streams the selected photos and videos progressively to AirPlay. You can seek and use Previous/Next from the phone during playback.'
       );
-      return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon"></div><div><strong>AirPlay</strong><p>${esc(note)}</p></div></div><div class="cast-airplay-actions"><button type="button" class="btn primary" data-airplay-start>${esc(tr('AirPlay', 'AirPlay'))}</button></div>`);
+      return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon"></div><div><strong>AirPlay</strong><p>${esc(note)}</p></div></div>${durationField}<div class="cast-airplay-actions"><button type="button" class="btn primary" data-airplay-start>${esc(tr('AirPlay', 'AirPlay'))}</button></div>`);
     }
     if (platform() === 'android') {
-      if (lastSession.cast_configured) return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon">▣</div><div><strong>Google Cast</strong><p>${esc(tr('Vælg Chromecast, Google TV eller Nest-skærm.', 'Choose a Chromecast, Google TV or Nest display.'))}</p></div></div><div class="cast-airplay-actions"><button type="button" class="btn primary" data-cast-start>${esc(tr('Vælg Cast-enhed', 'Choose Cast device'))}</button></div>`);
-      if (lastSession.can_admin) return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon">▣</div><div><strong>${esc(tr('Google Cast skal opsættes én gang', 'Google Cast needs one-time setup'))}</strong><p>${esc(tr('Receiver-siden er klar. Opret en Custom Web Receiver hos Google og indsæt App ID’et.', 'The receiver page is ready. Create a Custom Web Receiver with Google and enter its App ID.'))}</p></div></div><div class="cast-airplay-actions"><button type="button" class="btn primary" data-cast-setup>${esc(tr('Opsæt Google Cast', 'Set up Google Cast'))}</button></div>`);
-      return setBody(`<div class="cast-airplay-note">${esc(tr('Google Cast er ikke konfigureret endnu.', 'Google Cast is not configured yet.'))}</div>`);
+      if (lastSession.cast_configured) return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon">▣</div><div><strong>Google Cast</strong><p>${esc(tr('Vælg Chromecast, Google TV eller Nest-skærm.', 'Choose a Chromecast, Google TV or Nest display.'))}</p></div></div>${durationField}<div class="cast-airplay-actions"><button type="button" class="btn primary" data-cast-start>${esc(tr('Vælg Cast-enhed', 'Choose Cast device'))}</button></div>`);
+      if (lastSession.can_admin) return setBody(`<div class="cast-airplay-choice"><div class="cast-airplay-platform-icon">▣</div><div><strong>${esc(tr('Google Cast skal opsættes én gang', 'Google Cast needs one-time setup'))}</strong><p>${esc(tr('Receiver-siden er klar. Opret en Custom Web Receiver hos Google og indsæt App ID’et.', 'The receiver page is ready. Create a Custom Web Receiver with Google and enter its App ID.'))}</p></div></div>${durationField}<div class="cast-airplay-actions"><button type="button" class="btn primary" data-cast-setup>${esc(tr('Opsæt Google Cast', 'Set up Google Cast'))}</button></div>`);
+      return setBody(`<div class="cast-airplay-note">${esc(tr('Google Cast er ikke konfigureret endnu.', 'Google Cast is not configured yet.'))}</div>${durationField}`);
     }
     setBody(`<div class="cast-airplay-note">${esc(tr('Denne funktion er lavet til telefoner.', 'This feature is intended for phones.'))}</div>`);
   }
