@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 import app
 import moment_cinema
@@ -89,5 +90,19 @@ class ShareBrowserTests(unittest.TestCase):
             page.get_by_role('button',name='Opret delelink',exact=True).click()
             page.get_by_text('Linket har intet udløb.',exact=True).wait_for()
             self.assertTrue(any(s['expires_at'] is None for s in self.client.get('/api/admin/shares?include_inactive=1').get_json()['items']))
+            page.get_by_role('dialog',name='Del moment').locator('[data-close]').click()
+            page.locator('[data-moment-action="play"]').first.click()
+            page.locator('#momentPlayerVideoBtn').click()
+            format_dialog = page.get_by_role('dialog',name='Vælg videoformat')
+            format_dialog.wait_for()
+            self.assertTrue(format_dialog.locator('[value="landscape"]').is_checked())
+            format_dialog.locator('[value="portrait"]').check()
+            with patch.object(app.threading,'Thread') as thread:
+                thread.return_value.is_alive.return_value = False
+                with page.expect_response(lambda r: '/render-video' in r.url and r.request.method == 'POST') as started:
+                    format_dialog.get_by_role('button',name='Lav video',exact=True).click()
+                self.assertEqual(started.value.request.post_data_json,{'format':'portrait'})
+                self.assertEqual(started.value.status,200)
+            app.moment_video_threads.pop(moment['id'],None)
             self.assertFalse(errors,errors)
             browser.close()

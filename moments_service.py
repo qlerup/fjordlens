@@ -38,6 +38,7 @@ def migrate(conn):
     columns = {r[1] for r in conn.execute("PRAGMA table_info(moments)")}
     for name, definition in (("evidence_json", "TEXT NOT NULL DEFAULT '{}'"),
                              ("user_edited", "INTEGER NOT NULL DEFAULT 0"),
+                             ("video_format", "TEXT NOT NULL DEFAULT 'landscape'"),
                              ("revision", "INTEGER NOT NULL DEFAULT 0")):
         if name not in columns:
             conn.execute(f"ALTER TABLE moments ADD COLUMN {name} {definition}")

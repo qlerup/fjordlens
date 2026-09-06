@@ -185,6 +185,30 @@ function _momentPlayerMeasureFooter() {
 }
 
 const momentPlayerFooter = els.momentPlayerOverlay?.querySelector('.moment-player-footer');
+if (momentPlayerFooter) {
+  const full = document.createElement('button');
+  full.type = 'button'; full.className = 'btn'; full.id = 'momentPlayerFullscreenBtn';
+  full.textContent = 'Fuld skærm';
+  full.onclick = async () => {
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
+      } else {
+        const player = els.momentPlayerOverlay;
+        if (player.requestFullscreen) await player.requestFullscreen();
+        else if (player.webkitRequestFullscreen) player.webkitRequestFullscreen();
+        else window.alert('Denne browser understøtter ikke fuldskærm for diasshows. Du kan vende telefonen for at få en bredere visning.');
+      }
+    } catch { full.textContent = 'Prøv fuld skærm igen'; }
+  };
+  const updateFullscreen = () => {
+    full.textContent = (document.fullscreenElement || document.webkitFullscreenElement) ? 'Afslut fuld skærm' : 'Fuld skærm';
+    _momentPlayerMeasureFooter();
+  };
+  document.addEventListener('fullscreenchange', updateFullscreen);
+  document.addEventListener('webkitfullscreenchange', updateFullscreen);
+  momentPlayerFooter.append(full);
+}
 if (momentPlayerFooter && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(_momentPlayerMeasureFooter).observe(momentPlayerFooter);
 }
@@ -222,6 +246,8 @@ function _momentPlayerAdvance(delta) {
 }
 
 function _momentPlayerClose() {
+  if (document.fullscreenElement === els.momentPlayerOverlay) document.exitFullscreen?.().catch(() => {});
+  else if (document.webkitFullscreenElement === els.momentPlayerOverlay) document.webkitExitFullscreen?.();
   const onClose = state.momentPlayer?.onClose;
   _momentPlayerClearTimer();
   if (els.momentPlayerOverlay) els.momentPlayerOverlay.classList.add('hidden');
@@ -244,15 +270,54 @@ if (els.momentPlayerNextZone) {
   els.momentPlayerNextZone.addEventListener('click', () => _momentPlayerAdvance(1));
 }
 document.addEventListener('keydown', (e) => {
-  if (!state.momentPlayer) return;
-  if (e.key === 'Escape') _momentPlayerClose();
+  if (!state.momentPlayer || document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape' && !(document.fullscreenElement || document.webkitFullscreenElement)) _momentPlayerClose();
   else if (e.key === 'ArrowRight') _momentPlayerAdvance(1);
   else if (e.key === 'ArrowLeft') _momentPlayerAdvance(-1);
 });
 if (els.momentPlayerVideoBtn) {
   els.momentPlayerVideoBtn.addEventListener('click', () => {
-    if (state.momentPlayer?.videoUrl) window.open(state.momentPlayer.videoUrl, '_blank', 'noopener');
-    else if (state.momentPlayer && state.momentPlayer.id) startMomentVideoRender(state.momentPlayer.id);
+    if (state.momentPlayer?.id) momentVideoFormatDialog();
   });
+}
+
+async function momentVideoFormatDialog() {
+  const player = state.momentPlayer;
+  if (!player?.id || document.querySelector('.moment-video-dialog')) return;
+  _momentPlayerClearTimer();
+  els.momentPlayerStage.querySelectorAll('video').forEach(v => v.pause());
+  const dialog = document.createElement('dialog');
+  dialog.className = 'moment-video-dialog';
+  dialog.setAttribute('aria-label', 'Vælg videoformat');
+  dialog.innerHTML = `<h2>Lav video</h2><p>Vælg, hvor du vil se eller dele din MP4.</p><div class="moment-video-formats"><label><input type="radio" name="videoFormat" value="portrait"><span class="video-format-icon portrait"></span><strong>Mobil</strong><span>Lodret · 9:16</span><small>1080 × 1920</small></label><label><input type="radio" name="videoFormat" value="landscape"><span class="video-format-icon landscape"></span><strong>PC / TV</strong><span>Bredformat · 16:9</span><small>1920 × 1080</small></label></div><p role="status" data-format-status>Henter videostatus…</p><div class="slideshow-actions"><button class="btn ghost" data-cancel>Annuller</button><button class="btn primary" data-create disabled>Lav video</button></div>`;
+  els.momentPlayerOverlay.append(dialog);
+  const initial = window.matchMedia('(orientation: portrait)').matches ? 'portrait' : 'landscape';
+  dialog.querySelector(`[value="${initial}"]`).checked = true;
+  const close = () => { dialog.close(); dialog.remove(); if (state.momentPlayer === player) _momentPlayerRenderSlide(player.index); };
+  dialog.querySelector('[data-cancel]').onclick = close;
+  dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
+  dialog.showModal();
+  let cached = null;
+  const create = dialog.querySelector('[data-create]'), status = dialog.querySelector('[data-format-status]');
+  const format = () => dialog.querySelector('input:checked').value;
+  const update = () => {
+    const ready = cached?.video_status === 'done' && cached.video_format === format() && cached.video_url;
+    create.textContent = ready ? 'Hent MP4' : 'Lav video';
+    create.disabled = ['queued','running','rendering'].includes(cached?.video_status);
+    status.textContent = create.disabled ? 'Der bliver allerede lavet en video. Prøv igen, når den er færdig.' : ready ? 'Din video i dette format er klar.' : 'Tekst og billeder tilpasses det valgte format. Videoklip afspilles til ende.';
+  };
+  dialog.querySelectorAll('input').forEach(radio => radio.onchange = update);
+  create.onclick = () => {
+    const choice = format();
+    if (cached?.video_status === 'done' && cached.video_format === choice && cached.video_url) {
+      window.open(cached.video_url, '_blank', 'noopener'); close();
+    } else { close(); startMomentVideoRender(player.id, choice); }
+  };
+  try {
+    const response = await fetch(`/api/moments/${encodeURIComponent(player.id)}/render-video/status`);
+    cached = await response.json();
+    if (!response.ok || !cached.ok) throw new Error(cached.error || 'Kunne ikke hente videostatus.');
+    if (dialog.isConnected) update();
+  } catch (error) { if (dialog.isConnected) { cached = null; status.textContent = error.message; create.disabled = false; } }
 }
 

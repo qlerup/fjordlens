@@ -129,6 +129,11 @@ class EditorBrowserTests(unittest.TestCase):
             for width,height in ((390,844),(320,568)):
                 page.set_viewport_size(dict(width=width,height=height))
                 page.goto('http://fjordlens.test'+link)
+                if width == 390:
+                    page.get_by_role('button',name='Fuld skærm',exact=True).click()
+                    page.wait_for_function("document.fullscreenElement?.id === 'momentPlayerOverlay'")
+                    page.get_by_role('button',name='Afslut fuld skærm',exact=True).click()
+                    page.wait_for_function('!document.fullscreenElement')
                 heading = page.locator('#momentPlayerStage .cinema-heading').last
                 heading.wait_for()
                 page.emulate_media(reduced_motion='reduce')

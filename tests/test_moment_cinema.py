@@ -72,6 +72,12 @@ class CinemaTests(unittest.TestCase):
             result = subprocess.run([ffmpeg, '-v', 'error', '-ss', '0.5', '-i', str(pair), '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True, check=True)
             frame = Image.frombytes('RGB',(640,360),result.stdout)
             self.assertGreater(frame.getpixel((480,160))[0],frame.getpixel((160,160))[0]+40)
+            mobile = root / 'mobile.mp4'
+            self.assertTrue(cinema.render_segment(ffmpeg,dict(type='pair',duration=1),src,mobile,second_src=second,size=(360,640)))
+            result = subprocess.run([ffmpeg,'-v','error','-ss','0.5','-i',str(mobile),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],capture_output=True,check=True)
+            self.assertEqual(len(result.stdout),360*640*3)
+            frame = Image.frombytes('RGB',(360,640),result.stdout)
+            self.assertGreater(frame.getpixel((180,400))[0],frame.getpixel((180,130))[0]+40)
 
 
 class DayReconciliationTests(unittest.TestCase):

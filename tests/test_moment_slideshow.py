@@ -66,6 +66,20 @@ class SlideshowEditingTests(unittest.TestCase):
             with self.subTest(position=position), self.assertRaises(moments_service.EditError):
                 moment_slideshow.validate([dict(type='text',text='Hej',text_position=position)],{},set())
 
+    def test_export_format_validation_and_persistence(self):
+        moment = self.make_moment()
+        url = f"/api/moments/{moment['id']}/render-video"
+        self.assertEqual(self.client.post(url,json={'format':'square'}).status_code,400)
+        self.assertEqual(self.client.post(url,json=['portrait']).status_code,400)
+        with patch.object(app.threading, 'Thread') as thread:
+            thread.return_value.is_alive.return_value = False
+            for format in ('portrait','landscape'):
+                response = self.client.post(url,json={'format':format})
+                self.assertEqual(response.status_code,200,response.get_json())
+                self.assertEqual(self.client.get(url+'/status').get_json()['video_format'],format)
+                thread.return_value.start.assert_called()
+        app.moment_video_threads.pop(moment['id'],None)
+
     def test_mp4_text_overlay_moves_to_selected_corner(self):
         from PIL import Image
         def bounds(position):

@@ -156,7 +156,8 @@ def overlay(item, size):
     text = str(item.get('text') if card else item.get('label') or '')[:500]
     eyebrow = str(item.get('eyebrow') or '')[:100].upper()
     detail = ' · '.join(filter(None, (str(item.get('detail') or '')[:180], str(item.get('weather') or '')[:180])))
-    side = not card and item.get('fit') == 'contain' and item.get('type') != 'pair'
+    portrait = h > w
+    side = not portrait and not card and item.get('fit') == 'contain' and item.get('type') != 'pair'
     position = item.get('text_position')
     if not any((text, eyebrow, detail)):
         return canvas
@@ -170,6 +171,9 @@ def overlay(item, size):
             draw.line((left if side else 0, y, edge if side else w, y), fill=(7, 14, 18, alpha))
     margin, max_width = int(w*(.035 if side else .06)), int(w*(.78 if card else .20 if side else .75))
     font_size = h * (.085 if card else .052 if side else .027)
+    if portrait:
+        max_width = int(w*.86)
+        font_size = w * (.095 if card else .056)
     while True:
         font = _font(font_size, serif=True)
         lines = _wrap(draw, text, font, max_width)
@@ -177,11 +181,12 @@ def overlay(item, size):
             break
         font_size *= .9
     line_h = int(font_size*1.3)
-    small = _font(h*.022)
+    small = _font(w*.036 if portrait else h*.022)
     details = _wrap(draw, detail, small, max_width)
     eyebrows = _wrap(draw, eyebrow, small, max_width)
-    small_h = int(h*.035)
-    block_h = len(lines)*line_h + (len(details)+len(eyebrows))*small_h + int(h*.07)
+    small_h = int(w*.054 if portrait else h*.035)
+    gap = int(w*.035 if portrait else h*.025)
+    block_h = len(lines)*line_h + (len(details)+len(eyebrows))*small_h + 2*gap
     y = int((h-block_h)/2) if card or side else int(h*.91-block_h)
     block_width = max([draw.textlength(line, font=font) for line in lines] +
                       [draw.textlength(line, font=small) for line in details+eyebrows] + [0])
@@ -199,11 +204,11 @@ def overlay(item, size):
     for line in eyebrows:
         line_at(line, small, '#ddc29a')
         y += small_h
-    y += int(h*.025)
+    y += gap
     for line in lines:
         line_at(line, font, '#fff9ef')
         y += line_h
-    y += int(h*.025)
+    y += gap
     for line in details:
         line_at(line, small, '#ece8df')
         y += small_h
@@ -214,12 +219,14 @@ def backdrop(src, size, contain=False, second_src=None):
     if second_src:
         background = Image.new('RGB', size, '#10232a')
         gap, margin = int(size[0]*.025), int(size[0]*.05)
-        cell = ((size[0]-2*margin-gap)//2, int(size[1]*.82))
+        portrait = size[1] > size[0]
+        cell = (int(size[0]*.86), int(size[1]*.37)) if portrait else ((size[0]-2*margin-gap)//2, int(size[1]*.82))
         for index, path in enumerate((src, second_src)):
             with Image.open(path) as opened:
                 photo = ImageOps.contain(ImageOps.exif_transpose(opened).convert('RGB'), cell)
-                x = margin + index*(cell[0]+gap) + (cell[0]-photo.width)//2
-                background.paste(photo, (x, int(size[1]*.04)+(cell[1]-photo.height)//2))
+                x = (size[0]-photo.width)//2 if portrait else margin + index*(cell[0]+gap) + (cell[0]-photo.width)//2
+                y = int(size[1]*(.03+index*.40)) if portrait else int(size[1]*.04)
+                background.paste(photo, (x, y+(cell[1]-photo.height)//2))
         return background
     if src:
         with Image.open(src) as opened:
@@ -265,7 +272,7 @@ def render_segment(ffmpeg, item, src, out_path, *, size=(1920, 1080), fps=25, ti
         base_filter = f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x10232a,setsar=1,fps={fps},tpad=stop_mode=clone:stop_duration={1/fps}'
     else:
         background_path = Path(out_path).with_suffix('.background.jpg')
-        backdrop(src, (w*2, h*2), item.get('fit') == 'contain', second_src=second_src).save(background_path, quality=94)
+        backdrop(src, (w*2, h*2), item.get('fit') == 'contain' or h > w, second_src=second_src).save(background_path, quality=94)
         cmd = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', str(background_path)]
         frames = int(round(duration*fps))
         variant = int(item.get('motion', 0)) % 4

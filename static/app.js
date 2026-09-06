@@ -4032,12 +4032,12 @@ async function playMoment(id) {
   }
 }
 
-async function startMomentVideoRender(id) {
+async function startMomentVideoRender(id, format = 'landscape') {
   if (!els.momentPlayerVideoBtn) return;
   els.momentPlayerVideoBtn.disabled = true;
   els.momentPlayerVideoBtn.textContent = tr('momenter_video_queued');
   try {
-    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/render-video`, { method: 'POST' });
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/render-video`, { method: 'POST', headers: {'Content-Type':'application/json'}, body:JSON.stringify({format}) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_video_failed'));
     _momentVideoPoll(id);

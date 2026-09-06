@@ -7122,6 +7122,8 @@ def _render_moment_video(moment_id: int) -> None:
             for r in conn.execute(f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids).fetchall():
                 photos_by_id[int(r["id"])] = r
 
+    portrait = row['video_format'] == 'portrait'
+    video_size = (MOMENT_VIDEO_HEIGHT, MOMENT_VIDEO_WIDTH) if portrait else (MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT)
     work_dir = Path(tempfile.mkdtemp(prefix=f"moment_{moment_id}_"))
     try:
         segment_paths: list[Path] = []
@@ -7149,7 +7151,7 @@ def _render_moment_video(moment_id: int) -> None:
                 candidate = _disk_path_from_rel_path(second['rel_path'])
                 second_src = ensure_viewable_copy(candidate, second['rel_path'])
             ok = moment_cinema.render_segment(ffmpeg_bin, item, src, seg_path,
-                size=(MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT), fps=MOMENT_VIDEO_FPS,
+                size=video_size, fps=MOMENT_VIDEO_FPS,
                 timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC, second_src=second_src)
             if ok:
                 segment_paths.append(seg_path)
@@ -7163,7 +7165,7 @@ def _render_moment_video(moment_id: int) -> None:
 
         dest_dir = CONVERT_DIR / "moments"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"moment_{moment_id}.mp4"
+        dest = dest_dir / f"moment_{moment_id}{'_portrait' if portrait else ''}.mp4"
         tmp = dest.with_suffix(dest.suffix + ".tmp")
         cmd = [
             ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
@@ -7175,7 +7177,7 @@ def _render_moment_video(moment_id: int) -> None:
         if not tmp.exists() or tmp.stat().st_size <= 0:
             raise RuntimeError("ffmpeg producerede en tom video")
         os.replace(tmp, dest)
-        rel_out = f"moments/moment_{moment_id}.mp4"
+        rel_out = f"moments/{dest.name}"
         _set_moment_video_status(moment_id, "done", video_rel_path=rel_out)
         try:
             log_event("moment_video_done", rel_path=rel_out)
@@ -7200,6 +7202,10 @@ moment_video_threads: Dict[int, threading.Thread] = {}
 @app.route("/api/moments/<int:moment_id>/render-video", methods=["POST"])
 @login_required
 def api_moment_render_video(moment_id: int):
+    body = request.get_json(silent=True) or {}
+    video_format = body.get('format', 'landscape') if isinstance(body, dict) else None
+    if video_format not in ('landscape', 'portrait'):
+        return jsonify(ok=False, error='Vælg Mobil eller PC / TV.'), 400
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
     if not moments_service.can_view(globals(), row):
@@ -7208,7 +7214,9 @@ def api_moment_render_video(moment_id: int):
     if existing and existing.is_alive():
         return jsonify({"ok": False, "error": "Video bygges allerede"}), 409
 
-    _set_moment_video_status(moment_id, "queued")
+    with closing(get_conn()) as conn:
+        conn.execute("UPDATE moments SET video_format=?,video_status='queued',video_error=NULL WHERE id=?", (video_format, moment_id))
+        conn.commit()
 
     def run() -> None:
         _set_moment_video_status(moment_id, "running")
@@ -7217,7 +7225,7 @@ def api_moment_render_video(moment_id: int):
     t = threading.Thread(target=run, daemon=True)
     moment_video_threads[moment_id] = t
     t.start()
-    return jsonify({"ok": True, "started": True})
+    return jsonify({"ok": True, "started": True, "video_format": video_format})
 
 
 @app.route("/api/moments/<int:moment_id>/render-video/status")
@@ -7229,11 +7237,12 @@ def api_moment_render_video_status(moment_id: int):
         ).fetchone()
     if not moments_service.can_view(globals(), row):
         return jsonify({"ok": False, "error": "Not found"}), 404
-    video_url = f"/api/moments/{moment_id}/video" if row["video_status"] == "done" and row["video_rel_path"] else None
+    video_url = url_for('api_moment_video', moment_id=moment_id, format=row['video_format'], v=row['updated_at']) if row["video_status"] == "done" and row["video_rel_path"] else None
     return jsonify({
         "ok": True,
         "video_status": row["video_status"],
         "video_error": row["video_error"],
+        "video_format": row["video_format"],
         "video_url": video_url,
     })
 
