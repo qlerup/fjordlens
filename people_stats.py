@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from flask import jsonify, request
 
@@ -215,22 +215,8 @@ def _backfill_people_stats(conn) -> None:
     conn.commit()
 
 
-def _best_cover_face(conn, pid: int) -> Optional[int]:
-    row = conn.execute(
-        f"""
-        SELECT f.id
-        FROM faces f
-        LEFT JOIN photos ph ON ph.id=f.photo_id
-        WHERE f.person_id=?
-        ORDER BY {_COVER_ORDER_SQL}
-        LIMIT 1
-        """,
-        (int(pid),),
-    ).fetchone()
-    return int(row["id"]) if row and row["id"] is not None else None
-
-
-def _refresh_dirty_covers(fjordlens, limit: int = 48) -> int:
+def _refresh_dirty_covers(fjordlens, limit: int = 96) -> int:
+    """Refresh only changed covers, ranking a whole batch in one SQL query."""
     with fjordlens.closing(fjordlens.get_conn()) as conn:
         rows = conn.execute(
             """
@@ -245,18 +231,40 @@ def _refresh_dirty_covers(fjordlens, limit: int = 48) -> int:
         if not rows:
             return 0
 
-        updates = []
-        for row in rows:
-            pid = int(row["id"])
-            cover_id = _best_cover_face(conn, pid)
-            updates.append((cover_id, pid))
+        person_ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in person_ids)
+        cover_rows = conn.execute(
+            f"""
+            WITH ranked AS (
+              SELECT
+                f.person_id,
+                f.id AS face_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY f.person_id
+                  ORDER BY {_COVER_ORDER_SQL}
+                ) AS rn
+              FROM faces f
+              LEFT JOIN photos ph ON ph.id=f.photo_id
+              WHERE f.person_id IN ({placeholders})
+            )
+            SELECT person_id, face_id
+            FROM ranked
+            WHERE rn=1
+            """,
+            person_ids,
+        ).fetchall()
+        cover_by_person = {
+            int(row["person_id"]): int(row["face_id"])
+            for row in cover_rows
+            if row["person_id"] is not None and row["face_id"] is not None
+        }
 
         conn.executemany(
             "UPDATE people SET cover_face_id=?, cover_dirty=0 WHERE id=?",
-            updates,
+            [(cover_by_person.get(pid), pid) for pid in person_ids],
         )
         conn.commit()
-        return len(updates)
+        return len(person_ids)
 
 
 def _cover_worker_loop(fjordlens) -> None:
@@ -283,7 +291,7 @@ def _start_cover_worker(fjordlens) -> None:
         thread.start()
 
 
-def _unknown_bucket(conn) -> Optional[dict[str, Any]]:
+def _unknown_bucket(conn) -> dict[str, Any] | None:
     count_row = conn.execute(
         "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
     ).fetchone()
@@ -375,14 +383,20 @@ def init_people_stats(app, fjordlens) -> None:
     if app.extensions.get("fjordlens_people_stats_v1"):
         return
 
-    with fjordlens.closing(fjordlens.get_conn()) as conn:
-        needs_backfill = _ensure_people_stats_columns(conn)
-        _install_people_stats_triggers(conn)
-        if needs_backfill:
-            started = time.perf_counter()
-            _backfill_people_stats(conn)
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-            app.logger.info("People statistics backfill completed in %d ms", elapsed_ms)
+    try:
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            needs_backfill = _ensure_people_stats_columns(conn)
+            _install_people_stats_triggers(conn)
+            if needs_backfill:
+                started = time.perf_counter()
+                _backfill_people_stats(conn)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                app.logger.info("People statistics backfill completed in %d ms", elapsed_ms)
+    except Exception:
+        # Keep FjordLens usable if an unusual SQLite/storage setup rejects the
+        # optimization; the original People endpoint remains installed.
+        app.logger.exception("Could not initialize materialized People statistics")
+        return
 
     original = app.view_functions.get("api_people_list")
     if original is not None:
