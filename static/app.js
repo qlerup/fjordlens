@@ -1342,7 +1342,10 @@ const I18N = {
     view_momenter_sub: 'Automatisk fundne rejser og årsoverblik',
     momenter_find_new: 'Find nye momenter',
     momenter_finding: 'Leder efter momenter...',
-    momenter_finding_places: 'Leder efter momenter og undersøger steder… {seconds} sek.',
+    momenter_scan_grouping: 'Grupperer billeder efter dato og sted…',
+    momenter_scan_places: 'Undersøger seværdigheder · moment {current} af {total}…',
+    momenter_scan_saving: 'Gemmer og opdaterer momenter…',
+    momenter_possible_place: 'Muligt besøg: {place}',
     momenter_find_done: 'Fandt {n} nye momenter',
     momenter_find_failed: 'Kunne ikke finde momenter',
     momenter_find_zero_debug: 'Ingen nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
@@ -2203,7 +2206,10 @@ const I18N = {
     view_momenter_sub: 'Automatically detected trips and year reviews',
     momenter_find_new: 'Find new moments',
     momenter_finding: 'Looking for moments...',
-    momenter_finding_places: 'Looking for moments and checking places… {seconds} sec.',
+    momenter_scan_grouping: 'Grouping photos by date and place…',
+    momenter_scan_places: 'Checking attractions · moment {current} of {total}…',
+    momenter_scan_saving: 'Saving and updating moments…',
+    momenter_possible_place: 'Possible visit: {place}',
     momenter_find_done: 'Found {n} new moments',
     momenter_find_failed: 'Could not find moments',
     momenter_find_zero_debug: 'No new moments. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
@@ -3752,6 +3758,7 @@ function _momentCardHtml(m, mode) {
       </div>
       <div class="moment-card-body">
         <h4 class="moment-card-title">${escapeHtml(m.title || '')}</h4>
+        ${m.evidence?.attraction?.confidence === 'possible' ? `<div class="moment-card-meta">${escapeHtml(tr('momenter_possible_place').replace('{place}', m.evidence.attraction.name))}</div>` : ''}
         <div class="moment-card-meta">
           <span>${escapeHtml(dateLabel)}</span>
           <span>${escapeHtml(countLabel)}</span>
@@ -3862,8 +3869,13 @@ async function pollMomentDetection() {
       const data = await res.json().catch(() => ({}));
       if (data && data.running) {
         const statusEl = document.getElementById('momentsFindStatus');
-        if (statusEl && Number(data.elapsed_seconds) >= 3) {
-          statusEl.textContent = tr('momenter_finding_places').replace('{seconds}', String(data.elapsed_seconds));
+        if (statusEl) {
+          const progress = data.progress || {};
+          const phase = ['grouping', 'places', 'saving'].includes(progress.phase) ? progress.phase : 'grouping';
+          statusEl.textContent = tr(`momenter_scan_${phase}`)
+            .replace('{current}', String(progress.current || 0))
+            .replace('{total}', String(progress.total || 0));
+          if (Number(data.elapsed_seconds) >= 3) statusEl.textContent += ` (${data.elapsed_seconds} s)`;
         }
         setTimeout(poll, 1500);
         return;

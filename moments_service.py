@@ -13,6 +13,17 @@ from flask_login import login_required, current_user
 from moments_engine import discover, photo_date, country_for_name
 import moment_places
 
+_scan_context = threading.local()
+
+
+def _report_progress(g, progress):
+    token = getattr(_scan_context, 'token', None)
+    if token:
+        with closing(g['get_conn']()) as conn:
+            conn.execute('UPDATE moment_scan_state SET result_json=? WHERE id=1 AND token=? AND running=1',
+                         (json.dumps(progress), token))
+            conn.commit()
+
 
 def migrate(conn):
     columns = {r[1] for r in conn.execute("PRAGMA table_info(moments)")}
@@ -37,6 +48,7 @@ def scan_status(g):
     if row["running"] and not running:
         result = dict(ok=False, error="Søgningen blev afbrudt eller tog for lang tid. Start den igen.")
     return dict(ok=True, running=running, elapsed_seconds=max(0, int(time.time() - row["started"])),
+                progress=(result or dict(phase='grouping')) if running else None,
                 result=None if running else result)
 
 
@@ -52,7 +64,13 @@ def start_scan(g):
         conn.commit()
 
     def run():
-        result = g["_run_moment_detection"]()
+        _scan_context.token = token
+        try:
+            result = g["_run_moment_detection"]()
+        except Exception as error:
+            result = dict(ok=False, error=str(error))
+        finally:
+            del _scan_context.token
         with closing(g["get_conn"]()) as conn:
             conn.execute("UPDATE moment_scan_state SET running=0,result_json=? WHERE id=1 AND token=?", (json.dumps(result), token))
             conn.commit()
@@ -151,8 +169,10 @@ def detect(g):
     rows = g["_dedupe_upload_storage_rows"](rows)
     candidates, stats, _ = discover(rows, min_photos=g["MOMENT_MIN_PHOTOS"],
                                     min_hours=g["MOMENT_MIN_SPAN_HOURS"], gap_hours=g["MOMENT_GAP_HOURS"], manual_home=home)
-    place_stats = moment_places.enrich(candidates, rows, g['get_conn'])
+    place_stats = moment_places.enrich(candidates, rows, g['get_conn'],
+                                       progress=lambda progress: _report_progress(g, progress))
     stats.update({f'poi_{key}': value for key, value in place_stats.items()})
+    _report_progress(g, dict(phase='saving'))
     with closing(g["get_conn"]()) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if settings(conn) != home:

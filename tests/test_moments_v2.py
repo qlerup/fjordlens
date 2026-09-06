@@ -225,6 +225,13 @@ class MomentEditingTests(unittest.TestCase):
             self.assertTrue(self.client.get('/api/moments/detect/status').get_json()['running'])
             self.assertEqual(self.client.post('/api/moments/detect').status_code, 409)
         with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("UPDATE moment_scan_state SET result_json=?", (json.dumps({'phase': 'places', 'current': 2, 'total': 8}),))
+            conn.commit()
+        status = self.client.get('/api/moments/detect/status').get_json()
+        self.assertTrue(status['running'])
+        self.assertEqual(status['progress'], {'phase': 'places', 'current': 2, 'total': 8})
+        self.assertIsNone(status['result'])
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
             conn.execute("UPDATE moment_scan_state SET running=0,result_json=?", (json.dumps({'ok': True, 'created': 2}),))
             conn.commit()
         self.assertEqual(self.client.get('/api/moments/detect/status').get_json()['result']['created'], 2)

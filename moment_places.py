@@ -56,16 +56,17 @@ def lookup(lat, lon, *, deadline=None):
     return sorted(results, key=lambda r: (r['match'] != 'inside', r['category'] not in ('theme_park', 'zoo', 'water_park')))
 
 
-def enrich(candidates, rows, get_conn, budget=18, time_budget=20):
+def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None):
     if os.environ.get('MOMENT_POI_LOOKUP', '1').lower() in ('0', 'false', 'no'):
         return dict(lookups=0, pending=0, failed=0)
     by_id = {r['id']: dict(r) for r in rows}
     stats = dict(lookups=0, pending=0, failed=0)
     deadline = time.monotonic() + time_budget
     consecutive_failures = 0
-    for candidate in sorted(candidates, key=lambda c: c['start_date'], reverse=True):
-        if candidate['kind'] != 'event':
-            continue
+    events = sorted((c for c in candidates if c['kind'] == 'event'), key=lambda c: c['start_date'], reverse=True)
+    for index, candidate in enumerate(events, 1):
+        if progress:
+            progress(dict(phase='places', current=index, total=len(events)))
         points = []
         seen_points = set()
         for pid in candidate['photo_ids']:
