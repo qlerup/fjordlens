@@ -204,6 +204,8 @@ const els = {
   statSelected: document.getElementById("statSelected"),
   statHiddenToggle: document.getElementById("statHiddenToggle"),
   showHiddenToggle: document.getElementById("showHiddenToggle"),
+  statSingleToggle: document.getElementById("statSingleToggle"),
+  showSingleToggle: document.getElementById("showSingleToggle"),
 
   viewTitle: document.getElementById("viewTitle"),
   viewSubtitle: document.getElementById("viewSubtitle"),
@@ -737,8 +739,16 @@ try { window.addEventListener('DOMContentLoaded', ()=>{
   try { initThemeControls(); } catch{}
 }); } catch{}
 
+function visiblePeople(items = state.people || []) {
+  return state.showSinglePeople ? items : items.filter(p => !p.single_find);
+}
+
 // People: toggle 'Vis skjulte'
 try {
+  if (els.showSingleToggle) els.showSingleToggle.addEventListener('change', () => {
+    state.showSinglePeople = !!els.showSingleToggle.checked;
+    if (state.view === 'personer') renderGrid();
+  });
   if (els.showHiddenToggle) {
     els.showHiddenToggle.addEventListener('change', ()=>{
       state.showHiddenPeople = !!els.showHiddenToggle.checked;
@@ -949,6 +959,7 @@ const I18N = {
     stat_favorites: 'Favoritter',
     stat_selected: 'Valgt',
     stat_show_hidden: 'Vis skjulte',
+    stat_show_single: 'Vis enkeltfund',
     empty_people: 'Ingen personer endnu. Upload billeder med ansigter eller kør ansigtsindeksering.',
     empty_no_photos: 'Ingen billeder endnu. Slip filer for at uploade eller scan biblioteket.',
     empty_no_matches: "Ingen billeder matcher filteret endnu. Prøv 'Scan bibliotek'.",
@@ -1814,6 +1825,7 @@ const I18N = {
     stat_favorites: 'Favorites',
     stat_selected: 'Selected',
     stat_show_hidden: 'Show hidden',
+    stat_show_single: 'Show single finds',
     empty_people: 'No people yet. Upload photos with faces or run face indexing.',
     empty_no_photos: 'No photos yet. Drop files to upload or scan the library.',
     empty_no_matches: "No photos match the current filters yet. Try 'Scan library'.",
@@ -2773,6 +2785,7 @@ let state = {
   _peopleCache: { key: '', items: [], ts: 0 },
   personView: { mode: 'list', personId: null, personName: null },
   showHiddenPeople: false,
+  showSinglePeople: false,
   showFaceBoxes: (() => { try { return localStorage.getItem('fl_show_face_boxes') !== '0'; } catch { return true; } })(),
   mapperPath: "",
   mapperFolders: [],
@@ -3511,11 +3524,13 @@ function renderStats() {
   if (els.selectedCountLabel) els.selectedCountLabel.textContent = tr('stat_selected');
   const showHiddenLabel = document.querySelector('label[for="showHiddenToggle"]');
   if (showHiddenLabel) showHiddenLabel.textContent = tr('stat_show_hidden');
+  const singleLabel = document.querySelector('label[for="showSingleToggle"]');
+  if (singleLabel) singleLabel.textContent = tr('stat_show_single');
   if (els.statFavorites) els.statFavorites.style.display = inPeople ? 'none' : '';
   if (els.statSelected) els.statSelected.style.display = inPeople ? 'none' : '';
 
   if (inPeople) {
-    if (els.photoCount) els.photoCount.textContent = Array.isArray(state.people) ? state.people.length : 0;
+    if (els.photoCount) els.photoCount.textContent = visiblePeople().length;
   } else {
     if (els.photoCount) els.photoCount.textContent = state.items.length;
     if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
@@ -5974,7 +5989,8 @@ function reconcilePeopleGrid(newPeople) {
   state.people = list;
   state._peopleCache = { key: (state.showHiddenPeople ? 'hidden:1' : 'hidden:0'), items: list.slice(), ts: Date.now() };
   if (!els.grid || state.view !== 'personer' || state.personView.mode !== 'list') return;
-  const byId = new Map(list.map((p) => [String(p.id), p]));
+  const visible = visiblePeople(list);
+  const byId = new Map(visible.map((p) => [String(p.id), p]));
   const cards = Array.from(els.grid.querySelectorAll('.photo-card[data-person-id]'));
   const seenIds = new Set();
   for (const card of cards) {
@@ -5988,7 +6004,7 @@ function reconcilePeopleGrid(newPeople) {
       wirePersonCardBodyEvents(card, p);
     }
   }
-  const newOnes = list.filter((p) => !seenIds.has(String(p.id)));
+  const newOnes = visible.filter((p) => !seenIds.has(String(p.id)));
   if (newOnes.length) appendPeopleInChunks(newOnes);
   if (state.personView.mode === 'list') renderStats();
 }
@@ -6103,6 +6119,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
     if (!imgLoading) loadNextImg();
   }
   function step() {
+    if (currentEpoch !== peopleRenderEpoch || state.view !== 'personer' || state.personView.mode !== 'list') return;
     const end = Math.min(index + chunkSize, people.length);
     const frag = document.createDocumentFragment();
     for (; index < end; index += 1) {
@@ -6309,6 +6326,8 @@ function appendPhotoLoadMoreButton(id, expectedView) {
 }
 
 function renderGrid() {
+  if (els.statSingleToggle) els.statSingleToggle.style.display = state.view === 'personer' && state.personView.mode === 'list' ? '' : 'none';
+  if (els.showSingleToggle) els.showSingleToggle.checked = !!state.showSinglePeople;
   window.FjordLensFolderPreviews.reset();
   // Toggle fixed-width columns for folder view
   if (els.grid) els.grid.classList.toggle("folders-view", state.view === "mapper");
@@ -6407,8 +6426,10 @@ function renderGrid() {
         btn.style.display = '';
       }
     })();
-    const people = state.personView.mode === 'list' ? (state.people || []) : [];
+    const people = state.personView.mode === 'list' ? visiblePeople() : [];
     if (state.personView.mode === 'list') {
+      peopleRenderEpoch += 1;
+      activeFacePolls = 0;
       if (!people.length) {
         renderEmpty(tr('empty_people'));
         renderStats();
@@ -6417,8 +6438,6 @@ function renderGrid() {
       }
       hideEmpty();
       // New people render epoch: cancel any leftover polling from previous view
-      peopleRenderEpoch += 1;
-      activeFacePolls = 0;
       // Render in chunks to avoid main-thread spikes when many people exist
       appendPeopleInChunks(people);
       renderStats();

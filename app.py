@@ -13647,6 +13647,10 @@ def _row_to_share_public(row: sqlite3.Row, token: str, *, can_download: bool = F
 def api_people_list():
     """List people with face counts and a sample thumbnail."""
     include_hidden = request.args.get("include_hidden") in {"1", "true", "True"}
+    # Exclude every video format, including legacy rows without ext/frame metadata.
+    still_sql = "f.frame_sec IS NULL AND " + " AND ".join(
+        f"LOWER(COALESCE(ph.ext,'')) != '{ext}' AND LOWER(ph.rel_path) NOT LIKE '%{ext}'"
+        for ext in sorted(VIDEO_EXTS))
     with closing(get_conn()) as conn:
         acl_prefixes = _current_user_acl_prefixes(conn)
         def _person_count(item: Dict[str, Any]) -> int:
@@ -13680,16 +13684,16 @@ def api_people_list():
             hidden = bool(int(r["hidden"] or 0))
 
             if acl_prefixes is None:
-                cnt_row = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE person_id=?", (pid,)).fetchone()
+                cnt_row = conn.execute(f"SELECT COUNT(DISTINCT f.photo_id) AS c, COUNT(DISTINCT CASE WHEN {still_sql} THEN f.photo_id END) AS images FROM faces f JOIN photos ph ON ph.id=f.photo_id WHERE f.person_id=?", (pid,)).fetchone()
                 cnt = int(cnt_row["c"] or 0) if cnt_row else 0
                 face_row = conn.execute(
-                    """
+                    f"""
                     SELECT f.id
                     FROM faces f
                     LEFT JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=?
+                    AND ({still_sql})
                     ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
-                            CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                     AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -13717,7 +13721,7 @@ def api_people_list():
                 where_acl = " OR ".join(clauses) if clauses else "0=1"
                 cnt_row = conn.execute(
                     f"""
-                    SELECT COUNT(*) AS c
+                    SELECT COUNT(DISTINCT f.photo_id) AS c, COUNT(DISTINCT CASE WHEN {still_sql} THEN f.photo_id END) AS images
                     FROM faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
@@ -13731,8 +13735,8 @@ def api_people_list():
                     FROM faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
+                    AND ({still_sql})
                     ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
-                            CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
                              CASE
                                WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                     AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -13759,7 +13763,13 @@ def api_people_list():
                 except Exception:
                     pass
             if cnt > 0:
-                people.append({"id": pid, "name": name, "count": cnt, "thumb_url": thumb_url, "hidden": hidden})
+                image_count = int(cnt_row["images"] or 0)
+                unnamed = not str(name or "").strip() or bool(
+                    re.fullmatch(r"(?:Ukendt|Unknown)(?:-\d+)?", str(name).strip(), re.I))
+                people.append({"id": pid, "name": name, "count": cnt,
+                               "thumb_url": thumb_url, "hidden": hidden,
+                               "image_count": image_count,
+                               "single_find": unnamed and image_count <= 1})
 
         if acl_prefixes is None:
             unk = conn.execute(
@@ -13767,13 +13777,13 @@ def api_people_list():
             ).fetchone()
             unk_count = int(unk["c"] or 0) if unk else 0
             frow = conn.execute(
-                """
+                f"""
                 SELECT f.id
                 FROM faces f
                 LEFT JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL
-                ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
-                        CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
+                AND ({still_sql})
+                    ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                 AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
@@ -13814,8 +13824,8 @@ def api_people_list():
                 FROM faces f
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
-                ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
-                        CASE WHEN f.frame_sec IS NOT NULL THEN 1 ELSE 0 END DESC,
+                AND ({still_sql})
+                    ORDER BY CASE WHEN COALESCE(f.confidence, 0) >= 0.70 THEN 1 ELSE 0 END DESC,
                          CASE
                            WHEN COALESCE(ph.width,0) > 0 AND COALESCE(ph.height,0) > 0
                                 AND (1.0 * COALESCE(f.bbox_w,0) * COALESCE(f.bbox_h,0)) / (1.0 * ph.width * ph.height) BETWEEN 0.02 AND 0.45
