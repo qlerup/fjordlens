@@ -93,15 +93,15 @@ class ShareBrowserTests(unittest.TestCase):
             page.get_by_role('dialog',name='Del moment').locator('[data-close]').click()
             page.locator('[data-moment-action="play"]').first.click()
             page.locator('#momentPlayerVideoBtn').click()
-            format_dialog = page.get_by_role('dialog',name='Vælg videoformat')
+            format_dialog = page.get_by_role('dialog',name='Gem video')
             format_dialog.wait_for()
-            self.assertTrue(format_dialog.locator('[value="landscape"]').is_checked())
-            format_dialog.locator('[value="portrait"]').check()
+            self.assertEqual(format_dialog.locator('input[type=radio]').count(),0)
+            self.assertIn('1920 × 1080',format_dialog.inner_text())
             with patch.object(app.threading,'Thread') as thread:
                 thread.return_value.is_alive.return_value = False
                 with page.expect_response(lambda r: '/render-video' in r.url and r.request.method == 'POST') as started:
                     format_dialog.get_by_role('button',name='Lav video',exact=True).click()
-                self.assertEqual(started.value.request.post_data_json,{'format':'portrait'})
+                self.assertEqual(started.value.request.post_data_json,{'format':'landscape'})
                 self.assertEqual(started.value.status,200)
             app.moment_video_threads.pop(moment['id'],None)
             self.assertFalse(errors,errors)

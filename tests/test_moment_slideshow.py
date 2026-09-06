@@ -70,10 +70,11 @@ class SlideshowEditingTests(unittest.TestCase):
         moment = self.make_moment()
         url = f"/api/moments/{moment['id']}/render-video"
         self.assertEqual(self.client.post(url,json={'format':'square'}).status_code,400)
+        self.assertEqual(self.client.post(url,json={'format':'portrait'}).status_code,400)
         self.assertEqual(self.client.post(url,json=['portrait']).status_code,400)
         with patch.object(app.threading, 'Thread') as thread:
             thread.return_value.is_alive.return_value = False
-            for format in ('portrait','landscape'):
+            for format in ('landscape',):
                 response = self.client.post(url,json={'format':format})
                 self.assertEqual(response.status_code,200,response.get_json())
                 self.assertEqual(self.client.get(url+'/status').get_json()['video_format'],format)
@@ -94,6 +95,21 @@ class SlideshowEditingTests(unittest.TestCase):
         self.assertGreater(right[1],250)
         self.assertLessEqual(right[2],640)
         self.assertLessEqual(right[3],360)
+
+    def test_old_portrait_export_is_retired_without_changing_the_timeline(self):
+        import moments_service
+        moment = self.make_moment()
+        script = [dict(type='text',text='Vores dag',duration=6,script_edited=True,
+                       music=dict(track_id='wedding-1',volume=.3))]
+        with app.closing(app.get_conn()) as conn:
+            conn.execute("UPDATE moments SET user_edited=1,script_json=?,video_status='done',video_format='portrait',video_rel_path='old_portrait.mp4' WHERE id=?",
+                         (json.dumps(script),moment['id']))
+            moments_service.migrate(conn)
+            row=conn.execute('SELECT * FROM moments WHERE id=?',(moment['id'],)).fetchone()
+        self.assertEqual(json.loads(row['script_json']),script)
+        self.assertEqual(row['video_format'],'landscape')
+        self.assertEqual(row['video_status'],'none')
+        self.assertIsNone(row['video_rel_path'])
 
     def test_membership_changes_preserve_text_and_drop_removed_media(self):
         script = [dict(type='text',text='Vores egen overskrift',script_edited=True,background_photo_id=1),

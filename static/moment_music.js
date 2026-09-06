@@ -8,8 +8,9 @@ class MomentSoundtrack {
     this.stopped = false;
     this.muted = false;
   }
-  async start() {
+  async start({hold = false} = {}) {
     if (!this.track || this.stopped) return;
+    this.held = hold;
     try {
       const Context = window.AudioContext || window.webkitAudioContext;
       this.context = new Context();
@@ -27,14 +28,19 @@ class MomentSoundtrack {
       this.begin = Math.max(0, this.track.trim_start || 0);
       this.duration = Math.min(this.buffer.duration, this.track.trim_end || this.buffer.duration) - this.begin;
       this.fade = Math.min(this.track.crossfade || 6, this.duration / 3);
-      this.next = this.context.currentTime + .06;
-      this.first = true;
-      this.schedule();
-      this.timer = setInterval(() => this.schedule(), 1000);
-      this.status();
+      if (!this.held) this.play();
     } catch (error) {
       if (!this.stopped) { this.failed = true; this.onStatus('Musik utilgængelig'); }
     }
+  }
+  play() {
+    this.held = false;
+    if (!this.buffer || this.stopped || this.timer) return;
+    this.next = this.context.currentTime + .06;
+    this.first = true;
+    this.schedule();
+    this.timer = setInterval(() => this.schedule(), 1000);
+    this.status();
   }
   schedule() {
     if (this.stopped || !this.buffer) return;
@@ -82,7 +88,7 @@ class MomentSoundtrack {
   }
 }
 
-function momentStartMusic(player) {
+function momentStartMusic(player, options = {}) {
   player.soundtrack?.stop();
   let button = document.getElementById('momentPlayerMusicBtn');
   if (!button) {
@@ -98,5 +104,5 @@ function momentStartMusic(player) {
     button.setAttribute('aria-label', `${label} · ${player.music.title}`);
   });
   button.onclick = () => player.soundtrack.toggle();
-  player.soundtrack.start();
+  player.soundtrack.start(options);
 }

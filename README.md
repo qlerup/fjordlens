@@ -61,9 +61,10 @@ music, public links and MP4 export.
 - The slideshow curates varied highlights across the event, suppresses near-duplicates and plays them in chronological order; the moment retains its complete selection
 - Full-resolution media, animated typography, gentle motion, weather when available and occasional paired portrait photos
 - Video slides play to the end of the clip, independently of the photo duration
-- A full-screen player hides navigation, with responsive captions for portrait phones and widescreen computers/TVs
+- One **16:9 widescreen player** hides navigation and preserves the same layout on phones, computers and TVs
+- Shared moments wait for **Afspil**; phones show a three-second rotation hint before slides and music start. The player requests fullscreen/landscape where supported and otherwise rotates its canvas sideways in an upright phone viewport
 - **Rediger diasshow** opens a saved timeline: reorder slides, adjust photo duration, edit/add text and media, pair photos, drag text in the preview, undo/redo and reset placement
-- **Lav video** offers **PC / TV (1920×1080)** or **Mobil (1080×1920)** MP4 export; exported videos use the saved timeline and music
+- **Lav video** exports **1920×1080 (16:9)** MP4 with the saved timeline and music; phones use the same video, viewed sideways
 
 ### Background music
 
@@ -126,7 +127,7 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 ### Sharing and permissions
 
 - Public share links for folders
-- Public **moment links** open the cinematic player directly, including music, mobile captions and fullscreen controls
+- Public **moment links** open a start page with an **Afspil** button, then the widescreen player with music and fullscreen controls
 - Choose a moment link's lifetime when sharing; Settings → Shared lists it alongside other links with copy, QR, edit, extend, deactivate/reactivate and delete actions
 - Moment links contain a snapshot of the timeline and only allow access to its media and selected soundtrack; revoked/expired links stop working
 - Share permissions (`view`, `download`, `upload`, `manage`)

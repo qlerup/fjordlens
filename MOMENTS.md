@@ -59,8 +59,8 @@ Områdeopslag følger [Overpass QL](https://wiki.openstreetmap.org/wiki/Overpass
 
 Diasshowet bruger billedernes fulde visningsversion først og forudindlæser næste
 billede. Thumbnails bruges kun som reserve, hvis visningsversionen ikke kan hentes.
-**Lav video** tilbyder **PC / TV (1920 × 1080)** og **Mobil (1080 × 1920)**,
-begge med 25 fps, fra originalen eller dens fulde visningskopi. Færdige
+**Lav video** gemmer én bred version i **1920 × 1080 (16:9)** med 25 fps,
+fra originalen eller dens fulde visningskopi. Færdige
 videosegmenter samles uden en ekstra billedkomprimering.
 
 Filmene har en fælles tidslinje med åbningskort, sted-/datokapitler, varierede
@@ -112,10 +112,13 @@ indstil lydstyrken, eller vælg **Ingen musik**. Musikken fortsætter på tværs
 slides med seks sekunders krydsfade ved gentagelse. MP4 bruger samme musikvalg
 og overgang. Musikken har en særskilt [rettighedstekst](music/COPYRIGHT.md).
 
-**Del link** åbner en dialog med valg af levetid. Modtageren ser den samme
-afspiller med fuldskærmsknap; på lodrette telefoner placeres teksten i bunden,
-så den ikke forsvinder uden for billedet. Browseren kan kræve et tryk på
-**Slå musik til** for at starte lyden. Indstillinger → Delte administrerer
+**Del link** åbner en dialog med valg af levetid. Modtageren trykker **Afspil**;
+intet diasshow eller musik starter automatisk. På telefoner vises en rund
+drejepil i tre sekunder før afspilning. Browseren forsøger fuldskærm og liggende
+visning. Hvis det ikke understøttes, drejes selve 16:9-afspilleren på siden,
+mens telefonen holdes lodret. Når telefonen vendes, tilpasses afspilleren uden
+at genstarte momentet. Billeder, tekst og billedpar har samme brede layout
+på alle enheder. Indstillinger → Delte administrerer
 kopiering, QR, udløb, forlængelse, aktivering, deaktivering og sletning.
 Nye links gemmer deres egen version af tidslinje og musikvalg.
 

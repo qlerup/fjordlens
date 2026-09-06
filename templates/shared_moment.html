@@ -3,7 +3,7 @@
 <meta name="referrer" content="no-referrer"><title>{{ title }} · FjordLens</title>
 <link rel="stylesheet" href="{{ url_for('static',filename='styles.css',v=app_build) }}">
 </head><body style="margin:0;background:#102128;color:white">
-<main style="padding:10vh 8vw;text-align:center"><h1>{{ title }}</h1><p id="shareStatus">Henter moment…</p><button id="replayMoment" class="btn">Afspil igen</button></main>
+<main class="shared-moment-start"><span class="mini-label">FJORDLENS · MOMENTER</span><h1>{{ title }}</h1><p id="shareStatus" role="status">Henter moment…</p><button id="replayMoment" class="btn primary" disabled>▶ Afspil</button></main>
 <div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Moment">
 <div class="moment-player-progress" id="momentPlayerProgress"></div><button class="moment-player-close" id="momentPlayerCloseBtn" aria-label="Luk">×</button>
 <div class="moment-player-stage" id="momentPlayerStage"></div>

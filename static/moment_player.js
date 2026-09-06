@@ -1,3 +1,52 @@
+function momentIsPhone() {
+  return (navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches)
+    && Math.min(innerWidth, innerHeight) <= 900;
+}
+
+function momentSizeFrame() {
+  const overlay = els.momentPlayerOverlay;
+  const frame = overlay?.querySelector('.moment-player-frame');
+  if (!frame) return;
+  const rect = overlay.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const sideways = momentIsPhone() && rect.height > rect.width;
+  const availableWidth = sideways ? rect.height : rect.width;
+  const availableHeight = sideways ? rect.width : rect.height;
+  const width = Math.min(availableWidth, availableHeight * 16 / 9);
+  frame.style.width = `${width}px`;
+  frame.style.height = `${width * 9 / 16}px`;
+  frame.classList.toggle('is-sideways', sideways);
+  _momentPlayerMeasureFooter();
+}
+
+// Rotate the inner cinema canvas, not the fullscreen element. This also works
+// on browsers which cannot lock device orientation (including iPhone Safari).
+if (els.momentPlayerOverlay) {
+  const frame = document.createElement('div');
+  frame.className = 'moment-player-frame';
+  frame.append(...els.momentPlayerOverlay.children);
+  els.momentPlayerOverlay.append(frame);
+  new ResizeObserver(momentSizeFrame).observe(els.momentPlayerOverlay);
+  window.addEventListener('resize', momentSizeFrame);
+}
+
+function momentTryLandscape(player) {
+  const overlay = els.momentPlayerOverlay;
+  try {
+    const enter = overlay.requestFullscreen?.() || overlay.webkitRequestFullscreen?.();
+    Promise.resolve(enter).then(async () => {
+      if (state.momentPlayer !== player) {
+        if (document.fullscreenElement === overlay) document.exitFullscreen?.().catch(() => {});
+        else if (document.webkitFullscreenElement === overlay) document.webkitExitFullscreen?.();
+        return;
+      }
+      try { await screen.orientation?.lock?.('landscape'); player.orientationLocked = true; } catch {}
+      if (state.momentPlayer !== player) screen.orientation?.unlock?.();
+      momentSizeFrame();
+    }).catch(() => momentSizeFrame());
+  } catch { momentSizeFrame(); }
+}
+
 function _momentPlayerOpen() {
   if (!els.momentPlayerOverlay) return;
   els.momentPlayerOverlay.classList.remove('hidden');
@@ -10,10 +59,29 @@ function _momentPlayerOpen() {
     els.momentPlayerVideoBtn.textContent = tr(state.momentPlayer?.videoUrl ? 'momenter_video_download' : 'momenter_make_video');
     els.momentPlayerVideoBtn.disabled = false;
   }
-  if (state.momentPlayer) momentStartMusic(state.momentPlayer);
+  const player = state.momentPlayer;
+  const phone = momentIsPhone();
+  if (player) momentStartMusic(player, {hold:phone});
+  momentSizeFrame();
   _momentPlayerMeasureFooter();
   _momentPlayerBuildProgress();
-  _momentPlayerRenderSlide(0);
+  if (phone && player) {
+    player.preparing = true;
+    els.momentPlayerOverlay.classList.add('is-preparing');
+    const guide = document.createElement('div');
+    guide.className = 'moment-rotate-guide';
+    guide.innerHTML = '<div role="status"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M78 32A32 32 0 1 0 82 56M78 14v20H58"/></svg><h2>Drej telefonen</h2><p>Diasshowet starter om 3 sekunder</p></div><button class="btn" type="button">Annuller</button>';
+    guide.querySelector('button').onclick = _momentPlayerClose;
+    els.momentPlayerOverlay.append(guide);
+    momentTryLandscape(player);
+    player.startTimer = setTimeout(() => {
+      if (state.momentPlayer !== player) return;
+      guide.remove(); player.preparing = false;
+      els.momentPlayerOverlay.classList.remove('is-preparing');
+      momentSizeFrame(); player.soundtrack?.play();
+      _momentPlayerRenderSlide(0);
+    }, 3000);
+  } else _momentPlayerRenderSlide(0);
 }
 
 function _momentPlayerBuildProgress() {
@@ -182,7 +250,7 @@ function _momentPlayerRenderSlide(index) {
 
 function _momentPlayerMeasureFooter() {
   const footer = els.momentPlayerOverlay?.querySelector('.moment-player-footer');
-  if (footer) els.momentPlayerOverlay.style.setProperty('--moment-footer-height', `${footer.getBoundingClientRect().height}px`);
+  if (footer) els.momentPlayerOverlay.style.setProperty('--moment-footer-height', `${footer.offsetHeight}px`);
 }
 
 const momentPlayerFooter = els.momentPlayerOverlay?.querySelector('.moment-player-footer');
@@ -242,11 +310,15 @@ function momentSlideText(item) {
 
 function _momentPlayerAdvance(delta) {
   const p = state.momentPlayer;
-  if (!p) return;
+  if (!p || p.preparing) return;
   _momentPlayerRenderSlide(p.index + delta);
 }
 
 function _momentPlayerClose() {
+  clearTimeout(state.momentPlayer?.startTimer);
+  if (state.momentPlayer?.orientationLocked) { try { screen.orientation?.unlock?.(); } catch {} }
+  els.momentPlayerOverlay?.classList.remove('is-preparing');
+  els.momentPlayerOverlay?.querySelector('.moment-rotate-guide')?.remove();
   if (document.fullscreenElement === els.momentPlayerOverlay) document.exitFullscreen?.().catch(() => {});
   else if (document.webkitFullscreenElement === els.momentPlayerOverlay) document.webkitExitFullscreen?.();
   state.momentPlayer?.soundtrack?.stop();
@@ -290,11 +362,9 @@ async function momentVideoFormatDialog() {
   els.momentPlayerStage.querySelectorAll('video').forEach(v => v.pause());
   const dialog = document.createElement('dialog');
   dialog.className = 'moment-video-dialog';
-  dialog.setAttribute('aria-label', 'Vælg videoformat');
-  dialog.innerHTML = `<h2>Lav video</h2><p>Vælg, hvor du vil se eller dele din MP4.</p><div class="moment-video-formats"><label><input type="radio" name="videoFormat" value="portrait"><span class="video-format-icon portrait"></span><strong>Mobil</strong><span>Lodret · 9:16</span><small>1080 × 1920</small></label><label><input type="radio" name="videoFormat" value="landscape"><span class="video-format-icon landscape"></span><strong>PC / TV</strong><span>Bredformat · 16:9</span><small>1920 × 1080</small></label></div><p role="status" data-format-status>Henter videostatus…</p><div class="slideshow-actions"><button class="btn ghost" data-cancel>Annuller</button><button class="btn primary" data-create disabled>Lav video</button></div>`;
+  dialog.setAttribute('aria-label', 'Gem video');
+  dialog.innerHTML = `<h2>Gem video</h2><p>Diasshowet gemmes i bredformat · 16:9 · 1920 × 1080, med din valgte musik. Se det på computer, TV eller med telefonen på siden.</p><p role="status" data-format-status>Henter videostatus…</p><div class="slideshow-actions"><button class="btn ghost" data-cancel>Annuller</button><button class="btn primary" data-create disabled>Lav video</button></div>`;
   els.momentPlayerOverlay.append(dialog);
-  const initial = window.matchMedia('(orientation: portrait)').matches ? 'portrait' : 'landscape';
-  dialog.querySelector(`[value="${initial}"]`).checked = true;
   player.soundtrack?.pause();
   const close = () => { dialog.close(); dialog.remove(); if (state.momentPlayer === player) { player.soundtrack?.resume(); _momentPlayerRenderSlide(player.index); } };
   dialog.querySelector('[data-cancel]').onclick = close;
@@ -302,14 +372,13 @@ async function momentVideoFormatDialog() {
   dialog.showModal();
   let cached = null;
   const create = dialog.querySelector('[data-create]'), status = dialog.querySelector('[data-format-status]');
-  const format = () => dialog.querySelector('input:checked').value;
+  const format = () => 'landscape';
   const update = () => {
     const ready = cached?.video_status === 'done' && cached.video_format === format() && cached.video_url;
     create.textContent = ready ? 'Hent MP4' : 'Lav video';
     create.disabled = ['queued','running','rendering'].includes(cached?.video_status);
-    status.textContent = create.disabled ? 'Der bliver allerede lavet en video. Prøv igen, når den er færdig.' : ready ? 'Din video i dette format er klar.' : 'Tekst og billeder tilpasses det valgte format. Videoklip afspilles til ende.';
+    status.textContent = create.disabled ? 'Der bliver allerede lavet en video. Prøv igen, når den er færdig.' : ready ? 'Din video i dette format er klar.' : 'Videoen bruger samme brede diasshow. Videoklip afspilles til ende.';
   };
-  dialog.querySelectorAll('input').forEach(radio => radio.onchange = update);
   create.onclick = () => {
     const choice = format();
     if (cached?.video_status === 'done' && cached.video_format === choice && cached.video_url) {

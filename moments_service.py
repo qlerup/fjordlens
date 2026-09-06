@@ -63,6 +63,8 @@ def migrate(conn):
     moment_titles.upgrade(conn)
     import moment_music
     moment_music.upgrade(conn)
+    conn.execute("""UPDATE moments SET video_format='landscape',video_status='none',video_rel_path=NULL
+        WHERE video_format='portrait' AND COALESCE(video_status,'none') NOT IN ('queued','running','rendering')""")
 
 
 def scan_status(g):

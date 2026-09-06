@@ -7127,8 +7127,7 @@ def _render_moment_video(moment_id: int) -> None:
             for r in conn.execute(f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids).fetchall():
                 photos_by_id[int(r["id"])] = r
 
-    portrait = row['video_format'] == 'portrait'
-    video_size = (MOMENT_VIDEO_HEIGHT, MOMENT_VIDEO_WIDTH) if portrait else (MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT)
+    video_size = (MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT)
     work_dir = Path(tempfile.mkdtemp(prefix=f"moment_{moment_id}_"))
     try:
         segment_paths: list[Path] = []
@@ -7170,7 +7169,7 @@ def _render_moment_video(moment_id: int) -> None:
 
         dest_dir = CONVERT_DIR / "moments"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"moment_{moment_id}{'_portrait' if portrait else ''}.mp4"
+        dest = dest_dir / f"moment_{moment_id}.mp4"
         tmp = dest.with_suffix(dest.suffix + ".tmp")
         cmd = [
             ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
@@ -7215,8 +7214,8 @@ moment_video_threads: Dict[int, threading.Thread] = {}
 def api_moment_render_video(moment_id: int):
     body = request.get_json(silent=True) or {}
     video_format = body.get('format', 'landscape') if isinstance(body, dict) else None
-    if video_format not in ('landscape', 'portrait'):
-        return jsonify(ok=False, error='Vælg Mobil eller PC / TV.'), 400
+    if video_format != 'landscape':
+        return jsonify(ok=False, error='Videoer gemmes i bredformat (16:9).'), 400
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
     if not moments_service.can_view(globals(), row):

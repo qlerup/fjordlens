@@ -4502,7 +4502,7 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
 @keyframes cinemaDrift1 { from { transform: scale(1.06); } to { transform: scale(1.02); } }
 @keyframes cinemaDrift2 { from { transform: scale(1.04) translateX(-1%); } to { transform: scale(1.07) translateX(1%); } }
 @keyframes cinemaDrift3 { from { transform: scale(1.07) translateX(1%); } to { transform: scale(1.03) translateX(-1%); } }
-@media (max-width: 600px) { .cinema-type { padding-bottom: 24%; } .cinema-heading { max-width: 95%; } .cinema-eyebrow { margin-bottom: 12px; } .cinema-detail { margin-top: 15px; } }
+
 @media (prefers-reduced-motion: reduce) { .cinema-slide, .cinema-slide .cinema-media, .cinema-heading, .cinema-eyebrow, .cinema-detail { animation: none !important; } .cinema-slide.cinema-leaving { transition: none; } }
 
 /* Portraits leave room for a quiet editorial column; wide images keep small captions. */
@@ -4579,33 +4579,9 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
 .slideshow-library-photo { display: flex; flex-direction: column; border-radius: 9px; white-space: normal; padding: 5px; }
 .slideshow-library-photo img { width: 100%; height: 95px; object-fit: cover; border-radius: 5px; }
 .slideshow-library-photo small { font-size: 10px; }
-@container (max-width: 600px) {
-  .cinema-photo.cinema-contain .cinema-type, .cinema-video.cinema-contain .cinema-type { inset: auto 0 0; width: 100%; padding: 6%; align-items: flex-start; text-align: left; background: linear-gradient(transparent, #071217bb); }
-  .cinema-photo.cinema-contain.cinema-right .cinema-type, .cinema-video.cinema-contain.cinema-right .cinema-type { inset: auto 0 0; text-align: left; }
-  .cinema-photo.cinema-contain .cinema-heading, .cinema-video.cinema-contain .cinema-heading { font-size: 4cqw; }
-  .cinema-weather { font-size: 2cqw; margin-top: 5px; }
-}
-/* In a portrait phone viewport, captions sit over the bottom of the photograph,
-   above the player controls. This also applies to previously created share links. */
-@media (max-width: 900px) and (orientation: portrait) {
-  .moment-player-footer { padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
-  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-type {
-    inset: auto 0 0; width: 100%; max-height: calc(100% - 60px);
-    padding: 36px 7% calc(var(--moment-footer-height, 64px) + 22px);
-    justify-content: flex-end; align-items: flex-start; text-align: left;
-    background: linear-gradient(transparent, rgba(7, 14, 18, .68) 38%, rgba(7, 14, 18, .88));
-  }
-  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-heading {
-    max-width: 100%; font-size: clamp(22px, 6vw, 32px); line-height: 1.15;
-  }
-  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-eyebrow {
-    max-width: 100%; font-size: 12px; margin-bottom: 10px; letter-spacing: .15em;
-  }
-  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-detail,
-  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-weather {
-    max-width: 100%; font-size: 14px; line-height: 1.4; margin-top: 10px;
-  }
-}
+
+
+
 @media (max-width: 800px) {
   .slideshow-editor { padding: 15px; }
   .slideshow-editor header { align-items: flex-start; flex-direction: column; }
@@ -4633,12 +4609,7 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
 .slideshow-preview .cinema-type.is-dragging, .slideshow-preview .cinema-type.is-dragging > div { cursor: grabbing; }
 .slideshow-preview .cinema-type:is(:hover,:focus-visible) > div { outline: 1px dashed #52d8c9aa; outline-offset: 3px; }
 .slideshow-placement { grid-column: 1/-1; }
-@media (max-width: 900px) and (orientation: portrait) {
-  .moment-player-stage .cinema-slide .cinema-type.cinema-positioned {
-    max-width: 86%; max-height: calc(100% - var(--moment-footer-height, 64px) - 22px);
-    top: calc((100% - var(--moment-footer-height, 64px) - 22px) * var(--text-y)) !important;
-  }
-}
+
 
 .moment-player:fullscreen { width: 100%; height: 100%; background: #10232a; }
 .moment-video-dialog { width: min(520px, 90vw); box-sizing: border-box; border: 1px solid #294952; border-radius: 18px; padding: 26px; color: #e6eff1; background: #0e2027; }
@@ -4654,10 +4625,7 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
 .video-format-icon { display: block; border: 2px solid #ddc29a; border-radius: 5px; margin: 5px 0; box-sizing: border-box; }
 .video-format-icon.portrait { width: 34px; height: 60px; }
 .video-format-icon.landscape { width: 82px; height: 46px; margin: 12px 0; }
-@media (max-width: 900px) and (orientation: portrait) {
-  .moment-player-stage .cinema-pair .cinema-media { inset: 3% auto auto 7%; width: 86%; height: 37%; }
-  .moment-player-stage .cinema-pair .cinema-second { top: 43%; }
-}
+
 
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
@@ -5321,3 +5289,38 @@ dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
 .slideshow-music input[type="range"] { accent-color:#2dd4bf; padding:4px 0; }
 .moment-player-footer .btn { border:1px solid #ffffff2b; border-radius:24px; background:#102128d9; color:#eef6f7; padding:9px 14px; }
 .moment-player-footer .btn:hover { background:#24434b; }
+
+/* One 16:9 canvas, rotated inside the viewport on upright touch devices. */
+.moment-player-frame { position:absolute; top:50%; left:50%; display:flex; flex-direction:column; transform:translate(-50%,-50%); transform-origin:center; overflow:hidden; background:#10232a; }
+.moment-player-frame.is-sideways { transform:translate(-50%,-50%) rotate(90deg); }
+.moment-player-frame .moment-player-title { flex:1 1 100px; min-width:0; font-size:12px; }
+.moment-player-frame .moment-player-footer { flex-wrap:nowrap; padding:8px 12px; gap:8px; }
+.moment-player-frame .moment-player-footer .btn { flex-shrink:0; font-size:12px; padding:7px 11px; }
+.moment-player-frame .cinema-heading { font-size:clamp(28px,5.2cqw,86px); }
+.moment-player-frame .cinema-eyebrow { font-size:clamp(10px,1.2cqw,19px); margin-bottom:2cqw; }
+.moment-player-frame .cinema-detail { font-size:clamp(11px,1.35cqw,22px); margin-top:2.4cqw; }
+.moment-player-frame :is(.cinema-intro,.cinema-chapter) .cinema-heading { font-size:clamp(30px,6.5cqw,112px); }
+.moment-player-frame :is(.cinema-quote,.cinema-outro) .cinema-heading { font-size:clamp(26px,4.5cqw,76px); }
+.moment-player-frame :is(.cinema-photo,.cinema-video).cinema-contain .cinema-heading { font-size:clamp(18px,3.1cqw,68px); }
+.moment-player-frame :is(.cinema-photo,.cinema-video):not(.cinema-contain) .cinema-heading,
+.moment-player-frame .cinema-pair .cinema-heading { font-size:clamp(12px,1.5cqw,28px); }
+.moment-player-frame :is(.cinema-photo,.cinema-video):not(.cinema-contain) .cinema-type,
+.moment-player-frame .cinema-pair .cinema-type { padding-bottom:calc(var(--moment-footer-height,44px) + 8px); }
+.moment-player-frame :is(.cinema-photo,.cinema-video):not(.cinema-contain) .cinema-detail,
+.moment-player-frame .cinema-pair .cinema-detail { font-size:clamp(10px,.9cqw,16px); margin-top:5px; }
+.moment-player-frame :is(.cinema-photo,.cinema-video):not(.cinema-contain) .cinema-eyebrow,
+.moment-player-frame .cinema-pair .cinema-eyebrow { font-size:clamp(9px,.8cqw,14px); margin-bottom:5px; }
+.moment-player.is-preparing .moment-player-frame { visibility:hidden; }
+.moment-rotate-guide { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; text-align:center; color:#eef6f7; background:radial-gradient(ellipse at center,#183d42,#07151c); z-index:5; padding:24px; }
+.moment-rotate-guide svg { width:96px; height:96px; fill:none; stroke:#59ddcb; stroke-width:4; stroke-linecap:round; stroke-linejoin:round; animation:momentRotateHint 1.4s ease-in-out infinite; }
+.moment-rotate-guide h2 { font:400 28px Georgia,serif; margin:24px 0 12px; }
+.moment-rotate-guide p { color:#abc3c6; font-size:14px; }
+.moment-rotate-guide .btn { border:1px solid #36545d; border-radius:24px; padding:10px 22px; background:#142e36; color:#e6eff1; }
+@keyframes momentRotateHint { from { transform:rotate(-45deg); opacity:.5; } to { transform:rotate(45deg); opacity:1; } }
+@media(prefers-reduced-motion:reduce) { .moment-rotate-guide svg { animation:none; transform:rotate(45deg); } }
+.shared-moment-start { min-height:100dvh; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8vh 8vw; text-align:center; background:radial-gradient(ellipse at top,#153d42,#08171e 75%); }
+.shared-moment-start h1 { font:400 clamp(28px,5vw,64px)/1.15 Georgia,serif; max-width:900px; color:#fff9ef; }
+.shared-moment-start p { color:#aac1c6; max-width:460px; line-height:1.6; }
+.shared-moment-start .mini-label { color:#ddc29a; letter-spacing:.18em; font-size:11px; }
+.shared-moment-start .btn { margin-top:24px; background:#46dbc5; color:#062720; border:0; border-radius:30px; padding:16px 36px; font-size:17px; cursor:pointer; }
+.shared-moment-start .btn:disabled { opacity:.4; cursor:wait; }
