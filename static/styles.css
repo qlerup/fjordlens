@@ -4585,6 +4585,27 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
   .cinema-photo.cinema-contain .cinema-heading, .cinema-video.cinema-contain .cinema-heading { font-size: 4cqw; }
   .cinema-weather { font-size: 2cqw; margin-top: 5px; }
 }
+/* In a portrait phone viewport, captions sit over the bottom of the photograph,
+   above the player controls. This also applies to previously created share links. */
+@media (max-width: 900px) and (orientation: portrait) {
+  .moment-player-footer { padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-type {
+    inset: auto 0 0; width: 100%; max-height: calc(100% - 60px);
+    padding: 36px 7% calc(var(--moment-footer-height, 64px) + 22px);
+    justify-content: flex-end; align-items: flex-start; text-align: left;
+    background: linear-gradient(transparent, rgba(7, 14, 18, .68) 38%, rgba(7, 14, 18, .88));
+  }
+  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-heading {
+    max-width: 100%; font-size: clamp(22px, 6vw, 32px); line-height: 1.15;
+  }
+  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-eyebrow {
+    max-width: 100%; font-size: 12px; margin-bottom: 10px; letter-spacing: .15em;
+  }
+  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-detail,
+  .moment-player-stage .cinema-slide:is(.cinema-photo, .cinema-video, .cinema-pair) .cinema-weather {
+    max-width: 100%; font-size: 14px; line-height: 1.4; margin-top: 10px;
+  }
+}
 @media (max-width: 800px) {
   .slideshow-editor { padding: 15px; }
   .slideshow-editor header { align-items: flex-start; flex-direction: column; }

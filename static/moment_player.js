@@ -10,6 +10,7 @@ function _momentPlayerOpen() {
     els.momentPlayerVideoBtn.textContent = tr(state.momentPlayer?.videoUrl ? 'momenter_video_download' : 'momenter_make_video');
     els.momentPlayerVideoBtn.disabled = false;
   }
+  _momentPlayerMeasureFooter();
   _momentPlayerBuildProgress();
   _momentPlayerRenderSlide(0);
 }
@@ -176,6 +177,16 @@ function _momentPlayerRenderSlide(index) {
     loadingTimeout = setTimeout(ready, 10000);
     media.src = src;
   } else ready();
+}
+
+function _momentPlayerMeasureFooter() {
+  const footer = els.momentPlayerOverlay?.querySelector('.moment-player-footer');
+  if (footer) els.momentPlayerOverlay.style.setProperty('--moment-footer-height', `${footer.getBoundingClientRect().height}px`);
+}
+
+const momentPlayerFooter = els.momentPlayerOverlay?.querySelector('.moment-player-footer');
+if (momentPlayerFooter && typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(_momentPlayerMeasureFooter).observe(momentPlayerFooter);
 }
 
 function momentSlideText(item) {

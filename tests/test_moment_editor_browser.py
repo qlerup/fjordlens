@@ -35,7 +35,7 @@ class EditorBrowserTests(unittest.TestCase):
                 image.save(path)
                 image.resize((125,200)).save(self.thumbs / f'{pid}.jpg')
                 conn.execute("UPDATE photos SET ext='.jpg',width=500,height=800,thumb_name=? WHERE id=?",(f'{pid}.jpg',pid))
-            script = [dict(type='photo',photo_id=pid,duration=5.2,fit='contain',layout='right',label='Sommer',detail='12. juli 2024',design_version=moment_cinema.VERSION) for pid in ids]
+            script = [dict(type='photo',photo_id=pid,duration=5.2,fit='contain',layout='right',label='Sommer',eyebrow='DANMARK',weather='Sol · 22 °C',detail='12. juli 2024',design_version=moment_cinema.VERSION) for pid in ids]
             conn.execute('UPDATE moments SET script_json=? WHERE id=?',(json.dumps(script),moment['id']))
             conn.commit()
         harness = '''<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css">
@@ -85,5 +85,26 @@ class EditorBrowserTests(unittest.TestCase):
             self.assertFalse(page.locator('#momentPlayerVideoBtn').is_visible())
             page.get_by_role('button',name='Luk afspilning',exact=True).click()
             self.assertTrue(page.locator('.slideshow-editor').is_visible())
+            # Use the real anonymous share page, with the phone held upright.
+            link = self.client.post(f"/api/moments/{moment['id']}/share").get_json()['url']
+            public_client = app.app.test_client()
+            self.client = public_client
+            for width,height in ((390,844),(320,568)):
+                page.set_viewport_size(dict(width=width,height=height))
+                page.goto('http://fjordlens.test'+link)
+                heading = page.locator('#momentPlayerStage .cinema-heading').last
+                heading.wait_for()
+                page.emulate_media(reduced_motion='reduce')
+                text = page.locator('#momentPlayerStage .cinema-type').last.bounding_box()
+                self.assertGreater(text['width'],width*.9)
+                self.assertGreater(text['y'],height*.4)
+                self.assertGreaterEqual(heading.evaluate('e => parseFloat(getComputedStyle(e).fontSize)'),22)
+                weather = page.locator('#momentPlayerStage .cinema-weather').last.bounding_box()
+                footer = page.locator('.moment-player-footer').bounding_box()
+                self.assertLess(weather['y']+weather['height'],footer['y'])
+                if screenshot and width == 390:
+                    page.screenshot(path=str(Path(screenshot).with_name('fjordlens-mobile-share.png')),animations='disabled')
+            page.set_viewport_size(dict(width=844,height=390))
+            self.assertLess(page.locator('#momentPlayerStage .cinema-type').last.bounding_box()['width'],844*.4)
             self.assertFalse(errors,errors)
             browser.close()
