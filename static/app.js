@@ -1342,6 +1342,7 @@ const I18N = {
     view_momenter_sub: 'Automatisk fundne rejser og årsoverblik',
     momenter_find_new: 'Find nye momenter',
     momenter_finding: 'Leder efter momenter...',
+    momenter_finding_places: 'Leder efter momenter og undersøger steder… {seconds} sek.',
     momenter_find_done: 'Fandt {n} nye momenter',
     momenter_find_failed: 'Kunne ikke finde momenter',
     momenter_find_zero_debug: 'Ingen nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
@@ -2202,6 +2203,7 @@ const I18N = {
     view_momenter_sub: 'Automatically detected trips and year reviews',
     momenter_find_new: 'Find new moments',
     momenter_finding: 'Looking for moments...',
+    momenter_finding_places: 'Looking for moments and checking places… {seconds} sec.',
     momenter_find_done: 'Found {n} new moments',
     momenter_find_failed: 'Could not find moments',
     momenter_find_zero_debug: 'No new moments. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
@@ -3859,6 +3861,10 @@ async function pollMomentDetection() {
       const res = await fetch('/api/moments/detect/status');
       const data = await res.json().catch(() => ({}));
       if (data && data.running) {
+        const statusEl = document.getElementById('momentsFindStatus');
+        if (statusEl && Number(data.elapsed_seconds) >= 3) {
+          statusEl.textContent = tr('momenter_finding_places').replace('{seconds}', String(data.elapsed_seconds));
+        }
         setTimeout(poll, 1500);
         return;
       }

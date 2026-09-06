@@ -17,7 +17,7 @@ ENDPOINT = 'https://overpass-api.de/api/interpreter'
 FALLBACK_ENDPOINT = 'https://overpass.private.coffee/api/interpreter'
 
 
-def lookup(lat, lon):
+def lookup(lat, lon, *, deadline=None):
     lat, lon = float(lat), float(lon)
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return []
@@ -30,7 +30,10 @@ def lookup(lat, lon):
     payload = None
     for endpoint in (ENDPOINT, FALLBACK_ENDPOINT):
         try:
-            response = requests.post(endpoint, data={'data': query}, timeout=(5, 15),
+            remaining = deadline - time.monotonic() if deadline is not None else 20
+            if remaining <= 0:
+                raise requests.Timeout('Attraction lookup time budget exhausted')
+            response = requests.post(endpoint, data={'data': query}, timeout=(min(2, remaining / 2), min(10, remaining / 2)),
                                      headers={'User-Agent': 'FjordLens/1.0 (moment place lookup; github.com/qlerup/fjordlens)'})
             response.raise_for_status()
             payload = response.json()
@@ -53,11 +56,13 @@ def lookup(lat, lon):
     return sorted(results, key=lambda r: (r['match'] != 'inside', r['category'] not in ('theme_park', 'zoo', 'water_park')))
 
 
-def enrich(candidates, rows, get_conn, budget=18):
+def enrich(candidates, rows, get_conn, budget=18, time_budget=20):
     if os.environ.get('MOMENT_POI_LOOKUP', '1').lower() in ('0', 'false', 'no'):
         return dict(lookups=0, pending=0, failed=0)
     by_id = {r['id']: dict(r) for r in rows}
     stats = dict(lookups=0, pending=0, failed=0)
+    deadline = time.monotonic() + time_budget
+    consecutive_failures = 0
     for candidate in sorted(candidates, key=lambda c: c['start_date'], reverse=True):
         if candidate['kind'] != 'event':
             continue
@@ -86,15 +91,17 @@ def enrich(candidates, rows, get_conn, budget=18):
                     unresolved = True
                     stats['failed'] += 1
                     continue
-            elif stats['lookups'] < budget:
+            elif stats['lookups'] < budget and time.monotonic() < deadline and consecutive_failures < 2:
                 if stats['lookups']:
                     time.sleep(1)
                 stats['lookups'] += 1
                 try:
-                    result = lookup(lat, lon)
+                    result = lookup(lat, lon, deadline=deadline)
+                    consecutive_failures = 0
                     ttl = 30*86400 if result else 7*86400
                 except (requests.RequestException, ValueError, KeyError, TypeError):
                     stats['failed'] += 1
+                    consecutive_failures += 1
                     result, ttl = None, 3600
                     unresolved = True
                 with closing(get_conn()) as conn:

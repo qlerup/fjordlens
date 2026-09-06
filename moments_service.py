@@ -36,7 +36,8 @@ def scan_status(g):
     result = json.loads(row["result_json"]) if row["result_json"] else None
     if row["running"] and not running:
         result = dict(ok=False, error="Søgningen blev afbrudt eller tog for lang tid. Start den igen.")
-    return dict(ok=True, running=running, result=None if running else result)
+    return dict(ok=True, running=running, elapsed_seconds=max(0, int(time.time() - row["started"])),
+                result=None if running else result)
 
 
 def start_scan(g):
