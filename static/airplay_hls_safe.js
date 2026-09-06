@@ -98,7 +98,7 @@
         await plugin.start({url:String(state.stream_url || ''), title:String(session.title || 'FjordLens')});
         return;
       }
-      window.location.href = String(state.web_player_url || `/airplay/hls/${encodeURIComponent(session.token)}/play`);
+      window.location.href = `/airplay/control/${encodeURIComponent(session.token)}/play`;
     } catch (error) {
       setError(error?.message || error);
     }
