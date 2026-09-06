@@ -6457,6 +6457,20 @@ function renderGrid() {
       backLabel.textContent = `← ${state.personView.personName || 'Person'}`;
       backLabel.addEventListener('click', ()=>{ state.personView = { mode:'list', personId:null, personName:null }; loadPeople(); });
       head.appendChild(backLabel);
+      if (state.personView.personId !== 'unknown') {
+        const person = (state.people || []).find(p => String(p.id) === String(state.personView.personId))
+          || { id: state.personView.personId, name: state.personView.personName };
+        const renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'btn tiny';
+        renameBtn.textContent = tr('person_btn_rename');
+        renameBtn.addEventListener('click', e => {
+          e.preventDefault();
+          e.stopPropagation();
+          openPersonRenameMenu(e.currentTarget, person);
+        });
+        head.appendChild(renameBtn);
+      }
       const boxToggleWrap = document.createElement('label');
       boxToggleWrap.style.display = 'inline-flex';
       boxToggleWrap.style.alignItems = 'center';
@@ -7039,6 +7053,10 @@ async function renameOrMergePerson(pid, name) {
     closePersonRenameMenu();
     // Retrain this person's centroid, then re-match unknown faces/clusters against
     // the now-improved centroids, so matching keeps getting better for this person.
+    if (state.view === 'personer' && state.personView.mode === 'photos'
+        && String(state.personView.personId) === String(pid)) {
+      await loadPersonPhotos(d.to_id || pid, d.name || nv);
+    }
     try {
       const targetId = Number(d.to_id || pid);
       if (Number.isFinite(targetId)) {
