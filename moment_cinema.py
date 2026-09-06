@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
 from moments_engine import photo_date, location, DA_COUNTRIES
 
-VERSION = 3
+VERSION = 4
 MONTHS = ('januar februar marts april maj juni juli august september oktober november december').split()
 
 

@@ -114,37 +114,49 @@ def _source(row):
 
 
 def curate(rows, limit):
-    """Round-robin days/places, favor favorites and avoid nearby hash duplicates."""
-    rows = [dict(r) for r in rows]
-    if limit <= 0:
+    """Spread highlights across elapsed time, suppress bursts, then play chronologically."""
+    import random
+    rows = sorted((dict(r) for r in rows), key=lambda r: (photo_date(r) or datetime.min, r['id']))
+    if limit <= 0 or not rows:
         return []
-    groups = defaultdict(list)
-    for r in sorted(rows, key=lambda r: photo_date(r) or datetime.min):
-        dt = photo_date(r)
-        groups[(dt.date() if dt else None, r.get("gps_name") or "")].append(r)
-    groups = {key: deque(sorted(group, key=lambda r: not r.get("favorite"))) for key, group in groups.items()}
-    chosen, hashes = [], []
-    while groups and len(chosen) < limit:
-        for key in list(groups):
-            group = groups[key]
-            while group:
-                r = group.popleft()
-                phash = r.get("phash_dct") or r.get("phash")
-                try:
-                    value = int(phash, 16) if phash else None
-                except (ValueError, TypeError):
-                    value = None
-                if value is not None and any((value ^ h).bit_count() <= 4 for h in hashes):
-                    continue
-                chosen.append(r)
-                if value is not None:
-                    hashes.append(value)
-                break
-            if not group:
-                del groups[key]
-            if len(chosen) >= limit:
-                break
-    return sorted(chosen, key=lambda r: photo_date(r) or datetime.min)
+    rng = random.Random(','.join(str(r['id']) for r in rows))
+    dates = [photo_date(r) for r in rows]
+    origin = next((d for d in dates if d), datetime.min)
+    times = [(d-origin).total_seconds() if d else float(i) for i,d in enumerate(dates)]
+    hashes = []
+    for row in rows:
+        try:
+            raw = row.get('phash_dct') or row.get('phash')
+            hashes.append(int(raw, 16) if raw else None)
+        except (ValueError, TypeError):
+            hashes.append(None)
+    chosen = []
+    def distinct(i):
+        for j in chosen:
+            if hashes[i] is not None and hashes[j] is not None:
+                difference = (hashes[i] ^ hashes[j]).bit_count()
+                if difference <= 6 or (difference <= 10 and dates[i] and dates[j] and abs(times[i]-times[j]) < 300):
+                    return False
+            # Rapid sequences should not dominate even when visual hashes are missing.
+            if dates[i] and dates[j] and abs(times[i]-times[j]) < 20:
+                return False
+        return True
+    chosen.append(0)
+    if limit > 1 and len(rows) > 1 and distinct(len(rows)-1):
+        chosen.append(len(rows)-1)
+    remaining = set(range(len(rows))) - set(chosen)
+    while remaining and len(chosen) < limit:
+        remaining = {i for i in remaining if distinct(i)}
+        if not remaining:
+            break
+        distances = {i: min(abs(times[i]-times[j]) for j in chosen) for i in remaining}
+        widest = max(distances.values())
+        # Random choice among similarly well-spaced candidates; favorites get extra weight.
+        pool = sorted(i for i in remaining if distances[i] >= widest * .8)
+        picked = rng.choices(pool, weights=[3 if rows[i].get('favorite') else 1 for i in pool], k=1)[0]
+        chosen.append(picked)
+        remaining.remove(picked)
+    return [rows[i] for i in sorted(chosen)]
 
 
 def combine_day_segments(segments):
