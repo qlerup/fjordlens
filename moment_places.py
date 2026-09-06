@@ -10,6 +10,7 @@ from collections import Counter
 from contextlib import closing
 
 import requests
+import attraction_catalog
 
 from moments_engine import distance
 
@@ -32,8 +33,8 @@ def lookup(lat, lon, *, deadline=None):
         is_in({lat:.5f},{lon:.5f})->.inside;
         (area.inside["tourism"~"^(theme_park|zoo|museum|aquarium|attraction)$"]["name"];
          area.inside["leisure"="water_park"]["name"];);out tags;
-        (node(around:100,{lat:.5f},{lon:.5f})["tourism"~"^(theme_park|zoo|museum|aquarium|attraction)$"]["name"];
-         node(around:100,{lat:.5f},{lon:.5f})["leisure"="water_park"]["name"];);out body;'''
+        (nwr(around:100,{lat:.5f},{lon:.5f})["tourism"~"^(theme_park|zoo|museum|aquarium|attraction)$"]["name"];
+         nwr(around:100,{lat:.5f},{lon:.5f})["leisure"="water_park"]["name"];);out center;'''
     payload = None
     for endpoint in (ENDPOINT, FALLBACK_ENDPOINT):
         try:
@@ -70,10 +71,17 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
     stats = dict(lookups=0, pending=0, failed=0)
     deadline = time.monotonic() + time_budget
     consecutive_failures = 0
-    events = sorted((c for c in candidates if c['kind'] == 'event'), key=lambda c: c['start_date'], reverse=True)
+    events = sorted((c for c in candidates if c['kind'] != 'year_review'), key=lambda c: c['start_date'], reverse=True)
     for index, candidate in enumerate(events, 1):
         if progress:
             progress(dict(phase='places', current=index, total=len(events)))
+        visit = attraction_catalog.visit([by_id[pid] for pid in candidate['photo_ids'] if pid in by_id], len(candidate['photo_ids']))
+        if visit:
+            candidate['evidence']['attraction'] = visit
+            candidate['title'] = attraction_title(visit)
+            candidate['primary_place'] = visit['name']
+            candidate['evidence']['reasons'].append(f"{visit['photo_matches']} af {visit['photo_total']} billeder er taget inde i {visit['name']}. Steddata: © OpenStreetMap-bidragydere.")
+            continue
         points = []
         seen_points = set()
         for pid in candidate['photo_ids']:
@@ -90,7 +98,7 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
         hits = []
         unresolved = False
         for lat, lon in sample:
-            key = f'{lat:.5f},{lon:.5f}'
+            key = f'v2:{lat:.5f},{lon:.5f}'
             with closing(get_conn()) as conn:
                 cached = conn.execute('SELECT result_json,expires FROM moment_place_cache WHERE point=?', (key,)).fetchone()
             if cached and cached['expires'] > time.time():

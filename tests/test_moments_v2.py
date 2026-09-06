@@ -251,6 +251,21 @@ class MomentEditingTests(unittest.TestCase):
                 moments_service.migrate(conn)
                 self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'Min egen titel')
 
+    def test_native_place_migration_updates_existing_photos_and_moment(self):
+        import place_names
+        row = self.make_moment()
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("DELETE FROM settings WHERE key='native_place_names_v1'")
+            conn.execute("UPDATE photos SET gps_name='Naestved, Denmark',metadata_json=?",
+                         (json.dumps({'geo': {'city': 'Naestved', 'country': 'Denmark'}}),))
+            conn.execute("UPDATE moments SET primary_place='Naestved, Denmark',title='En dag i Naestved, Denmark' WHERE id=?", (row['id'],))
+            place_names.migrate(conn)
+            photo = conn.execute('SELECT gps_name,metadata_json FROM photos LIMIT 1').fetchone()
+            self.assertEqual(photo['gps_name'], 'Næstved, Denmark')
+            self.assertEqual(json.loads(photo['metadata_json'])['geo']['city'], 'Næstved')
+            self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'En dag i Næstved, Denmark')
+            place_names.migrate(conn)  # Idempotent on subsequent startup.
+
     def test_viewer_cannot_see_moment_from_hidden_folders(self):
         row = self.make_moment()
         with self.client.session_transaction() as session:

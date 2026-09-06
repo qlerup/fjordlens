@@ -32,6 +32,7 @@ import piexif
 import exifread
 import requests
 import reverse_geocoder as rg
+import place_names
 import pycountry
 import moment_cinema
 import moments_engine
@@ -4374,6 +4375,7 @@ def init_db() -> None:
         )
         conn.commit()
         moments_service.migrate(conn)
+        place_names.migrate(conn)
         conn.commit()
         # Simple migration for old DBs
         # Add people.hidden if missing
@@ -11799,9 +11801,10 @@ def reverse_geocode_with_cache(lat: float, lon: float) -> tuple[Optional[str], O
             (lat_r, lon_r),
         ).fetchone()
     if row and (row["country"] or row["city"]):
-        return row["country"], row["city"]
+        return row["country"], place_names.city_name(row["city"], row["country"])
 
     country, city = reverse_geocode_providers(lat, lon)
+    city = place_names.city_name(city, country)
     if country or city:
         with closing(get_conn()) as conn:
             conn.execute(
@@ -13554,6 +13557,7 @@ def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
                 pass
         else:
             d[key] = [] if key in {"ai_tags", "ai_desc_tags"} else None
+    place_names.photo_places(d)
     d["ai_tags"] = _normalize_ai_desc_tags(d.get("ai_tags"), max_tags=64)
     d["ai_desc_tags"] = _normalize_ai_desc_tags(d.get("ai_desc_tags"), max_tags=96)
     if d.get("ai_desc_caption"):

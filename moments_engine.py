@@ -12,6 +12,7 @@ from functools import lru_cache
 import re
 
 import pycountry
+from place_names import place_name, city_name
 
 
 COUNTRIES = {
@@ -57,7 +58,7 @@ def country_for_name(name):
 
 
 def location(row):
-    name = str(row.get("gps_name") or "").strip()
+    name = place_name(str(row.get("gps_name") or "").strip())
     loc = {"name": name, "country": country_for_name(name),
            "lat": row.get("gps_lat"), "lon": row.get("gps_lon")}
     if distance(loc, loc) is None:
@@ -228,7 +229,7 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
             for loc in locs:
                 loc["country"] = found.get("cc")
                 if not loc["name"]:
-                    loc["name"] = ", ".join(v for v in (found.get("name"), DA_COUNTRIES.get(found.get("cc"), found.get("cc"))) if v)
+                    loc["name"] = ", ".join(v for v in (city_name(found.get("name"), found.get("cc")), DA_COUNTRIES.get(found.get("cc"), found.get("cc"))) if v)
     rows.sort(key=lambda r: (r["_dt"], r["id"]))
     stats["dated"] = len(rows)
     home = infer_home(rows, manual_home)
