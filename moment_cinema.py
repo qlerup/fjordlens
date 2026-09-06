@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import json
 import math
+import moment_titles
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
@@ -54,7 +55,7 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
         folder = evidence.get('folder_title') or {}
         if evidence.get('title_source') == 'folder' and film_title == folder.get('generated_title', folder.get('name')):
             film_title = folder.get('name') or film_title
-        film_title = re.sub(r'\s*·\s*(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})$', '', film_title)
+        film_title = moment_titles.base_title(film_title)
     script = [dict(type='text', style='intro', text=film_title,
                    eyebrow=moment['primary_place'] or 'ET MOMENT', detail=period,
                    background_photo_id=rows[0]['id'], duration=4.6, design_version=VERSION)]

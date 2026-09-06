@@ -4,6 +4,7 @@ import json
 import re
 from datetime import date
 from moments_engine import photo_date
+import moment_titles
 
 MIN_FOLDER_PERCENT = 75
 
@@ -38,7 +39,7 @@ def generic_title(candidate):
         return False
     if info.get('title_source') in ('journey', 'trip', 'activity', 'occasion', 'folder'):
         return False
-    title = re.sub(r'\s*·\s*\d{2}\.\d{2}\.\d{4}$', '', candidate.get('title') or '')
+    title = moment_titles.base_title(candidate.get('title'))
     place = candidate.get('primary_place')
     return title in ('Dagens oplevelser', 'Oplevelser') or bool(place and title == f'En dag i {place}')
 
@@ -70,9 +71,10 @@ def apply(candidates, rows):
         fallback_source = info.get('title_source', 'place' if candidate.get('primary_place') else 'generic')
         days = Counter(dates[pid] for pid in set(candidate['photo_ids']) if pid in dates)
         dominant_date = min(days, key=lambda day: (-days[day], day)) if days else None
-        # The most photographed day determines the year, including across New Year.
-        year = str(dominant_date.year) if dominant_date else ''
-        candidate['title'] = f'{name} {year}' if year and not re.search(rf'\b{year}$', name) else name
+        candidate['title'] = moment_titles.format_title(name,
+            min(days).isoformat() if days else candidate.get('start_date'),
+            max(days).isoformat() if days else candidate.get('end_date'),
+            dominant_date.isoformat() if dominant_date else None)
         info['title_source'] = 'folder'
         info['folder_title'] = dict(name=name, photo_count=count, total_photos=total,
                                    generated_title=candidate['title'],

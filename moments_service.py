@@ -13,6 +13,7 @@ from flask_login import login_required, current_user
 from moments_engine import discover, photo_date, country_for_name
 import moment_places
 import moment_folders
+import moment_titles
 
 _scan_context = threading.local()
 
@@ -46,16 +47,19 @@ def migrate(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS moment_scan_state
         (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, started REAL, running INTEGER, result_json TEXT)""")
     # Upgrade automatic suggestions without changing saved or manually edited titles.
-    for row in conn.execute("""SELECT id,title,evidence_json FROM moments
+    for row in conn.execute("""SELECT id,title,evidence_json,start_date,end_date FROM moments
             WHERE kind='event' AND status='suggested' AND user_edited=0
             AND COALESCE(video_status,'none') NOT IN ('queued','running','rendering')""").fetchall():
         info = json.loads(row['evidence_json'] or '{}')
         attraction = info.get('attraction')
         title = moment_places.attraction_title(attraction, info.get('occasion')) if attraction else None
+        if title:
+            title = moment_titles.format_title(title, row['start_date'], row['end_date'])
         if title and title != row['title']:
             conn.execute("""UPDATE moments SET title=?,script_json=NULL,subtitle=NULL,
                 video_status='none',video_rel_path=NULL,video_error=NULL,revision=revision+1
                 WHERE id=?""", (title, row['id']))
+    moment_titles.upgrade(conn)
 
 
 def scan_status(g):
@@ -190,6 +194,8 @@ def can_view(g, row):
 
 
 def insert(conn, candidate, now, *, edited=False, status="suggested"):
+    if not edited:
+        moment_titles.apply(candidate)
     cur = conn.execute("""INSERT INTO moments
         (kind,status,title,start_date,end_date,primary_place,cover_photo_id,photo_ids_json,
          evidence_json,user_edited,created_at,updated_at)
@@ -212,6 +218,8 @@ def detect(g):
     place_stats = moment_places.enrich(candidates, rows, g['get_conn'],
                                        progress=lambda progress: _report_progress(g, progress))
     moment_folders.apply(candidates, rows)
+    for candidate in candidates:
+        moment_titles.apply(candidate)
     stats.update({f'poi_{key}': value for key, value in place_stats.items()})
     _report_progress(g, dict(phase='saving'))
     with closing(g["get_conn"]()) as conn:

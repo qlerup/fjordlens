@@ -6913,7 +6913,8 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
     cards: list[str] = []
     if narration:
         if not moment_row["user_edited"] and moment_row["status"] == "suggested" and not moment_row["primary_place"] and moments_service.evidence(moment_row).get('title_source') != 'folder':
-            title = str(narration.get("title") or title).strip() or title
+            title = moments_service.moment_titles.format_title(str(narration.get("title") or title).strip() or title,
+                                                               moment_row['start_date'], moment_row['end_date'])
         subtitle = str(narration.get("subtitle") or "").strip() or None
         cards = [str(c).strip() for c in (narration.get("cards") or []) if str(c or "").strip()]
 
