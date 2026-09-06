@@ -670,15 +670,15 @@ try:
 except Exception:
     MOMENT_GAP_HOURS = 30.0
 try:
-    MOMENT_MIN_PHOTOS = int(os.environ.get("MOMENT_MIN_PHOTOS", "8") or 8)
+    MOMENT_MIN_PHOTOS = max(10, int(os.environ.get("MOMENT_MIN_PHOTOS", "10") or 10))
 except Exception:
-    MOMENT_MIN_PHOTOS = 8
+    MOMENT_MIN_PHOTOS = 10
 try:
     MOMENT_MIN_SPAN_HOURS = float(os.environ.get("MOMENT_MIN_SPAN_HOURS", "4") or 4)
 except Exception:
     MOMENT_MIN_SPAN_HOURS = 4.0
 try:
-    MOMENT_YEAR_REVIEW_MIN_PHOTOS = int(os.environ.get("MOMENT_YEAR_REVIEW_MIN_PHOTOS", "30") or 30)
+    MOMENT_YEAR_REVIEW_MIN_PHOTOS = max(10, int(os.environ.get("MOMENT_YEAR_REVIEW_MIN_PHOTOS", "30") or 30))
 except Exception:
     MOMENT_YEAR_REVIEW_MIN_PHOTOS = 30
 try:
@@ -6981,6 +6981,10 @@ def api_moments_list():
     suggested: list[Dict[str, Any]] = []
     saved: list[Dict[str, Any]] = []
     for r in rows:
+        # Apply the new minimum to old automatic suggestions immediately, without
+        # deleting saved edits or the records used by existing share links.
+        if r['status'] == 'suggested' and not r['user_edited'] and len(moments_service.members(r)) < MOMENT_MIN_PHOTOS:
+            continue
         if not moments_service.can_view(globals(), r):
             continue
         pub = _moment_row_to_public(r)

@@ -13,6 +13,13 @@ def photo(pid, day, place=None, **extra):
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_default_minimum_is_ten_photos(self):
+        rows = [photo(i, f'2024-07-10T{9+i:02}:00:00', 'Berlin, Germany') for i in range(10)]
+        for count in (8, 9, 10):
+            moments, stats, _ = discover(rows[:count])
+            self.assertEqual(len(moments), int(count >= 10))
+            self.assertEqual(stats['rejected_too_few'], int(count < 10))
+
     def scan(self, rows, **kwargs):
         return discover(rows, min_photos=3, min_hours=1, **kwargs)[0]
 
@@ -173,6 +180,27 @@ class MomentEditingTests(unittest.TestCase):
         row = self.make_moment()
         self.client.post(f"/api/moments/{row['id']}/dismiss")
         self.assertEqual(fjordlens._detect_moment_candidates()['created'], 0)
+
+    def test_small_automatic_suggestions_hidden_but_saved_and_edits_preserved(self):
+        row = self.make_moment()
+        with patch.object(fjordlens, 'MOMENT_MIN_PHOTOS', 10):
+            self.assertEqual(self.client.get('/api/moments').get_json()['suggested'], [])
+            with fjordlens.closing(fjordlens.get_conn()) as conn:
+                self.assertIsNotNone(conn.execute('SELECT id FROM moments WHERE id=?', (row['id'],)).fetchone())
+                conn.execute('UPDATE moments SET user_edited=1 WHERE id=?', (row['id'],))
+                conn.commit()
+            self.assertEqual(len(self.client.get('/api/moments').get_json()['suggested']), 1)
+            self.client.post(f"/api/moments/{row['id']}/accept")
+            self.assertEqual(len(self.client.get('/api/moments').get_json()['saved']), 1)
+
+    def test_small_suggestion_can_qualify_when_more_photos_arrive(self):
+        self.make_moment()
+        with patch.object(fjordlens, 'MOMENT_MIN_PHOTOS', 10), patch('moment_places.enrich', return_value={}):
+            self.assertEqual(fjordlens._detect_moment_candidates()['created'], 0)
+            for i in range(6):
+                self._insert_photo(f'archive/extra_{i}.jpg', f'2024-07-10T{14+i}:00:00', 'Berlin, Germany')
+            self.assertEqual(fjordlens._detect_moment_candidates()['created'], 1)
+            self.assertEqual(len(self.client.get('/api/moments').get_json()['suggested']), 1)
 
     def test_edit_data_skips_ai_and_search_finds_library_photos(self):
         row = self.make_moment()

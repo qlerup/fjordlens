@@ -106,7 +106,7 @@ til hjemområde og scanningsstatus oprettes automatisk af `init_db()`. Opgraderi
 bevarer eksisterende momenter. Scanningsstatus deles mellem serverprocesser;
 en efterladt status kan genstartes efter en time.
 
-De eksisterende `MOMENT_MIN_PHOTOS` (8), `MOMENT_MIN_SPAN_HOURS` (4),
+De eksisterende `MOMENT_MIN_PHOTOS` (10, kan ikke sættes lavere), `MOMENT_MIN_SPAN_HOURS` (4),
 `MOMENT_GAP_HOURS` (30), `MOMENT_MAX_SLIDES` (60),
 `MOMENT_YEAR_REVIEW_MIN_PHOTOS` (30) og `MOMENT_YEAR_REVIEW_MAX_PHOTOS` (60)
 bevares. Dagsoplevelser og stedunderstøttede rejsepauser har ovenstående særregler.

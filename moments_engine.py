@@ -222,7 +222,7 @@ def combine_day_segments(segments):
     return sorted(result, key=lambda pair: pair[0][0]['_dt'])
 
 
-def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=None):
+def discover(raw_rows, *, min_photos=10, min_hours=4, gap_hours=30, manual_home=None):
     stats = dict(scanned=len(raw_rows), dated=0, segments=0, created=0, updated=0, retired=0,
                  rejected_too_few=0, rejected_too_short=0, rejected_home_only=0,
                  rejected_already_covered=0)
