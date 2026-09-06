@@ -21,8 +21,7 @@ def attraction_title(attraction):
     name = str(attraction.get('name') or '').strip()
     if not name:
         return None
-    prefix = 'En dag i' if attraction.get('confidence') == 'high' else 'Måske en dag i'
-    return f'{prefix} {name}'
+    return f'En tur til {name}'
 
 
 def lookup(lat, lon, *, deadline=None):

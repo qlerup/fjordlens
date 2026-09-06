@@ -244,7 +244,7 @@ class MomentEditingTests(unittest.TestCase):
             conn.execute("UPDATE moments SET kind='event',evidence_json=? WHERE id=?", (evidence, row['id']))
             moments_service.migrate(conn)
             self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0],
-                             'Måske en dag i Knuthenborg Safaripark')
+                             'En tur til Knuthenborg Safaripark')
             for status, edited in [('accepted', 0), ('suggested', 1)]:
                 conn.execute('UPDATE moments SET title=?,status=?,user_edited=? WHERE id=?',
                              ('Min egen titel', status, edited, row['id']))
