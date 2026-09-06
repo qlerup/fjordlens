@@ -1,4 +1,5 @@
 from app import app as application
+from airplay_controls import init_airplay_controls
 from airplay_hls import init_airplay_hls
 from cast_airplay import init_cast_airplay
 from google_photo_frame import init_google_photo_frame
@@ -29,6 +30,9 @@ init_cast_airplay(application)
 
 # Incremental HLS for iOS AirPlay.
 init_airplay_hls(application)
+
+# Slideshow duration settings and phone-side seek/previous/next controls.
+init_airplay_controls(application)
 
 # Safe mobile clients: no global MutationObserver and no monkey-patching window.fetch.
 init_safe_airplay_assets(application)
