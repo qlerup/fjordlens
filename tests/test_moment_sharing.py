@@ -1,0 +1,41 @@
+import json
+import unittest
+from pathlib import Path
+from PIL import Image
+import app
+import moment_cinema
+from tests import test_moments_v2 as legacy
+
+
+class MomentSharingTests(unittest.TestCase):
+    setUp = legacy.MomentEditingTests.setUp
+    tearDown = legacy.MomentEditingTests.tearDown
+    _insert_photo = legacy.MomentEditingTests._insert_photo
+    make_moment = legacy.MomentEditingTests.make_moment
+
+    def test_public_link_is_scoped_revocable_and_has_no_library_access(self):
+        moment = self.make_moment()
+        ids = json.loads(moment['photo_ids_json'])
+        script = [dict(type='photo',photo_id=ids[0],duration=5,design_version=moment_cinema.VERSION)]
+        with app.closing(app.get_conn()) as conn:
+            conn.execute('UPDATE moments SET script_json=? WHERE id=?',(json.dumps(script),moment['id']))
+            rel = conn.execute('SELECT rel_path FROM photos WHERE id=?',(ids[0],)).fetchone()[0]
+            conn.commit()
+        path = app.UPLOAD_DIR / rel.split('/',1)[1]
+        path.parent.mkdir(parents=True,exist_ok=True)
+        Image.new('RGB',(40,40),'red').save(path)
+        response = self.client.post(f"/api/moments/{moment['id']}/share")
+        self.assertEqual(response.status_code,200)
+        url = response.get_json()['url']
+        token = url.split('/')[-1]
+        public = app.app.test_client()
+        self.assertEqual(public.get(url).status_code,200)
+        shared = public.get(f'/api/moment-share/{token}').get_json()['item']
+        self.assertEqual(set(shared['photos']),{str(ids[0])})
+        self.assertEqual(public.get(shared['photos'][str(ids[0])]['original_url']).status_code,200)
+        self.assertEqual(public.get(f'/api/moment-share/{token}/media/{ids[1]}').status_code,404)
+        self.assertNotEqual(public.get('/api/moments').status_code,200)
+        self.assertNotEqual(public.post(f"/api/moments/{moment['id']}/share").status_code,200)
+        self.assertEqual(self.client.delete(f"/api/moments/{moment['id']}/share").status_code,200)
+        self.assertEqual(public.get(url).status_code,404)
+        self.assertEqual(public.get(shared['photos'][str(ids[0])]['original_url']).status_code,404)

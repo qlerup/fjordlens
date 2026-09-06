@@ -176,3 +176,25 @@ async function editMomentHome() {
     };
   } catch (error) { status.textContent = error.message; }
 }
+async function shareMoment(id) {
+  const dialog = momentDialog('Del moment');
+  const body = dialog.querySelector('[data-body]');
+  const status = dialog.querySelector('[data-status]');
+  status.textContent = 'Opretter link…';
+  try {
+    const data = await momentRequest(`/api/moments/${id}/share`, 'POST', {});
+    if (!dialog.isConnected) return;
+    const url = new URL(data.url, window.location.origin).href;
+    body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet.</p><input readonly aria-label="Delelink" style="width:100%"><p><button class="btn primary" data-copy>Kopiér link</button> <button class="btn ghost" data-revoke>Stop deling</button></p>`;
+    body.querySelector('input').value = url;
+    body.querySelector('[data-copy]').onclick = async () => {
+      try { await navigator.clipboard.writeText(url); status.textContent='Link kopieret'; }
+      catch { body.querySelector('input').select(); status.textContent='Kopiér det markerede link.'; }
+    };
+    body.querySelector('[data-revoke]').onclick = async () => {
+      try { await momentRequest(`/api/moments/${id}/share`, 'DELETE'); body.innerHTML=''; status.textContent='Alle delelinks til momentet er lukket.'; }
+      catch(error) { status.textContent=error.message; }
+    };
+    status.textContent='';
+  } catch(error) { status.textContent=error.message; }
+}

@@ -26,6 +26,9 @@ def _report_progress(g, progress):
 
 
 def migrate(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS moment_shares (
+        token_hash TEXT PRIMARY KEY, moment_id INTEGER NOT NULL,
+        title TEXT NOT NULL, script_json TEXT NOT NULL, created_at TEXT NOT NULL)''')
     columns = {r[1] for r in conn.execute("PRAGMA table_info(moments)")}
     for name, definition in (("evidence_json", "TEXT NOT NULL DEFAULT '{}'"),
                              ("user_edited", "INTEGER NOT NULL DEFAULT 0"),
@@ -340,6 +343,9 @@ def register_routes(app, g):
             except EditError as exc:
                 return jsonify(ok=False, error=str(exc)), exc.status
         return login_required(wrapped)
+
+    from moment_sharing import register as register_sharing
+    register_sharing(app, g, managed)
 
     @app.route("/api/moments/settings", methods=["GET", "PUT"])
     @managed

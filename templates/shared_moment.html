@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>{{ title }} · FjordLens</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='styles.css',v=app_build) }}">
+</head><body style="margin:0;background:#102128;color:white">
+<main style="padding:10vh 8vw;text-align:center"><h1>{{ title }}</h1><p id="shareStatus">Henter moment…</p><button id="replayMoment" class="btn">Afspil igen</button></main>
+<div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Moment">
+<div class="moment-player-progress" id="momentPlayerProgress"></div><button class="moment-player-close" id="momentPlayerCloseBtn" aria-label="Luk">×</button>
+<div class="moment-player-stage" id="momentPlayerStage"></div>
+<div class="moment-player-zone prev" id="momentPlayerPrevZone"></div><div class="moment-player-zone next" id="momentPlayerNextZone"></div>
+<div class="moment-player-footer"><div id="momentPlayerFooterTitle" class="moment-player-title"></div></div></div>
+<div id="shareBootstrap" data-url="{{ url_for('shared_moment_data',token=share_token) }}"></div>
+<script src="{{ url_for('static',filename='shared_moment.js',v=app_build) }}"></script>
+<script src="{{ url_for('static',filename='moment_player.js',v=app_build) }}"></script>
+</body></html>
