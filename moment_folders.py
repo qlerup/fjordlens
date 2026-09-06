@@ -3,6 +3,7 @@ from collections import Counter
 import json
 import re
 from datetime import date
+from moments_engine import photo_date
 
 MIN_FOLDER_PERCENT = 75
 
@@ -43,7 +44,9 @@ def generic_title(candidate):
 
 
 def apply(candidates, rows):
+    rows = [dict(r) for r in rows]
     folders = {r['id']: folder_key(r['rel_path']) for r in rows}
+    dates = {r['id']: dt.date() for r in rows if (dt := photo_date(r))}
     changed = 0
     for candidate in candidates:
         if not generic_title(candidate):
@@ -65,9 +68,15 @@ def apply(candidates, rows):
         info = candidate['evidence']
         fallback_title = candidate['title']
         fallback_source = info.get('title_source', 'place' if candidate.get('primary_place') else 'generic')
-        candidate['title'] = name
+        days = Counter(dates[pid] for pid in set(candidate['photo_ids']) if pid in dates)
+        dominant_date = min(days, key=lambda day: (-days[day], day)) if days else None
+        # The most photographed day determines the year, including across New Year.
+        year = str(dominant_date.year) if dominant_date else ''
+        candidate['title'] = f'{name} {year}' if year and not re.search(rf'\b{year}$', name) else name
         info['title_source'] = 'folder'
         info['folder_title'] = dict(name=name, photo_count=count, total_photos=total,
+                                   generated_title=candidate['title'],
+                                   dominant_date=dominant_date.isoformat() if dominant_date else None,
                                    fallback_title=fallback_title, fallback_source=fallback_source)
         info.setdefault('reasons', []).append(f'Titlen kommer fra mappen “{name}”, som bidrager med {count} af {total} billeder (mindst {MIN_FOLDER_PERCENT} %). Parenteser er fjernet.')
         changed += 1
@@ -87,7 +96,7 @@ def upgrade_suggestions(conn):
         if info.get('title_source') == 'folder' and not (info.get('attraction') or info.get('occasion')):
             previous = info.get('folder_title') or {}
             # Only reconsider the title we generated, never a subsequently chosen name.
-            if candidate['title'] != previous.get('name'):
+            if candidate['title'] != previous.get('generated_title', previous.get('name')):
                 continue
             fallback = previous.get('fallback_title')
             if not fallback:
@@ -105,7 +114,7 @@ def upgrade_suggestions(conn):
     rows = []
     for offset in range(0, len(ids), 500):
         batch = ids[offset:offset+500]
-        rows.extend(conn.execute(f"SELECT id,rel_path FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
+        rows.extend(conn.execute(f"SELECT id,rel_path,captured_at,modified_fs,created_fs FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
     apply(candidates, rows)
     for candidate in candidates:
         if (candidate['title'], json.dumps(candidate['evidence'], sort_keys=True)) == before[candidate['id']]:

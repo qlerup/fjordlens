@@ -50,6 +50,10 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
     period = date_range(moment['start_date'], moment['end_date'])
     film_title = title or moment['title'] or 'Et øjeblik at huske'
     if not moment.get('user_edited'):
+        evidence = moment.get('evidence') or json.loads(moment.get('evidence_json') or '{}')
+        folder = evidence.get('folder_title') or {}
+        if evidence.get('title_source') == 'folder' and film_title == folder.get('generated_title', folder.get('name')):
+            film_title = folder.get('name') or film_title
         film_title = re.sub(r'\s*·\s*(?:\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})$', '', film_title)
     script = [dict(type='text', style='intro', text=film_title,
                    eyebrow=moment['primary_place'] or 'ET MOMENT', detail=period,
