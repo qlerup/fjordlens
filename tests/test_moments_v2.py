@@ -236,6 +236,22 @@ class MomentEditingTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self.client.get('/api/moments/detect/status').get_json()['result']['created'], 2)
 
+    def test_pending_regions_continue_without_another_user_click(self):
+        import moments_service
+        with patch.object(fjordlens, '_run_moment_detection', side_effect=[
+                {'ok':True,'debug':{'poi_pending':3,'poi_lookups':18}},
+                {'ok':True,'debug':{'poi_pending':0,'poi_lookups':3}}]) as run:
+            result = moments_service.complete_detection(dict(get_conn=fjordlens.get_conn,_run_moment_detection=run))
+            self.assertEqual(run.call_count,2)
+            self.assertEqual(result['debug']['poi_pending'],0)
+
+    def test_pending_regions_stop_if_a_batch_cannot_make_progress(self):
+        import moments_service
+        with patch.object(fjordlens, '_run_moment_detection', return_value=
+                {'ok':True,'debug':{'poi_pending':3,'poi_lookups':0}}) as run:
+            moments_service.complete_detection(dict(get_conn=fjordlens.get_conn,_run_moment_detection=run))
+            self.assertEqual(run.call_count,1)
+
     def test_attraction_title_upgrade_preserves_user_choices(self):
         import moments_service
         row = self.make_moment()

@@ -4470,6 +4470,8 @@ body.view-momenter .topbar { display: none !important; }
   white-space: nowrap;
 }
 body.moment-player-open { overflow: hidden; }
+body.moment-player-open .sidebar,
+body.moment-player-open .mobile-bottom-nav { display: none !important; }
 
 /* Warm editorial typography, full-resolution photography, quiet motion. */
 .cinema-slide { background: #10232a; animation: cinemaReveal .65s ease both; }

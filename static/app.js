@@ -1,4 +1,4 @@
-﻿const els = {
+const els = {
   grid: document.getElementById("galleryGrid"),
   topbar: document.getElementById("topbar"),
   searchShell: document.getElementById("searchShell"),
@@ -3036,8 +3036,8 @@ function renderMapperTree() {
     link.textContent = node.name;
     link.addEventListener('click', async () => {
       const targetPath = beginMapperPathNavigation(path);
-      await loadMapperTools(targetPath);
-      await loadPhotos();
+      await loadMapperTools(targetPath, true);
+      await loadPhotos(false, false, true);
     });
     row.appendChild(link);
     els.mapperTreeNav.appendChild(row);
@@ -6142,6 +6142,10 @@ let photoLoadMoreObserver = null;
 let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
 let photosLoadPromise = null;
+const galleryDataCache = window.FjordLensGalleryCache.createCache();
+function galleryCacheKey(query) {
+  return JSON.stringify([state.currentUser?.id, state.currentUser?.username, state.currentUser?.role, query]);
+}
 
 function estimateMapperGridMetrics(gridEl) {
   const el = gridEl || els.grid;
@@ -6558,8 +6562,8 @@ function renderGrid() {
         title,
         onOpen: async () => {
           const targetPath = beginMapperPathNavigation(folderPath);
-          await loadMapperTools(targetPath);
-          await loadPhotos();
+          await loadMapperTools(targetPath, true);
+          await loadPhotos(false, false, true);
         },
       });
     }
@@ -6946,7 +6950,7 @@ function appendFolderCard(folder, arr, opts = {}) {
     state.view = "timeline";
     state.folder = folder === "(root)" ? "" : folder;
     document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
-    loadPhotos();
+    loadPhotos(false, false, true);
   });
   els.grid.appendChild(card);
 
@@ -7863,9 +7867,11 @@ function restoreGalleryScrollAnchor(anchor) {
   });
 }
 
-async function loadPhotos(append = false, preserveScroll = false) {
+async function loadPhotos(append = false, preserveScroll = false, useCache = false) {
   if (append && photosLoadPromise) return photosLoadPromise.catch(() => false);
-  const request = loadPhotosPage(append, preserveScroll);
+  // Existing refresh calls after edits/uploads stay fresh. Only navigation opts in.
+  if (!append && !useCache) galleryDataCache.clear();
+  const request = loadPhotosPage(append, preserveScroll, useCache || append);
   photosLoadPromise = request;
   try {
     return await request;
@@ -7880,7 +7886,7 @@ async function loadPhotos(append = false, preserveScroll = false) {
   }
 }
 
-async function loadPhotosPage(append = false, preserveScroll = false) {
+async function loadPhotosPage(append = false, preserveScroll = false, useCache = false) {
   if (state.view === 'photoframe') {
     state.items = [];
     const labels = navLabels();
@@ -7927,14 +7933,22 @@ async function loadPhotosPage(append = false, preserveScroll = false) {
   }
 
   state.photosLoading = true;
-  const res = await fetch(`/api/photos?${qs.toString()}`);
-  if (!requestIsCurrent()) return;
-  let data;
-  try {
-    const ct = String(res.headers.get('content-type') || '');
-    data = ct.includes('application/json') ? await res.json() : null;
-  } catch (_) {
-    data = null;
+  const cacheKey = galleryCacheKey(`/api/photos?${qs.toString()}`);
+  const cacheGeneration = galleryDataCache.generation();
+  let data = pagedView && useCache ? galleryDataCache.get(cacheKey) : null;
+  let res = { ok: true };
+  if (!data) {
+    res = await fetch(`/api/photos?${qs.toString()}`);
+    if (!requestIsCurrent()) return;
+    try {
+      const ct = String(res.headers.get('content-type') || '');
+      data = ct.includes('application/json') ? await res.json() : null;
+    } catch (_) {
+      data = null;
+    }
+    if (pagedView && res.ok && data && !data.error && requestIsCurrent()) {
+      galleryDataCache.set(cacheKey, data, cacheGeneration);
+    }
   }
   if (!requestIsCurrent()) return;
   if (!data || !res.ok || data.error) {
@@ -11655,10 +11669,20 @@ async function saveAppUpdateSettings() {
 
 let mapperToolsRequestSequence = 0;
 
-async function loadMapperTools(preferred = null) {
+async function loadMapperTools(preferred = null, useCache = false) {
   const requestSequence = ++mapperToolsRequestSequence;
+  if (!useCache) galleryDataCache.clear();
+  const cacheKey = galleryCacheKey('mapper-folder-index');
+  const cacheGeneration = galleryDataCache.generation();
   try {
-    const { res, data } = await fetchUploadDestinationConfig('uploads');
+    let data = useCache ? galleryDataCache.get(cacheKey) : null;
+    let res = { ok: true };
+    if (!data) {
+      ({ res, data } = await fetchUploadDestinationConfig('uploads'));
+      if (res.ok && data?.ok && requestSequence === mapperToolsRequestSequence) {
+        galleryDataCache.set(cacheKey, data, cacheGeneration);
+      }
+    }
     if (requestSequence !== mapperToolsRequestSequence) return false;
     if (!res.ok || !data || !data.ok) {
       const errMsg = String((data && data.error) || `HTTP ${res && res.status ? res.status : 'fejl'}`).trim();
@@ -11744,8 +11768,8 @@ async function createMapperFolder() {
       title: createdPath.split('/').filter(Boolean).pop() || createdPath,
       onOpen: async () => {
         const targetPath = beginMapperPathNavigation(createdPath);
-        await loadMapperTools(targetPath);
-        await loadPhotos();
+        await loadMapperTools(targetPath, true);
+        await loadPhotos(false, false, true);
       },
     }) : null;
     if (inserted) renderStats();
@@ -11843,8 +11867,8 @@ async function renameMapperFolder() {
       title: newPath.split('/').filter(Boolean).pop() || newPath,
       onOpen: async () => {
         const targetPath = beginMapperPathNavigation(newPath);
-        await loadMapperTools(targetPath);
-        await loadPhotos();
+        await loadMapperTools(targetPath, true);
+        await loadPhotos(false, false, true);
       },
     });
     if (patched) {
@@ -13201,6 +13225,7 @@ async function toggleFavorite() {
   if (!res.ok || !data.ok) return;
 
   selected.favorite = !!data.favorite;
+  galleryDataCache.clear();
   renderGrid();
   setDetail(selected);
 }
@@ -13278,8 +13303,8 @@ async function setView(view, opts = {}) {
     state.items = [];
     await loadMoments();
   } else {
-    if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''));
-    await loadPhotos();
+    if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''), true);
+    await loadPhotos(false, false, true);
     if (nextView === 'mapper') checkMapperDiskSyncNow().catch(() => {});
   }
 }
@@ -16496,8 +16521,8 @@ els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   parts.pop();
   const parent = parts.join('/');
   const targetPath = beginMapperPathNavigation(parent);
-  await loadMapperTools(targetPath);
-  await loadPhotos();
+  await loadMapperTools(targetPath, true);
+  await loadPhotos(false, false, true);
 });
 if (els.mapperDropZone) {
   els.mapperDropZone.addEventListener('dragover', (e) => {

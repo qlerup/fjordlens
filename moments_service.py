@@ -40,8 +40,9 @@ def migrate(conn):
     for row in conn.execute("""SELECT id,title,evidence_json FROM moments
             WHERE kind='event' AND status='suggested' AND user_edited=0
             AND COALESCE(video_status,'none') NOT IN ('queued','running','rendering')""").fetchall():
-        attraction = json.loads(row['evidence_json'] or '{}').get('attraction')
-        title = moment_places.attraction_title(attraction) if attraction else None
+        info = json.loads(row['evidence_json'] or '{}')
+        attraction = info.get('attraction')
+        title = moment_places.attraction_title(attraction, info.get('occasion')) if attraction else None
         if title and title != row['title']:
             conn.execute("""UPDATE moments SET title=?,script_json=NULL,subtitle=NULL,
                 video_status='none',video_rel_path=NULL,video_error=NULL,revision=revision+1
@@ -76,7 +77,7 @@ def start_scan(g):
     def run():
         _scan_context.token = token
         try:
-            result = g["_run_moment_detection"]()
+            result = complete_detection(g)
         except Exception as error:
             result = dict(ok=False, error=str(error))
         finally:
@@ -92,6 +93,26 @@ def start_scan(g):
             conn.commit()
         raise
     return dict(ok=True, started=True), 200
+
+
+def complete_detection(g):
+    """Continue bounded lookup batches automatically while they make progress."""
+    with closing(g['get_conn']()) as conn:
+        before = {row['id']: row['revision'] for row in conn.execute('SELECT id,revision FROM moments')}
+    deadline = time.monotonic() + 300
+    while True:
+        result = g['_run_moment_detection']()
+        debug = result.get('debug', {})
+        if (not result.get('ok') or not debug.get('poi_pending') or not debug.get('poi_lookups')
+                or time.monotonic() >= deadline):
+            break
+    if result.get('ok'):
+        with closing(g['get_conn']()) as conn:
+            after = {row['id']: row['revision'] for row in conn.execute('SELECT id,revision FROM moments')}
+        result['created'] = len(after.keys() - before.keys())
+        result['updated'] = sum(after[mid] != revision for mid, revision in before.items() if mid in after)
+        result['retired'] = len(before.keys() - after.keys())
+    return result
 
 
 def detect_years(g):

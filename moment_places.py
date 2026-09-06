@@ -17,10 +17,13 @@ ENDPOINT = 'https://overpass-api.de/api/interpreter'
 FALLBACK_ENDPOINT = 'https://overpass.private.coffee/api/interpreter'
 
 
-def attraction_title(attraction):
+def attraction_title(attraction, occasion=None):
     name = str(attraction.get('name') or '').strip()
     if not name:
         return None
+    if occasion:
+        from moment_calendar import title_for
+        return title_for(occasion, name)
     return f'En tur til {name}'
 
 

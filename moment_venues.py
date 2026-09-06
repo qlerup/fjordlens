@@ -8,6 +8,7 @@ from contextlib import closing
 
 import requests
 from moments_engine import distance
+from moment_calendar import title_for
 
 ENDPOINTS = ('https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter')
 CELL = .02
@@ -163,7 +164,8 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
         info.update(match='inside' if inside else 'nearby',confidence='high' if inside else 'possible',
                     photo_matches=count,photo_total=len(candidate['photo_ids']),gps_photo_total=len(points))
         candidate['evidence']['attraction'] = info
-        candidate['title'] = f"En tur til {venue['name']}"
+        occasion = candidate['evidence'].get('occasion')
+        candidate['title'] = title_for(occasion, venue['name']) if occasion else f"En tur til {venue['name']}"
         candidate['primary_place'] = venue['name']
         where = 'inde i det kortlagte område for' if inside else 'tæt ved'
         candidate['evidence']['reasons'].append(f"{count} af {len(candidate['photo_ids'])} billeder er taget {where} {venue['name']}. Steddata: © OpenStreetMap-bidragydere.")

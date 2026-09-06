@@ -13,6 +13,7 @@ import re
 
 import pycountry
 from place_names import place_name, city_name
+from moment_calendar import occasion_for_dates, title_for
 
 
 COUNTRIES = {
@@ -311,9 +312,13 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
             stats["rejected_too_short"] += 1
             continue
         at_home = all(r["_home"] for r in segment)
+        occasion = occasion_for_dates([r['_dt'].date() for r in segment if r.get('captured_at')],
+                                      [r['_loc']['country'] for r in segment if r['_loc']['country']])
+        if sum(bool(r.get('captured_at')) for r in segment) < len(segment)*.6:
+            occasion = None
         familiar = single_day and all(r["_routine"] for r in segment)
         baseline = source_baselines[str(segment[0].get("uploaded_by") or "")]
-        if (at_home or familiar) and len(segment) < max(min_photos, baseline * 2):
+        if not (occasion and at_home) and (at_home or familiar) and len(segment) < max(min_photos, baseline * 2):
             stats["rejected_home_only"] += 1
             continue
         places = list(dict.fromkeys(r["_loc"]["name"] for r in segment if r["_loc"]["name"]))
@@ -331,14 +336,18 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
                     title = f"En dag i {label}" if label == "zoo" else f"En dag ved {label}" if label == "stranden" else "En dag i skoven"
                     break
         title += f" · {start.strftime('%d.%m.%Y')}"
+        if occasion:
+            title = title_for(occasion)
         located = sum(bool(r["_loc"]["name"] or r["_loc"]["lat"] is not None) for r in segment)
         reasons = [f"{len(segment)} billeder fra {start.date().isoformat()} til {end.date().isoformat()}."]
+        if occasion:
+            reasons.append(f"Billeddatoerne falder på {occasion['name']}. Forslaget bygger på kalenderen; billederne behøver ikke vise en fejring.")
         if primary:
             reasons.append(f"Sammenhængende billeder fra {primary}.")
         if segment_home and not at_home and located:
             reasons.append("Billeder uden for dit normale område.")
         if at_home:
-            reasons.append("Flere billeder end normalt i dit hjemområde.")
+            reasons.append("Mærkedag i dit hjemområde." if occasion else "Flere billeder end normalt i dit hjemområde.")
         if not located:
             reasons.append("Grupperet efter tid; stedet er ukendt.")
         uncertain_dates = sum(not r.get("captured_at") for r in segment)
@@ -367,5 +376,5 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
                                evidence=dict(version=2, reasons=reasons, places=places, countries=countries, chapters=chapters,
                                              confidence="high" if located/len(segment) >= .7 and not uncertain_dates and not day_inferred else "medium" if located else "low",
                                              date_basis="Billeddatoer; afrejse og hjemkomst kan ligge uden for intervallet.",
-                                             home=segment_home, inferred_photo_count=inferred)))
+                                             home=segment_home, inferred_photo_count=inferred, occasion=occasion)))
     return candidates, stats, home
