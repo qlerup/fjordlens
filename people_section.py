@@ -154,10 +154,15 @@ def _inject_people_fast_asset(app) -> None:
 
 def init_people_section(app) -> None:
     """Install People UX/access fixes once per Flask app."""
-    if app.extensions.get("fjordlens_people_section_v5"):
+    if app.extensions.get("fjordlens_people_section_v6"):
         return
 
     import app as fjordlens
+    from people_stats import init_people_stats
+
+    # Materialize global People counts/cover faces and fast-path the list for
+    # admin/manager users before installing the remaining People UX helpers.
+    init_people_stats(app, fjordlens)
 
     # Managers already have can_manage_media and full media-library visibility.
     # Give them the People-specific content actions while keeping scan/logs/
@@ -175,4 +180,4 @@ def init_people_section(app) -> None:
 
     _register_bulk_hide_route(app, fjordlens)
     _inject_people_fast_asset(app)
-    app.extensions["fjordlens_people_section_v5"] = True
+    app.extensions["fjordlens_people_section_v6"] = True
