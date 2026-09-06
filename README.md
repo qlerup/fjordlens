@@ -5,7 +5,8 @@ FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with
 This repository contains the FjordLens web app/API plus the Raspberry Pi photoframe client.
 
 See [Momenter](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
-photo selection, editing, splitting and merging moments.
+photo selection, editing, splitting and merging moments, cinematic slideshows,
+music, public links and MP4 export.
 
 ---
 
@@ -21,6 +22,8 @@ photo selection, editing, splitting and merging moments.
 | AI image description | X* | | X | |
 | Face detection/indexing | | | | |
 | Public share links | | | | |
+| Automatic moments and attraction lookup | | | | OpenStreetMap / Overpass for places |
+| Slideshow editor, bundled music and MP4 export | | | | |
 | Raspberry Pi photoframe management | | X | | |
 | Remote photoframe update | | X | | |
 | Google Photos / Nest Hub Photo Frame | | | | Google Photos OAuth |
@@ -43,6 +46,46 @@ photo selection, editing, splitting and merging moments.
 - Per-photo editing for captured date, GPS and favorite state
 - Duplicate detection and merge tools
 - Single file and ZIP downloads
+- Progressive loading in Timeline, Folders and People
+
+### Moments and cinematic slideshows
+
+- Automatic day events, journeys abroad, annual reviews and Danish calendar occasions
+- At least **10 photos** for automatic moment suggestions; scan progress explains the current phase
+- Home-area/country settings distinguish a local outing from a journey abroad
+- Worldwide attraction detection uses repeated GPS positions and mapped areas, including large parks; geographically separate outings are kept separate
+- Same-event reconciliation brings together photos with and without GPS, while checking dates, folders and locations to avoid combining unrelated events
+- Generic titles can use a source-folder name when at least **75%** of the photos come from it; parenthesized text is removed
+- Danish place/country names and automatic title suffixes: `Title · DD.MM.YYYY` for one day, `Title · YYYY` for multiple days
+- Edit dates and membership, split or merge moments, and retain manual changes during later scans
+- The slideshow curates varied highlights across the event, suppresses near-duplicates and plays them in chronological order; the moment retains its complete selection
+- Full-resolution media, animated typography, gentle motion, weather when available and occasional paired portrait photos
+- Video slides play to the end of the clip, independently of the photo duration
+- A full-screen player hides navigation, with responsive captions for portrait phones and widescreen computers/TVs
+- **Rediger diasshow** opens a saved timeline: reorder slides, adjust photo duration, edit/add text and media, pair photos, drag text in the preview, undo/redo and reset placement
+- **Lav video** offers **PC / TV (1920×1080)** or **Mobil (1080×1920)** MP4 export; exported videos use the saved timeline and music
+
+### Background music
+
+The bundled [music library](music/README.md) contains **16 tracks in eight moods**.
+FjordLens selects an initial track from the moment title. In the slideshow editor,
+choose a track, preview it, set the volume or select **Ingen musik**. Music continues
+across slides and loops with a six-second equal-power crossfade. MP4 export uses
+the same loop structure, with a fade at the beginning and end. Original video
+clips remain muted in the moment presentation.
+
+Music is served by your FjordLens server without a streaming-service account.
+Browsers may require a tap on **Slå musik til**, especially on public links and
+phones. Playback also includes a mute control. A new sharing link snapshots the
+track and volume along with the timeline; later editor changes do not alter it.
+Older links without a music setting receive a default track based on their stored
+title. Existing editable timelines receive music without losing their edits;
+previous silent MP4 exports must be generated again.
+
+The recordings were supplied by qlerup and created with Suno under a paid
+subscription. Their separate [music rights notice](music/COPYRIGHT.md) permits
+use in FjordLens moments, shared links and exported videos; they are not offered
+as public-domain or unrestricted stock music.
 
 ### Upload and file handling
 
@@ -73,10 +116,19 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 - AI search and "similar photos" tools
 - Face indexing jobs with progress tracking
 - People training, rename, hide, unknown-face matching
+- Person covers use still-photo face crops with corrected orientation, rather than video frames
+- Unnamed single-photo detections are hidden behind the single-find toggle; they keep participating in matching and appear automatically when more photos match
+- Explicitly hidden people stay hidden until unhidden, independently of the single-find filter
+- Name an unknown person from inside their album; named people have an explicit rename/merge dialog
+- Existing-person choices sort by photo count descending, then Danish alphabetical order
+- Face-box toggling updates immediately, and refreshing a person album preserves the selected person
 
 ### Sharing and permissions
 
 - Public share links for folders
+- Public **moment links** open the cinematic player directly, including music, mobile captions and fullscreen controls
+- Choose a moment link's lifetime when sharing; Settings → Shared lists it alongside other links with copy, QR, edit, extend, deactivate/reactivate and delete actions
+- Moment links contain a snapshot of the timeline and only allow access to its media and selected soundtrack; revoked/expired links stop working
 - Share permissions (`view`, `download`, `upload`, `manage`)
 - Optional password protection
 - Expiry and management (extend/revoke/activate/edit)
@@ -181,6 +233,10 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
+
+When updating an installation with the separate `fjordlens-ai` service, restart
+that service along with the web app and verify AI health and the expected GPU
+runtime after the update. The bundled music is included in the web-app image.
 
 Weather enrichment is enabled by default with `WEATHER_AUTO_FETCH=1`. New uploads and metadata rescans store weather under each photo's metadata when the photo has a date plus either GPS coordinates or a city/country value. FjordLens uses Open-Meteo's historical weather endpoint and caches both weather lookups and city geocoding locally.
 

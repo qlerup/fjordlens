@@ -2,6 +2,7 @@
 import hashlib
 import json
 import secrets
+import moment_music
 from contextlib import closing
 from flask import abort, jsonify, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
@@ -30,6 +31,7 @@ def media_ids(script):
 
 def register(app, g, managed):
     import moments_service as service
+    moment_music.register(app)
 
     def load(token):
         if not 32 <= len(token) <= 100:
@@ -62,6 +64,7 @@ def register(app, g, managed):
             script = json.loads(row['script_json'] or '[]')
             if not script:
                 raise service.EditError('Diasshowet kunne ikke oprettes. Prøv igen.')
+            script[0]['music'] = moment_music.choice(script, row['title'])
             token = secrets.token_urlsafe(32)
             expires_at, error = g['_share_expires_at_from_body'](request.get_json(silent=True) or {}, default_value=7, default_unit='days')
             if error:
@@ -115,8 +118,20 @@ def register(app, g, managed):
         row, script = load(token)
         photos = {str(pid): dict(original_url=url_for('shared_moment_media', token=token, photo_id=pid),
                                  is_video=any(s.get('photo_id')==pid and s.get('type')=='video' for s in script)) for pid in media_ids(script)}
-        response = jsonify(ok=True, item=dict(title=row['title'], script=script, photos=photos))
+        music = moment_music.descriptor(script, row['title'], url_for('shared_moment_music', token=token))
+        response = jsonify(ok=True, item=dict(title=row['title'], script=script, photos=photos, music=music))
         response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    @app.get('/api/moment-share/<token>/music')
+    def shared_moment_music(token):
+        row, script = load(token)
+        music = moment_music.descriptor(script, row['title'])
+        if not music:
+            abort(404)
+        response = send_file(moment_music.ROOT / music['file'], conditional=True, max_age=0)
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['Referrer-Policy'] = 'no-referrer'
         return response
 
     @app.get('/api/moment-share/<token>/media/<int:photo_id>')

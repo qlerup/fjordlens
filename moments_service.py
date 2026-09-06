@@ -61,6 +61,8 @@ def migrate(conn):
                 video_status='none',video_rel_path=NULL,video_error=NULL,revision=revision+1
                 WHERE id=?""", (title, row['id']))
     moment_titles.upgrade(conn)
+    import moment_music
+    moment_music.upgrade(conn)
 
 
 def scan_status(g):

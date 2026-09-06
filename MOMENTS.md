@@ -41,18 +41,16 @@ ophold. Biblioteker med begrænset GPS/historik får mere forsigtige forslag.
 
 ## Attraktioner ved koordinaterne
 
-For dagsoplevelser undersøges op til tre forskellige GPS-positioner. Overpass
-søger først efter navngivne områder, som indeholder positionen, eksempelvis
-forlystelsesparker, zoologiske haver, museer, akvarier og vandlande. Et flertal af
-prøvepositionerne inden for samme område kan give en titel som **En dag i
-LEGOLAND**. Nærliggende punkter inden for 100 meter markeres som mulige besøg;
-de erstatter ikke titlen med et sikkert stednavn.
+Momentets GPS-positioner samles og sammenholdes med dynamiske kortopslag efter
+navngivne seværdigheder og deres områder. Mange billeder i samme park vejer
+tungere end et enkelt nærliggende punkt. Det virker også i udlandet og bygger
+ikke på en fast liste over danske seværdigheder. En tilknytning kan give en
+titel som **En tur til Knuthenborg Safaripark**. Geografisk adskilte oplevelser
+opdeles frem for at få samme seværdighed som titel.
 
-Der bruges højst 18 nye positionsopslag pr. scanning, nyeste oplevelser først.
-Resultater gemmes i 30 dage, tomme resultater i syv dage og mislykkede opslag i
-en time. Flere steder kan undersøges ved næste scanning. En reserveinstans
-forsøges ved fejl; manglende netværk eller manglende kortdata stopper ikke den
-almindelige momentanalyse. Miljøvariablen `MOMENT_POI_LOOKUP=0` slår opslag fra.
+Opslag har en tidsgrænse, cache og reserveinstans. Manglende netværk eller
+kortdata stopper ikke den øvrige momentanalyse. Scanningsstatus viser den
+aktuelle fase. Miljøvariablen `MOMENT_POI_LOOKUP=0` slår opslag fra.
 
 Steddata: [© OpenStreetMap-bidragydere](https://www.openstreetmap.org/copyright).
 Områdeopslag følger [Overpass QL](https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL).
@@ -61,8 +59,9 @@ Områdeopslag følger [Overpass QL](https://wiki.openstreetmap.org/wiki/Overpass
 
 Diasshowet bruger billedernes fulde visningsversion først og forudindlæser næste
 billede. Thumbnails bruges kun som reserve, hvis visningsversionen ikke kan hentes.
-MP4 eksporteres i **1920 × 1080 / 25 fps**, fra originalen eller dens fulde
-visningskopi. Færdige videosegmenter samles uden en ekstra komprimering.
+**Lav video** tilbyder **PC / TV (1920 × 1080)** og **Mobil (1080 × 1920)**,
+begge med 25 fps, fra originalen eller dens fulde visningskopi. Færdige
+videosegmenter samles uden en ekstra billedkomprimering.
 
 Filmene har en fælles tidslinje med åbningskort, sted-/datokapitler, varierede
 billedtekster, diskrete klokkeslæt og afslutning. Serifoverskrifter kombineres med
@@ -100,6 +99,31 @@ Redigering afvises med en konfliktbesked, hvis momentet er ændret siden åbning
 eller hvis en video er under opbygning.
 
 ## Drift og validering
+
+### Tidslinje, musik og deling
+
+**Rediger diasshow** giver en tidslinje med flytbare slides, visningstider,
+tekstfelter, ekstra billeder/videoer og par af billeder. Teksten kan trækkes
+direkte på forhåndsvisningen og flyttes med piletasterne. Fortryd, gentag og
+nulstil placering understøttes. Videoer afspilles i deres fulde længde.
+
+Vælg blandt [16 musiknumre i otte stemninger](music/README.md), lyt til dem og
+indstil lydstyrken, eller vælg **Ingen musik**. Musikken fortsætter på tværs af
+slides med seks sekunders krydsfade ved gentagelse. MP4 bruger samme musikvalg
+og overgang. Musikken har en særskilt [rettighedstekst](music/COPYRIGHT.md).
+
+**Del link** åbner en dialog med valg af levetid. Modtageren ser den samme
+afspiller med fuldskærmsknap; på lodrette telefoner placeres teksten i bunden,
+så den ikke forsvinder uden for billedet. Browseren kan kræve et tryk på
+**Slå musik til** for at starte lyden. Indstillinger → Delte administrerer
+kopiering, QR, udløb, forlængelse, aktivering, deaktivering og sletning.
+Nye links gemmer deres egen version af tidslinje og musikvalg.
+
+Ved opdatering får eksisterende tidslinjer musik uden at miste manuelle
+tekst-/layoutændringer. Tidligere MP4-filer skal genereres igen. Genstart både
+`fjordlens` og `fjordlens-ai` ved en samlet opdatering, og kontrollér AI/GPU-status.
+
+### Database og test
 
 Databasefelter til forklaringer, redigeringsmarkering og revision samt tabeller
 til hjemområde og scanningsstatus oprettes automatisk af `init_db()`. Opgraderingen

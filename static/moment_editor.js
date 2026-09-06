@@ -13,11 +13,12 @@ async function editMomentSlideshow(id) {
   dialog.innerHTML = `<header><div><span class="mini-label">MOMENTER / REDIGERING</span><h2>Rediger diasshow</h2></div><div class="slideshow-actions"><button class="btn" data-play disabled>Afspil udkast</button><button class="btn primary" data-save disabled>Gem diasshow</button><button class="btn ghost" data-close>Luk</button></div></header><p role="status" aria-live="polite" data-status>Henter tidslinjen…</p><main data-main></main>`;
   document.body.append(dialog);
   dialog.showModal();
-  let dirty = false, saving = false;
+  let dirty = false, saving = false, audition = null;
   const status = dialog.querySelector('[data-status]');
   const close = () => {
     if (saving || (dirty && !window.confirm('Luk uden at gemme ændringerne i diasshowet?'))) return;
     dialog.querySelectorAll('video').forEach(v => v.pause());
+    audition?.stop();
     dialog.close(); dialog.remove();
   };
   dialog.querySelector('[data-close]').onclick = close;
@@ -28,11 +29,48 @@ async function editMomentSlideshow(id) {
     const {item} = await momentRequest(`/api/moments/${id}/edit-data`);
     if (!dialog.isConnected) return;
     let slides = structuredClone(item.script || []), selected = 0, revision = item.revision;
+    const {items: tracks} = await momentRequest('/api/moments/music');
+    if (!dialog.isConnected) return;
+    let soundtrack = structuredClone(slides[0]?.music || {track_id:item.music?.id || null,volume:item.music?.volume ?? .23});
+    slides.forEach(s => delete s.music);
+    const savedScript = () => { const result = structuredClone(slides); if (result.length) result[0].music = {...soundtrack}; return result; };
+    const musicDescriptor = () => { const t = tracks.find(t => t.id === soundtrack.track_id); return t ? {...t,volume:soundtrack.volume} : null; };
     let undo = [], redo = [], editingField = null;
     const photos = Object.fromEntries(item.photos.map(p => [String(p.id), p]));
     const root = dialog.querySelector('[data-main]');
     dialog.querySelector('h2').textContent = item.title;
     root.innerHTML = `<div class="slideshow-workspace"><div class="slideshow-preview" data-preview aria-label="Forhåndsvisning"></div><aside class="slideshow-inspector"><h3 data-selection></h3><label>Overskrift<textarea data-field="heading" rows="2" maxlength="240"></textarea></label><label>Lille tekst over overskriften<input data-field="eyebrow" maxlength="100"></label><label>Dato eller undertekst<input data-field="detail" maxlength="180"></label><label>Vejr<input data-field="weather" maxlength="180" placeholder="Vises kun, hvis det findes eller tilføjes her"></label><div class="slideshow-field-row"><label>Sekunder<input data-field="duration" type="number" min="1" max="60" step="0.1"></label><label>Tekstens side<select data-field="layout"><option value="left">Venstre</option><option value="right">Højre</option></select></label></div><p class="mini-label" data-video-note hidden>Videoen afspilles altid til ende.</p><label data-fit-label>Billedvisning<select data-field="fit"><option value="contain">Hele billedet</option><option value="cover">Fyld skærmen</option></select></label><label data-style-label>Tekstkort<select data-field="style"><option value="intro">Introduktion</option><option value="chapter">Kapitel</option><option value="quote">Citat</option><option value="outro">Afslutning</option></select></label><label data-second-label>Andet billede<select data-second><option value="">Ét billede</option></select></label></aside></div><div class="slideshow-toolbar"><div class="slideshow-actions"><button class="btn small" data-undo>Fortryd</button><button class="btn small" data-redo>Gentag</button><button class="btn small" data-left aria-label="Flyt slide til venstre">← Flyt</button><button class="btn small" data-right aria-label="Flyt slide til højre">Flyt →</button><button class="btn small danger" data-remove>Fjern slide</button></div><div class="slideshow-actions"><button class="btn small" data-text>+ Tekst</button><button class="btn small" data-library-toggle>+ Billeder / videoer</button></div></div><p class="mini-label" data-total></p><div class="slideshow-timeline" data-timeline role="list" aria-label="Slides i afspilningsrækkefølge"></div><p class="mini-label">Træk slides for at ændre rækkefølgen. Træk i højre kant for at ændre visningstiden, eller skriv sekunder ovenfor.</p><section class="slideshow-library" data-library hidden><h3>Tilføj fra momentet</h3><p class="mini-label">Indsættes efter den valgte slide.</p><div data-library-grid></div></section>`;
+    const musicPanel = document.createElement('section');
+    musicPanel.className = 'slideshow-music';
+    musicPanel.innerHTML = '<label>Baggrundsmusik<select data-music><option value="">Ingen musik</option></select></label><label>Lydstyrke <output data-volume-label></output><input data-music-volume type="range" min="0" max="100" step="1"></label><button type="button" class="btn" data-audition>Lyt til nummer</button><p class="mini-label">Musikken følger hele diasshowet og gentages med en glidende overgang. Dit valg bruges også i nye delelinks og MP4-filer.</p>';
+    root.prepend(musicPanel);
+    const musicSelect = musicPanel.querySelector('[data-music]');
+    const volumeInput = musicPanel.querySelector('[data-music-volume]');
+    const auditionButton = musicPanel.querySelector('[data-audition]');
+    for (const group of [...new Set(tracks.map(t => t.group))]) {
+      const optgroup = document.createElement('optgroup'); optgroup.label = group;
+      for (const t of tracks.filter(t => t.group === group)) {
+        const option = document.createElement('option'); option.value = t.id;
+        option.textContent = `${t.title} · ${Math.floor(t.duration/60)}:${String(Math.floor(t.duration%60)).padStart(2,'0')}`;
+        optgroup.append(option);
+      }
+      musicSelect.append(optgroup);
+    }
+    const stopAudition = () => { audition?.stop(); audition = null; auditionButton.textContent = 'Lyt til nummer'; };
+    musicSelect.onchange = () => { stopAudition(); mutate(() => { soundtrack.track_id = musicSelect.value || null; }); };
+    volumeInput.oninput = () => {
+      if (editingField !== 'music-volume') { checkpoint(); editingField = 'music-volume'; }
+      soundtrack.volume = Number(volumeInput.value)/100;
+      musicPanel.querySelector('[data-volume-label]').textContent = `${volumeInput.value} %`;
+      audition?.volume(soundtrack.volume); changed();
+    };
+    volumeInput.onchange = () => { editingField = null; render(); };
+    auditionButton.onclick = () => {
+      if (audition) { stopAudition(); return; }
+      const track = musicDescriptor(); if (!track) return;
+      audition = new MomentSoundtrack(track, label => { auditionButton.textContent = label === 'Slå musik fra' ? 'Stop prøve' : label; });
+      audition.start();
+    };
     const preview = root.querySelector('[data-preview]');
     const placement = document.createElement('div');
     placement.className = 'slideshow-placement';
@@ -46,7 +84,7 @@ async function editMomentSlideshow(id) {
       option.value = p.id; option.textContent = `${p.date?.replace('T',' ') || ''} · ${p.filename || p.id}`;
       secondSelect.append(option);
     }
-    const snapshot = () => JSON.stringify({slides, selected});
+    const snapshot = () => JSON.stringify({slides, selected, soundtrack});
     const checkpoint = () => { undo.push(snapshot()); if (undo.length > 60) undo.shift(); redo = []; };
     const changed = () => { dirty = true; status.textContent = 'Ændringerne er ikke gemt endnu.'; };
     const mutate = fn => { checkpoint(); editingField = null; fn(); changed(); render(); };
@@ -161,6 +199,12 @@ async function editMomentSlideshow(id) {
       root.querySelector('[data-total]').textContent = `${slides.length} slides · ${Math.floor(seconds/60)} min. ${Math.round(seconds%60)} sek.${clips ? ` + ${clips} hele videoklip` : ''}`;
     }
     function render() {
+      musicSelect.value = soundtrack.track_id || '';
+      volumeInput.value = Math.round(soundtrack.volume * 100);
+      musicPanel.querySelector('[data-volume-label]').textContent = `${volumeInput.value} %`;
+      auditionButton.disabled = !soundtrack.track_id;
+      if (audition && audition.track.id !== soundtrack.track_id) stopAudition();
+      audition?.volume(soundtrack.volume);
       selected = Math.max(0, Math.min(selected, slides.length-1));
       const s = slides[selected];
       root.querySelector('[data-selection]').textContent = `Slide ${selected+1} af ${slides.length}`;
@@ -211,8 +255,8 @@ async function editMomentSlideshow(id) {
     root.querySelector('[data-left]').onclick = () => move(selected,selected-1);
     root.querySelector('[data-right]').onclick = () => move(selected,selected+1);
     root.querySelector('[data-remove]').onclick = () => mutate(() => slides.splice(selected,1));
-    root.querySelector('[data-undo]').onclick = () => { redo.push(snapshot()); ({slides,selected} = JSON.parse(undo.pop())); editingField = null; changed(); render(); };
-    root.querySelector('[data-redo]').onclick = () => { undo.push(snapshot()); ({slides,selected} = JSON.parse(redo.pop())); editingField = null; changed(); render(); };
+    root.querySelector('[data-undo]').onclick = () => { redo.push(snapshot()); ({slides,selected,soundtrack} = JSON.parse(undo.pop())); editingField = null; changed(); render(); };
+    root.querySelector('[data-redo]').onclick = () => { undo.push(snapshot()); ({slides,selected,soundtrack} = JSON.parse(redo.pop())); editingField = null; changed(); render(); };
     const insert = slide => {
       if (slides.length >= 300) { status.textContent = 'Et diasshow kan højst have 300 slides.'; return; }
       mutate(() => { slides.splice(++selected,0,slide); });
@@ -262,8 +306,9 @@ async function editMomentSlideshow(id) {
     dialog.querySelector('[data-play]').disabled = false;
     dialog.querySelector('[data-play]').onclick = () => {
       preview.querySelectorAll('video').forEach(v => v.pause());
+      stopAudition();
       dialog.close();
-      state.momentPlayer = {title:item.title, script:structuredClone(slides), photos, index:0, onClose:() => dialog.showModal()};
+      state.momentPlayer = {title:item.title, music:musicDescriptor(), script:savedScript(), photos, index:0, onClose:() => dialog.showModal()};
       _momentPlayerOpen();
     };
     const save = dialog.querySelector('[data-save]'); save.disabled = false;
@@ -273,8 +318,8 @@ async function editMomentSlideshow(id) {
       root.inert = true;
       dialog.querySelector('[data-play]').disabled = true;
       try {
-        const result = await momentRequest(`/api/moments/${id}/slideshow`, 'PUT', {revision,script:slides});
-        revision = result.revision; slides = result.script; dirty = false;
+        const result = await momentRequest(`/api/moments/${id}/slideshow`, 'PUT', {revision,script:savedScript()});
+        revision = result.revision; slides = result.script; soundtrack = {...slides[0].music}; slides.forEach(s => delete s.music); dirty = false;
         status.textContent = 'Diasshow gemt. Afspilning og nye MP4-filer bruger din tidslinje. Eksisterende delelinks beholder deres version.';
       } catch(error) { status.textContent = error.message; }
       finally { saving = false; save.disabled = false; root.inert = false; dialog.querySelector('[data-play]').disabled = false; }

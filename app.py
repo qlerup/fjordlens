@@ -35,6 +35,7 @@ import reverse_geocoder as rg
 import place_names
 import pycountry
 import moment_cinema
+import moment_music
 import moments_engine
 import moments_service
 import pyotp
@@ -5139,6 +5140,7 @@ def enforce_login_for_app():
         "shared_moment_view",
         "shared_moment_data",
         "shared_moment_media",
+        "shared_moment_music",
         "api_share_info",
         "api_share_photos",
         "api_share_thumb",
@@ -6832,6 +6834,7 @@ def _moment_row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
         d["script"] = json.loads(script_raw) if script_raw else None
     except Exception:
         d["script"] = None
+    d["music"] = moment_music.descriptor(d["script"], d.get("title", ""))
     d["photo_count"] = len(d["photo_ids"])
     d["cover"] = None
     cover_id = d.get("cover_photo_id")
@@ -6920,6 +6923,8 @@ def _generate_moment_script(moment_row: sqlite3.Row) -> None:
 
     script = moment_cinema.timeline(dict(moment_row), ordered_rows, title=title,
                                     subtitle=subtitle, cards=cards, video_exts=VIDEO_EXTS)
+    if script:
+        script[0]["music"] = moment_music.choice(script, title)
 
     with closing(get_conn()) as conn:
         conn.execute(
@@ -7176,6 +7181,12 @@ def _render_moment_video(moment_id: int) -> None:
         subprocess.run(cmd, check=True, timeout=MOMENT_VIDEO_RENDER_TIMEOUT_SEC * 3)
         if not tmp.exists() or tmp.stat().st_size <= 0:
             raise RuntimeError("ffmpeg producerede en tom video")
+        music = moment_music.descriptor(script, row['title'])
+        if music:
+            scored = work_dir / 'scored.mp4'
+            moment_music.add_to_video(ffmpeg_bin, tmp, scored, work_dir, music,
+                                      MOMENT_VIDEO_RENDER_TIMEOUT_SEC * 3)
+            os.replace(scored, tmp)
         os.replace(tmp, dest)
         rel_out = f"moments/{dest.name}"
         _set_moment_video_status(moment_id, "done", video_rel_path=rel_out)

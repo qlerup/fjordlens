@@ -4017,6 +4017,7 @@ async function playMoment(id) {
       title: item.title || '',
       photos: item.photos || {},
       script,
+      music: item.music,
       videoUrl: item.video_status === 'done' ? `/api/moments/${id}/video` : null,
       index: 0,
       timer: null,

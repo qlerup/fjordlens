@@ -10,6 +10,7 @@ function _momentPlayerOpen() {
     els.momentPlayerVideoBtn.textContent = tr(state.momentPlayer?.videoUrl ? 'momenter_video_download' : 'momenter_make_video');
     els.momentPlayerVideoBtn.disabled = false;
   }
+  if (state.momentPlayer) momentStartMusic(state.momentPlayer);
   _momentPlayerMeasureFooter();
   _momentPlayerBuildProgress();
   _momentPlayerRenderSlide(0);
@@ -248,6 +249,7 @@ function _momentPlayerAdvance(delta) {
 function _momentPlayerClose() {
   if (document.fullscreenElement === els.momentPlayerOverlay) document.exitFullscreen?.().catch(() => {});
   else if (document.webkitFullscreenElement === els.momentPlayerOverlay) document.webkitExitFullscreen?.();
+  state.momentPlayer?.soundtrack?.stop();
   const onClose = state.momentPlayer?.onClose;
   _momentPlayerClearTimer();
   if (els.momentPlayerOverlay) els.momentPlayerOverlay.classList.add('hidden');
@@ -293,7 +295,8 @@ async function momentVideoFormatDialog() {
   els.momentPlayerOverlay.append(dialog);
   const initial = window.matchMedia('(orientation: portrait)').matches ? 'portrait' : 'landscape';
   dialog.querySelector(`[value="${initial}"]`).checked = true;
-  const close = () => { dialog.close(); dialog.remove(); if (state.momentPlayer === player) _momentPlayerRenderSlide(player.index); };
+  player.soundtrack?.pause();
+  const close = () => { dialog.close(); dialog.remove(); if (state.momentPlayer === player) { player.soundtrack?.resume(); _momentPlayerRenderSlide(player.index); } };
   dialog.querySelector('[data-cancel]').onclick = close;
   dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
   dialog.showModal();

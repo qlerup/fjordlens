@@ -4,6 +4,7 @@ import math
 from contextlib import closing
 from flask import request, jsonify
 import moment_cinema
+import moment_music
 import moments_service as service
 
 
@@ -13,6 +14,7 @@ def retain_edited_script(script_json, member_ids):
         script = json.loads(script_json or '[]')
         if not script or not script[0].get('script_edited'):
             return None
+        music = script[0].get('music')
         ids, result = set(member_ids), []
         for slide in script:
             if slide['type'] == 'text':
@@ -30,6 +32,8 @@ def retain_edited_script(script_json, member_ids):
             result.append(slide)
         if result:
             result[0]['script_edited'] = True
+            if music is not None:
+                result[0]['music'] = music
             return json.dumps(result, ensure_ascii=False)
     except (ValueError, KeyError, TypeError, AttributeError):
         pass
@@ -87,6 +91,11 @@ def validate(script, photos, video_exts):
         item['motion'] = motion if type(motion) is int and 0 <= motion <= 3 else 0
         result.append(item)
     result[0]['script_edited'] = True
+    if 'music' in script[0]:
+        try:
+            result[0]['music'] = moment_music.validate(script[0]['music'])
+        except ValueError as error:
+            raise service.EditError(str(error))
     return result
 
 
@@ -102,6 +111,8 @@ def register(app, g, managed):
             row = service._get(conn, moment_id, body['revision'])
             photos = {p['id']: p for p in service._photos(conn, sorted(service.members(row)))}
             script = validate(body.get('script'), photos, g['VIDEO_EXTS'])
+            if 'music' not in script[0]:
+                script[0]['music'] = moment_music.choice(json.loads(row['script_json'] or '[]'), row['title'])
             conn.execute("""UPDATE moments SET script_json=?,user_edited=1,revision=revision+1,
                 video_status='none',video_rel_path=NULL,video_error=NULL,updated_at=? WHERE id=?""",
                 (json.dumps(script, ensure_ascii=False), g['now_iso'](), moment_id))

@@ -42,7 +42,7 @@ class EditorBrowserTests(unittest.TestCase):
         <button onclick="editMomentSlideshow(MOMENT_ID)">Test editor</button>
         <div id="momentPlayerOverlay" class="moment-player hidden"><div id="momentPlayerProgress" class="moment-player-progress"></div><button id="momentPlayerCloseBtn" class="moment-player-close">Luk afspilning</button><div id="momentPlayerStage" class="moment-player-stage"></div><div class="moment-player-footer"><span id="momentPlayerFooterTitle"></span><button id="momentPlayerVideoBtn">Video</button><button id="momentPlayerEditBtn">Rediger diasshow</button></div></div>
         <script>const state={currentUser:{role:'admin'},momentPlayer:null}; const els=Object.fromEntries([...document.querySelectorAll('[id]')].map(e=>[e.id,e])); function tr(s){return s} function escapeHtml(s){const e=document.createElement('span');e.textContent=String(s);return e.innerHTML.replaceAll('"','&quot;')}</script>
-        <script src="/static/moments.js"></script><script src="/static/moment_player.js"></script><script src="/static/moment_editor.js"></script>'''.replace('MOMENT_ID',str(moment['id']))
+        <script src="/static/moments.js"></script><script src="/static/moment_music.js"></script><script src="/static/moment_player.js"></script><script src="/static/moment_editor.js"></script>'''.replace('MOMENT_ID',str(moment['id']))
         errors = []
         with sync_playwright() as runtime:
             try:
@@ -62,6 +62,12 @@ class EditorBrowserTests(unittest.TestCase):
             page.route('**/*',route)
             page.goto('http://fjordlens.test/')
             page.get_by_role('button',name='Test editor',exact=True).click()
+            page.locator('[data-music]').select_option('wedding-2')
+            page.locator('[data-music-volume]').fill('35')
+            page.locator('[data-music-volume]').dispatch_event('change')
+            if os.environ.get('FJORDLENS_EDITOR_SCREENSHOT'):
+                page.locator('.slideshow-music').scroll_into_view_if_needed()
+                page.screenshot(path=str(Path(os.environ['FJORDLENS_EDITOR_SCREENSHOT']).with_name('fjordlens-music-controls.png')), animations='disabled')
             page.locator('[data-field="heading"]').fill('K\u00f8benhavn og \u00c6r\u00f8')
             page.locator('[data-field="duration"]').fill('14')
             page.locator('[data-second]').select_option(str(ids[1]))
@@ -93,6 +99,7 @@ class EditorBrowserTests(unittest.TestCase):
             page.get_by_text('Diasshow gemt.',exact=False).wait_for()
             saved = self.client.get(f"/api/moments/{moment['id']}").get_json()['item']['script']
             self.assertEqual(saved[2]['type'],'pair')
+            self.assertEqual(saved[0]['music'], dict(track_id='wedding-2', volume=.35))
             self.assertEqual(saved[2]['label'],'K\u00f8benhavn og \u00c6r\u00f8')
             self.assertEqual(saved[2]['duration'],14)
             self.assertEqual(saved[3]['text'],'Vores sommerminder')
@@ -101,6 +108,7 @@ class EditorBrowserTests(unittest.TestCase):
             page.get_by_role('button',name='Luk',exact=True).click()
             page.get_by_role('button',name='Test editor',exact=True).click()
             page.locator('.slideshow-clip').nth(3).click()
+            self.assertEqual(page.locator('[data-music]').input_value(), 'wedding-2')
             restored = page.locator('.slideshow-preview .cinema-heading').bounding_box()
             restored_stage = page.locator('.slideshow-preview').bounding_box()
             self.assertAlmostEqual(restored['x']-restored_stage['x'],moved['x']-moved_stage['x'],delta=2)
@@ -119,6 +127,12 @@ class EditorBrowserTests(unittest.TestCase):
                 page.screenshot(path=screenshot,full_page=True,animations='disabled')
             page.get_by_role('button',name='Afspil udkast',exact=True).click()
             page.locator('#momentPlayerStage .cinema-media').wait_for()
+            page.wait_for_function("state.momentPlayer.soundtrack?.buffer && state.momentPlayer.soundtrack.context.state === 'running'")
+            self.assertEqual(page.evaluate('state.momentPlayer.music.id'), 'wedding-2')
+            page.locator('#momentPlayerMusicBtn').click()
+            self.assertTrue(page.evaluate('state.momentPlayer.soundtrack.muted'))
+            page.locator('#momentPlayerMusicBtn').click()
+            self.assertFalse(page.evaluate('state.momentPlayer.soundtrack.muted'))
             self.assertFalse(page.locator('#momentPlayerVideoBtn').is_visible())
             page.get_by_role('button',name='Luk afspilning',exact=True).click()
             self.assertTrue(page.locator('.slideshow-editor').is_visible())
