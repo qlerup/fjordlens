@@ -6,12 +6,17 @@ from cast_airplay import init_cast_airplay
 from google_photo_frame import init_google_photo_frame
 from google_photo_frame_picker import init_google_photo_frame_picker
 from google_photo_frame_selection import init_google_photo_frame_selection
+from people_section import init_people_section
 from privacy import init_privacy_page
 from safe_airplay_assets import init_safe_airplay_assets
 from share_link_defaults import init_share_link_defaults
 
 # Register public/support pages and optional integrations without touching filesystem or DB at startup.
 init_privacy_page(application)
+
+# Speed up the People view and give media managers the People-specific actions
+# without widening access to system maintenance/settings.
+init_people_section(application)
 
 # Google Photo Frame state remains lazy and is only read when its routes/UI are used.
 init_google_photo_frame(application)
