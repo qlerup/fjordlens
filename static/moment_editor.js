@@ -34,6 +34,10 @@ async function editMomentSlideshow(id) {
     dialog.querySelector('h2').textContent = item.title;
     root.innerHTML = `<div class="slideshow-workspace"><div class="slideshow-preview" data-preview aria-label="Forhåndsvisning"></div><aside class="slideshow-inspector"><h3 data-selection></h3><label>Overskrift<textarea data-field="heading" rows="2" maxlength="240"></textarea></label><label>Lille tekst over overskriften<input data-field="eyebrow" maxlength="100"></label><label>Dato eller undertekst<input data-field="detail" maxlength="180"></label><label>Vejr<input data-field="weather" maxlength="180" placeholder="Vises kun, hvis det findes eller tilføjes her"></label><div class="slideshow-field-row"><label>Sekunder<input data-field="duration" type="number" min="1" max="60" step="0.1"></label><label>Tekstens side<select data-field="layout"><option value="left">Venstre</option><option value="right">Højre</option></select></label></div><p class="mini-label" data-video-note hidden>Videoen afspilles altid til ende.</p><label data-fit-label>Billedvisning<select data-field="fit"><option value="contain">Hele billedet</option><option value="cover">Fyld skærmen</option></select></label><label data-style-label>Tekstkort<select data-field="style"><option value="intro">Introduktion</option><option value="chapter">Kapitel</option><option value="quote">Citat</option><option value="outro">Afslutning</option></select></label><label data-second-label>Andet billede<select data-second><option value="">Ét billede</option></select></label></aside></div><div class="slideshow-toolbar"><div class="slideshow-actions"><button class="btn small" data-undo>Fortryd</button><button class="btn small" data-redo>Gentag</button><button class="btn small" data-left aria-label="Flyt slide til venstre">← Flyt</button><button class="btn small" data-right aria-label="Flyt slide til højre">Flyt →</button><button class="btn small danger" data-remove>Fjern slide</button></div><div class="slideshow-actions"><button class="btn small" data-text>+ Tekst</button><button class="btn small" data-library-toggle>+ Billeder / videoer</button></div></div><p class="mini-label" data-total></p><div class="slideshow-timeline" data-timeline role="list" aria-label="Slides i afspilningsrækkefølge"></div><p class="mini-label">Træk slides for at ændre rækkefølgen. Træk i højre kant for at ændre visningstiden, eller skriv sekunder ovenfor.</p><section class="slideshow-library" data-library hidden><h3>Tilføj fra momentet</h3><p class="mini-label">Indsættes efter den valgte slide.</p><div data-library-grid></div></section>`;
     const preview = root.querySelector('[data-preview]');
+    const placement = document.createElement('div');
+    placement.className = 'slideshow-placement';
+    placement.innerHTML = '<p class="mini-label">Træk teksten på billedet for at flytte den. Du kan også bruge piletasterne, når teksten er valgt.</p><button class="btn small" type="button" data-reset-position>Nulstil placering</button>';
+    root.querySelector('.slideshow-inspector').append(placement);
     const timeline = root.querySelector('[data-timeline]');
     const fields = [...root.querySelectorAll('[data-field]')];
     const secondSelect = root.querySelector('[data-second]');
@@ -71,9 +75,71 @@ async function editMomentSlideshow(id) {
         const p2 = photos[String(s.second_photo_id)];
         const img = new Image(); img.alt = ''; img.className = 'cinema-media cinema-second'; img.src = p2.original_url || p2.thumb_url; wrap.append(img);
       }
-      const text = momentSlideText(s); if (text) wrap.append(text);
+      const text = momentSlideText(s);
+      if (text) {
+        text.tabIndex = 0;
+        text.setAttribute('role', 'button');
+        text.setAttribute('aria-label', 'Flyt teksten med musen eller piletasterne');
+        wrap.append(text);
+      }
       preview.append(wrap);
     }
+    function positionForDrag(text) {
+      if (slides[selected].text_position) return {...slides[selected].text_position};
+      const bounds = [...text.children].map(e => e.getBoundingClientRect());
+      const stage = preview.getBoundingClientRect();
+      const left = Math.min(...bounds.map(r => r.left)), top = Math.min(...bounds.map(r => r.top));
+      momentPositionText(text, {x:0, y:0});
+      const box = text.getBoundingClientRect();
+      return {x:Math.max(0, Math.min(1, (left-stage.left)/Math.max(1,stage.width-box.width))),
+              y:Math.max(0, Math.min(1, (top-stage.top)/Math.max(1,stage.height-box.height)))};
+    }
+    const resetPosition = root.querySelector('[data-reset-position]');
+    resetPosition.onclick = () => mutate(() => { delete slides[selected].text_position; });
+    preview.onpointerdown = e => {
+      const text = e.target.closest('.cinema-type');
+      if (!text || e.button !== 0 || !e.isPrimary) return;
+      e.preventDefault();
+      const startX = e.clientX, startY = e.clientY, original = {...slides[selected]};
+      const previousRedo = redo, previousDirty = dirty, previousStatus = status.textContent;
+      let start = null;
+      text.setPointerCapture(e.pointerId);
+      text.focus({preventScroll:true});
+      text.onpointermove = event => {
+        if (event.pointerId !== e.pointerId) return;
+        if (!start && Math.hypot(event.clientX-startX,event.clientY-startY) < 3) return;
+        if (!start) { checkpoint(); editingField = null; start = positionForDrag(text); text.classList.add('is-dragging'); }
+        const stage = preview.getBoundingClientRect(), box = text.getBoundingClientRect();
+        slides[selected].text_position = {
+          x:Math.max(0,Math.min(1,start.x+(event.clientX-startX)/Math.max(1,stage.width-box.width))),
+          y:Math.max(0,Math.min(1,start.y+(event.clientY-startY)/Math.max(1,stage.height-box.height)))};
+        momentPositionText(text, slides[selected].text_position);
+        changed(); resetPosition.disabled = false;
+      };
+      const finish = event => {
+        if (event.pointerId !== e.pointerId) return;
+        text.onpointermove = text.onpointerup = text.onpointercancel = text.onlostpointercapture = null;
+        if (start) {
+          if (event.type === 'pointercancel') {
+            slides[selected] = original; undo.pop(); redo = previousRedo;
+            dirty = previousDirty; status.textContent = previousStatus;
+          }
+          render();
+          preview.querySelector('.cinema-type')?.focus({preventScroll:true});
+        }
+      };
+      text.onpointerup = text.onpointercancel = text.onlostpointercapture = finish;
+    };
+    preview.onkeydown = e => {
+      const text = e.target.closest('.cinema-type');
+      const delta = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
+      if (!text || !delta) return;
+      e.preventDefault();
+      const start = positionForDrag(text), step = e.shiftKey ? .05 : .01;
+      mutate(() => { slides[selected].text_position = {
+        x:Math.max(0,Math.min(1,start.x+delta[0]*step)),y:Math.max(0,Math.min(1,start.y+delta[1]*step))}; });
+      preview.querySelector('.cinema-type')?.focus({preventScroll:true});
+    };
     function drawTimeline() {
       const scroll = timeline.scrollLeft;
       timeline.replaceChildren();
@@ -115,6 +181,7 @@ async function editMomentSlideshow(id) {
       root.querySelector('[data-left]').disabled = selected === 0;
       root.querySelector('[data-right]').disabled = selected === slides.length-1;
       root.querySelector('[data-remove]').disabled = slides.length <= 1;
+      resetPosition.disabled = !s.text_position;
       drawPreview(); drawTimeline();
     }
     fields.forEach(field => {

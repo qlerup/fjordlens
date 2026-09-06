@@ -157,13 +157,17 @@ def overlay(item, size):
     eyebrow = str(item.get('eyebrow') or '')[:100].upper()
     detail = ' · '.join(filter(None, (str(item.get('detail') or '')[:180], str(item.get('weather') or '')[:180])))
     side = not card and item.get('fit') == 'contain' and item.get('type') != 'pair'
+    position = item.get('text_position')
     if not any((text, eyebrow, detail)):
         return canvas
     # Dark photographic scrim keeps white type readable over bright snow/sky.
     for y in range(h):
         alpha = 110 if card else 90 if side else int(145 * max(0, (y/h-.7)/.3))
         left, edge = (int(w*.74), w) if right else (0, int(w*.26))
-        draw.line((left if side else 0, y, edge if side else w, y), fill=(7, 14, 18, alpha))
+        if position:
+            draw.line((0, y, w, y), fill=(7, 14, 18, 110 if card else 85))
+        else:
+            draw.line((left if side else 0, y, edge if side else w, y), fill=(7, 14, 18, alpha))
     margin, max_width = int(w*(.035 if side else .06)), int(w*(.78 if card else .20 if side else .75))
     font_size = h * (.085 if card else .052 if side else .027)
     while True:
@@ -179,10 +183,17 @@ def overlay(item, size):
     small_h = int(h*.035)
     block_h = len(lines)*line_h + (len(details)+len(eyebrows))*small_h + int(h*.07)
     y = int((h-block_h)/2) if card or side else int(h*.91-block_h)
+    block_width = max([draw.textlength(line, font=font) for line in lines] +
+                      [draw.textlength(line, font=small) for line in details+eyebrows] + [0])
+    if position:
+        block_x = max(0, w-block_width) * max(0, min(1, position['x']))
+        y = int(max(0, h-block_h) * max(0, min(1, position['y'])))
 
     def line_at(value, selected_font, color):
         length = draw.textlength(value, font=selected_font)
         x = (w-length)/2 if card else w-margin-length if right else margin
+        if position:
+            x = block_x + ((block_width-length)/2 if card else block_width-length if right else 0)
         draw.text((int(x), y), value, font=selected_font, fill=color, stroke_width=0)
 
     for line in eyebrows:

@@ -4614,6 +4614,32 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
   .slideshow-inspector h3 { grid-column: 1/-1; }
 }
 
+/* Positions are fractions of the space left around the text, so the whole block
+   stays inside the frame at every resolution. Automatic layouts remain intact. */
+.cinema-slide .cinema-type.cinema-positioned {
+  inset: auto !important; left: calc(100% * var(--text-x)) !important;
+  top: calc(100% * var(--text-y)) !important;
+  transform: translate(calc(-100% * var(--text-x)), calc(-100% * var(--text-y)));
+  width: max-content !important; max-width: 78%; height: auto; max-height: 96%;
+  padding: 0 !important; overflow: hidden; background: none !important; z-index: 2;
+}
+.cinema-slide .cinema-type.cinema-positioned > div { max-width: 100%; }
+.cinema-slide:is(.cinema-photo,.cinema-video).cinema-contain .cinema-positioned { max-width: 20%; }
+.cinema-slide:has(> .cinema-positioned)::after { content: ''; position: absolute; inset: 0; background: #07121755; pointer-events: none; }
+.cinema-slide:is(.cinema-intro,.cinema-chapter,.cinema-quote,.cinema-outro):has(> .cinema-positioned)::after { background: #07121788; }
+.slideshow-preview .cinema-type > div, .slideshow-preview .cinema-positioned {
+  pointer-events: auto; cursor: grab; touch-action: none; user-select: none;
+}
+.slideshow-preview .cinema-type.is-dragging, .slideshow-preview .cinema-type.is-dragging > div { cursor: grabbing; }
+.slideshow-preview .cinema-type:is(:hover,:focus-visible) > div { outline: 1px dashed #52d8c9aa; outline-offset: 3px; }
+.slideshow-placement { grid-column: 1/-1; }
+@media (max-width: 900px) and (orientation: portrait) {
+  .moment-player-stage .cinema-slide .cinema-type.cinema-positioned {
+    max-width: 86%; max-height: calc(100% - var(--moment-footer-height, 64px) - 22px);
+    top: calc((100% - var(--moment-footer-height, 64px) - 22px) * var(--text-y)) !important;
+  }
+}
+
 /* On mobile, keep topbar for burger menu, but hide search/sort controls */
 @media (max-width: 760px) {
   .mapper-search-shell { display: none !important; }

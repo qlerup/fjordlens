@@ -189,11 +189,20 @@ if (momentPlayerFooter && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(_momentPlayerMeasureFooter).observe(momentPlayerFooter);
 }
 
+function momentPositionText(text, position) {
+  const valid = position && Number.isFinite(position.x) && Number.isFinite(position.y);
+  text.classList.toggle('cinema-positioned', Boolean(valid));
+  if (valid) {
+    for (const key of ['x', 'y']) text.style.setProperty(`--text-${key}`, Math.max(0, Math.min(1, position[key])));
+  }
+}
+
 function momentSlideText(item) {
   const title = item.type === 'text' ? item.text : item.label;
   if (title || item.eyebrow || item.detail || item.weather) {
     const text = document.createElement('div');
     text.className = 'cinema-type';
+    momentPositionText(text, item.text_position);
     for (const [className, value] of [['cinema-eyebrow', item.eyebrow], ['cinema-heading', title], ['cinema-detail', item.detail], ['cinema-weather', item.weather]]) {
       if (!value) continue;
       const line = document.createElement('div');

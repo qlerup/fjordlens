@@ -16,7 +16,7 @@ class SlideshowEditingTests(unittest.TestCase):
     def test_saved_timeline_survives_reload_and_is_shared_with_pair_media(self):
         moment = self.make_moment()
         ids = json.loads(moment['photo_ids_json'])
-        script = [dict(type='text',text='Ærø og København',duration=4.5),
+        script = [dict(type='text',text='Ærø og København',duration=4.5,text_position=dict(x=.2,y=.7)),
                   dict(type='pair',photo_id=ids[2],second_photo_id=ids[0],duration=15,weather='Sol · 22 °C')]
         url = f"/api/moments/{moment['id']}/slideshow"
         response = self.client.put(url,json=dict(revision=moment['revision'],script=script))
@@ -27,6 +27,7 @@ class SlideshowEditingTests(unittest.TestCase):
         self.assertEqual(item['script'][0]['text'],'Ærø og København')
         self.assertEqual(item['script'][1]['second_photo_id'],ids[0])
         self.assertEqual(item['script'][1]['duration'],15)
+        self.assertEqual(item['script'][0]['text_position'],dict(x=.2,y=.7))
         self.assertEqual(set(item['photos']),{str(ids[2]),str(ids[0])})
         self.assertEqual(item['photo_ids'],ids)
         self.assertEqual(item['video_status'],'none')
@@ -57,6 +58,28 @@ class SlideshowEditingTests(unittest.TestCase):
     def test_video_duration_is_always_natural(self):
         result = moment_slideshow.validate([dict(type='video',photo_id=1,duration=2)],{1:dict(ext='.mp4')},{'.mp4'})
         self.assertIsNone(result[0]['duration'])
+
+    def test_invalid_text_positions_rejected(self):
+        import moments_service
+        for position in ({'x':-1,'y':.5},{'x':.5,'y':1.1},{'x':True,'y':.5},
+                         {'x':float('nan'),'y':.5},{'x':.5},{'x':.5,'y':'20%'},[]):
+            with self.subTest(position=position), self.assertRaises(moments_service.EditError):
+                moment_slideshow.validate([dict(type='text',text='Hej',text_position=position)],{},set())
+
+    def test_mp4_text_overlay_moves_to_selected_corner(self):
+        from PIL import Image
+        def bounds(position):
+            overlay = moment_cinema.overlay(dict(type='text',text='Bryllup',text_position=position),(640,360))
+            bright = Image.new('1',overlay.size)
+            bright.putdata([int(max(pixel[:3])>150) for pixel in overlay.getdata()])
+            return bright.getbbox()
+        left, right = bounds(dict(x=0,y=0)), bounds(dict(x=1,y=1))
+        self.assertLess(left[0],10)
+        self.assertLess(left[1],60)
+        self.assertGreater(right[0],400)
+        self.assertGreater(right[1],250)
+        self.assertLessEqual(right[2],640)
+        self.assertLessEqual(right[3],360)
 
     def test_membership_changes_preserve_text_and_drop_removed_media(self):
         script = [dict(type='text',text='Vores egen overskrift',script_edited=True,background_photo_id=1),

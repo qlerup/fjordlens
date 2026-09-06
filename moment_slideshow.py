@@ -77,6 +77,13 @@ def validate(script, photos, video_exts):
                 raise service.EditError('Ugyldigt layout.')
             item[key] = value
         motion = source.get('motion', 0)
+        position = source.get('text_position')
+        if position is not None:
+            if (not isinstance(position, dict) or set(position) != {'x', 'y'} or
+                    any(type(position[k]) not in (int, float) or not math.isfinite(position[k])
+                        or not 0 <= position[k] <= 1 for k in ('x', 'y'))):
+                raise service.EditError('Tekstens placering skal være inden for billedet.')
+            item['text_position'] = {k: round(position[k], 5) for k in ('x', 'y')}
         item['motion'] = motion if type(motion) is int and 0 <= motion <= 3 else 0
         result.append(item)
     result[0]['script_edited'] = True
