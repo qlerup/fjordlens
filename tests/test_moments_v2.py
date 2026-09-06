@@ -284,6 +284,18 @@ class MomentEditingTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?', (row['id'],)).fetchone()[0], 'En dag i Næstved, Danmark')
             place_names.migrate(conn)  # Idempotent on subsequent startup.
 
+    def test_date_edit_removes_selected_photos_outside_range(self):
+        row = self.make_moment()
+        ids = json.loads(row['photo_ids_json'])
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("UPDATE photos SET captured_at='2024-07-13T10:00:00' WHERE id=?", (ids[-1],))
+            conn.commit()
+        response = self.client.patch(f"/api/moments/{row['id']}", json=dict(title='Min tur',start_date='2024-07-10',end_date='2024-07-10',photo_ids=ids,revision=row['revision']))
+        self.assertEqual(response.status_code,200)
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            saved = conn.execute('SELECT * FROM moments WHERE id=?',(row['id'],)).fetchone()
+            self.assertEqual(json.loads(saved['photo_ids_json']),ids[:-1])
+
     def test_viewer_cannot_see_moment_from_hidden_folders(self):
         row = self.make_moment()
         with self.client.session_transaction() as session:

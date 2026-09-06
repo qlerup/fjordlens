@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from contextlib import closing
 
 import requests
-from moments_engine import distance
+from moments_engine import distance, photo_date
 from moment_calendar import title_for
 
 ENDPOINTS = ('https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter')
@@ -158,6 +158,17 @@ def enrich(candidates, rows, get_conn, budget=18, time_budget=20, progress=None)
         counts = [(sum(matches(venue,point) for point in points),venue) for venue in venues.values()]
         count, venue = max(counts,key=lambda pair:(pair[0],pair[1]['category'] in ('theme_park','zoo','aquarium','water_park'),bool(pair[1]['outer'])))
         if count < 5 or count < len(points)*.6 or count < len(candidate['photo_ids'])*.5:
+            continue
+        # A busy attraction day must not rename a larger journey containing
+        # unrelated days elsewhere. Validate each dated day's GPS evidence.
+        days = defaultdict(list)
+        for pid in candidate['photo_ids']:
+            row = by_id.get(pid, {})
+            day = photo_date(row)
+            loc = dict(lat=row.get('gps_lat'), lon=row.get('gps_lon'))
+            if day and distance(loc, loc) is not None:
+                days[day.date()].append((float(loc['lat']), float(loc['lon'])))
+        if any(sum(matches(venue,p) for p in daily) < len(daily)*.6 for daily in days.values()):
             continue
         inside = bool(venue['outer'])
         info = {k:venue[k] for k in ('name','osm_type','osm_id','category','source')}

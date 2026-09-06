@@ -232,7 +232,7 @@ def detect(g):
                     candidate['title'] = target['title']
                     candidate['primary_place'] = target['primary_place']
                     candidate['evidence']['reasons'].extend(r for r in previous.get('reasons', []) if 'OpenStreetMap' in r)
-                if members(target) == ids and evidence(target) == candidate["evidence"] and target["kind"] == candidate["kind"]:
+                if members(target) == ids and evidence(target) == candidate["evidence"] and target["kind"] == candidate["kind"] and target['title'] == candidate['title']:
                     stats["rejected_already_covered"] += 1
                     continue
                 if any(r["video_status"] in ("queued", "running", "rendering") for r in matches):
@@ -423,8 +423,9 @@ def register_routes(app, g):
             conn.execute("BEGIN IMMEDIATE")
             row = _get(conn, moment_id, data["revision"])
             photos = _photos(conn, ids)
-            if any(photo_date(p) and not start <= photo_date(p).date().isoformat() <= end for p in photos):
-                raise EditError("De valgte billeder skal ligge inden for datoerne. Brug 'Vælg inden for datoer'.")
+            ids = [p['id'] for p in photos if photo_date(p) and start <= photo_date(p).date().isoformat() <= end]
+            if not ids:
+                raise EditError('Ingen af de valgte billeder ligger inden for datoerne.')
             _update(conn, row, title=title, start=start, end=end, ids=ids, now=g["now_iso"](),
                     info=_manual_evidence(row, ids, "Du har rettet dette moment. Nye scanninger bevarer dine valg."))
             conn.commit()

@@ -88,7 +88,16 @@ def nearby(a, b, radius=40):
 
 def infer_home(rows, manual=None):
     if manual:
-        return location({"gps_name": manual.get("name"), "gps_lat": manual.get("lat"), "gps_lon": manual.get("lon")})
+        home = location({"gps_name": manual.get("name"), "gps_lat": manual.get("lat"), "gps_lon": manual.get("lon")})
+        if not home['country']:
+            home['country'] = next((r['_loc']['country'] for r in rows if r['_loc']['country'] and nearby(home, r['_loc'])), None)
+        if not home['country'] and home['lat'] is not None and home['lon'] is not None:
+            try:
+                import reverse_geocoder
+                home['country'] = reverse_geocoder.search((home['lat'], home['lon']), mode=1, verbose=False)[0].get('cc')
+            except Exception:
+                pass
+        return home
     places = {}
     for r in rows:
         loc = r["_loc"]
@@ -250,7 +259,7 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
     segments = []
     source_baselines = {}
     for stream in streams.values():
-        stream_home = location({"gps_name": manual_home.get("name"), "gps_lat": manual_home.get("lat"), "gps_lon": manual_home.get("lon")}) if manual_home else infer_home(stream)
+        stream_home = home if manual_home else (infer_home(stream) or home)
         home_here = stream_home
         days_by_place = defaultdict(set)
         daily_counts = Counter(r["_dt"].date() for r in stream)
@@ -295,10 +304,16 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
                     same_country = bool(loc["country"] and loc["country"] == prev_loc["country"])
                     km = distance(loc, prev_loc)
                     continuity = bool(home_here or same_country or nearby(loc, prev_loc, 100) or (km is not None and km <= 1200))
-                    allowed_gap = 96 if both_away and continuity else gap_hours
+                    home_cc = (home_here or {}).get('country')
+                    foreign = bool(home_cc and loc['country'] and prev_loc['country']
+                                   and loc['country'] != home_cc and prev_loc['country'] != home_cc)
+                    unknown_home_continuity = not home_cc and (km is None or km <= 100)
+                    allowed_gap = 96 if both_away and continuity and (foreign or unknown_home_continuity) else min(gap_hours, 30)
                     # Without home/country/coordinate evidence, a different place is a separate event.
                     place_break = both_away and not continuity and loc["name"] != prev_loc["name"]
                     split = hours > allowed_gap or r["_home"] != prev["_home"] or place_break
+                    if not foreign and km is not None and km > 80 and (hours > 6 or r['_dt'].date() != prev['_dt'].date()):
+                        split = True
                     if r["_home"] and r["_dt"].date() != prev["_dt"].date():
                         split = True
                 if split:
@@ -336,9 +351,13 @@ def discover(raw_rows, *, min_photos=8, min_hours=4, gap_hours=30, manual_home=N
         primary = " og ".join(country_names) if not single_day and countries else (places[0] if places else None)
         kind = "event" if single_day else "trip"
         title = (f"En dag i {primary}" if single_day else f"Tur til {primary}") if primary else ("Dagens oplevelser" if single_day else "Oplevelser")
+        abroad = bool(segment_home and segment_home.get('country') and countries
+                      and all(c != segment_home['country'] for c in countries))
+        if abroad:
+            title = f"Rejse til {' og '.join(country_names)}"
         # Existing descriptions can suggest an activity, only with repeated explicit evidence.
         themes = {"zoo": ("zoo", "zoologisk"), "stranden": ("strand", "beach"), "skoven": ("skov", "forest")}
-        if single_day:
+        if single_day and not abroad:
             for label, words in themes.items():
                 matches = sum(any(re.search(r"\b" + re.escape(w) + r"\b", str(r.get("ai_desc_caption") or "").casefold() + " " + str(r.get("ai_desc_tags") or "").casefold()) for w in words) for r in segment)
                 if matches >= max(3, len(segment)*.4):

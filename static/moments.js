@@ -73,11 +73,19 @@ async function editMoment(id) {
       <p class="mini-label">Ved opdeling flyttes de valgte billeder til et nyt moment, mens resten bliver her. De to perioder beregnes fra billederne. Gem eventuelle titelændringer først.</p>`;
     const start = body.querySelector('[data-start]');
     const end = body.querySelector('[data-end]');
+    const inRange = p => p.date && p.date.slice(0, 10) >= start.value && p.date.slice(0, 10) <= end.value;
+    function trimDateSelection() {
+      if (!start.value || !end.value || start.value > end.value) return;
+      photos.forEach(p => { if (!inRange(p)) selected.delete(p.id); });
+      renderPhotos();
+    }
+    start.addEventListener('change', trimDateSelection);
+    end.addEventListener('change', trimDateSelection);
     function renderPhotos() {
       body.querySelector('[data-count]').textContent = `${selected.size} valgt · ${photos.size} billeder vist`;
       body.querySelector('[data-photos]').innerHTML = [...photos.values()].map(p => `
         <label class="moment-editor-photo">
-          <input type="checkbox" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
+          <input type="checkbox" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''} ${inRange(p) ? '' : 'disabled'}>
           ${p.thumb_url ? `<img src="${escapeHtml(p.thumb_url)}" alt="" loading="lazy">` : '<span class="moment-photo-placeholder">Billede</span>'}
           <span>${escapeHtml((p.date || '').replace('T', ' '))}<br>${escapeHtml(p.place || p.filename || 'Ukendt sted')}</span>
         </label>`).join('');
@@ -89,7 +97,7 @@ async function editMoment(id) {
       body.querySelector('[data-count]').textContent = `${selected.size} valgt · ${photos.size} billeder vist`;
     });
     body.querySelector('[data-none]').onclick = () => { selected.clear(); renderPhotos(); };
-    body.querySelector('[data-all]').onclick = () => { photos.forEach(p => selected.add(p.id)); renderPhotos(); };
+    body.querySelector('[data-all]').onclick = () => { photos.forEach(p => { if (inRange(p)) selected.add(p.id); }); renderPhotos(); };
     body.querySelector('[data-range]').onclick = () => {
       selected.clear();
       photos.forEach(p => { if (p.date && p.date.slice(0, 10) >= start.value && p.date.slice(0, 10) <= end.value) selected.add(p.id); });
