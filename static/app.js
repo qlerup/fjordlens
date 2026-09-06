@@ -6335,6 +6335,7 @@ function appendPhotoLoadMoreButton(id, expectedView) {
 }
 
 function renderGrid() {
+  if (els.statPhotos) els.statPhotos.style.display = state.view === 'personer' && state.personView.mode === 'photos' ? 'none' : '';
   if (els.statSingleToggle) els.statSingleToggle.style.display = state.view === 'personer' && state.personView.mode === 'list' ? '' : 'none';
   if (els.showSingleToggle) els.showSingleToggle.checked = !!state.showSinglePeople;
   window.FjordLensFolderPreviews.reset();
@@ -6397,7 +6398,7 @@ function renderGrid() {
   // Handle People (Personer) view
   if (state.view === 'personer') {
     if (els.statHiddenToggle) {
-      els.statHiddenToggle.style.display = '';
+      els.statHiddenToggle.style.display = state.personView.mode === 'list' ? '' : 'none';
       if (els.showHiddenToggle) els.showHiddenToggle.checked = !!state.showHiddenPeople;
     }
     els.grid.innerHTML = '';
