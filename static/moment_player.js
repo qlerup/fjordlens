@@ -258,25 +258,38 @@ if (momentPlayerFooter) {
   const full = document.createElement('button');
   full.type = 'button'; full.className = 'btn'; full.id = 'momentPlayerFullscreenBtn';
   full.textContent = 'Fuld skærm';
-  full.onclick = async () => {
+  full.onclick = async (event) => {
+    event.preventDefault(); event.stopPropagation();
+    if (full.disabled) return;
+    full.disabled = true;
+    // Fullscreen can resize/rotate the canvas between two touch events. Ignore
+    // a trailing tap on another control until the new layout has settled.
+    els.momentPlayerOverlay._fullscreenInputUntil = performance.now() + 800;
     try {
       if (document.fullscreenElement || document.webkitFullscreenElement) {
-        await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else document.webkitExitFullscreen?.();
       } else {
         const player = els.momentPlayerOverlay;
         if (player.requestFullscreen) await player.requestFullscreen();
         else if (player.webkitRequestFullscreen) player.webkitRequestFullscreen();
         else window.alert('Denne browser understøtter ikke fuldskærm for diasshows. Du kan vende telefonen for at få en bredere visning.');
       }
-    } catch { full.textContent = 'Prøv fuld skærm igen'; }
+    } catch { full.title = 'Browseren kunne ikke åbne fuld skærm. Prøv igen.'; }
+    finally { full.disabled = false; momentSizeFrame(); }
   };
   const updateFullscreen = () => {
+    els.momentPlayerOverlay._fullscreenInputUntil = performance.now() + 800;
     full.textContent = (document.fullscreenElement || document.webkitFullscreenElement) ? 'Afslut fuld skærm' : 'Fuld skærm';
     _momentPlayerMeasureFooter();
   };
   document.addEventListener('fullscreenchange', updateFullscreen);
   document.addEventListener('webkitfullscreenchange', updateFullscreen);
   momentPlayerFooter.append(full);
+  full.addEventListener('pointerdown', event => {
+    if (event.isPrimary && event.button === 0) full.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+  });
 }
 if (momentPlayerFooter && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(_momentPlayerMeasureFooter).observe(momentPlayerFooter);

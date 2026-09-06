@@ -103,6 +103,14 @@ function momentStartMusic(player, options = {}) {
     button.textContent = label;
     button.setAttribute('aria-label', `${label} · ${player.music.title}`);
   });
-  button.onclick = () => player.soundtrack.toggle();
+  button.onclick = event => {
+    event.preventDefault(); event.stopPropagation();
+    if (event.detail > 0 && performance.now() < (els.momentPlayerOverlay._fullscreenInputUntil || 0)) return;
+    player.soundtrack.toggle();
+  };
+  button.onpointerdown = event => {
+    if (event.isPrimary && event.button === 0) button.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+  };
   player.soundtrack.start(options);
 }

@@ -5343,3 +5343,7 @@ dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
 .text-snap-guide.snap-x { width:1px; top:0; bottom:0; }.text-snap-guide.snap-y { height:1px; left:0; right:0; }
 .slideshow-editor .slideshow-snap-toggle { display:flex; align-items:center; gap:8px; margin-top:14px; }
 .slideshow-editor .slideshow-snap-toggle input { width:auto; accent-color:#38d9c9; }
+
+/* Stable, separate touch targets while labels/fullscreen state change. */
+.moment-player-frame #momentPlayerFullscreenBtn { order:30; flex:0 0 132px; width:132px; box-sizing:border-box; white-space:nowrap; touch-action:manipulation; }
+.moment-player-frame #momentPlayerMusicBtn { order:20; flex:0 0 132px; width:132px; box-sizing:border-box; white-space:nowrap; touch-action:manipulation; }
