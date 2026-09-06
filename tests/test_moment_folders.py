@@ -32,6 +32,18 @@ class FolderTitlesTests(unittest.TestCase):
         self.assertFalse(moment_folders.generic_title(self.candidate(title='Rejse til Tyrkiet · 26.05.2018')))
         self.assertFalse(moment_folders.generic_title(self.candidate(title='Tur til Danmark · 26.05.2026')))
 
+    def test_at_least_three_quarters_must_come_from_the_same_folder(self):
+        for percentage in (40,50,60,74,75,90,100):
+            candidate = self.candidate(photo_ids=list(range(100)))
+            original_title = candidate['title']
+            rows = [dict(id=i,rel_path=f"uploads/originals/{'Bryllup (2026)' if i < percentage else 'Andre billeder'}/{i}.jpg") for i in range(100)]
+            moment_folders.apply([candidate],rows)
+            self.assertEqual(candidate['title'], 'Bryllup' if percentage >= 75 else original_title)
+
+    def test_unknown_folders_count_towards_the_total(self):
+        candidate = self.candidate()
+        self.assertEqual(moment_folders.apply([candidate],[dict(id=i,rel_path=f'Bryllup/{i}.jpg') for i in (1,2)]),0)
+
 
 class FolderTitlePersistenceTests(unittest.TestCase):
     setUp = legacy.MomentEditingTests.setUp
@@ -65,3 +77,22 @@ class FolderTitlePersistenceTests(unittest.TestCase):
                 conn.execute('UPDATE moments SET status=?,user_edited=? WHERE id=?',(status,edited,moment['id']))
                 moment_folders.upgrade_suggestions(conn)
                 self.assertEqual(conn.execute('SELECT title FROM moments WHERE id=?',(moment['id'],)).fetchone()[0],moment['title'])
+
+    def test_legacy_weak_folder_title_is_restored_once(self):
+        moment = self.make_moment()
+        ids = json.loads(moment['photo_ids_json'])
+        info = json.loads(moment['evidence_json'])
+        info.update(title_source='folder',folder_title=dict(name='Bryllup',photo_count=2,total_photos=4))
+        info['reasons'].append('Titlen kommer fra mappen “Bryllup”.')
+        with app.closing(app.get_conn()) as conn:
+            for index,pid in enumerate(ids):
+                folder = 'Bryllup (2024)' if index < 2 else 'Andre billeder'
+                conn.execute('UPDATE photos SET rel_path=? WHERE id=?',(f'uploads/originals/{folder}/{pid}.jpg',pid))
+            conn.execute("UPDATE moments SET title='Bryllup',evidence_json=? WHERE id=?",(json.dumps(info),moment['id']))
+            moment_folders.upgrade_suggestions(conn)
+            row = conn.execute('SELECT * FROM moments WHERE id=?',(moment['id'],)).fetchone()
+            self.assertEqual(row['title'],moment['title'])
+            self.assertNotIn('folder_title',json.loads(row['evidence_json']))
+            self.assertIsNone(row['script_json'])
+            moment_folders.upgrade_suggestions(conn)
+            self.assertEqual(conn.execute('SELECT revision FROM moments WHERE id=?',(moment['id'],)).fetchone()[0],row['revision'])

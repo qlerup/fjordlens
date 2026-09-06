@@ -2,6 +2,9 @@
 from collections import Counter
 import json
 import re
+from datetime import date
+
+MIN_FOLDER_PERCENT = 75
 
 
 def clean_name(value):
@@ -49,6 +52,9 @@ def apply(candidates, rows):
         if not counts:
             continue
         folder, count = min(counts.items(), key=lambda entry: (-entry[1], entry[0].casefold(), entry[0]))
+        total = len(set(candidate['photo_ids']))
+        if count * 100 < MIN_FOLDER_PERCENT * total:
+            continue
         name = clean_name(folder.rsplit('/', 1)[-1])
         # Storage roots, camera folders and date-only names don't describe an event.
         if not name or name.casefold() in {'uploads', 'originals', 'converted', 'photos', 'pictures', 'images',
@@ -56,23 +62,43 @@ def apply(candidates, rows):
             continue
         if re.fullmatch(r'[\d\W_]+|\d{3}[A-Za-z_]+', name):
             continue
-        candidate['title'] = name
         info = candidate['evidence']
+        fallback_title = candidate['title']
+        fallback_source = info.get('title_source', 'place' if candidate.get('primary_place') else 'generic')
+        candidate['title'] = name
         info['title_source'] = 'folder'
-        info['folder_title'] = dict(name=name, photo_count=count, total_photos=len(set(candidate['photo_ids'])))
-        info.setdefault('reasons', []).append(f'Titlen kommer fra mappen “{name}”, som bidrager med flest billeder ({count}). Parenteser er fjernet.')
+        info['folder_title'] = dict(name=name, photo_count=count, total_photos=total,
+                                   fallback_title=fallback_title, fallback_source=fallback_source)
+        info.setdefault('reasons', []).append(f'Titlen kommer fra mappen “{name}”, som bidrager med {count} af {total} billeder (mindst {MIN_FOLDER_PERCENT} %). Parenteser er fjernet.')
         changed += 1
     return changed
 
 
 def upgrade_suggestions(conn):
     """Refresh existing automatic generic suggestions without a full GPS rescan."""
-    candidates = []
+    candidates, before = [], {}
     for row in conn.execute("""SELECT * FROM moments WHERE status='suggested' AND user_edited=0
             AND kind!='year_review' AND COALESCE(video_status,'none') NOT IN ('queued','running','rendering')"""):
         candidate = dict(row)
         candidate['evidence'] = json.loads(row['evidence_json'] or '{}')
         candidate['photo_ids'] = json.loads(row['photo_ids_json'] or '[]')
+        info = candidate['evidence']
+        before[row['id']] = (row['title'], json.dumps(info, sort_keys=True))
+        if info.get('title_source') == 'folder' and not (info.get('attraction') or info.get('occasion')):
+            previous = info.get('folder_title') or {}
+            # Only reconsider the title we generated, never a subsequently chosen name.
+            if candidate['title'] != previous.get('name'):
+                continue
+            fallback = previous.get('fallback_title')
+            if not fallback:
+                place = candidate.get('primary_place')
+                single_day = candidate['start_date'] == candidate['end_date']
+                fallback = (f'En dag i {place}' if single_day else f'Tur til {place}') if place else ('Dagens oplevelser' if single_day else 'Oplevelser')
+                fallback += f" · {date.fromisoformat(candidate['start_date']).strftime('%d.%m.%Y')}"
+            candidate['title'] = fallback
+            info['title_source'] = previous.get('fallback_source', 'place' if candidate.get('primary_place') else 'generic')
+            info.pop('folder_title', None)
+            info['reasons'] = [r for r in info.get('reasons', []) if not r.startswith('Titlen kommer fra mappen')]
         if generic_title(candidate):
             candidates.append(candidate)
     ids = sorted({pid for c in candidates for pid in c['photo_ids']})
@@ -82,7 +108,7 @@ def upgrade_suggestions(conn):
         rows.extend(conn.execute(f"SELECT id,rel_path FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
     apply(candidates, rows)
     for candidate in candidates:
-        if candidate['evidence'].get('title_source') != 'folder':
+        if (candidate['title'], json.dumps(candidate['evidence'], sort_keys=True)) == before[candidate['id']]:
             continue
         conn.execute("""UPDATE moments SET title=?,evidence_json=?,script_json=NULL,subtitle=NULL,
             video_status='none',video_rel_path=NULL,video_error=NULL,revision=revision+1,
