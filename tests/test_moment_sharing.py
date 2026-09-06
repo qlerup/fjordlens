@@ -36,6 +36,28 @@ class MomentSharingTests(unittest.TestCase):
         self.assertEqual(public.get(f'/api/moment-share/{token}/media/{ids[1]}').status_code,404)
         self.assertNotEqual(public.get('/api/moments').status_code,200)
         self.assertNotEqual(public.post(f"/api/moments/{moment['id']}/share").status_code,200)
+        listing = self.client.get('/api/admin/shares?include_inactive=1').get_json()['items']
+        share = next(s for s in listing if s.get('kind') == 'moment')
+        self.assertTrue(share['link'].endswith(url))
+        self.assertTrue(share['expires_at'])
+        admin_url = f"/api/admin/moment-shares/{abs(share['id'])}"
+        self.assertNotEqual(public.post(admin_url+'/revoke').status_code,200)
+        self.assertEqual(self.client.post(admin_url+'/revoke').status_code,200)
+        self.assertEqual(public.get(url).status_code,404)
+        self.assertEqual(public.get(shared['photos'][str(ids[0])]['original_url']).status_code,404)
+        self.assertEqual(self.client.post(admin_url+'/activate',json={'expires_value':7}).status_code,200)
+        self.assertEqual(public.get(url).status_code,200)
+        with app.closing(app.get_conn()) as conn:
+            conn.execute("UPDATE moment_shares SET expires_at='2000-01-01T00:00:00Z'")
+            conn.commit()
+        self.assertEqual(public.get(url).status_code,404)
+        self.assertEqual(public.get(f'/api/moment-share/{token}').status_code,404)
+        self.assertEqual(self.client.post(admin_url+'/extend',json={'expires_value':30}).status_code,200)
+        self.assertEqual(public.get(url).status_code,200)
+        self.assertEqual(self.client.put(admin_url,json={'share_name':'Test', 'expires_value':0}).status_code,200)
+        updated = self.client.get('/api/admin/shares?include_inactive=1').get_json()['items'][0]
+        self.assertEqual(updated['share_name'],'Test')
+        self.assertIsNone(updated['expires_at'])
         self.assertEqual(self.client.delete(f"/api/moments/{moment['id']}/share").status_code,200)
         self.assertEqual(public.get(url).status_code,404)
         self.assertEqual(public.get(shared['photos'][str(ids[0])]['original_url']).status_code,404)

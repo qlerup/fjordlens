@@ -9965,6 +9965,10 @@ async function _copySharedLink(link) {
   }
 }
 
+function adminShareUrl(id) {
+  return Number(id) < 0 ? `/api/admin/moment-shares/${Math.abs(Number(id))}` : `/api/admin/shares/${encodeURIComponent(String(id))}`;
+}
+
 function renderDnsSharesList() {
   if (!els.sharedLinksList) return;
   const items = Array.isArray(state.sharedLinks) ? state.sharedLinks : [];
@@ -9996,7 +10000,7 @@ function renderDnsSharesList() {
     const qrBtn = `<button type="button" class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
     return `
       <tr>
-        <td class="col-folder">${escapeHtml(folder)}</td>
+        <td class="col-folder">${item.kind === 'moment' ? '<span class="mini-label">Moment · </span>' : ''}${escapeHtml(folder)}</td>
         <td class="col-access" data-label="${escapeHtml(tr('dns_shares_col_access'))}">${escapeHtml(permissionLabel)}</td>
         <td class="col-expires" data-label="${escapeHtml(tr('dns_shares_col_expires'))}">${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
         <td class="col-last-used">${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>
@@ -10374,6 +10378,7 @@ function _renderSharedEditFolders(allFolders, selectedFolders) {
 }
 
 async function openSharedEditModal(shareId) {
+  if (Number(shareId) < 0) return editMomentShare(shareId);
   if (!els.sharedEditModal) return;
   const sid = Number(shareId || 0) || 0;
   if (!sid) return;
@@ -10497,7 +10502,7 @@ async function saveSharedEditModal() {
       saveBtn.classList.add('loading');
       saveBtn.textContent = tr('dns_shares_edit_saving');
     }
-    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}`, {
+    const res = await fetch(`${adminShareUrl(shareId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -10535,7 +10540,7 @@ async function revokeDnsShare(shareId) {
   if (!shareId) return;
   if (!window.confirm(tr('dns_shares_deactivate_confirm'))) return;
   try {
-    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/revoke`, {
+    const res = await fetch(`${adminShareUrl(shareId)}/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -10566,7 +10571,7 @@ async function activateDnsShare(shareId) {
     days = Math.floor(parsed);
   }
   try {
-    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/activate`, {
+    const res = await fetch(`${adminShareUrl(shareId)}/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expires_value: days, expires_unit: 'days' }),
@@ -10587,7 +10592,7 @@ async function deleteDnsShare(shareId) {
   if (!shareId) return;
   if (!window.confirm(tr('dns_shares_delete_confirm'))) return;
   try {
-    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}`, {
+    const res = await fetch(`${adminShareUrl(shareId)}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -10636,7 +10641,7 @@ async function extendDnsShare(shareId) {
     days = Math.floor(parsed);
   }
   try {
-    const res = await fetch(`/api/admin/shares/${encodeURIComponent(String(shareId))}/extend`, {
+    const res = await fetch(`${adminShareUrl(shareId)}/extend`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expires_value: days, expires_unit: 'days' }),
@@ -16354,40 +16359,40 @@ if (els.sharedLinksList) {
     if (!(target instanceof HTMLElement) || !els.sharedLinksList.contains(target)) return;
     e.preventDefault();
     const copyId = Number(target.getAttribute('data-share-copy') || 0) || 0;
-    if (copyId > 0) {
+    if (copyId !== 0) {
       const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === copyId) : null;
       await _copySharedLink(item && item.link ? String(item.link) : '');
       return;
     }
     const qrId = Number(target.getAttribute('data-share-qr') || 0) || 0;
-    if (qrId > 0) {
+    if (qrId !== 0) {
       const item = Array.isArray(state.sharedLinks) ? state.sharedLinks.find((s) => Number(s.id || 0) === qrId) : null;
       const link = item && item.link ? String(item.link) : '';
       if (link) await _downloadQrForLink(link, `share-${qrId}-qr.png`);
       return;
     }
     const editId = Number(target.getAttribute('data-share-edit') || 0) || 0;
-    if (editId > 0) {
+    if (editId !== 0) {
       await openSharedEditModal(editId);
       return;
     }
     const revokeId = Number(target.getAttribute('data-share-revoke') || 0) || 0;
-    if (revokeId > 0) {
+    if (revokeId !== 0) {
       await revokeDnsShare(revokeId);
       return;
     }
     const activateId = Number(target.getAttribute('data-share-activate') || 0) || 0;
-    if (activateId > 0) {
+    if (activateId !== 0) {
       await activateDnsShare(activateId);
       return;
     }
     const extendId = Number(target.getAttribute('data-share-extend') || 0) || 0;
-    if (extendId > 0) {
+    if (extendId !== 0) {
       await extendDnsShare(extendId);
       return;
     }
     const deleteId = Number(target.getAttribute('data-share-delete') || 0) || 0;
-    if (deleteId > 0) {
+    if (deleteId !== 0) {
       await deleteDnsShare(deleteId);
     }
   });

@@ -29,6 +29,10 @@ def migrate(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS moment_shares (
         token_hash TEXT PRIMARY KEY, moment_id INTEGER NOT NULL,
         title TEXT NOT NULL, script_json TEXT NOT NULL, created_at TEXT NOT NULL)''')
+    share_columns = {r[1] for r in conn.execute('PRAGMA table_info(moment_shares)')}
+    for name, definition in (('token_plain', 'TEXT'), ('expires_at', 'TEXT'), ('last_used_at', 'TEXT'), ('revoked', 'INTEGER NOT NULL DEFAULT 0')):
+        if name not in share_columns:
+            conn.execute(f'ALTER TABLE moment_shares ADD COLUMN {name} {definition}')
     columns = {r[1] for r in conn.execute("PRAGMA table_info(moments)")}
     for name, definition in (("evidence_json", "TEXT NOT NULL DEFAULT '{}'"),
                              ("user_edited", "INTEGER NOT NULL DEFAULT 0"),

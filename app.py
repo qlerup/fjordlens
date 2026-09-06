@@ -25236,6 +25236,9 @@ def api_admin_shares_list():
             }
         )
 
+    import moment_sharing
+    items.extend(moment_sharing.admin_items(globals(), include_inactive))
+    items.sort(key=lambda item: item.get('created_at') or '', reverse=True)
     return jsonify({"ok": True, "items": items})
 
 

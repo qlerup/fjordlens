@@ -185,7 +185,7 @@ async function shareMoment(id) {
     const data = await momentRequest(`/api/moments/${id}/share`, 'POST', {});
     if (!dialog.isConnected) return;
     const url = new URL(data.url, window.location.origin).href;
-    body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet.</p><input readonly aria-label="Delelink" style="width:100%"><p><button class="btn primary" data-copy>Kopiér link</button> <button class="btn ghost" data-revoke>Stop deling</button></p>`;
+    body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet. Linket gælder i 7 dage. Du kan forlænge eller ophæve det under Indstillinger → Delte.</p><input readonly aria-label="Delelink" style="width:100%"><p><button class="btn primary" data-copy>Kopiér link</button> <button class="btn ghost" data-revoke>Stop deling</button></p>`;
     body.querySelector('input').value = url;
     body.querySelector('[data-copy]').onclick = async () => {
       try { await navigator.clipboard.writeText(url); status.textContent='Link kopieret'; }
@@ -197,4 +197,22 @@ async function shareMoment(id) {
     };
     status.textContent='';
   } catch(error) { status.textContent=error.message; }
+}
+
+function editMomentShare(id) {
+  const item = state.sharedLinks.find(s => s.id === Number(id));
+  if (!item) return;
+  const dialog = momentDialog('Rediger momentlink');
+  const body = dialog.querySelector('[data-body]');
+  body.innerHTML = `<label>Navn<input data-name maxlength="240"></label><label>Gyldighed fra nu (dage)<input data-days type="number" min="0" max="3650" value="7"></label><p class="mini-label">0 betyder intet udløb. Ændringen gælder kun delelinket.</p><button class="btn primary" data-save>Gem ændringer</button>`;
+  body.querySelector('[data-name]').value = item.share_name;
+  body.querySelector('[data-save]').onclick = async () => {
+    const days = body.querySelector('[data-days]');
+    if (!days.reportValidity()) return;
+    try {
+      await momentRequest(adminShareUrl(id), 'PUT', {share_name: body.querySelector('[data-name]').value, expires_value: Number(days.value), expires_unit: 'days'});
+      dialog.close();
+      await loadDnsShares();
+    } catch(error) { dialog.querySelector('[data-status]').textContent = error.message; }
+  };
 }
