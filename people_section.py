@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from functools import wraps
 
+from flask import jsonify, request
 from flask_login import current_user
 
 
-PEOPLE_FAST_ASSET = "/static/people_fast.js?v=2"
+PEOPLE_FAST_ASSET = "/static/people_fast.js?v=3"
 
 
 def _allow_manager_for_people_action(original):
@@ -32,6 +33,81 @@ def _allow_manager_for_people_action(original):
     return view
 
 
+def _can_manage_people() -> bool:
+    try:
+        return bool(getattr(current_user, "can_manage_media", False))
+    except Exception:
+        return False
+
+
+def _register_bulk_hide_route(app, fjordlens) -> None:
+    """Register one bulk hide/unhide endpoint for People cards."""
+    if "api_people_hide_bulk" in app.view_functions:
+        return
+
+    def api_people_hide_bulk():
+        if not _can_manage_people():
+            return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("ids")
+        if not isinstance(raw_ids, list):
+            return jsonify({"ok": False, "error": "Missing ids"}), 400
+
+        person_ids: list[int] = []
+        seen: set[int] = set()
+        for raw in raw_ids[:1000]:
+            try:
+                pid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if pid <= 0 or pid in seen:
+                continue
+            seen.add(pid)
+            person_ids.append(pid)
+
+        if not person_ids:
+            return jsonify({"ok": False, "error": "No valid person ids"}), 400
+
+        hidden_raw = data.get("hidden", True)
+        hidden = 0 if hidden_raw in (False, 0, "0", "false", "False") else 1
+        placeholders = ",".join("?" for _ in person_ids)
+
+        try:
+            with fjordlens.closing(fjordlens.get_conn()) as conn:
+                rows = conn.execute(
+                    f"SELECT id FROM people WHERE id IN ({placeholders})",
+                    person_ids,
+                ).fetchall()
+                existing_ids = [int(row["id"]) for row in rows]
+                if existing_ids:
+                    existing_placeholders = ",".join("?" for _ in existing_ids)
+                    conn.execute(
+                        f"UPDATE people SET hidden=? WHERE id IN ({existing_placeholders})",
+                        [hidden, *existing_ids],
+                    )
+                    conn.commit()
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "hidden": bool(hidden),
+                    "updated": len(existing_ids),
+                    "ids": existing_ids,
+                }
+            )
+        except Exception as exc:
+            app.logger.exception("Could not bulk-update People visibility")
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    app.add_url_rule(
+        "/api/people/hide-bulk",
+        endpoint="api_people_hide_bulk",
+        view_func=api_people_hide_bulk,
+        methods=["POST"],
+    )
+
+
 def _inject_people_fast_asset(app) -> None:
     @app.after_request
     def inject_people_fast_asset(response):
@@ -50,6 +126,15 @@ def _inject_people_fast_asset(app) -> None:
             ):
                 return response
 
+            # Remove an older injected people_fast.js tag if a cached template or
+            # earlier extension version supplied one, then inject the current asset.
+            import re
+            html = re.sub(
+                r'<script\s+src="/static/people_fast\.js\?v=\d+"></script>\s*',
+                "",
+                html,
+                flags=re.IGNORECASE,
+            )
             tag = f'<script src="{PEOPLE_FAST_ASSET}"></script>'
             response.set_data(html.replace("</body>", f"{tag}\n</body>", 1))
             response.headers["Content-Length"] = str(len(response.get_data()))
@@ -60,8 +145,10 @@ def _inject_people_fast_asset(app) -> None:
 
 def init_people_section(app) -> None:
     """Install People UX/access fixes once per Flask app."""
-    if app.extensions.get("fjordlens_people_section_v3"):
+    if app.extensions.get("fjordlens_people_section_v4"):
         return
+
+    import app as fjordlens
 
     # Managers already have can_manage_media and full media-library visibility.
     # Give them the People-specific content actions while keeping scan/logs/
@@ -77,5 +164,6 @@ def init_people_section(app) -> None:
         if original is not None:
             app.view_functions[endpoint] = _allow_manager_for_people_action(original)
 
+    _register_bulk_hide_route(app, fjordlens)
     _inject_people_fast_asset(app)
-    app.extensions["fjordlens_people_section_v3"] = True
+    app.extensions["fjordlens_people_section_v4"] = True
