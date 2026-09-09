@@ -43,9 +43,24 @@
     });
   }
 
+  function rememberCookie(key, value) {
+    // Appearance only, never identity/session data. This also lets the server
+    // render the next login in the right design before JavaScript starts.
+    try {
+      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      document.cookie = key + '=' + encodeURIComponent(value) + '; Path=/; Max-Age=31536000; SameSite=Lax' + secure;
+    } catch (_) {}
+  }
+
+  function rememberTheme() {
+    const mode = document.documentElement.getAttribute('data-theme');
+    rememberCookie('fl_theme_mode', mode === 'light' || mode === 'dark' ? mode : 'system');
+  }
+
   function applyLocally(value) {
     current = value === 'fjord' ? 'fjord' : 'classic';
     try { localStorage.setItem(DESIGN_KEY, current); } catch {}
+    rememberCookie(DESIGN_KEY, current);
     if (stylesheet) stylesheet.disabled = current !== 'fjord';
     document.documentElement.dataset.uiDesign = current;
     if (settingsSelect) settingsSelect.value = current;
@@ -97,6 +112,11 @@
   }
 
   applyLocally(current);
+  rememberTheme();
+  // app.js owns the light/dark/system control. Mirror its applied preference,
+  // including a switch back to system, without changing the user's selection.
+  const themeObserver = new MutationObserver(rememberTheme);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   if (settingsSelect) settingsSelect.addEventListener('change', () => save(settingsSelect.value));
   if (introApply) introApply.addEventListener('click', async () => {
     await save((introSelect && introSelect.value) || 'fjord');

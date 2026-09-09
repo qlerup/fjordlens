@@ -1,5 +1,9 @@
 <!doctype html>
-<html lang="{{ ui_lang|default('da') }}">
+{% set saved_design = 'fjord' if request.cookies.get('fl_ui_design') == 'fjord' else 'classic' %}
+{% set saved_theme = request.cookies.get('fl_theme_mode', 'system') %}
+{% set light_color = '#edf3f4' if saved_design == 'fjord' else '#f5f6f8' %}
+{% set dark_color = '#08141a' if saved_design == 'fjord' else '#0f1115' %}
+<html lang="{{ ui_lang|default('da') }}" data-ui-design="{{ saved_design }}"{% if saved_theme in ('light', 'dark') %} data-theme="{{ saved_theme }}"{% endif %}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -11,9 +15,9 @@
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v=app_build) }}">
   <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v=app_build) }}">
   <!-- Match browser chrome with theme; supports auto and overrides -->
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f6f8">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1115">
-  <meta id="theme-color-override" name="theme-color" content="#0f1115">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ dark_color if saved_theme == 'dark' else light_color }}">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ light_color if saved_theme == 'light' else dark_color }}">
+  <meta id="theme-color-override" name="theme-color" content="{{ light_color if saved_theme == 'light' else dark_color }}">
   <meta name="application-name" content="FjordLens">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="FjordLens">
@@ -23,24 +27,68 @@
   <meta name="msapplication-config" content="{{ url_for('static', filename='logos/web/browserconfig.xml', v=app_build) }}">
   <script>
     (function () {
-      try {
-        const theme = localStorage.getItem('fl_theme_mode');
-        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
-        const design = localStorage.getItem('fl_ui_design');
-        if (design === 'fjord') document.documentElement.setAttribute('data-ui-design', 'fjord');
-      } catch (_) {}
+      'use strict';
+      const root = document.documentElement;
+      let systemTheme = null;
+      try { systemTheme = window.matchMedia('(prefers-color-scheme: dark)'); } catch (_) {}
+
+      function readPreference(key, allowed, fallback) {
+        // Storage can be unavailable independently of cookies (and vice versa).
+        try {
+          const value = localStorage.getItem(key);
+          if (allowed.includes(value)) return value;
+        } catch (_) {}
+        try {
+          const cookie = document.cookie.split(';').map(part => part.trim())
+            .find(part => part.startsWith(key + '='));
+          const value = cookie ? decodeURIComponent(cookie.slice(key.length + 1)) : null;
+          if (allowed.includes(value)) return value;
+        } catch (_) {}
+        return fallback;
+      }
+
+      function restoreAppearance() {
+        const design = readPreference('fl_ui_design', ['classic', 'fjord'], 'classic');
+        const theme = readPreference('fl_theme_mode', ['system', 'light', 'dark'], 'system');
+        root.setAttribute('data-ui-design', design);
+        if (theme === 'system') root.removeAttribute('data-theme');
+        else root.setAttribute('data-theme', theme);
+
+        const stylesheet = document.getElementById('fjordDesignStylesheet');
+        if (stylesheet) stylesheet.media = design === 'fjord' ? 'all' : 'not all';
+        const light = design === 'fjord' ? '#edf3f4' : '#f5f6f8';
+        const dark = design === 'fjord' ? '#08141a' : '#0f1115';
+        const resolved = theme === 'system' ? (!systemTheme || systemTheme.matches ? 'dark' : 'light') : theme;
+        document.querySelectorAll('meta[name="theme-color"]').forEach(meta => {
+          const media = meta.getAttribute('media');
+          const useLight = theme === 'system' && media ? media.includes('light') : resolved === 'light';
+          meta.setAttribute('content', useLight ? light : dark);
+        });
+      }
+
+      // Run before CSS/first paint, and again when a cached/backgrounded login
+      // page is restored. A one-time bootstrap leaves old themes stuck in Safari.
+      restoreAppearance();
+      window.addEventListener('pageshow', restoreAppearance);
+      window.addEventListener('focus', restoreAppearance);
+      window.addEventListener('storage', event => {
+        if (!event.key || event.key === 'fl_ui_design' || event.key === 'fl_theme_mode') restoreAppearance();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') restoreAppearance();
+      });
+      if (systemTheme) {
+        if (systemTheme.addEventListener) systemTheme.addEventListener('change', restoreAppearance);
+        else if (systemTheme.addListener) systemTheme.addListener(restoreAppearance);
+      }
     })();
   </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=app_build) }}">
-  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css', v=app_build) }}" disabled>
+  <!-- Keep the optional CSS loadable; do not start it as a disabled stylesheet. -->
+  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css', v=app_build) }}" media="{{ 'all' if saved_design == 'fjord' else 'not all' }}">
   <script>
-    (function () {
-      try {
-        const design = localStorage.getItem('fl_ui_design');
-        const stylesheet = document.getElementById('fjordDesignStylesheet');
-        if (stylesheet && design === 'fjord') stylesheet.disabled = false;
-      } catch (_) {}
-    })();
+    document.getElementById('fjordDesignStylesheet').media =
+      document.documentElement.getAttribute('data-ui-design') === 'fjord' ? 'all' : 'not all';
   </script>
   {% block head %}{% endblock %}
   <style>/* minimal safe defaults for pages that center a single card */
