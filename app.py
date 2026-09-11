@@ -806,13 +806,14 @@ def inject_template_i18n():
         "tt": lambda key: _ui_text(str(key), lang),
         "app_build": APP_BUILD_ID,
         "forgot_password_enabled": _get_setting_bool("forgot_password_enabled", True),
+        "site_ui_design": _site_ui_design(),
     }
 
 
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    if request.path.startswith("/api/settings/"):
+    if request.path.startswith("/api/settings/") or response.mimetype == "text/html":
         response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -5124,6 +5125,7 @@ def enforce_login_for_app():
         "hub_login",
         "api_health",
         "api_auth_session",
+        "api_ui_design",
         "apple_touch_icon",
         "apple_touch_icon_180",
         "apple_touch_icon_167",
@@ -5277,6 +5279,31 @@ def _set_setting(key: str, value: str) -> None:
             (key, value),
         )
         conn.commit()
+
+
+def _site_ui_design() -> str:
+    """One shared design, read from SQLite so every worker sees admin changes."""
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='ui_design'").fetchone()
+        if row and row["value"] in {"classic", "fjord"}:
+            return row["value"]
+        # Upgrade existing installs using the original administrator's selection.
+        # Do not persist a default before setup has created an administrator.
+        admin = conn.execute(
+            "SELECT ui_design FROM users WHERE role='admin' "
+            "OR ((role IS NULL OR role='') AND is_admin=1) ORDER BY id LIMIT 1"
+        ).fetchone()
+        if not admin:
+            return "classic"
+        design = "fjord" if admin["ui_design"] == "fjord" else "classic"
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('ui_design', ?) "
+            "ON CONFLICT(key) DO NOTHING", (design,),
+        )
+        conn.commit()
+        # A simultaneous admin save must win over migration in another worker.
+        saved = conn.execute("SELECT value FROM settings WHERE key='ui_design'").fetchone()
+        return "fjord" if saved and saved["value"] == "fjord" else "classic"
 
 
 # --- "Glemt kode" (standalone mode only - hub-managed installs delegate to FjordHub) ---
@@ -15647,7 +15674,7 @@ def index():
             "ui_language": _normalize_language((row["ui_language"] if row else None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
-            "ui_design": str((row["ui_design"] if row and "ui_design" in row.keys() else "classic") or "classic").lower(),
+            "ui_design": _site_ui_design(),
             "video_autoplay": video_autoplay_enabled(),
             "ui_design_intro_seen": _get_setting_bool("ui_design_intro_seen", False),
         }
@@ -15660,7 +15687,7 @@ def index():
             "ui_language": _normalize_language(getattr(current_user, "ui_language", None), DEFAULT_UI_LANGUAGE),
             "search_language": _normalize_language(getattr(current_user, "search_language", None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": "system",
-            "ui_design": "classic",
+            "ui_design": _site_ui_design(),
             "video_autoplay": video_autoplay_enabled(),
             "ui_design_intro_seen": _get_setting_bool("ui_design_intro_seen", False),
         }
@@ -25704,7 +25731,7 @@ def api_me():
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
                     "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),
-                    "ui_design": str((row["ui_design"] if "ui_design" in row.keys() else "classic") or "classic").lower(),
+                    "ui_design": _site_ui_design(),
                 },
             }
         )
@@ -25712,24 +25739,28 @@ def api_me():
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
+@app.route("/api/ui-design", methods=["GET"])
+def api_ui_design():
+    # Appearance is public so login, setup and shared links use the same design.
+    response = jsonify({"ok": True, "ui_design": _site_ui_design()})
+    response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+    return response
+
+
+@app.route("/api/settings/ui-design", methods=["POST"])
 @app.route("/api/me/ui-design", methods=["POST"])
 @login_required
 def api_me_ui_design():
+    # Keep the old URL for existing clients, with the same admin-only policy.
+    if not getattr(current_user, "is_admin", False):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
     data = request.get_json(silent=True) or {}
-    ui_design = str(data.get("ui_design") or "classic").strip().lower()
+    ui_design = str(data.get("ui_design") or "").strip().lower()
     if ui_design not in {"classic", "fjord"}:
         return jsonify({"ok": False, "error": "invalid_ui_design"}), 400
     try:
-        with closing(get_conn()) as conn:
-            try:
-                conn.execute("UPDATE users SET ui_design=? WHERE id=?", (ui_design, current_user.id))
-            except sqlite3.OperationalError as exc:
-                if "ui_design" not in str(exc).lower():
-                    raise
-                conn.execute("ALTER TABLE users ADD COLUMN ui_design TEXT DEFAULT 'classic'")
-                conn.execute("UPDATE users SET ui_design=? WHERE id=?", (ui_design, current_user.id))
-            conn.commit()
-        log_event("ui_design_updated", actor=_audit_actor(), new_value=ui_design)
+        _set_setting("ui_design", ui_design)
+        log_event("ui_design_updated", actor=_audit_actor(), new_value=ui_design, scope="global")
         return jsonify({"ok": True, "ui_design": ui_design})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400

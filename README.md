@@ -489,6 +489,18 @@ Google OAuth also needs the callback route to reach FjordLens normally:
 
 If Cloudflare challenge pages are returned instead of media/JSON/HLS, frames, TVs and receivers cannot parse the response.
 
+## Shared appearance
+
+Administrators choose **Klassisk** or **Fjord** under `Indstillinger` → `Andet`.
+The choice applies to every account, device, login page and page using the shared
+base template. Old per-user settings, cookies and local storage cannot override it.
+Existing installations migrate the original administrator's saved design once.
+Light/dark/system remains a personal display preference.
+
+Visible pages check the shared setting every five seconds and when returning to
+the app. They change design without reloading or interrupting uploads. Offline
+pages retain the last confirmed design until they reconnect.
+
 ## Updating
 
 ### Update FjordLens

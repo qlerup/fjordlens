@@ -7,6 +7,7 @@
   'use strict';
 
   var openInstance = null;
+  var instances = new Map();
   var valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
 
   var CARET_SVG =
@@ -171,7 +172,17 @@
       characterData: true
     });
 
-    var api = { close: close, wrap: wrap };
+    var api = { close: close, wrap: wrap, destroy: function () {
+      close(false);
+      mo.disconnect();
+      if (valueDesc) delete select.value;
+      delete select.dataset.flSelect;
+      if (wrap.parentNode) {
+        wrap.parentNode.insertBefore(select, wrap);
+        wrap.remove();
+      }
+    } };
+    instances.set(select, api);
     rebuild();
     sync();
     return api;
@@ -184,12 +195,17 @@
   function init() {
     // Kun aktiv når Fjord-temaet er valgt — under Klassisk skal den native select vises uændret
     var link = document.getElementById('fjordDesignStylesheet');
-    if (!link || link.disabled) return;
+    if (!link || link.disabled || link.media === 'not all') {
+      instances.forEach(function (api) { api.destroy(); });
+      instances.clear();
+      return;
+    }
     document.querySelectorAll('select.select').forEach(function (s) { enhance(s); });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+  window.addEventListener('fjordlens:ui-design', init);
 
   window.flEnhanceSelect = enhance;
 })();

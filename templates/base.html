@@ -1,5 +1,5 @@
 <!doctype html>
-{% set saved_design = 'fjord' if request.cookies.get('fl_ui_design') == 'fjord' else 'classic' %}
+{% set saved_design = 'fjord' if site_ui_design == 'fjord' else 'classic' %}
 {% set saved_theme = request.cookies.get('fl_theme_mode', 'system') %}
 {% set light_color = '#edf3f4' if saved_design == 'fjord' else '#f5f6f8' %}
 {% set dark_color = '#08141a' if saved_design == 'fjord' else '#0f1115' %}
@@ -48,7 +48,8 @@
       }
 
       function restoreAppearance() {
-        const design = readPreference('fl_ui_design', ['classic', 'fjord'], 'classic');
+        // Server-rendered global design always wins over legacy browser values.
+        const design = root.getAttribute('data-ui-design') === 'fjord' ? 'fjord' : 'classic';
         const theme = readPreference('fl_theme_mode', ['system', 'light', 'dark'], 'system');
         root.setAttribute('data-ui-design', design);
         if (theme === 'system') root.removeAttribute('data-theme');
@@ -71,6 +72,7 @@
       restoreAppearance();
       window.addEventListener('pageshow', restoreAppearance);
       window.addEventListener('focus', restoreAppearance);
+      window.addEventListener('fjordlens:ui-design', restoreAppearance);
       window.addEventListener('storage', event => {
         if (!event.key || event.key === 'fl_ui_design' || event.key === 'fl_theme_mode') restoreAppearance();
       });
@@ -90,6 +92,7 @@
     document.getElementById('fjordDesignStylesheet').media =
       document.documentElement.getAttribute('data-ui-design') === 'fjord' ? 'all' : 'not all';
   </script>
+  <script defer src="{{ url_for('static', filename='ui-design-sync.js', v=app_build) }}"></script>
   {% block head %}{% endblock %}
   <style>/* minimal safe defaults for pages that center a single card */
     .center-screen{display:grid;min-height:100vh;place-items:center;}

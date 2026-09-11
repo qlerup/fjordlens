@@ -22,7 +22,7 @@ class Tags(HTMLParser):
 
 
 class LoginAppearanceTemplateTests(unittest.TestCase):
-    def render(self, cookies=None):
+    def render(self, cookies=None, design="classic"):
         env = Environment(
             loader=FileSystemLoader(Path(__file__).resolve().parents[1] / "templates"),
             autoescape=select_autoescape(["html"]),
@@ -31,14 +31,15 @@ class LoginAppearanceTemplateTests(unittest.TestCase):
             request=SimpleNamespace(cookies=cookies or {}),
             app_build="appearance-test",
             ui_lang="da",
+            site_ui_design=design,
             url_for=lambda endpoint, **kwargs: "/static/" + kwargs["filename"],
         )
 
-    def test_cookie_preferences_are_rendered_without_javascript(self):
+    def test_global_design_and_theme_are_rendered_without_javascript(self):
         for design in ("classic", "fjord"):
             for theme in ("system", "light", "dark"):
                 with self.subTest(design=design, theme=theme):
-                    html = self.render({"fl_ui_design": design, "fl_theme_mode": theme})
+                    html = self.render({"fl_ui_design": "classic" if design == "fjord" else "fjord", "fl_theme_mode": theme}, design=design)
                     tags = Tags(html).tags
                     root = next(attrs for tag, attrs in tags if tag == "html")
                     css = next(attrs for tag, attrs in tags if attrs.get("id") == "fjordDesignStylesheet")
@@ -62,6 +63,10 @@ class LoginAppearanceTemplateTests(unittest.TestCase):
         root = next(attrs for tag, attrs in Tags(html).tags if tag == "html")
         self.assertEqual(root["data-ui-design"], "classic")
         self.assertNotIn("data-theme", root)
+
+    def test_new_browser_gets_admin_design_without_cookies(self):
+        root = next(attrs for tag, attrs in Tags(self.render(design="fjord")).tags if tag == "html")
+        self.assertEqual(root["data-ui-design"], "fjord")
 
     def test_cookie_values_cannot_inject_markup(self):
         attack = '\"><script>alert("appearance")</script>'

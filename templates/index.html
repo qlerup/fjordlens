@@ -1,20 +1,11 @@
 <!doctype html>
-<html lang="{{ ui_lang|default('da') }}"{% if user_profile and user_profile.theme_mode in ('light', 'dark') %} data-theme="{{ user_profile.theme_mode }}"{% endif %}>
+<html lang="{{ ui_lang|default('da') }}" data-ui-design="{{ site_ui_design }}"{% if user_profile and user_profile.theme_mode in ('light', 'dark') %} data-theme="{{ user_profile.theme_mode }}"{% endif %}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FjordLens</title>
-  <script>
-    (() => {
-      try {
-        const mode = localStorage.getItem('fl_theme_mode');
-        if (mode === 'light' || mode === 'dark') document.documentElement.setAttribute('data-theme', mode);
-        else if (mode === 'system') document.documentElement.removeAttribute('data-theme');
-      } catch (_) {}
-    })();
-  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ app_build }}">
-  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css') }}?v={{ app_build }}"{% if not user_profile or user_profile.ui_design != 'fjord' %} disabled{% endif %}>
+  <link id="fjordDesignStylesheet" rel="stylesheet" href="{{ url_for('static', filename='redesign.css') }}?v={{ app_build }}" media="{{ 'all' if site_ui_design == 'fjord' else 'not all' }}">
   <!-- App icons / PWA manifest -->
   <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v=app_build) }}" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='logos/web/favicon-32x32.png', v=app_build) }}">
@@ -22,7 +13,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v=app_build) }}">
   <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v=app_build) }}">
   <!-- Theme-color for browser UI: auto + JS override -->
-  {% set fjord_active = user_profile and user_profile.ui_design == 'fjord' %}
+  {% set fjord_active = site_ui_design == 'fjord' %}
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ '#edf3f4' if fjord_active else '#f5f6f8' }}">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ '#08141a' if fjord_active else '#0f1115' }}">
   <meta id="theme-color-override" name="theme-color" content="{{ '#08141a' if fjord_active else '#0f1115' }}">
@@ -703,9 +694,10 @@
 
         <!-- Andet (dupletter) -->
         <div class="tab-panel hidden" data-tabpanel="other">
+          {% if user_role == "admin" %}
           <div class="sidebar-card" id="uiDesignCard" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Udseende</div>
-            <p class="hint">Vælg mellem det klassiske FjordLens-design og det nye Fjord-tema. Valget gemmes på din bruger.</p>
+            <p class="hint">Vælg mellem det klassiske FjordLens-design og Fjord-temaet. Valget gælder for alle brugere og login-siden på alle enheder.</p>
             <label class="mini-label" for="uiDesignSelect">Design</label>
             <select id="uiDesignSelect" class="input-number" style="min-width:220px;margin-top:6px;">
               <option value="classic">Klassisk</option>
@@ -713,6 +705,7 @@
             </select>
             <div id="uiDesignStatus" class="status hidden" style="margin-top:10px;"></div>
           </div>
+          {% endif %}
           <div class="sidebar-card" id="dupeCard" style="margin-bottom:12px;">
             <div class="sidebar-card-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
               <span>Dupletter</span>
@@ -1287,7 +1280,7 @@
     <div class="modal-card" style="max-width:520px;">
       <h3 id="uiDesignIntroTitle" style="margin-top:0;">Prøv det nye Fjord-tema</h3>
       <p>FjordLens har fået et nyt nordisk design med roligere farver, glasflader og en opdateret navigation.</p>
-      <p class="mini-label">Du kan prøve det nu eller beholde det klassiske design. Valget kan altid ændres under Indstillinger → Andet.</p>
+      <p class="mini-label">Valget gælder for alle brugere og login-siden. En administrator kan ændre det under Indstillinger → Andet.</p>
       <label class="mini-label" for="uiDesignIntroSelect">Vælg design</label>
       <select id="uiDesignIntroSelect" class="input-number" style="width:100%;margin:7px 0 16px;">
         <option value="fjord">Fjord — nyt design</option>
@@ -1335,6 +1328,7 @@
   <script src="{{ url_for('static', filename='moment_player.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_text_editor.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_editor.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='ui-design-sync.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='theme-design.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='fl-select.js', v=app_build) }}"></script>
   <script>

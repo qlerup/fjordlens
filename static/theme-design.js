@@ -6,7 +6,8 @@
   const bootstrap = document.getElementById('bootstrapData');
   let profile = {};
   try { profile = JSON.parse((bootstrap && bootstrap.dataset.profile) || '{}') || {}; } catch {}
-  let current = profile.ui_design === 'fjord' ? 'fjord' : 'classic';
+  let current = document.documentElement.getAttribute('data-ui-design') === 'fjord' ? 'fjord' : 'classic';
+  let saving = false;
 
   const stylesheet = document.getElementById('fjordDesignStylesheet');
   const settingsSelect = document.getElementById('uiDesignSelect');
@@ -44,8 +45,7 @@
   }
 
   function rememberCookie(key, value) {
-    // Appearance only, never identity/session data. This also lets the server
-    // render the next login in the right design before JavaScript starts.
+    // Appearance-only compatibility hints. The server owns the global design.
     try {
       const secure = window.location.protocol === 'https:' ? '; Secure' : '';
       document.cookie = key + '=' + encodeURIComponent(value) + '; Path=/; Max-Age=31536000; SameSite=Lax' + secure;
@@ -61,45 +61,63 @@
     current = value === 'fjord' ? 'fjord' : 'classic';
     try { localStorage.setItem(DESIGN_KEY, current); } catch {}
     rememberCookie(DESIGN_KEY, current);
-    if (stylesheet) stylesheet.disabled = current !== 'fjord';
+    if (stylesheet) {
+      stylesheet.disabled = false;
+      stylesheet.media = current === 'fjord' ? 'all' : 'not all';
+    }
     document.documentElement.dataset.uiDesign = current;
     if (settingsSelect) settingsSelect.value = current;
     if (introSelect) introSelect.value = current;
     if (current === 'fjord') {
       prepareNavigation();
       prepareSearchIcons();
+    } else {
+      document.querySelectorAll('.nav-item[data-view]').forEach(button => {
+        const icon = button.querySelector('.nav-icon');
+        const label = button.querySelector('.nav-label');
+        if (icon && label) button.textContent = icon.textContent + ' ' + label.textContent;
+      });
+      ['searchToggleBtn', 'mapperSearchToggleBtn'].forEach(id => {
+        const button = document.getElementById(id);
+        if (button && button.querySelector('.fl-lens-icon')) button.textContent = '🔍';
+      });
     }
   }
 
   async function save(value) {
-    const changed = (value === 'fjord' ? 'fjord' : 'classic') !== current;
-    applyLocally(value);
+    if (saving) return false;
+    saving = true;
+    const requested = value === 'fjord' ? 'fjord' : 'classic';
+    [settingsSelect, introSelect, introApply, introLater].forEach(el => { if (el) el.disabled = true; });
     if (status) {
       status.textContent = 'Gemmer design…';
       status.className = 'status';
     }
     try {
-      const response = await fetch('/api/me/ui-design', {
+      const response = await fetch('/api/settings/ui-design', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ui_design: current }),
+        body: JSON.stringify({ ui_design: requested }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data.error || 'save_failed');
+      if (window.FjordLensDesign) window.FjordLensDesign.apply(data.ui_design);
+      applyLocally(data.ui_design);
       if (status) {
-        status.textContent = 'Designet er gemt.';
+        status.textContent = 'Designet er gemt for alle brugere.';
         status.className = 'status ok';
       }
-      // Genindlæs så hele siden (dropdowns, navigation, viewer m.m.) starter
-      // rent op i det valgte design, i stedet for at forsøge at leve-skifte DOM'en.
-      if (changed) window.setTimeout(() => window.location.reload(), 400);
       return true;
     } catch (error) {
+      applyLocally(current);
       if (status) {
         status.textContent = 'Designet kunne ikke gemmes.';
         status.className = 'status err';
       }
       return false;
+    } finally {
+      saving = false;
+      [settingsSelect, introSelect, introApply, introLater].forEach(el => { if (el) el.disabled = false; });
     }
   }
 
@@ -112,6 +130,7 @@
   }
 
   applyLocally(current);
+  window.addEventListener('fjordlens:ui-design', event => applyLocally(event.detail));
   rememberTheme();
   // app.js owns the light/dark/system control. Mirror its applied preference,
   // including a switch back to system, without changing the user's selection.
@@ -119,12 +138,10 @@
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   if (settingsSelect) settingsSelect.addEventListener('change', () => save(settingsSelect.value));
   if (introApply) introApply.addEventListener('click', async () => {
-    await save((introSelect && introSelect.value) || 'fjord');
-    closeIntro();
+    if (await save((introSelect && introSelect.value) || 'fjord')) closeIntro();
   });
   if (introLater) introLater.addEventListener('click', async () => {
-    await save('classic');
-    closeIntro();
+    if (await save('classic')) closeIntro();
   });
 
   let introSeen = !!profile.ui_design_intro_seen;

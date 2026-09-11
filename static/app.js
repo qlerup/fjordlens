@@ -797,7 +797,7 @@ function systemPrefersDark(){ try { return window.matchMedia && window.matchMedi
 function isFjordDesignActive(){
   try {
     const link = document.getElementById('fjordDesignStylesheet');
-    return !!(link && !link.disabled);
+    return !!(link && !link.disabled && link.media !== 'not all');
   } catch { return false; }
 }
 function themeColors(){
