@@ -11775,7 +11775,9 @@ async function loadMapperTools(preferred = null, useCache = false) {
         Array.from(state.mapperSelectedFolders).filter(f => folders.includes(f))
       );
     }
-    const wantedRaw = (preferred !== null) ? String(preferred || '') : String(state.mapperPath || data.subdir || '');
+    // An empty path explicitly means uploads root. The server's saved upload
+    // destination changes when folders are created and must not move navigation.
+    const wantedRaw = (preferred !== null) ? String(preferred || '') : String(state.mapperPath ?? '');
     const wanted = _normalizeMapperPath(wantedRaw);
     state.mapperPath = wanted;
     state.folder = wanted || null;
