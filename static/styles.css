@@ -5356,3 +5356,9 @@ dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
 /* Stable, separate touch targets while labels/fullscreen state change. */
 .moment-player-frame #momentPlayerFullscreenBtn { order:30; flex:0 0 132px; width:132px; box-sizing:border-box; white-space:nowrap; touch-action:manipulation; }
 .moment-player-frame #momentPlayerMusicBtn { order:20; flex:0 0 132px; width:132px; box-sizing:border-box; white-space:nowrap; touch-action:manipulation; }
+
+.mapper-move-dialog{background:#102129;color:#edf6f8;border:1px solid #36515b;border-radius:16px;width:480px;max-width:calc(100vw - 32px);max-height:85dvh;overflow:auto;padding:24px;box-sizing:border-box}
+.mapper-move-dialog::backdrop{background:#0009}.mapper-move-dialog p{overflow-wrap:anywhere;font-size:13px;line-height:1.6}
+.mapper-move-dialog .move-search{width:100%;box-sizing:border-box;padding:10px;background:#162e36;color:inherit;border:1px solid #45636d;border-radius:8px}
+.move-destinations{display:grid;gap:6px;max-height:35dvh;overflow:auto;margin:16px 0}.move-destinations button{text-align:left;overflow-wrap:anywhere;white-space:normal}
+.move-destinations button[aria-pressed=true]{background:#167a62;color:white;border-color:#25c995}.move-actions{display:flex;justify-content:flex-end;gap:10px}.move-error{color:#ff9191}

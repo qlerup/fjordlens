@@ -1,0 +1,32 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const {readFileSync} = require('node:fs');
+const {JSDOM} = require('jsdom');
+
+test('destination picker excludes source and descendants and confirms root as an explicit destination', async () => {
+  const dom = new JSDOM('',{runScripts:'outside-only'}), w = dom.window;
+  w.HTMLDialogElement.prototype.showModal = function(){this.open=true};
+  w.HTMLDialogElement.prototype.close = function(){this.open=false;this.dispatchEvent(new w.Event('close'))};
+  w.state = {view:'mapper',mapperPath:'Old',mapperFolders:['Old','Old/Album','Old/Album/Nested','Elsewhere']};
+  w._normalizeMapperPath = path=>path;
+  w._replaceMapperPathPrefix = path=>path;
+  w.showStatus = ()=>{}; w.galleryDataCache={clear(){}}; w.mapperViews=new Map();
+  w.loadMapperTools = w.loadPhotos = async()=>{};
+  let payload;
+  w.fetch = async(url,opts)=>{payload=JSON.parse(opts.body);return {ok:true,json:async()=>({ok:true,old_path:'Old/Album',new_path:'Album'})}};
+  const source=readFileSync('static/app.js','utf8');
+  w.eval(source.slice(source.indexOf('function openMapperMoveDialog('),source.indexOf("document.getElementById('mapperHeaderMoveAction')")));
+  w.openMapperMoveDialog('Old/Album');
+  const choices=[...w.document.querySelectorAll('.move-destinations button')];
+  assert.equal(choices.length,2);
+  assert.equal(choices[0].textContent,'uploads (rodmappe)');
+  const save=w.document.querySelector('[data-save]');
+  assert.equal(save.disabled,true);
+  choices[0].click();
+  assert.equal(save.disabled,false);
+  assert.match(w.document.querySelector('.move-preview').textContent,/uploads\/Album/);
+  await save.onclick();
+  assert.deepEqual(payload,{path:'Old/Album',parent:''});
+  assert.equal(w.document.querySelector('dialog'),null);
+  dom.window.close();
+});

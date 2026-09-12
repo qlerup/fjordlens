@@ -14278,6 +14278,7 @@ function mapperContextMenuItemsForBackground() {
 
 function mapperContextMenuItemsForFolder(folderPath) {
   return [
+    { label: 'Flyt mappe', action: () => openMapperMoveDialog(folderPath) },
     { label: tr('mapper_ctx_rename'), action: () => openMapperRenameModal(folderPath) },
     { label: tr('mapper_ctx_select'), action: () => { setMapperEditMode(true); toggleMapperFolderSelection(folderPath); } },
     {
@@ -14292,6 +14293,76 @@ function mapperContextMenuItemsForFolder(folderPath) {
     },
   ];
 }
+
+function openMapperMoveDialog(source) {
+  source = _normalizeMapperPath(source || '');
+  if (!source) {showStatus('Vælg én mappe, der skal flyttes.', 'err'); return;}
+  const currentParent = source.includes('/') ? source.slice(0, source.lastIndexOf('/')) : '';
+  const dialog = document.createElement('dialog');
+  dialog.className = 'mapper-move-dialog'; dialog.setAttribute('aria-labelledby','mapper-move-title');
+  dialog.innerHTML = `<h3 id="mapper-move-title">Flyt mappe</h3><p class="move-source"></p>
+    <p>Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:</p>
+    <input type="search" class="move-search" placeholder="Søg efter destinationsmappe" aria-label="Søg efter destinationsmappe">
+    <div class="move-destinations"></div><p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
+    <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>Flyt hertil</button></div>`;
+  dialog.querySelector('.move-source').textContent = 'Mappe: uploads/' + source;
+  let destination = null, busy = false;
+  const list = dialog.querySelector('.move-destinations'), search = dialog.querySelector('input'), save = dialog.querySelector('[data-save]');
+  const paths = ['', ...(state.mapperFolders || [])].filter((path, index, all) => all.indexOf(path) === index
+    && path !== source && !path.startsWith(source + '/') && path !== currentParent);
+  function render() {
+    list.replaceChildren();
+    paths.filter(path => path.toLocaleLowerCase('da').includes(search.value.trim().toLocaleLowerCase('da'))).forEach(path => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn';
+      button.textContent = path ? 'uploads/' + path : 'uploads (rodmappe)';
+      button.setAttribute('aria-pressed', String(destination === path)); button.disabled = busy;
+      button.onclick = () => {
+        destination = path; save.disabled = false;
+        dialog.querySelector('.move-preview').textContent = 'Ny placering: uploads/' + (path ? path + '/' : '') + source.split('/').pop();
+        list.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+      };
+      list.append(button);
+    });
+    if (!list.children.length) list.textContent = 'Ingen andre mapper fundet.';
+  }
+  search.oninput = render;
+  dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+  dialog.addEventListener('cancel', event => {if (busy) event.preventDefault();});
+  dialog.addEventListener('close', () => dialog.remove());
+  save.onclick = async () => {
+    if (busy || destination === null) return;
+    busy = true; dialog.querySelectorAll('button,input').forEach(el => el.disabled = true);
+    save.textContent = 'Flytter…'; save.classList.add('loading'); save.setAttribute('aria-busy','true');
+    let moved = false;
+    try {
+      const response = await fetch('/api/settings/upload-folder-move', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:source,parent:destination})});
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Mappen kunne ikke flyttes.');
+      moved = true;
+      galleryDataCache.clear(); mapperViews.clear();
+      state.mapperSelectedFolders?.clear(); state.mapperSelectedPhotoIds?.clear();
+      state.mapperPath = _replaceMapperPathPrefix(state.mapperPath, data.old_path, data.new_path);
+      state.folder = state.mapperPath || null;
+      dialog.close();
+      if (state.view === 'mapper') {await loadMapperTools(state.mapperPath); await loadPhotos(false, true);}
+      showStatus('Mappen er flyttet til uploads/' + data.new_path, 'ok');
+    } catch (error) {
+      const message = moved ? 'Mappen er flyttet. Genindlæs siden for at opdatere visningen.' : error.message;
+      dialog.querySelector('.move-error').textContent = message; showStatus(message, 'err');
+    } finally {
+      busy = false; dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
+      save.textContent = 'Flyt hertil'; save.classList.remove('loading'); save.removeAttribute('aria-busy');
+    }
+  };
+  document.body.append(dialog); render(); dialog.showModal(); search.focus();
+}
+
+document.getElementById('mapperHeaderMoveAction')?.addEventListener('click', () => {
+  closeMapperHeaderMenu();
+  const selected = [...(state.mapperSelectedFolders || [])];
+  if (selected.length > 1 || state.mapperSelectedPhotoIds?.size) {showStatus('Vælg præcis én mappe.', 'err'); return;}
+  openMapperMoveDialog(selected[0] || state.mapperPath);
+});
 
 function mapperContextMenuItemsForPhoto(photoId) {
   return [

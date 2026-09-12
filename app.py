@@ -22365,7 +22365,7 @@ def _merge_permission_value(a: Optional[str], b: Optional[str]) -> str:
     return va if order[va] >= order[vb] else vb
 
 
-def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
+def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str, *, reject_conflicts: bool = False) -> dict:
     old_sub = _normalize_upload_subdir(old_subdir)
     new_sub = _normalize_upload_subdir(new_subdir)
     if not old_sub or not new_sub:
@@ -22409,9 +22409,9 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
             """
             SELECT user_id, folder_path, permission, created_at
             FROM user_folder_access
-            WHERE folder_path=? OR folder_path LIKE ?
+            WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'
             """,
-            (old_acl, old_acl + "/%"),
+            (old_acl, old_acl.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         ).fetchall()
         for r in acl_rows:
             uid = int(r["user_id"] or 0)
@@ -22438,14 +22438,14 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
                     (uid, next_path, perm, str(r["created_at"] or now_iso())),
                 )
         conn.execute(
-            "DELETE FROM user_folder_access WHERE folder_path=? OR folder_path LIKE ?",
-            (old_acl, old_acl + "/%"),
+            "DELETE FROM user_folder_access WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_acl, old_acl.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         )
 
         # Folder owners
         owner_rows = conn.execute(
-            "SELECT folder_path, user_id FROM folder_owners WHERE folder_path=? OR folder_path LIKE ?",
-            (old_acl, old_acl + "/%"),
+            "SELECT folder_path, user_id FROM folder_owners WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_acl, old_acl.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         ).fetchall()
         for r in owner_rows:
             prev_path = str(r["folder_path"] or "")
@@ -22457,14 +22457,14 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
                 (next_path, int(r["user_id"] or 0)),
             )
         conn.execute(
-            "DELETE FROM folder_owners WHERE folder_path=? OR folder_path LIKE ?",
-            (old_acl, old_acl + "/%"),
+            "DELETE FROM folder_owners WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_acl, old_acl.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         )
 
         # Folder previews
         preview_rows = conn.execute(
-            "SELECT folder_path, previews_json, updated_at FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
-            (old_sub, old_sub + "/%"),
+            "SELECT folder_path, previews_json, updated_at FROM folder_previews WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_sub, old_sub.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         ).fetchall()
         for r in preview_rows:
             prev_path = str(r["folder_path"] or "")
@@ -22476,14 +22476,14 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
                 (next_path, str(r["previews_json"] or "[]"), str(r["updated_at"] or now_iso())),
             )
         conn.execute(
-            "DELETE FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
-            (old_sub, old_sub + "/%"),
+            "DELETE FROM folder_previews WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_sub, old_sub.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         )
 
         # Share folder references (multi-folder shares)
         slf_rows = conn.execute(
-            "SELECT share_id, folder_path, created_at FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ?",
-            (old_sub, old_sub + "/%"),
+            "SELECT share_id, folder_path, created_at FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_sub, old_sub.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         ).fetchall()
         for r in slf_rows:
             prev_path = str(r["folder_path"] or "")
@@ -22495,14 +22495,14 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
                 (int(r["share_id"] or 0), next_path, str(r["created_at"] or now_iso())),
             )
         conn.execute(
-            "DELETE FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ?",
-            (old_sub, old_sub + "/%"),
+            "DELETE FROM share_link_folders WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_sub, old_sub.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         )
 
         # Share primary folder + default share_name
         share_rows = conn.execute(
-            "SELECT id, folder_path, share_name FROM share_links WHERE folder_path=? OR folder_path LIKE ?",
-            (old_sub, old_sub + "/%"),
+            "SELECT id, folder_path, share_name FROM share_links WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
+            (old_sub, old_sub.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         ).fetchall()
         for r in share_rows:
             prev_path = str(r["folder_path"] or "")
@@ -22522,8 +22522,8 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
         where_parts: list[str] = []
         where_params: list[Any] = []
         for old_pref, _new_pref in photo_prefix_pairs:
-            where_parts.append("(rel_path=? OR rel_path LIKE ?)")
-            where_params.extend([old_pref, old_pref + "/%"])
+            where_parts.append("(rel_path=? OR rel_path LIKE ? ESCAPE '!')")
+            where_params.extend([old_pref, old_pref.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"])
         photo_rows = conn.execute(
             f"SELECT id, rel_path FROM photos WHERE {' OR '.join(where_parts)}",
             tuple(where_params),
@@ -22538,6 +22538,8 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
                 "SELECT id, thumb_name FROM photos WHERE rel_path=? AND id<>? LIMIT 1",
                 (next_rel, pid),
             ).fetchone()
+            if conflict and reject_conflicts:
+                raise ValueError("Maalstien findes allerede i databasen. Ingen filer overskrives.")
             if conflict:
                 conflict_id = int(conflict["id"] or 0)
                 conn.execute("DELETE FROM faces WHERE photo_id=?", (conflict_id,))
@@ -22563,13 +22565,25 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str) -> dict:
     return {"photos_renamed": photos_renamed, "photos_conflicts_removed": photos_conflicts_removed}
 
 
+_UPLOAD_FOLDER_CHANGE_LOCK = threading.Lock()
+
+
+@app.route("/api/settings/upload-folder-move", methods=["POST"])
 @app.route("/api/settings/upload-folder-rename", methods=["POST"])
 def api_settings_upload_folder_rename():
+    with _UPLOAD_FOLDER_CHANGE_LOCK:
+        return _change_upload_folder()
+
+
+def _change_upload_folder():
     fb = _forbid_media_management()
     if fb:
         return jsonify(fb[0]), fb[1]
 
     body = request.get_json(silent=True) or {}
+    moving = request.path.endswith('upload-folder-move')
+    if moving and (_any_upload_transfer_active() or _any_regular_upload_postprocess_running() or UPLOAD_FOLDER_SYNC_RUNNING or _direct_upload_active_rels_snapshot() or _pending_upload_rels_snapshot()):
+        return jsonify(ok=False, error="Vent til upload og mappebehandling er afsluttet, og flyt derefter mappen."), 409
     destination = str(body.get("destination") or "uploads").strip().lower()
     if destination != UPLOAD_DEST_UPLOADS:
         return jsonify({"ok": False, "error": "OmdÃ¸bning understÃ¸ttes kun i uploads-mappen"}), 400
@@ -22587,7 +22601,7 @@ def api_settings_upload_folder_rename():
     if not old_subdir:
         return jsonify({"ok": False, "error": "Rodmappen kan ikke omdÃ¸bes"}), 400
 
-    new_name_raw = str(body.get("new_name") or "").strip()
+    new_name_raw = old_subdir.rsplit('/', 1)[-1] if moving else str(body.get("new_name") or "").strip()
     if not new_name_raw:
         return jsonify({"ok": False, "error": "Angiv nyt navn"}), 400
     try:
@@ -22596,6 +22610,20 @@ def api_settings_upload_folder_rename():
         return jsonify({"ok": False, "error": "Ugyldigt nyt mappenavn"}), 400
 
     parent_subdir = old_subdir.rsplit("/", 1)[0] if "/" in old_subdir else ""
+    if moving:
+        try:
+            if not isinstance(body.get('parent'), str):
+                raise ValueError()
+            parent_subdir = _normalize_upload_subdir(body['parent'])
+            if parent_subdir.split('/')[0] in ('originals', 'converted'):
+                raise ValueError()
+        except Exception:
+            return jsonify(ok=False, error="Ugyldig destinationsmappe."), 400
+        if parent_subdir == old_subdir or parent_subdir.startswith(old_subdir + '/'):
+            return jsonify(ok=False, error="En mappe kan ikke flyttes ind i sig selv eller en undermappe."), 400
+        perm = _current_user_folder_permission_for_rel('uploads/' + parent_subdir if parent_subdir else 'uploads')
+        if not getattr(current_user, 'is_admin', False) and not _perm_allows(perm, 'edit'):
+            return jsonify(ok=False, error="Du har ikke adgang til at flytte til denne mappe."), 403
     new_subdir = f"{parent_subdir}/{new_name}" if parent_subdir else new_name
     try:
         new_subdir = _normalize_upload_subdir(new_subdir)
@@ -22623,6 +22651,8 @@ def api_settings_upload_folder_rename():
             dst.relative_to(base)
         except Exception:
             return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+        if moving and dst.exists():
+            return jsonify(ok=False, error="Destinationsmappen findes allerede. V?lg en anden placering."), 409
         if src.exists() and src.is_dir():
             if dst.exists():
                 return jsonify({"ok": False, "error": f"MÃ¥lmappen findes allerede: {new_subdir}"}), 409
@@ -22632,8 +22662,23 @@ def api_settings_upload_folder_rename():
         return jsonify({"ok": False, "error": f"Mappen findes ikke: {old_subdir}"}), 404
 
     moved: list[tuple[Path, Path]] = []
+    created_parents: list[Path] = []
+    def cleanup_new_parents():
+        for folder in reversed(created_parents):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
     try:
         for src, dst in operations:
+            missing = []
+            parent = dst.parent
+            while not parent.exists() and parent not in protected_roots:
+                missing.append(parent)
+                parent = parent.parent
+            for parent in reversed(missing):
+                parent.mkdir(exist_ok=True)
+                created_parents.append(parent)
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.rename(dst)
             moved.append((src, dst))
@@ -22645,10 +22690,11 @@ def api_settings_upload_folder_rename():
                     dst.rename(src)
             except Exception:
                 pass
+        cleanup_new_parents()
         return jsonify({"ok": False, "error": f"Kunne ikke omdÃ¸be mappe: {e}"}), 400
 
     try:
-        db_stats = _apply_upload_folder_rename_db(old_subdir, new_subdir)
+        db_stats = _apply_upload_folder_rename_db(old_subdir, new_subdir, reject_conflicts=moving)
     except Exception as e:
         for src, dst in reversed(moved):
             try:
@@ -22657,10 +22703,11 @@ def api_settings_upload_folder_rename():
                     dst.rename(src)
             except Exception:
                 pass
+        cleanup_new_parents()
         return jsonify({"ok": False, "error": f"Kunne ikke opdatere database: {e}"}), 500
 
     # Remove now-empty old parent directories where safe
-    for src, _dst in moved:
+    for src, _dst in ([] if moving else moved):
         cur = src.parent
         while True:
             try:
@@ -22681,7 +22728,7 @@ def api_settings_upload_folder_rename():
     payload["photos_renamed"] = int(db_stats.get("photos_renamed", 0))
     payload["photos_conflicts_removed"] = int(db_stats.get("photos_conflicts_removed", 0))
     log_event(
-        "folder_renamed", actor=_audit_actor(), old_path=old_subdir, new_path=new_subdir,
+        "folder_moved" if moving else "folder_renamed", actor=_audit_actor(), old_path=old_subdir, new_path=new_subdir,
         photos_renamed=payload["photos_renamed"],
         conflicts_removed=payload["photos_conflicts_removed"],
     )
