@@ -4175,7 +4175,10 @@ body.detail-open .detail-panel {
   body.drawer-open .sidebar { transform: translateX(0); box-shadow: 8px 0 24px rgba(0,0,0,0.45); }
   /* backdrop rules moved to global section above */
 
-  .main { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  /* Keep space for the fixed navigation in every main view. The app-shell
+     selector must outrank the later theme's .main padding shorthand. */
+  .main,
+  .app-shell > .main { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
   .topbar {
     flex-wrap: nowrap;
     align-items: center;
