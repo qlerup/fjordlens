@@ -6596,7 +6596,7 @@ function appendCardTo(item, container) {
         thumb.style.position = 'relative';
         img.style.objectFit = 'contain';
         img.style.background = '#0d1016';
-        const faces = item.faces.slice(0, 2);
+        const faces = item.thumbnail_faces || item.faces;
         const draw = () => {
           try {
             if (!card.isConnected) return;
@@ -6607,14 +6607,16 @@ function appendCardTo(item, container) {
             const dw = iw*scale; const dh = ih*scale;
             const offX = (cw - dw)/2; const offY = (ch - dh)/2;
             faces.forEach(fc => {
+              const coords = item.is_video && fc.pixel_box
+                ? {x:fc.pixel_box[0]/iw, y:fc.pixel_box[1]/ih, w:fc.pixel_box[2]/iw, h:fc.pixel_box[3]/ih} : fc;
               const box = document.createElement('div');
               box.className = 'person-face-box';
               box.style.display = state.showFaceBoxes ? '' : 'none';
               box.style.position = 'absolute';
-              box.style.left = `${offX + (fc.x*dw)}px`;
-              box.style.top = `${offY + (fc.y*dh)}px`;
-              box.style.width = `${fc.w*dw}px`;
-              box.style.height = `${fc.h*dh}px`;
+              box.style.left = `${offX + (coords.x*dw)}px`;
+              box.style.top = `${offY + (coords.y*dh)}px`;
+              box.style.width = `${coords.w*dw}px`;
+              box.style.height = `${coords.h*dh}px`;
               box.style.border = '2px solid #e33';
               box.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.4) inset';
               box.style.pointerEvents = 'none';

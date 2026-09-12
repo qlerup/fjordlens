@@ -1750,13 +1750,6 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
                     "-q:v", "3",
                     str(out_path),
                 ],
-                [
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", str(path),
-                    "-frames:v", "1",
-                    "-q:v", "3",
-                    str(out_path),
-                ],
             ]
 
             for cmd in commands:
@@ -14176,7 +14169,7 @@ def api_people_photos(pid: int):
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-            SELECT p.*, f.id as face_id, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
+            SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
             FROM photos p
             INNER JOIN faces f ON f.photo_id = p.id
             WHERE f.person_id = ?
@@ -14201,9 +14194,10 @@ def api_people_photos(pid: int):
             y = max(0.0, float(r["bbox_y"] or 0) / h)
             bw = max(0.0, float(r["bbox_w"] or 0) / w)
             bh = max(0.0, float(r["bbox_h"] or 0) / h)
-            by_photo[photo_id]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"])})
+            by_photo[photo_id]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"]), "frame_sec": r["frame_sec"], "pixel_box": [r["bbox_x"], r["bbox_y"], r["bbox_w"], r["bbox_h"]]})
         items = list(by_photo.values())
-    return jsonify({"ok": True, "items": items})
+    from person_video_frames import decorate
+    return jsonify({"ok": True, "items": decorate(items)})
 
 
 @app.route("/api/people/unknown/photos-faces")
@@ -14212,7 +14206,7 @@ def api_people_unknown_photos_faces():
     with closing(get_conn()) as conn:
         rows = conn.execute(
             """
-            SELECT p.*, f.id as face_id, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
+            SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
             FROM photos p
             INNER JOIN faces f ON f.photo_id = p.id
             WHERE f.person_id IS NULL
@@ -14237,9 +14231,10 @@ def api_people_unknown_photos_faces():
             y = max(0.0, float(r["bbox_y"] or 0) / h)
             bw = max(0.0, float(r["bbox_w"] or 0) / w)
             bh = max(0.0, float(r["bbox_h"] or 0) / h)
-            by_photo[pid_]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"])})
+            by_photo[pid_]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"]), "frame_sec": r["frame_sec"], "pixel_box": [r["bbox_x"], r["bbox_y"], r["bbox_w"], r["bbox_h"]]})
     items = list(by_photo.values())
-    return jsonify({"ok": True, "items": items})
+    from person_video_frames import decorate
+    return jsonify({"ok": True, "items": decorate(items)})
 
 
 @app.route("/api/face-thumb/<int:face_id>")

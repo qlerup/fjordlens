@@ -182,5 +182,7 @@ def init_people_section(app) -> None:
     _register_bulk_hide_route(app, fjordlens)
     from person_faces import register
     register(app, fjordlens, _can_manage_people)
+    from person_video_frames import register as register_video_frames
+    register_video_frames(app, fjordlens)
     _inject_people_fast_asset(app)
     app.extensions["fjordlens_people_section_v6"] = True
