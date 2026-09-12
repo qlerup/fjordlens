@@ -5194,7 +5194,9 @@ body.compact-settings .settings-header { display: none !important; }
 .badge.muted { color: var(--muted); }
 
 .person-rename-menu {
-  position: absolute;
+  position: fixed;
+  box-sizing: border-box;
+  overflow: auto;
   z-index: 10010;
   width: min(320px, calc(100vw - 24px));
   border: 1px solid var(--border);
@@ -5213,8 +5215,10 @@ body.compact-settings .settings-header { display: none !important; }
   gap: 6px;
   align-items: center;
 }
+.person-rename-create-row > button { flex: 0 0 auto; white-space: nowrap; }
 .person-rename-input {
-  flex: 1;
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -5234,6 +5238,8 @@ body.compact-settings .settings-header { display: none !important; }
   gap: 6px;
 }
 .person-rename-option {
+  min-width: 0;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);

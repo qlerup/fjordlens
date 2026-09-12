@@ -1582,8 +1582,9 @@ const I18N = {
     person_rename_merge_error: 'Fejl ved navngivning/merge',
     person_unknown_cannot_rename: 'Ukendte kan ikke omdøbes',
     person_rename_title: 'Navngiv / merge person',
-    person_rename_new_placeholder: 'Opret ny person',
-    person_rename_save: 'Gem',
+    person_rename_new_placeholder: 'Søg eller opret person',
+    person_rename_save: 'Opret',
+    person_rename_no_matches: 'Ingen personer matcher. Tryk Opret for at bruge navnet.',
     person_rename_none: 'Ingen eksisterende navne endnu',
     person_unknown: 'Ukendt',
     person_maybe_name: 'Måske {name}?',
@@ -2449,8 +2450,9 @@ const I18N = {
     person_rename_merge_error: 'Error while renaming/merging',
     person_unknown_cannot_rename: 'Unknown people cannot be renamed',
     person_rename_title: 'Rename / merge person',
-    person_rename_new_placeholder: 'Create new person',
-    person_rename_save: 'Save',
+    person_rename_new_placeholder: 'Search or create person',
+    person_rename_save: 'Create',
+    person_rename_no_matches: 'No matching people. Press Create to use this name.',
     person_rename_none: 'No existing names yet',
     person_unknown: 'Unknown',
     person_maybe_name: 'Maybe {name}?',
@@ -6872,6 +6874,7 @@ let personRenameMenuEl = null;
 
 function closePersonRenameMenu() {
   if (personRenameMenuEl?.getAttribute('aria-busy') === 'true') return;
+  personRenameMenuEl?.cleanup?.();
   if (personRenameMenuEl && personRenameMenuEl.parentElement) {
     personRenameMenuEl.parentElement.removeChild(personRenameMenuEl);
   }
@@ -7044,7 +7047,7 @@ function openPersonRenameMenu(anchorBtn, person) {
   menu.innerHTML = `
     <div class="person-rename-head">${escapeHtml(tr('person_rename_title'))}</div>
     <div class="person-rename-create-row">
-      <input type="text" class="person-rename-input" placeholder="${escapeHtml(tr('person_rename_new_placeholder'))}" value="" />
+      <input type="search" class="person-rename-input" aria-label="${escapeHtml(tr('person_rename_new_placeholder'))}" placeholder="${escapeHtml(tr('person_rename_new_placeholder'))}" autocomplete="off" value="" />
       <button type="button" class="btn tiny primary" data-act="create">${escapeHtml(tr('person_rename_save'))}</button>
     </div>
     <div class="person-rename-divider"></div>
@@ -7052,12 +7055,12 @@ function openPersonRenameMenu(anchorBtn, person) {
   `;
 
   let busy = false;
-  const submit = async (name, button, merging = false) => {
+  const submit = async (name, button, targetId = null) => {
     if (busy) return;
     busy = true;
     const originalLabel = button.textContent;
     const en = state.uiLanguage === 'en';
-    button.textContent = merging ? (en ? 'Merging…' : 'Fletter…') : (en ? 'Saving…' : 'Gemmer…');
+    button.textContent = targetId !== null ? (en ? 'Merging…' : 'Fletter…') : (en ? 'Creating…' : 'Opretter…');
     button.classList.add('loading');
     button.setAttribute('aria-busy', 'true');
     menu.setAttribute('aria-busy', 'true');
@@ -7067,7 +7070,8 @@ function openPersonRenameMenu(anchorBtn, person) {
     anchorBtn.setAttribute('aria-busy', 'true');
     let saved = false;
     try {
-      saved = await renameOrMergePerson(person.id, name);
+      saved = await renameOrMergePerson(person.id, name, targetId !== null
+        ? {action: 'merge', target_id: targetId} : {action: 'rename'});
     } finally {
       busy = false;
       button.textContent = originalLabel;
@@ -7094,23 +7098,27 @@ function openPersonRenameMenu(anchorBtn, person) {
     .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0)
       || String(a.name || '').localeCompare(String(b.name || ''), 'da-DK'));
 
-  if (!existing.length) {
-    listEl.innerHTML = `<div class="person-rename-empty">${escapeHtml(tr('person_rename_none'))}</div>`;
-  } else {
-    existing.forEach((it) => {
+  const input = menu.querySelector('.person-rename-input');
+  const filterPeople = () => {
+    const query = input.value.trim().toLocaleLowerCase('da-DK');
+    const matches = existing.filter(it => String(it.name).toLocaleLowerCase('da-DK').includes(query));
+    listEl.replaceChildren();
+    if (!matches.length) {
+      listEl.innerHTML = `<div class="person-rename-empty" role="status">${escapeHtml(tr(query ? 'person_rename_no_matches' : 'person_rename_none'))}</div>`;
+    }
+    matches.forEach((it) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'person-rename-option';
       btn.textContent = String(it.name || tr('person_unknown'));
       btn.addEventListener('click', async () => {
-        await submit(String(it.name || ''), btn, true);
+        await submit(String(it.name || ''), btn, it.id);
       });
       listEl.appendChild(btn);
     });
-  }
-
-  const input = menu.querySelector('.person-rename-input');
-  if (input && personHasName(person)) input.value = String(person.name).trim();
+    positionMenu();
+  };
+  input.addEventListener('input', filterPeople);
   const createBtn = menu.querySelector('[data-act="create"]');
   const createNow = async () => {
     if (busy) return;
@@ -7134,30 +7142,40 @@ function openPersonRenameMenu(anchorBtn, person) {
   });
 
   document.body.appendChild(menu);
-  const rect = anchorBtn.getBoundingClientRect();
-  const top = Math.min(window.innerHeight - 12, rect.bottom + 6 + window.scrollY);
-  const left = Math.min(window.innerWidth - 12, rect.left + window.scrollX);
-  menu.style.top = `${top}px`;
-  menu.style.left = `${left}px`;
   personRenameMenuEl = menu;
+  function positionMenu() {
+    const viewport = window.visualViewport;
+    const width = viewport?.width || window.innerWidth;
+    const height = viewport?.height || window.innerHeight;
+    const x = viewport?.offsetLeft || 0;
+    const y = viewport?.offsetTop || 0;
+    menu.style.maxWidth = `${Math.max(0, width - 24)}px`;
+    menu.style.maxHeight = `${Math.max(0, height - 24)}px`;
+    const rect = anchorBtn.getBoundingClientRect();
+    const size = menu.getBoundingClientRect();
+    const below = rect.bottom + 6;
+    const desiredTop = below + size.height <= y + height - 12 ? below : rect.top - size.height - 6;
+    menu.style.left = `${Math.max(x + 12, Math.min(rect.left, x + width - size.width - 12))}px`;
+    menu.style.top = `${Math.max(y + 12, Math.min(desiredTop, y + height - size.height - 12))}px`;
+  }
+  filterPeople();
   if (input) {
     try { input.focus(); input.select(); } catch {}
   }
 
-  window.setTimeout(() => {
-    const onDocClick = (ev) => {
-      const target = ev.target;
-      if (!personRenameMenuEl) {
-        document.removeEventListener('click', onDocClick, true);
-        return;
-      }
-      if (target && (personRenameMenuEl.contains(target) || anchorBtn.contains(target))) return;
-      if (busy) return;
-      closePersonRenameMenu();
-      document.removeEventListener('click', onDocClick, true);
-    };
-    document.addEventListener('click', onDocClick, true);
-  }, 0);
+  const listeners = new AbortController();
+  menu.cleanup = () => listeners.abort();
+  const onOutsideClick = ev => {
+    if (!menu.contains(ev.target) && !anchorBtn.contains(ev.target)) closePersonRenameMenu();
+  };
+  document.addEventListener('click', onOutsideClick, {capture:true, signal:listeners.signal});
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && !busy) { closePersonRenameMenu(); anchorBtn.focus(); }
+  }, {signal:listeners.signal});
+  window.addEventListener('resize', positionMenu, {signal:listeners.signal});
+  window.addEventListener('scroll', positionMenu, {capture:true, signal:listeners.signal});
+  window.visualViewport?.addEventListener('resize', positionMenu, {signal:listeners.signal});
+  window.visualViewport?.addEventListener('scroll', positionMenu, {signal:listeners.signal});
 }
 
 function appendPersonCard(p) {
