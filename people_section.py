@@ -144,6 +144,7 @@ def _inject_people_fast_asset(app) -> None:
             tags = (
                 f'<script src="{PEOPLE_FAST_ASSET}"></script>\n'
                 f'<script src="{PEOPLE_CACHE_ASSET}"></script>'
+                '<script src="/static/person_faces.js?v=1"></script>'
             )
             response.set_data(html.replace("</body>", f"{tags}\n</body>", 1))
             response.headers["Content-Length"] = str(len(response.get_data()))
@@ -179,5 +180,7 @@ def init_people_section(app) -> None:
             app.view_functions[endpoint] = _allow_manager_for_people_action(original)
 
     _register_bulk_hide_route(app, fjordlens)
+    from person_faces import register
+    register(app, fjordlens, _can_manage_people)
     _inject_people_fast_asset(app)
     app.extensions["fjordlens_people_section_v6"] = True

@@ -6325,6 +6325,7 @@ function renderGrid() {
       wrap.className = 'timeline-grid';
       els.grid.appendChild(wrap);
       (state.items||[]).forEach(it => appendCardTo(it, wrap));
+      window.setupPersonFaceSelection?.(head, wrap);
       renderStats();
       return;
     }
