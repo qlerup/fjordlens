@@ -215,14 +215,13 @@ class ViewerImageTests(unittest.TestCase):
             let source = '';
             Object.defineProperty(node, 'src', {
               get: () => source,
-              set: value => { source = value; },
+              set: value => { source = value; setTimeout(() => node.dispatchEvent(new Event('load')), 0); },
             });
             const removeAttribute = node.removeAttribute.bind(node);
             node.removeAttribute = name => {
               if (name === 'src') source = '';
               removeAttribute(name);
             };
-            node.decode = () => { node.decoded = true; return Promise.resolve(); };
             created.push(node);
             return node;
           };
@@ -243,17 +242,16 @@ class ViewerImageTests(unittest.TestCase):
           await settle();
           const afterBack = created.filter(node => node.src).map(node => node.src).sort();
           const backCount = created.length;
-          const decoded = created.every(node => node.decoded);
           cache.clear();
           const released = created.every(node => !node.src);
           window.Image = NativeImage;
-          return {first, initialCount, afterForward, forwardCount, sameSelected, afterBack, backCount, decoded, released};
+          return {first, initialCount, afterForward, forwardCount, sameSelected, afterBack, backCount, released};
         }""")
         self.assertEqual(result["first"], sorted(f"/photo-{i}.jpg" for i in range(5, 26)))
         self.assertEqual(result["afterForward"], sorted(f"/photo-{i}.jpg" for i in range(6, 27)))
         self.assertEqual(result["afterBack"], result["first"])
         self.assertEqual((result["initialCount"], result["forwardCount"], result["backCount"]), (21, 22, 23))
-        self.assertTrue(result["sameSelected"] and result["decoded"] and result["released"])
+        self.assertTrue(result["sameSelected"] and result["released"])
 
 
 if __name__ == "__main__":

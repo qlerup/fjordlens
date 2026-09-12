@@ -14,6 +14,7 @@
 
   function release(entry) {
     if (!entry || !entry.node) return;
+    entry.cancel?.();
     const node = entry.node;
     if (entry.video) {
       try { node.pause(); } catch (_) {}
@@ -28,30 +29,59 @@
     }
   }
 
-  function createEntry(item, url) {
-    if (isVideo(item)) {
-      const node = document.createElement('video');
+  function createEntry(item, url, priority = 'low') {
+    const video = isVideo(item);
+    const node = video ? document.createElement('video') : new Image();
+    const entry = { node, video, pending: true, failed: false };
+    // Video preparation is bounded to metadata: never download whole movies
+    // in the background while the user is trying to view a photo.
+    if (video) {
       node.muted = true;
       node.playsInline = true;
-      node.preload = 'auto';
-      if (item && item.thumb_url) node.poster = item.thumb_url;
-      node.src = url;
-      try { node.load(); } catch (_) {}
-      return { node, video: true };
+      node.preload = 'metadata';
+      if (item.thumb_url) node.poster = item.thumb_url;
+    } else {
+      node.decoding = 'async';
+      node.fetchPriority = priority;
     }
-
-    const node = new Image();
-    try { node.decoding = 'async'; } catch (_) {}
-    try { node.fetchPriority = 'low'; } catch (_) {}
+    entry.ready = new Promise(resolve => {
+      const event = video ? 'loadedmetadata' : 'load';
+      let timer;
+      const finish = (failed = false) => {
+        if (!entry.pending) return;
+        entry.pending = false;
+        entry.failed = failed;
+        clearTimeout(timer);
+        node.removeEventListener(event, loaded);
+        node.removeEventListener('error', error);
+        resolve();
+      };
+      const loaded = () => finish();
+      const error = () => finish(true);
+      entry.cancel = () => finish(true);
+      node.addEventListener(event, loaded);
+      node.addEventListener('error', error);
+      // A stalled speculative request must not block the queue indefinitely.
+      if (priority !== 'high') timer = setTimeout(() => {
+        finish(true);
+        if (!node.isConnected) {
+          node.removeAttribute('src');
+          if (video) node.load();
+        }
+      }, 30000);
+      entry.promote = () => {
+        clearTimeout(timer);
+        if (!video) node.fetchPriority = 'high';
+      };
+    });
     node.src = url;
-    // Fetching alone does not make a large photo ready to paint on mobile.
-    try { if (node.decode) node.decode().catch(() => {}); } catch (_) {}
-    return { node, video: false };
+    if (video) { try { node.load(); } catch (_) {} }
+    return entry;
   }
 
   function create(options) {
-    const ahead = Math.max(0, Number(options && options.ahead) || DEFAULT_AHEAD);
-    const behind = Math.max(0, Number(options && options.behind) || DEFAULT_BEHIND);
+    const ahead = Math.max(0, Number(options?.ahead ?? DEFAULT_AHEAD));
+    const behind = Math.max(0, Number(options?.behind ?? DEFAULT_BEHIND));
     const cache = new Map();
     let generation = 0;
     let idleHandle = null;
@@ -90,6 +120,7 @@
       const addTarget = (index) => {
         const normalized = ((index % length) + length) % length;
         const item = list[normalized];
+        if (normalized === current && isVideo(item)) return;
         const url = mediaUrl(item);
         if (!url) return;
         const key = `${isVideo(item) ? 'v' : 'i'}:${url}`;
@@ -100,11 +131,10 @@
 
       // Keep the current photo too: advancing one step should only add one
       // distant neighbour and evict one at the opposite end of the window.
-      addTarget(current);
-      for (let offset = 1; offset <= Math.max(ahead, behind); offset += 1) {
-        if (offset <= ahead) addTarget(current + offset);
-        if (offset <= behind) addTarget(current - offset);
-      }
+      // The visible player already owns the current video request.
+      if (!isVideo(list[current])) addTarget(current);
+      for (let offset = 1; offset <= ahead; offset += 1) addTarget(current + offset);
+      for (let offset = 1; offset <= behind; offset += 1) addTarget(current - offset);
 
       for (const [key, entry] of cache.entries()) {
         if (targetKeys.has(key)) continue;
@@ -112,13 +142,17 @@
         cache.delete(key);
       }
 
-      const run = () => {
+      const run = async () => {
         idleHandle = null;
         timeoutHandle = null;
         if (runGeneration !== generation) return;
         for (const target of targets) {
           if (runGeneration !== generation) return;
+          // An update can reorder the queue while a retained request is active.
+          await Promise.all(Array.from(cache.values()).filter(entry => entry.pending).map(entry => entry.ready));
+          if (runGeneration !== generation) return;
           if (!cache.has(target.key)) cache.set(target.key, createEntry(target.item, target.url));
+          await cache.get(target.key).ready;
         }
       };
 
@@ -132,7 +166,21 @@
     function getImage(item) {
       if (isVideo(item) || !mediaUrl(item)) return null;
       const key = `i:${mediaUrl(item)}`;
-      if (!cache.has(key)) cache.set(key, createEntry(item, mediaUrl(item)));
+      // Navigation takes priority over an unfinished speculative download.
+      generation += 1;
+      cancelScheduled();
+      for (const [otherKey, entry] of cache) {
+        if (otherKey !== key && entry.pending && !entry.node.isConnected) {
+          release(entry);
+          cache.delete(otherKey);
+        }
+      }
+      if (cache.get(key)?.failed) {
+        release(cache.get(key));
+        cache.delete(key);
+      }
+      if (!cache.has(key)) cache.set(key, createEntry(item, mediaUrl(item), 'high'));
+      cache.get(key).promote();
       return cache.get(key).node;
     }
 
