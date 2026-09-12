@@ -63,6 +63,7 @@
   }
 
   const pending = new Map();
+  const sources = new WeakMap();
   const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
@@ -74,6 +75,7 @@
   }, { rootMargin: '300px' }) : null;
 
   function watch(card, getUrls) {
+    sources.set(card, getUrls);
     // Drop detached cards after navigation instead of retaining their closures.
     for (const previous of pending.keys()) {
       if (!previous.isConnected) { observer?.unobserve(previous); pending.delete(previous); }
@@ -129,5 +131,11 @@
     };
   }
 
-  window.FjordLensFolderPreviews = { watch, render, reset, createBatchLoader };
+  function resume(root) {
+    root.querySelectorAll('.photo-card').forEach(card => {
+      const getUrls = sources.get(card);
+      if (getUrls && !card.querySelector('img')) watch(card, getUrls);
+    });
+  }
+  window.FjordLensFolderPreviews = { watch, render, reset, resume, createBatchLoader };
 })();

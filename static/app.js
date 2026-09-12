@@ -5994,6 +5994,74 @@ let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
 let photosLoadPromise = null;
 const galleryDataCache = window.FjordLensGalleryCache.createCache();
+const mapperViews = new Map();
+let pendingMapperView = null;
+let mapperUnchangedCards = null;
+function mapperViewKey() {
+  return galleryCacheKey(JSON.stringify([state.mapperPath || '', state.q, state.mapperSort, state.searchLanguage, state.uiLanguage]));
+}
+function rememberMapperView() {
+  if (state.view !== 'mapper' || state.photosLoading || state.mapperEditMode || !els.grid?.classList.contains('folders-view')) return;
+  if ((state.items || []).length > 2000) return;
+  const key = mapperViewKey();
+  mapperViews.delete(key);
+  mapperViews.set(key, {nodes:[...els.grid.childNodes], items:state.items.slice(), folders:(state.mapperFolders || []).slice(),
+    offset:state.photosPageOffset, more:state.photosHasMore, total:state.mapperTotalItems, capacity:state.mapperGhostCapacity,
+    scroll:captureGalleryScrollAnchor(), generation:galleryDataCache.generation(), at:Date.now(), empty:!els.empty.classList.contains('hidden')});
+  while (mapperViews.size > 6) mapperViews.delete(mapperViews.keys().next().value);
+}
+function restoreMapperView() {
+  const entry = mapperViews.get(mapperViewKey());
+  if (!entry || state.mapperEditMode || entry.generation !== galleryDataCache.generation() || Date.now() - entry.at > 600000) return false;
+  if (entry.nodes.length && entry.nodes.every(node => node.parentNode === els.grid)
+      && state.items.length === entry.items.length && state.items.every((item, index) => item === entry.items[index])) return true;
+  photosRequestSequence++;
+  state.items = entry.items.slice(); state.mapperFolders = entry.folders.slice();
+  state.photosPageOffset = entry.offset; state.photosHasMore = entry.more; state.mapperTotalItems = entry.total;
+  state.mapperGhostCapacity = entry.capacity; state.photosLoading = false;
+  pendingMapperView = entry;
+  renderGrid(); renderMapperContext(state.mapperPath || '');
+  refreshMapperViewInBackground().catch(() => {});
+  return true;
+}
+async function refreshMapperViewInBackground() {
+  const key = mapperViewKey(), sequence = photosRequestSequence, generation = galleryDataCache.generation();
+  const current = () => state.view === 'mapper' && mapperViewKey() === key && photosRequestSequence === sequence
+    && galleryDataCache.generation() === generation && !state.mapperEditMode;
+  const qs = new URLSearchParams({view:'mapper',folder:state.mapperPath || '',direct:'1',q:state.q || '',
+    sort:_normalizeMapperSort(state.mapperSort),search_lang:state.searchLanguage || 'da',offset:'0',
+    limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false))))});
+  const [photos, folders] = await Promise.all([
+    fetch(`/api/photos?${qs}`).then(async response => {if (!response.ok) throw new Error('photos'); return response.json();}),
+    fetchUploadDestinationConfig('uploads')
+  ]);
+  if (!current() || !Array.isArray(photos.items) || !folders.res.ok || !folders.data?.ok) return;
+  const nextFolders = (folders.data.folders || []).filter(Boolean);
+  const changed = JSON.stringify(state.items) !== JSON.stringify(photos.items)
+    || JSON.stringify(state.mapperFolders) !== JSON.stringify(nextFolders)
+    || Number(state.mapperTotalItems) !== Number(photos.total);
+  if (changed) {
+    const anchor = captureGalleryScrollAnchor();
+    const previous = new Map(state.items.map(item => [String(item.id), JSON.stringify(item)]));
+    mapperUnchangedCards = new Map();
+    for (const item of photos.items) {
+      if (previous.get(String(item.id)) === JSON.stringify(item)) {
+        const card = els.grid.querySelector(`.photo-card[data-photo-id="${Number(item.id)}"]`);
+        if (card) mapperUnchangedCards.set(String(item.id), card);
+      }
+    }
+    for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
+      mapperUnchangedCards.set('folder:' + card.dataset.folder, card);
+    }
+    state.items = photos.items; state.mapperFolders = nextFolders;
+    state.mapperTotalItems = photos.total; state.photosPageOffset = photos.next_offset;
+    state.photosHasMore = photos.total != null ? photos.next_offset < photos.total : !!photos.has_more;
+    renderGrid(); mapperUnchangedCards = null;
+    window.FjordLensFolderPreviews.resume?.(els.grid);
+    renderMapperContext(state.mapperPath || ''); restoreGalleryScrollAnchor(anchor, current);
+  }
+  rememberMapperView();
+}
 function galleryCacheKey(query) {
   return JSON.stringify([state.currentUser?.id, state.currentUser?.username, state.currentUser?.role, query]);
 }
@@ -6391,6 +6459,18 @@ function renderGrid() {
   }
 
   // Default views (mapper, etc.)
+  if (state.view === 'mapper' && pendingMapperView) {
+    const entry = pendingMapperView; pendingMapperView = null;
+    els.grid.replaceChildren(...entry.nodes);
+    els.grid.classList.add('gallery-grid'); els.grid.classList.remove('timeline-wrap');
+    els.mapperTools?.classList.remove('hidden');
+    if (entry.empty) renderEmpty(tr('empty_no_photos')); else hideEmpty();
+    window.FjordLensFolderPreviews.resume?.(els.grid);
+    setupMapperGhostLoading(); renderStats(); setDetail(null);
+    const key = mapperViewKey();
+    restoreGalleryScrollAnchor(entry.scroll, () => state.view === 'mapper' && mapperViewKey() === key);
+    return;
+  }
   els.grid.innerHTML = "";
   if (state.view === "mapper" && els.mapperTools) {
     els.mapperTools.classList.remove("hidden");
@@ -6427,6 +6507,8 @@ function renderGrid() {
       return;
     }
     for (const folderPath of sorted) {
+      const existing = mapperUnchangedCards?.get('folder:' + folderPath);
+      if (existing) {els.grid.append(existing); continue;}
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
       appendFolderCard(folderPath, [], {
         title,
@@ -6438,7 +6520,8 @@ function renderGrid() {
       });
     }
     items.forEach((item, index) => {
-      const card = appendCard(item);
+      let card = mapperUnchangedCards?.get(String(item.id));
+      if (card) els.grid.append(card); else card = appendCard(item);
       if (card) card.dataset.mapperIndex = String(index);
     });
     const cols = Math.max(1, estimateMapperGridMetrics().cols);
@@ -7833,9 +7916,10 @@ function captureGalleryScrollAnchor() {
   };
 }
 
-function restoreGalleryScrollAnchor(anchor) {
+function restoreGalleryScrollAnchor(anchor, isCurrent = () => true) {
   if (!anchor) return;
   const restore = () => {
+    if (!isCurrent()) return;
     const photoId = Number(anchor.photoId || 0);
     const card = photoId > 0 && els.grid
       ? els.grid.querySelector(`.photo-card[data-photo-id="${photoId}"]`)
@@ -7853,6 +7937,7 @@ function restoreGalleryScrollAnchor(anchor) {
 }
 
 async function loadPhotos(append = false, preserveScroll = false, useCache = false) {
+  if (!append && useCache && state.view === 'mapper' && restoreMapperView()) return true;
   if (append && photosLoadPromise) return photosLoadPromise.catch(() => false);
   // Existing refresh calls after edits/uploads stay fresh. Only navigation opts in.
   if (!append && !useCache) galleryDataCache.clear();
@@ -11661,6 +11746,7 @@ async function saveAppUpdateSettings() {
 let mapperToolsRequestSequence = 0;
 
 async function loadMapperTools(preferred = null, useCache = false) {
+  if (useCache && state.view === 'mapper' && mapperViews.has(mapperViewKey()) && restoreMapperView()) return true;
   const requestSequence = ++mapperToolsRequestSequence;
   if (!useCache) galleryDataCache.clear();
   const cacheKey = galleryCacheKey('mapper-folder-index');
@@ -11704,6 +11790,7 @@ async function loadMapperTools(preferred = null, useCache = false) {
 }
 
 function beginMapperPathNavigation(path) {
+  rememberMapperView();
   const nextPath = _normalizeMapperPath(path || '');
   // Invalidate an in-flight photo response immediately and remove cards from
   // the previous folder before any asynchronous mapper requests can repaint.
@@ -11715,7 +11802,7 @@ function beginMapperPathNavigation(path) {
   state.photosHasMore = false;
   _expandMapperAncestors(nextPath);
   renderMapperContext(nextPath);
-  if (state.view === 'mapper') renderGrid();
+  if (state.view === 'mapper' && !restoreMapperView()) renderGrid();
   return nextPath;
 }
 
@@ -13222,6 +13309,7 @@ async function toggleFavorite() {
 }
 
 async function setView(view, opts = {}) {
+  rememberMapperView();
   const { syncUrl = true } = opts || {};
   let nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
   // System settings are reserved for administrators.

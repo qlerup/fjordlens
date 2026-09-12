@@ -9,7 +9,7 @@ function fixture() {
   const context = vm.createContext({ window: {}, URLSearchParams, console,
     state: { view: 'timeline', q: '', sort: 'date', items: [], currentUser: { id: 1 }, photosPageLimit: 300 },
     els: { viewTitle: {}, viewSubtitle: {} }, renderGrid() {}, renderStats() {}, showStatus() {},
-    navLabels: () => ({}), restoreGalleryScrollAnchor() {},
+    navLabels: () => ({}), restoreGalleryScrollAnchor() {}, restoreMapperView: () => false,
     _normalizeMapperPath: s => s, _normalizeMapperSort: s => s || 'date', estimateMapperPageLimit: () => 100,
     handleMapperDiskSyncStatus() {}, hydrateMapperItems() {}, setupMapperGhostLoading() {},
     fetch: async () => { requests++; return { ok: true, headers: { get: () => 'application/json' },
