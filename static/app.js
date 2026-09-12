@@ -741,7 +741,8 @@ try { window.addEventListener('DOMContentLoaded', ()=>{
 
 function visiblePeople(items = state.people || []) {
   const visible = state.showSinglePeople ? items.slice() : items.filter(p => !p.single_find);
-  return visible.sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0)
+  return visible.sort((a, b) => Number(personHasName(b)) - Number(personHasName(a))
+    || (Number(b.count) || 0) - (Number(a.count) || 0)
     || String(a.name || '').localeCompare(String(b.name || ''), 'da-DK')
     || String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
 }
