@@ -740,7 +740,10 @@ try { window.addEventListener('DOMContentLoaded', ()=>{
 }); } catch{}
 
 function visiblePeople(items = state.people || []) {
-  return state.showSinglePeople ? items : items.filter(p => !p.single_find);
+  const visible = state.showSinglePeople ? items.slice() : items.filter(p => !p.single_find);
+  return visible.sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0)
+    || String(a.name || '').localeCompare(String(b.name || ''), 'da-DK')
+    || String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
 }
 
 // People: toggle 'Vis skjulte'
@@ -5797,7 +5800,19 @@ function wirePersonCardBodyEvents(card, p) {
 
 // Sync the People grid to a fresh server list without tearing down and
 // re-fetching thumbnails that already loaded — only touched by create/merge/
-// match-scan flows, so a card only vanishes, appears or updates its text.
+// match-scan flows. Move existing cards when their photo counts change.
+function reorderPeopleCards() {
+  if (!els.grid || state.view !== 'personer' || state.personView.mode !== 'list') return;
+  const cards = Array.from(els.grid.querySelectorAll('.photo-card[data-person-id]'));
+  const byId = new Map(cards.map(card => [card.getAttribute('data-person-id'), card]));
+  const ordered = visiblePeople().map(p => byId.get(String(p.id))).filter(Boolean);
+  let next = cards[0] || null;
+  for (const card of ordered) {
+    if (card === next) next = next.nextElementSibling;
+    else els.grid.insertBefore(card, next);
+  }
+}
+
 function reconcilePeopleGrid(newPeople) {
   const list = Array.isArray(newPeople) ? newPeople : [];
   state.people = list;
@@ -5820,6 +5835,7 @@ function reconcilePeopleGrid(newPeople) {
   }
   const newOnes = visible.filter((p) => !seenIds.has(String(p.id)));
   if (newOnes.length) appendPeopleInChunks(newOnes);
+  reorderPeopleCards();
   if (state.personView.mode === 'list') renderStats();
 }
 
@@ -5960,6 +5976,7 @@ function appendPeopleInChunks(people, chunkSize = 48) {
       frag.appendChild(card);
     }
     els.grid.appendChild(frag);
+    reorderPeopleCards();
     enqueueImgsFrom(els.grid);
     if (index < people.length) {
       // Yield to browser to paint and handle input, then continue
@@ -6854,6 +6871,7 @@ function personHasName(person) {
 let personRenameMenuEl = null;
 
 function closePersonRenameMenu() {
+  if (personRenameMenuEl?.getAttribute('aria-busy') === 'true') return;
   if (personRenameMenuEl && personRenameMenuEl.parentElement) {
     personRenameMenuEl.parentElement.removeChild(personRenameMenuEl);
   }
@@ -6876,7 +6894,6 @@ async function renameOrMergePerson(pid, name, options = {}) {
     }
     if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
     else showStatus(tr('person_name_updated'), 'ok');
-    closePersonRenameMenu();
     // Retrain this person's centroid, then re-match unknown faces/clusters against
     // the now-improved centroids, so matching keeps getting better for this person.
     if (state.view === 'personer' && state.personView.mode === 'photos'
@@ -6976,13 +6993,26 @@ function openNamedPersonDialog(anchorBtn, person) {
   const submit = async (name, options) => {
     if (busy) return;
     busy = true;
-    dialog.querySelectorAll('button').forEach(b => b.disabled = true);
+    const activeBtn = dialog.querySelector(`[data-${options.action}] button[type="submit"]`);
+    const originalLabel = activeBtn.textContent;
+    activeBtn.textContent = options.action === 'merge'
+      ? (en ? 'Merging…' : 'Fletter…') : (en ? 'Saving…' : 'Gemmer…');
+    activeBtn.classList.add('loading');
+    activeBtn.setAttribute('aria-busy', 'true');
+    dialog.querySelector('[data-error]').textContent = '';
+    dialog.querySelectorAll('button, input, select').forEach(b => b.disabled = true);
     try {
       if (await renameOrMergePerson(person.id, name, options)) dialog.close();
       else dialog.querySelector('[data-error]').textContent = options.action === 'rename'
         ? (en ? 'Could not save. If the name exists, use Merge people.' : 'Navnet kunne ikke gemmes. Hvis navnet allerede findes, skal du bruge Flet personer.')
         : (en ? 'Could not merge people. Try again.' : 'Personerne kunne ikke flettes. Prøv igen.');
-    } finally { busy = false; dialog.querySelectorAll('button').forEach(b => b.disabled = false); }
+    } finally {
+      busy = false;
+      activeBtn.textContent = originalLabel;
+      activeBtn.classList.remove('loading');
+      activeBtn.removeAttribute('aria-busy');
+      dialog.querySelectorAll('button, input, select').forEach(b => b.disabled = false);
+    }
   };
   dialog.querySelector('[data-rename]').addEventListener('submit', e => {
     e.preventDefault(); submit(dialog.querySelector('input').value.trim(), {action:'rename'});
@@ -7001,6 +7031,7 @@ function openNamedPersonDialog(anchorBtn, person) {
 }
 
 function openPersonRenameMenu(anchorBtn, person) {
+  if (personRenameMenuEl?.getAttribute('aria-busy') === 'true') return;
   closePersonRenameMenu();
   if (personHasName(person)) { openNamedPersonDialog(anchorBtn, person); return; }
   if (!anchorBtn || !person || person.id === 'unknown') {
@@ -7019,6 +7050,37 @@ function openPersonRenameMenu(anchorBtn, person) {
     <div class="person-rename-divider"></div>
     <div class="person-rename-list"></div>
   `;
+
+  let busy = false;
+  const submit = async (name, button, merging = false) => {
+    if (busy) return;
+    busy = true;
+    const originalLabel = button.textContent;
+    const en = state.uiLanguage === 'en';
+    button.textContent = merging ? (en ? 'Merging…' : 'Fletter…') : (en ? 'Saving…' : 'Gemmer…');
+    button.classList.add('loading');
+    button.setAttribute('aria-busy', 'true');
+    menu.setAttribute('aria-busy', 'true');
+    menu.querySelectorAll('button, input').forEach(el => el.disabled = true);
+    anchorBtn.disabled = true;
+    anchorBtn.classList.add('loading');
+    anchorBtn.setAttribute('aria-busy', 'true');
+    let saved = false;
+    try {
+      saved = await renameOrMergePerson(person.id, name);
+    } finally {
+      busy = false;
+      button.textContent = originalLabel;
+      button.classList.remove('loading');
+      button.removeAttribute('aria-busy');
+      menu.removeAttribute('aria-busy');
+      menu.querySelectorAll('button, input').forEach(el => el.disabled = false);
+      anchorBtn.disabled = false;
+      anchorBtn.classList.remove('loading');
+      anchorBtn.removeAttribute('aria-busy');
+    }
+    if (saved) closePersonRenameMenu();
+  };
 
   const listEl = menu.querySelector('.person-rename-list');
   // Exclude auto-generated unknown buckets like "Ukendt-10" from merge targets
@@ -7041,7 +7103,7 @@ function openPersonRenameMenu(anchorBtn, person) {
       btn.className = 'person-rename-option';
       btn.textContent = String(it.name || tr('person_unknown'));
       btn.addEventListener('click', async () => {
-        await renameOrMergePerson(person.id, String(it.name || ''));
+        await submit(String(it.name || ''), btn, true);
       });
       listEl.appendChild(btn);
     });
@@ -7050,30 +7112,14 @@ function openPersonRenameMenu(anchorBtn, person) {
   const input = menu.querySelector('.person-rename-input');
   if (input && personHasName(person)) input.value = String(person.name).trim();
   const createBtn = menu.querySelector('[data-act="create"]');
-  let createBusy = false;
   const createNow = async () => {
-    if (createBusy) return;
+    if (busy) return;
     const val = String(input && input.value ? input.value : '').trim();
     if (!val) {
       input && input.focus();
       return;
     }
-    createBusy = true;
-    const originalLabel = createBtn ? String(createBtn.textContent || '') : '';
-    try {
-      if (createBtn) {
-        createBtn.disabled = true;
-        createBtn.classList.add('loading');
-      }
-      await renameOrMergePerson(person.id, val);
-    } finally {
-      createBusy = false;
-      if (createBtn && createBtn.isConnected) {
-        createBtn.disabled = false;
-        createBtn.classList.remove('loading');
-        if (originalLabel) createBtn.textContent = originalLabel;
-      }
-    }
+    await submit(val, createBtn);
   };
   createBtn && createBtn.addEventListener('click', createNow);
   input && input.addEventListener('keydown', async (e) => {
@@ -7106,6 +7152,7 @@ function openPersonRenameMenu(anchorBtn, person) {
         return;
       }
       if (target && (personRenameMenuEl.contains(target) || anchorBtn.contains(target))) return;
+      if (busy) return;
       closePersonRenameMenu();
       document.removeEventListener('click', onDocClick, true);
     };

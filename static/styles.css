@@ -1476,11 +1476,11 @@ body.view-kameraer .timeline-header-actions {
   border-color: rgba(91,140,255,0.45);
   background: rgba(91,140,255,0.12);
 }
-.btn.loading {
+.btn.loading, .person-rename-option.loading {
   position: relative;
   pointer-events: none;
 }
-.btn.loading::after {
+.btn.loading::after, .person-rename-option.loading::after {
   content: "";
   display: inline-block;
   width: 12px;

@@ -436,6 +436,7 @@
       }
 
       els.grid.appendChild(fragment);
+      reorderPeopleCards();
       pendingImgs.push(...newImgs);
       pumpImages();
 
