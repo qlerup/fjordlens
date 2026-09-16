@@ -2810,9 +2810,9 @@ let state = {
   mapperThumbnailPickerSelected: [],
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
-  // Paging for large folders (timeline and mapper views)
+  // Small initial pages keep navigation responsive on phones as well as desktops.
   photosPageOffset: 0,
-  photosPageLimit: 300,
+  photosPageLimit: 60,
   mapperPageRows: 5,
   mapperTotalItems: 0,
   mapperGhostCapacity: 0,
@@ -5993,6 +5993,11 @@ let photoLoadMoreObserver = null;
 let mapperGhostChunkObserver = null;
 let photosRequestSequence = 0;
 let photosLoadPromise = null;
+let photosAbortController = null;
+let viewNavigationSequence = 0;
+function isPagedGalleryView(view) {
+  return ['timeline', 'kameraer', 'favorites', 'mapper'].includes(view);
+}
 const galleryDataCache = window.FjordLensGalleryCache.createCache();
 const mapperViews = new Map();
 let pendingMapperView = null;
@@ -6030,7 +6035,7 @@ async function refreshMapperViewInBackground() {
     && galleryDataCache.generation() === generation && !state.mapperEditMode;
   const qs = new URLSearchParams({view:'mapper',folder:state.mapperPath || '',direct:'1',q:state.q || '',
     sort:_normalizeMapperSort(state.mapperSort),search_lang:state.searchLanguage || 'da',offset:'0',
-    limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false))))});
+    limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false)))), browse:'1'});
   const [photos, folders] = await Promise.all([
     fetch(`/api/photos?${qs}`).then(async response => {if (!response.ok) throw new Error('photos'); return response.json();}),
     fetchUploadDestinationConfig('uploads')
@@ -6107,7 +6112,7 @@ function appendMapperGhostSlots(fromIndex, toIndex) {
 
 function expandMapperGhostChunk() {
   const cols = Math.max(1, estimateMapperGridMetrics().cols);
-  const total = Math.max(0, Number(state.mapperTotalItems || 0));
+  const total = mapperDisplayCapacity(cols);
   const nextCapacity = Math.min(total, Number(state.mapperGhostCapacity || 0) + (cols * 50));
   if (nextCapacity <= Number(state.mapperGhostCapacity || 0)) return;
   const startIndex = Number(state.mapperGhostCapacity || 0);
@@ -6123,12 +6128,17 @@ function hydrateMapperItems(startIndex, items) {
   items.forEach((item, offset) => {
     const index = startIndex + offset;
     const ghost = els.grid.querySelector(`.mapper-ghost-card[data-mapper-index="${index}"]`);
-    if (!ghost) return;
     const fragment = document.createDocumentFragment();
     const card = appendCardTo(item, fragment);
     if (card) card.dataset.mapperIndex = String(index);
-    if (fragment.firstChild) ghost.replaceWith(fragment.firstChild);
+    if (ghost && fragment.firstChild) ghost.replaceWith(fragment.firstChild);
+    else if (!els.grid.querySelector(`.photo-card[data-photo-id="${Number(item.id)}"]`)) els.grid.append(fragment);
   });
+}
+
+function mapperDisplayCapacity(cols) {
+  if (state.mapperTotalItems != null) return Math.max(state.items.length, Number(state.mapperTotalItems) || 0);
+  return state.items.length + (state.photosHasMore ? cols * 10 : 0);
 }
 
 function setupMapperGhostLoading() {
@@ -6141,18 +6151,19 @@ function setupMapperGhostLoading() {
   const firstGhost = els.grid.querySelector(`.mapper-ghost-card[data-mapper-index="${state.items.length}"]`);
   if (firstGhost && state.photosHasMore && 'IntersectionObserver' in window) {
     photoLoadMoreObserver = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
+      if (state.view === 'mapper' && firstGhost.isConnected && state.photosHasMore
+          && entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
     }, { rootMargin: `${bufferPx}px 0px` });
     photoLoadMoreObserver.observe(firstGhost);
   }
   const capacity = Number(state.mapperGhostCapacity || 0);
-  const total = Number(state.mapperTotalItems || 0);
+  const total = mapperDisplayCapacity(cols);
   if (capacity < total && 'IntersectionObserver' in window) {
     const triggerIndex = Math.max(0, capacity - (cols * 40));
     const trigger = els.grid.querySelector(`[data-mapper-index="${triggerIndex}"]`);
     if (trigger) {
       mapperGhostChunkObserver = new IntersectionObserver((entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) expandMapperGhostChunk();
+        if (state.view === 'mapper' && trigger.isConnected && entries.some((entry) => entry.isIntersecting)) expandMapperGhostChunk();
       });
       mapperGhostChunkObserver.observe(trigger);
     }
@@ -6166,6 +6177,7 @@ function appendTimelineGhostRow() {
   const cols = Math.max(1, estimateMapperGridMetrics(lastGroup).cols);
   const wrap = document.createElement('div');
   wrap.className = 'timeline-grid';
+  wrap.dataset.gallerySentinel = '1';
   const fragment = document.createDocumentFragment();
   for (let i = 0; i < cols * 2; i += 1) {
     const ghost = document.createElement('article');
@@ -6178,7 +6190,8 @@ function appendTimelineGhostRow() {
   els.grid.appendChild(wrap);
   if ('IntersectionObserver' in window) {
     photoLoadMoreObserver = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
+      if (state.view === 'timeline' && wrap.isConnected && state.photosHasMore
+          && entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
     }, { rootMargin: '700px 0px' });
     photoLoadMoreObserver.observe(wrap.firstChild);
   }
@@ -6189,6 +6202,7 @@ function appendPhotoLoadMoreButton(id, expectedView) {
     if (photoLoadMoreObserver) photoLoadMoreObserver.disconnect();
   } catch {}
   if (!els.grid) return;
+  els.grid.querySelectorAll('[data-gallery-sentinel]').forEach(node => node.remove());
   const old = document.getElementById(id);
   if (old && old.parentNode) old.parentNode.removeChild(old);
   if (!state.photosHasMore) return;
@@ -6202,12 +6216,14 @@ function appendPhotoLoadMoreButton(id, expectedView) {
   }
   const btn = document.createElement('button');
   btn.id = id;
+  btn.dataset.gallerySentinel = '1';
   btn.className = 'btn';
   btn.style.margin = '16px auto';
   btn.style.display = 'block';
+  btn.style.gridColumn = '1 / -1';
   btn.textContent = 'Indlæs flere…';
   const loadMore = async () => {
-    if (state.photosLoading || state.view !== expectedView || !state.photosHasMore) return;
+    if (!btn.isConnected || state.photosLoading || state.view !== expectedView || !state.photosHasMore) return;
     btn.disabled = true;
     btn.classList.add('loading');
     try {
@@ -6227,6 +6243,50 @@ function appendPhotoLoadMoreButton(id, expectedView) {
   }
 }
 
+// Append pages without replacing decoded images, event handlers or scroll anchors.
+function appendTimelineItems(items) {
+  const language = state.uiLanguage === 'en' ? 'en-GB' : 'da-DK';
+  const formatter = new Intl.DateTimeFormat(language, { month: 'long', year: 'numeric' });
+  const groups = new Map();
+  for (const item of items) {
+    let date = new Date(item.captured_at || item.modified_fs || item.created_fs || Date.now());
+    if (!Number.isFinite(date.getTime())) date = new Date();
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    if (!groups.has(key)) groups.set(key, { date, items: [] });
+    groups.get(key).items.push(item);
+  }
+  const asc = state.sort === 'date_asc';
+  for (const [key, group] of groups) {
+    let wrap = els.grid.querySelector(`.timeline-grid[data-month="${key}"]`);
+    if (!wrap) {
+      const header = document.createElement('div');
+      header.className = 'timeline-header';
+      header.textContent = formatter.format(group.date);
+      wrap = document.createElement('div');
+      wrap.className = 'timeline-grid'; wrap.dataset.month = key;
+      const next = Array.from(els.grid.querySelectorAll('.timeline-grid[data-month]'))
+        .find(node => asc ? node.dataset.month > key : node.dataset.month < key);
+      els.grid.insertBefore(header, next ? next.previousElementSibling : null);
+      els.grid.insertBefore(wrap, next ? next.previousElementSibling : null);
+    }
+    const fragment = document.createDocumentFragment();
+    group.items.forEach(item => appendCardTo(item, fragment));
+    wrap.append(fragment);
+  }
+}
+
+function appendGalleryPage(items) {
+  els.grid.querySelectorAll('[data-gallery-sentinel]').forEach(node => node.remove());
+  if (state.view === 'timeline') appendTimelineItems(items);
+  else {
+    const fragment = document.createDocumentFragment();
+    items.forEach(item => appendCardTo(item, fragment));
+    els.grid.append(fragment);
+  }
+  appendPhotoLoadMoreButton(`${state.view}LoadMoreBtn`, state.view);
+  renderStats();
+}
+
 function renderGrid() {
   if (els.statPhotos) els.statPhotos.style.display = state.view === 'personer' && state.personView.mode === 'photos' ? 'none' : '';
   if (els.statSingleToggle) els.statSingleToggle.style.display = state.view === 'personer' && state.personView.mode === 'list' ? '' : 'none';
@@ -6238,6 +6298,30 @@ function renderGrid() {
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
   if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
+  const loading = isPagedGalleryView(state.view) && state.photosLoading && !state.items.length;
+  if (els.grid) els.grid.setAttribute('aria-busy', loading ? 'true' : 'false');
+  if (loading) {
+    if (els.searchShell) els.searchShell.style.display = '';
+    if (els.sort) els.sort.style.display = '';
+    if (els.statHiddenToggle) els.statHiddenToggle.style.display = 'none';
+    const peopleButton = document.getElementById('peopleMatchScanBtn');
+    if (peopleButton) peopleButton.style.display = 'none';
+    els.grid.classList.remove('timeline-wrap');
+    els.grid.classList.add('gallery-grid');
+    els.grid.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < 12; i++) {
+      const card = document.createElement('article');
+      card.className = 'photo-card mapper-ghost-card';
+      card.setAttribute('aria-hidden', 'true');
+      card.innerHTML = '<div class="card-thumb mapper-ghost-thumb"></div>';
+      fragment.append(card);
+    }
+    els.grid.append(fragment);
+    if (els.mapperTools && state.view === 'mapper') els.mapperTools.classList.remove('hidden');
+    hideEmpty(); setDetail(null); renderStats();
+    return;
+  }
   // Handle Settings view
   if (state.view === "settings") {
     els.grid.innerHTML = "";
@@ -6424,32 +6508,7 @@ function renderGrid() {
       setDetail(null);
       return;
     }
-    const groups = new Map(); // key: YYYY-MM label
-    for (const it of items) {
-      const d = new Date(it.captured_at || it.modified_fs || it.created_fs || Date.now());
-      const y = d.getFullYear();
-      const m = d.toLocaleString((state.uiLanguage === 'en') ? 'en-GB' : 'da-DK', { month: "long" });
-      const key = `${y}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      const label = `${m} ${y}`;
-      if (!groups.has(key)) groups.set(key, { label, arr: [] });
-      groups.get(key).arr.push(it);
-    }
-    // Sort groups according to selection (date_desc or date_asc)
-    const asc = state.sort === 'date_asc';
-    const ordered = Array.from(groups.entries()).sort((a,b)=> {
-      if (a[0] === b[0]) return 0;
-      return asc ? (a[0] > b[0] ? 1 : -1) : (a[0] < b[0] ? 1 : -1);
-    });
-    for (const [, grp] of ordered) {
-      const h = document.createElement('div');
-      h.className = 'timeline-header';
-      h.textContent = grp.label;
-      const wrap = document.createElement('div');
-      wrap.className = 'timeline-grid';
-      els.grid.appendChild(h);
-      els.grid.appendChild(wrap);
-      grp.arr.forEach(it => appendCardTo(it, wrap));
-    }
+    appendTimelineItems(items);
     appendPhotoLoadMoreButton('timelineLoadMoreBtn', 'timeline');
     if (!state.items.some(i => i.id === state.selectedId)) {
       state.selectedId = null; setDetail(null);
@@ -6525,12 +6584,13 @@ function renderGrid() {
       if (card) card.dataset.mapperIndex = String(index);
     });
     const cols = Math.max(1, estimateMapperGridMetrics().cols);
-    const total = Math.max(items.length, Number(state.mapperTotalItems || items.length));
+    const total = mapperDisplayCapacity(cols);
     state.mapperGhostCapacity = Math.min(total, cols * 50);
     appendMapperGhostSlots(items.length, state.mapperGhostCapacity);
     appendPhotoLoadMoreButton('mapperLoadMoreBtn', 'mapper');
   } else {
     items.forEach(item => appendCard(item));
+    if (isPagedGalleryView(state.view)) appendPhotoLoadMoreButton(`${state.view}LoadMoreBtn`, state.view);
   }
 
   if (!state.items.some(i => i.id === state.selectedId)) {
@@ -7344,7 +7404,7 @@ const viewerImagePresenter = window.FjordLensMediaPreloader.createImagePresenter
 const viewerPager = window.FjordLensMediaPreloader.createViewerPager({
   getItems: getViewerItems,
   getIndex: () => state.selectedIndex,
-  hasMore: () => !Array.isArray(state.viewerItems) && ['mapper', 'timeline'].includes(state.view) && state.photosHasMore,
+  hasMore: () => !Array.isArray(state.viewerItems) && isPagedGalleryView(state.view) && state.photosHasMore,
   loadMore: () => loadPhotos(true),
   getContext: () => JSON.stringify([state.view, state.mapperPath, state.folder, state.q, state.sort, state.mapperSort, viewerVideoSourceGeneration]),
   isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
@@ -7948,7 +8008,11 @@ async function loadPhotos(append = false, preserveScroll = false, useCache = fal
   try {
     return await request;
   } catch (error) {
-    showStatus('Kunne ikke hente billeder. Prøv igen.', 'err');
+    if (photosLoadPromise === request && error?.name !== 'AbortError') {
+      state.photosLoading = false;
+      renderGrid();
+      showStatus('Kunne ikke hente billeder. Prøv igen.', 'err');
+    }
     return false;
   } finally {
     if (photosLoadPromise === request) {
@@ -7970,7 +8034,10 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   }
 
   const requestSequence = ++photosRequestSequence;
-  const mapperAppendStart = append && state.view === 'mapper' ? (state.items || []).length : 0;
+  const appendStart = append ? (state.items || []).length : 0;
+  photosAbortController?.abort();
+  const controller = new AbortController();
+  photosAbortController = controller;
   const requestedView = String(state.view || '');
   const requestedMapperPath = requestedView === 'mapper'
     ? _normalizeMapperPath(state.mapperPath || '')
@@ -7981,9 +8048,8 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     && (requestedView !== 'mapper' || _normalizeMapperPath(state.mapperPath || '') === requestedMapperPath)
   );
 
-  // Timeline and Mapper support paging. Mapper only fetches direct photos in the
-  // current folder; child folder previews are loaded separately and cheaply.
-  const pagedView = (state.view === 'timeline' || state.view === 'mapper');
+  // All photo grids use bounded pages. Folder discovery is a separate request.
+  const pagedView = isPagedGalleryView(state.view);
   if (!append) {
     state.photosPageOffset = 0;
     state.photosHasMore = false;
@@ -7999,10 +8065,11 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     qs.set('direct', '1');
     qs.set('offset', String(state.photosPageOffset || 0));
     qs.set('limit', String(estimateMapperPageLimit(append)));
-  } else if (state.view === 'timeline') {
+  } else if (pagedView) {
     qs.set('offset', String(state.photosPageOffset || 0));
-    qs.set('limit', String(state.photosPageLimit || 300));
+    qs.set('limit', String(state.photosPageLimit || 60));
   }
+  if (pagedView) qs.set('browse', '1');
 
   state.photosLoading = true;
   const cacheKey = galleryCacheKey(`/api/photos?${qs.toString()}`);
@@ -8010,7 +8077,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   let data = pagedView && useCache ? galleryDataCache.get(cacheKey) : null;
   let res = { ok: true };
   if (!data) {
-    res = await fetch(`/api/photos?${qs.toString()}`);
+    res = await fetch(`/api/photos?${qs.toString()}`, { signal: controller.signal });
     if (!requestIsCurrent()) return;
     try {
       const ct = String(res.headers.get('content-type') || '');
@@ -8027,7 +8094,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     const text = await res.text().catch(()=> '');
     console.warn('photos non-JSON svar', { status: res.status, text: text?.slice(0, 200) });
     showStatus(data && data.error ? `Kunne ikke hente billeder: ${data.error}` : 'Kunne ikke hente billeder. Prøv igen.', 'err');
-    if (!append) state.items = []; // keep existing on append failure
+    throw new Error(data?.error || 'photos_failed');
   } else {
     const incoming = Array.isArray(data.items) ? data.items : [];
     if (append) state.items = (state.items || []).concat(incoming);
@@ -8035,6 +8102,8 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     state.photosHasMore = !!data.has_more;
     if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined' && Number.isFinite(Number(data.total))) {
       state.mapperTotalItems = Math.max(0, Number(data.total));
+    } else if (state.view === 'mapper') {
+      state.mapperTotalItems = null;
     }
     if (pagedView) {
       const used = incoming.length;
@@ -8058,10 +8127,20 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   els.viewTitle.textContent = title;
   els.viewSubtitle.textContent = subtitle;
 
+  els.grid?.setAttribute('aria-busy', 'false');
   if (append && state.view === 'mapper') {
-    hydrateMapperItems(mapperAppendStart, state.items.slice(mapperAppendStart));
+    hydrateMapperItems(appendStart, state.items.slice(appendStart));
+    if (state.photosHasMore) expandMapperGhostChunk();
+    else {
+      els.grid.querySelectorAll('.mapper-ghost-card').forEach(node => node.remove());
+      state.mapperGhostCapacity = state.items.length;
+    }
     setupMapperGhostLoading();
     renderStats();
+    return;
+  }
+  if (append && pagedView) {
+    appendGalleryPage(state.items.slice(appendStart));
     return;
   }
   const scrollAnchor = (preserveScroll && !append) ? captureGalleryScrollAnchor() : null;
@@ -8487,6 +8566,8 @@ async function checkMapperDiskSyncNow() {
   if (state.view !== 'mapper') return;
   if (state.photosLoading || isUploadRunning() || uploadQueuePumpRunning) return;
   mapperDiskSyncWatcherBusy = true;
+  const requestedPath = state.mapperPath || '';
+  const navigation = viewNavigationSequence;
   try {
     const qs = new URLSearchParams({
       folder: state.mapperPath || '',
@@ -8494,6 +8575,7 @@ async function checkMapperDiskSyncNow() {
     });
     const res = await fetch(`/api/upload/folder-sync/status?${qs.toString()}`, { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
+    if (state.view !== 'mapper' || (state.mapperPath || '') !== requestedPath || navigation !== viewNavigationSequence) return;
     if (!res.ok || !data || !data.ok) return;
     const sync = data.disk_sync || {};
     handleMapperDiskSyncStatus(sync);
@@ -13306,14 +13388,29 @@ async function toggleFavorite() {
   const data = await res.json();
   if (!res.ok || !data.ok) return;
 
+  const wasFavorite = !!selected.favorite;
   selected.favorite = !!data.favorite;
+  if (state.view === 'favorites' && state.items.includes(selected) && wasFavorite !== selected.favorite) {
+    // The edited item was before the paging cursor in the favorites query.
+    state.photosPageOffset = Math.max(0, state.photosPageOffset + (selected.favorite ? 1 : -1));
+  }
   galleryDataCache.clear();
   renderGrid();
   setDetail(selected);
 }
 
 async function setView(view, opts = {}) {
+  // Input feedback must not depend on API latency or gallery rendering.
+  document.body.classList.remove('drawer-open');
   rememberMapperView();
+  const navigation = ++viewNavigationSequence;
+  photosRequestSequence++;
+  mapperToolsRequestSequence++;
+  photosAbortController?.abort();
+  photosLoadPromise = null;
+  state.photosLoading = false;
+  photoLoadMoreObserver?.disconnect();
+  mapperGhostChunkObserver?.disconnect();
   const { syncUrl = true } = opts || {};
   let nextView = APP_VIEW_KEYS.has(view) ? view : 'timeline';
   // System settings are reserved for administrators.
@@ -13363,6 +13460,16 @@ async function setView(view, opts = {}) {
   if (nextView !== 'settings') stopAppUpdateStatusPolling();
   if (syncUrl) _syncRouteStateToUrl();
 
+  if (isPagedGalleryView(nextView)) {
+    if (nextView === 'mapper' && restoreMapperView()) return;
+    state.items = [];
+    state.photosPageOffset = 0;
+    state.photosHasMore = false;
+    state.mapperTotalItems = null;
+    state.photosLoading = true;
+    renderGrid();
+  }
+
   if (nextView === "settings") {
     // show logs panel, do not load photos
     renderGrid();
@@ -13390,9 +13497,16 @@ async function setView(view, opts = {}) {
     state.items = [];
     await loadMoments();
   } else {
-    if (nextView === 'mapper') await loadMapperTools(String(state.mapperPath || ''), true);
-    await loadPhotos(false, false, true);
-    if (nextView === 'mapper') checkMapperDiskSyncNow().catch(() => {});
+    if (nextView === 'mapper') {
+      const path = String(state.mapperPath || '');
+      const folders = loadMapperTools(path, true).then(() => {
+        if (navigation === viewNavigationSequence && state.view === 'mapper' && !state.photosLoading) renderGrid();
+      });
+      await Promise.all([folders, loadPhotos(false, false, true)]);
+      if (navigation === viewNavigationSequence && state.view === 'mapper') checkMapperDiskSyncNow().catch(() => {});
+    } else {
+      await loadPhotos(false, false, true);
+    }
   }
 }
 
@@ -16122,8 +16236,6 @@ document.querySelectorAll(".nav-item").forEach(btn => {
       state.folder = null;
     }
     await setView(targetView);
-    // Close drawer on mobile nav selection
-    document.body.classList.remove("drawer-open");
   });
 });
 
@@ -16169,7 +16281,6 @@ if (els.mobileNavItems && els.mobileNavItems.length) {
           state.folder = null;
         }
         await setView(btn.dataset.view);
-        closeDrawer();
       }
     });
   });

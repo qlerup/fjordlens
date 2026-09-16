@@ -6,24 +6,25 @@ const vm = require('node:vm');
 const source = readFileSync(join(__dirname, '../static/app.js'), 'utf8');
 function fixture() {
   let clock = 0, requests = 0;
-  const context = vm.createContext({ window: {}, URLSearchParams, console,
+  const context = vm.createContext({ window: {}, URLSearchParams, console, AbortController,
     state: { view: 'timeline', q: '', sort: 'date', items: [], currentUser: { id: 1 }, photosPageLimit: 300 },
     els: { viewTitle: {}, viewSubtitle: {} }, renderGrid() {}, renderStats() {}, showStatus() {},
     navLabels: () => ({}), restoreGalleryScrollAnchor() {}, restoreMapperView: () => false,
     _normalizeMapperPath: s => s, _normalizeMapperSort: s => s || 'date', estimateMapperPageLimit: () => 100,
     handleMapperDiskSyncStatus() {}, hydrateMapperItems() {}, setupMapperGhostLoading() {},
+    isPagedGalleryView: view => ['timeline', 'mapper', 'kameraer', 'favorites'].includes(view),
     fetch: async () => { requests++; return { ok: true, headers: { get: () => 'application/json' },
       json: async () => ({ items: [{ id: requests }], has_more: false, next_offset: 1, total: 1 }) }; },
   });
   vm.runInContext(readFileSync(join(__dirname, '../static/gallery_cache.js'), 'utf8'), context);
   context.galleryDataCache = context.window.FjordLensGalleryCache.createCache({ now: () => clock });
-  vm.runInContext(`let photosLoadPromise = null; let photosRequestSequence = 0;
+  vm.runInContext(`let photosLoadPromise = null; let photosRequestSequence = 0; let photosAbortController = null;
     function galleryCacheKey(query) { return JSON.stringify([state.currentUser.id, query]); }
     ${source.slice(source.indexOf('async function loadPhotos('), source.indexOf('async function loadPeople('))}`, context);
   return { context, cache: context.galleryDataCache, requests: () => requests, advance: n => clock += n,
     load: (append=false, cached=true) => context.loadPhotos(append, false, cached) };
 }
-for (const view of ['timeline', 'mapper']) {
+for (const view of ['timeline', 'mapper', 'kameraer', 'favorites']) {
   test(`${view}: repeat navigation avoids fetch, edits and expiry refresh`, async () => {
     const f = fixture(); f.context.state.view = view;
     await f.load(); await f.load();

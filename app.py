@@ -15053,13 +15053,13 @@ def query_photos(
             ), '') AS people_names
         FROM photos
         {where_sql}
-        ORDER BY {order_by}
+        ORDER BY {order_by}, photos.id DESC
     """
     dedupe_paged_uploads = bool(isinstance(limit, int) and limit > 0)
     if isinstance(limit, int) and limit > 0:
         raw_limit = int(limit)
         if dedupe_paged_uploads:
-            raw_limit = max(raw_limit, int(offset or 0) + (int(limit) * 6))
+            raw_limit = (max(0, int(offset or 0)) + int(limit)) * 6
         sql += f"\n    LIMIT {raw_limit}"
         if (not dedupe_paged_uploads) and isinstance(offset, int) and offset > 0:
             sql += f" OFFSET {int(offset)}"
@@ -20893,6 +20893,31 @@ def api_photos():
     search_language = _normalize_language(requested_lang, user_lang)
 
     try:
+        # Interactive browsing reads the existing index immediately. Filesystem
+        # discovery runs separately through /api/upload/folder-sync/status.
+        # Keep the legacy API contract for other clients and integrations.
+        if request.args.get("browse") == "1" and view in {"timeline", "kameraer", "favorites", "mapper"}:
+            from gallery_browse import photo_page
+            page_limit = max(1, min(2000, limit or 60))
+            expand_tags = []
+            if q and AI_QUERY_EXPAND_ENABLED:
+                try:
+                    expand_tags = _ai_expand_query_tags(q, language=search_language)
+                except Exception:
+                    pass
+            items, has_more, next_offset = photo_page(
+                lambda start, size: query_photos(view, sort, folder=folder, offset=start,
+                                               limit=size, direct_only=direct_only),
+                _filter_public_items_by_current_user_acl,
+                lambda item: not q or matches_search(item, q, search_language=search_language)
+                or bool(expand_tags and _photo_contains_any_tags(item, expand_tags)),
+                offset=offset, limit=page_limit,
+            )
+            return jsonify({"items": items, "count": len(items), "query": q,
+                            "view": view, "sort": sort, "folder": folder,
+                            "offset": offset, "limit": page_limit,
+                            "has_more": has_more, "next_offset": next_offset,
+                            "total": None, "search_lang": search_language, "disk_sync": None})
         disk_sync: Optional[Dict[str, Any]] = None
         if view == "mapper":
             try:
