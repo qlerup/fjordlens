@@ -6170,16 +6170,19 @@ function setupMapperGhostLoading() {
   }
 }
 
-function appendTimelineGhostRow() {
-  if (!els.grid || state.view !== 'timeline') return;
+function appendGalleryGhostRows(expectedView) {
+  if (!els.grid || state.view !== expectedView) return;
+  const timeline = expectedView === 'timeline';
   const groups = els.grid.querySelectorAll('.timeline-grid');
-  const lastGroup = groups.length ? groups[groups.length - 1] : null;
-  const cols = Math.max(1, estimateMapperGridMetrics(lastGroup).cols);
+  const lastGroup = timeline && groups.length ? groups[groups.length - 1] : null;
+  const metrics = estimateMapperGridMetrics(lastGroup);
+  const cols = Math.max(1, metrics.cols);
   const wrap = document.createElement('div');
-  wrap.className = 'timeline-grid';
+  if (timeline) wrap.className = 'timeline-grid';
+  else wrap.style.display = 'contents'; // Place placeholders in the existing grid tracks.
   wrap.dataset.gallerySentinel = '1';
   const fragment = document.createDocumentFragment();
-  for (let i = 0; i < cols * 2; i += 1) {
+  for (let i = 0; i < cols * (timeline ? 2 : 10); i += 1) {
     const ghost = document.createElement('article');
     ghost.className = 'photo-card mapper-ghost-card';
     ghost.setAttribute('aria-hidden', 'true');
@@ -6190,9 +6193,9 @@ function appendTimelineGhostRow() {
   els.grid.appendChild(wrap);
   if ('IntersectionObserver' in window) {
     photoLoadMoreObserver = new IntersectionObserver((entries) => {
-      if (state.view === 'timeline' && wrap.isConnected && state.photosHasMore
+      if (state.view === expectedView && wrap.isConnected && state.photosHasMore
           && entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
-    }, { rootMargin: '700px 0px' });
+    }, { rootMargin: timeline ? '700px 0px' : `${Math.ceil((metrics.tileWidth + metrics.gap) * 5)}px 0px` });
     photoLoadMoreObserver.observe(wrap.firstChild);
   }
 }
@@ -6210,8 +6213,8 @@ function appendPhotoLoadMoreButton(id, expectedView) {
     setupMapperGhostLoading();
     return;
   }
-  if (expectedView === 'timeline') {
-    appendTimelineGhostRow();
+  if (expectedView === 'timeline' || (['kameraer', 'favorites'].includes(expectedView) && 'IntersectionObserver' in window)) {
+    appendGalleryGhostRows(expectedView);
     return;
   }
   const btn = document.createElement('button');
@@ -8067,7 +8070,8 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     qs.set('limit', String(estimateMapperPageLimit(append)));
   } else if (pagedView) {
     qs.set('offset', String(state.photosPageOffset || 0));
-    qs.set('limit', String(state.photosPageLimit || 60));
+    qs.set('limit', String(['kameraer', 'favorites'].includes(state.view)
+      ? estimateMapperPageLimit(append) : (state.photosPageLimit || 60)));
   }
   if (pagedView) qs.set('browse', '1');
 

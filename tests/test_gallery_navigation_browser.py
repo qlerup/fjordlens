@@ -117,16 +117,17 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_timeout(50)
         self.hold_view = None
         self.photo_response(self.pending.pop())
-        self.page.wait_for_function('state.items.length === 60 && !state.photosLoading')
+        self.page.wait_for_function('state.items.length > 0 && !state.photosLoading')
 
     def test_all_photo_grids_append_without_replacing_existing_cards(self):
         for view in ('timeline', 'kameraer', 'favorites'):
             with self.subTest(view=view):
                 self.page.evaluate('(view) => setView(view)', view)
+                initial_count = self.page.evaluate('state.items.length')
                 self.page.evaluate("window.originalCard = document.querySelector('#galleryGrid [data-photo-id]')")
                 self.page.evaluate('loadPhotos(true)')
                 self.assertTrue(self.page.evaluate("originalCard.isConnected && originalCard === document.querySelector('#galleryGrid [data-photo-id]')"))
-                self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), 120)
+                self.assertGreater(self.page.locator('#galleryGrid [data-photo-id]').count(), initial_count)
         photo_requests = [parse_qs(urlsplit(r).query) for r in self.requests if r.startswith('/api/photos?')]
         self.assertTrue(all(int(q['limit'][0]) <= 60 and q['browse'] == ['1'] for q in photo_requests))
 
@@ -142,10 +143,11 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         for view in ('kameraer', 'favorites'):
             with self.subTest(view=view):
                 self.page.evaluate('(view) => setView(view)', view)
-                self.page.evaluate('openViewer(59)')
+                boundary = self.page.evaluate('state.items.length')
+                self.page.evaluate('(boundary) => openViewer(boundary - 1)', boundary)
                 self.page.evaluate('nextViewer(1)')
-                self.assertEqual(self.page.evaluate('state.selectedIndex'), 60)
-                self.assertEqual(self.page.evaluate('state.items.length'), 120)
+                self.assertEqual(self.page.evaluate('state.selectedIndex'), boundary)
+                self.assertGreater(self.page.evaluate('state.items.length'), boundary)
                 self.page.evaluate('closeViewer()')
 
     def test_removing_a_favorite_does_not_skip_the_next_page_first_photo(self):
@@ -153,7 +155,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.evaluate('state.selectedId = state.items[0].id; toggleFavorite()')
         self.page.evaluate('loadPhotos(true)')
         ids = self.page.evaluate('state.items.map(item => item.id)')
-        self.assertEqual(ids, list(range(30000, 30120)))
+        self.assertEqual(ids, list(range(30000, 30000 + len(ids))))
 
     def test_timeline_merges_months_and_keeps_sorted_headers_across_pages(self):
         for _ in range(4):
@@ -202,4 +204,34 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
         self.hold_view = None
         self.page.evaluate("setView('kameraer')")
-        self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), 60)
+        self.assertGreater(self.page.locator('#galleryGrid [data-photo-id]').count(), 0)
+
+    def test_camera_and_favorites_fetch_five_rows_and_load_more_on_scroll(self):
+        for width in (390, 1366):
+            self.page.set_viewport_size({'width': width, 'height': 844})
+            for view in ('kameraer', 'favorites'):
+                with self.subTest(width=width, view=view):
+                    self.page.evaluate('galleryDataCache.clear(); window.scrollTo(0, 0)')
+                    start = len(self.requests)
+                    self.page.evaluate('(view) => setView(view)', view)
+                    self.page.wait_for_timeout(200)
+                    self.page.wait_for_function('!state.photosLoading')
+                    count = self.page.evaluate('state.items.length')
+                    self.assertLess(count, self.total)
+                    limit = self.page.evaluate('estimateMapperGridMetrics().cols * 5')
+                    self.assertLess(limit, 60)
+                    requests = [parse_qs(urlsplit(r).query) for r in self.requests[start:] if r.startswith('/api/photos?')]
+                    self.assertTrue(requests)
+                    self.assertTrue(all(int(q['limit'][0]) == limit for q in requests))
+                    self.assertEqual(self.page.locator('#galleryGrid button[data-gallery-sentinel]').count(), 0)
+                    self.page.evaluate("window.originalCard = document.querySelector('#galleryGrid [data-photo-id]'); document.querySelector('#galleryGrid [data-gallery-sentinel]').firstElementChild.scrollIntoView()")
+                    self.page.wait_for_function('(count) => state.items.length > count', arg=count)
+                    self.assertTrue(self.page.evaluate('originalCard.isConnected'))
+
+    def test_camera_and_favorite_scroll_placeholders_disappear_at_end(self):
+        self.total = 53
+        for view in ('kameraer', 'favorites'):
+            self.page.evaluate('(view) => setView(view)', view)
+            self.page.evaluate('async () => { while (state.photosHasMore) await loadPhotos(true); }')
+            self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), self.total)
+            self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
