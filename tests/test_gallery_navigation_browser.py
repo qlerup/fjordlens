@@ -64,10 +64,17 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
 
     def photo_response(self, route):
         qs = parse_qs(urlsplit(route.request.url).query)
+        if urlsplit(route.request.url).path == '/api/cameras':
+            route.fulfill(json={'items': [], 'cameras': [
+                {'model': 'Camera A', 'count': self.total, 'thumb_url': '/test/thumb.jpg'},
+                {'model': 'Camera B', 'count': self.total, 'thumb_url': None}], 'has_more': False})
+            return
         start = int(qs.get('offset', ['0'])[0])
         size = int(qs.get('limit', [str(self.total)])[0])
         view = qs.get('view', ['timeline'])[0]
         base = {'timeline': 10000, 'kameraer': 20000, 'favorites': 30000, 'mapper': 40000}.get(view, 0)
+        if view == 'kameraer' and qs.get('camera') == ['Camera B']:
+            base = 50000
         indices = [i for i in range(self.total) if view != 'favorites' or i not in self.excluded_favorites]
         if qs.get('sort') == ['date_asc']:
             indices.reverse()
@@ -84,7 +91,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         if url.hostname != 'fjordlens.test':
             route.abort(); return
         self.requests.append(url.path + '?' + url.query)
-        if url.path == '/api/photos':
+        if url.path in ('/api/photos', '/api/cameras'):
             view = parse_qs(url.query).get('view', [''])[0]
             if view == self.hold_view:
                 self.pending.append(route)
@@ -119,12 +126,12 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_timeout(50)
         self.hold_view = None
         self.photo_response(self.pending.pop())
-        self.page.wait_for_function('state.items.length > 0 && !state.photosLoading')
+        self.page.wait_for_function('state.cameras.length === 2 && !state.photosLoading')
 
     def test_all_photo_grids_append_without_replacing_existing_cards(self):
         for view in ('timeline', 'kameraer', 'favorites'):
             with self.subTest(view=view):
-                self.page.evaluate('(view) => setView(view)', view)
+                self.page.evaluate("(view) => setView(view, {cameraModel: view === 'kameraer' ? 'Camera A' : null})", view)
                 initial_count = self.page.evaluate('state.items.length')
                 self.page.evaluate("window.originalCard = document.querySelector('#galleryGrid [data-photo-id]')")
                 self.page.evaluate('loadPhotos(true)')
@@ -144,7 +151,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
     def test_viewer_continues_across_gallery_page_boundaries(self):
         for view in ('timeline', 'kameraer', 'favorites'):
             with self.subTest(view=view):
-                self.page.evaluate('(view) => setView(view)', view)
+                self.page.evaluate("(view) => setView(view, {cameraModel: view === 'kameraer' ? 'Camera A' : null})", view)
                 boundary = self.page.evaluate('state.items.length')
                 self.page.evaluate('(boundary) => openViewer(boundary - 1)', boundary)
                 self.page.evaluate('nextViewer(1)')
@@ -209,7 +216,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
         self.hold_view = None
         self.page.evaluate("setView('kameraer')")
-        self.assertGreater(self.page.locator('#galleryGrid [data-photo-id]').count(), 0)
+        self.assertEqual(self.page.locator('#galleryGrid .camera-folder').count(), 2)
 
     def test_galleries_fetch_five_rows_and_load_more_on_scroll(self):
         for width in (390, 1366):
@@ -218,7 +225,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
                 with self.subTest(width=width, view=view):
                     self.page.evaluate('galleryDataCache.clear(); window.scrollTo(0, 0)')
                     start = len(self.requests)
-                    self.page.evaluate('(view) => setView(view)', view)
+                    self.page.evaluate("(view) => setView(view, {cameraModel: view === 'kameraer' ? 'Camera A' : null})", view)
                     self.page.wait_for_timeout(200)
                     self.page.wait_for_function('!state.photosLoading')
                     count = self.page.evaluate('state.items.length')
@@ -237,7 +244,37 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.total = 53
         for view in ('timeline', 'kameraer', 'favorites'):
             self.page.evaluate('galleryDataCache.clear()')
-            self.page.evaluate('(view) => setView(view)', view)
+            self.page.evaluate("(view) => setView(view, {cameraModel: view === 'kameraer' ? 'Camera A' : null})", view)
             self.page.evaluate('async () => { while (state.photosHasMore) await loadPhotos(true); }')
             self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), self.total)
             self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
+
+    def test_camera_overview_opens_filtered_album_and_returns_without_folder_actions(self):
+        for width in (390, 1366):
+            self.page.set_viewport_size({'width': width, 'height': 844})
+            self.page.evaluate("setView('kameraer')")
+            self.assertEqual(self.page.locator('.camera-folder').count(), 2)
+            self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), 0)
+            self.page.locator('.camera-folder[data-camera="Camera A"]').click()
+            self.page.wait_for_function("state.cameraModel === 'Camera A' && state.items.length > 0")
+            self.assertEqual(self.page.evaluate('state.items[0].id'), 20000)
+            self.assertIn('camera=Camera+A', self.page.url)
+            self.page.locator('[data-camera-back]').click()
+            self.page.wait_for_function('state.cameraModel === null && !state.photosLoading')
+            self.assertNotIn('camera=', self.page.url)
+            self.page.locator('.camera-folder[data-camera="Camera B"]').click()
+            self.page.wait_for_function("state.cameraModel === 'Camera B' && state.items.length > 0")
+            self.assertEqual(self.page.evaluate('state.items[0].id'), 50000)
+            self.assertFalse(self.page.evaluate('state.mapperEditMode'))
+            self.assertFalse(any('/folder-preview' in r for r in self.requests))
+
+    def test_camera_album_survives_reload_and_ignores_a_late_previous_album(self):
+        self.page.goto('https://fjordlens.test/?view=kameraer&camera=Camera+B', wait_until='networkidle')
+        self.page.wait_for_function("state.cameraModel === 'Camera B' && state.items.length > 0")
+        self.assertEqual(self.page.evaluate('state.items[0].id'), 50000)
+        self.hold_view = 'kameraer'
+        self.page.evaluate("void setView('kameraer', {cameraModel: 'Camera A'})")
+        self.page.wait_for_timeout(50)
+        self.hold_view = None
+        self.page.evaluate("setView('kameraer', {cameraModel: 'Camera B'})")
+        self.assertEqual(self.page.evaluate('state.items[0].id'), 50000)

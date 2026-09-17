@@ -92,3 +92,44 @@ class GalleryBrowseTests(unittest.TestCase):
             conn.commit()
         data = self.page(self._authenticated_client(), 'mapper', folder='Allowed', direct='1')
         self.assertEqual([item['filename'] for item in data['items']], ['direct.jpg'])
+
+    def test_camera_folders_are_deduplicated_without_loading_photo_metadata(self):
+        self.seed(240, mirrors=True)
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("UPDATE photos SET camera_model=' Second camera ' WHERE rel_path LIKE '%/Allowed/%'")
+            conn.commit()
+        with patch.object(fl, 'row_to_public', side_effect=AssertionError('overview must not load photos')):
+            response = self._authenticated_client().get('/api/cameras')
+        self.assertEqual(response.status_code, 200)
+        cameras = response.get_json()['cameras']
+        self.assertEqual([(c['model'], c['count']) for c in cameras], [('Second camera', 48), ('Test camera', 192)])
+        client = self._authenticated_client()
+        first = self.page(client, 'kameraer', camera='Second camera', limit=20)
+        second = self.page(client, 'kameraer', camera='Second camera', limit=20, offset=first['next_offset'])
+        self.assertEqual(len(first['items']), 20)
+        self.assertEqual(len(second['items']), 20)
+        self.assertTrue(all(i['camera_model'].strip() == 'Second camera' for i in first['items'] + second['items']))
+        self.assertEqual(len({i['id'] for i in first['items'] + second['items']}), 40)
+        self.assertEqual(self.page(client, 'kameraer', camera="' OR 1=1 --")['items'], [])
+
+    def test_camera_folder_names_counts_and_covers_respect_permissions(self):
+        self.seed(100)
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("UPDATE photos SET camera_model='Private camera', thumb_name='private.jpg' WHERE rel_path LIKE '%/Other/%'")
+            conn.execute("UPDATE photos SET thumb_name='allowed.jpg' WHERE rel_path LIKE '%/Allowed/%'")
+            fl._set_user_allowed_folders(conn, 2, [{'folder_path': 'Allowed', 'permission': 'view'}])
+            conn.commit()
+        viewer = self._authenticated_client(2)
+        self.assertEqual(viewer.get('/api/cameras').get_json()['cameras'],
+                         [{'model': 'Test camera', 'count': 20, 'thumb_url': '/api/thumbs/allowed.jpg'}])
+        self.assertEqual(self.page(viewer, 'kameraer', camera='Private camera')['items'], [])
+        self.assertEqual(fl.app.test_client().get('/api/cameras').status_code, 401)
+
+    def test_camera_folder_search_and_missing_camera_metadata(self):
+        self.seed(100)
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("UPDATE photos SET camera_model='   ' WHERE rel_path LIKE '%/Other/%'")
+            conn.commit()
+        client = self._authenticated_client()
+        self.assertEqual(len(client.get('/api/cameras?q=TEST').get_json()['cameras']), 1)
+        self.assertEqual(client.get('/api/cameras?q=missing').get_json()['cameras'], [])

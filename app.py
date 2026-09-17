@@ -14953,6 +14953,7 @@ def query_photos(
     offset: int | None = None,
     limit: int | None = None,
     direct_only: bool = False,
+    camera_model: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
@@ -14976,6 +14977,9 @@ def query_photos(
         where.append("(gps_lat IS NOT NULL AND gps_lon IS NOT NULL)")
     elif view == "kameraer":
         where.append("(camera_model IS NOT NULL AND camera_model != '')")
+        if camera_model is not None:
+            where.append("TRIM(camera_model) = ?")
+            params.append(camera_model.strip())
     elif view == "personer":
         where.append("people_count > 0")  # future face-service
     elif view == "recent":
@@ -20866,12 +20870,42 @@ def api_factory_reset():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/cameras")
+@login_required
+def api_cameras():
+    """Virtual camera folders from indexed metadata, without opening photo files."""
+    query = _fold_danish(request.args.get("q", "").strip())
+    groups = {}
+    with closing(get_conn()) as conn:
+        rows = conn.execute("""
+            SELECT id, rel_path, camera_model, thumb_name FROM photos
+            WHERE TRIM(COALESCE(camera_model, '')) != ''
+              AND UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%'
+              AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%'
+              AND rel_path NOT LIKE '%/@eaDir/%'
+            ORDER BY id DESC
+        """).fetchall()
+        visible = [row for row in rows if _is_rel_visible_for_current_user(row['rel_path'], conn)]
+        for row in _dedupe_upload_storage_rows(visible):
+            model = row['camera_model'].strip()
+            if query and query not in _fold_danish(model):
+                continue
+            group = groups.setdefault(model, {'model': model, 'count': 0, 'thumb_url': None})
+            group['count'] += 1
+            if group['thumb_url'] is None and row['thumb_name']:
+                group['thumb_url'] = f"/api/thumbs/{row['thumb_name']}"
+    cameras = sorted(groups.values(), key=lambda item: item['model'].casefold(),
+                     reverse=request.args.get('sort') == 'name_desc')
+    return jsonify({'cameras': cameras, 'items': [], 'has_more': False, 'next_offset': 0})
+
+
 @app.route("/api/photos")
 def api_photos():
     q = request.args.get("q", "").strip()
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
     folder = request.args.get("folder")
+    camera_model = request.args.get("camera") if view == "kameraer" else None
     direct_only = str(request.args.get("direct") or "").strip().lower() in {"1", "true", "yes", "on"}
     try:
         offset = int(str(request.args.get("offset") or "0"))
@@ -20907,7 +20941,7 @@ def api_photos():
                     pass
             items, has_more, next_offset = photo_page(
                 lambda start, size: query_photos(view, sort, folder=folder, offset=start,
-                                               limit=size, direct_only=direct_only),
+                                               limit=size, direct_only=direct_only, camera_model=camera_model),
                 _filter_public_items_by_current_user_acl,
                 lambda item: not q or matches_search(item, q, search_language=search_language)
                 or bool(expand_tags and _photo_contains_any_tags(item, expand_tags)),
@@ -20932,7 +20966,8 @@ def api_photos():
                     )
             except Exception as sync_err:
                 disk_sync = {"ok": False, "error": str(sync_err)}
-        items = query_photos(view, sort, folder=folder, offset=offset, limit=limit, direct_only=direct_only)
+        items = query_photos(view, sort, folder=folder, offset=offset, limit=limit,
+                             direct_only=direct_only, camera_model=camera_model)
         if q:
             # Try AI-assisted expansion to widen matches when helpful
             expand_tags: list[str] = []

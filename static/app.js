@@ -943,7 +943,7 @@ const I18N = {
     view_steder_title: 'Steder',
     view_steder_sub: 'Billeder med GPS/placeringsdata',
     view_kameraer_title: 'Kameraer',
-    view_kameraer_sub: 'Filtreret på billeder med kameradata',
+    view_kameraer_sub: 'Billeder opdelt efter kameramodel',
     view_mapper_title: 'Mapper',
     view_mapper_sub: 'Grupperet efter kilde-mappe',
     view_photoframe_title: 'Photoframe',
@@ -1811,7 +1811,7 @@ const I18N = {
     view_steder_title: 'Places',
     view_steder_sub: 'Photos with location metadata',
     view_kameraer_title: 'Cameras',
-    view_kameraer_sub: 'Filtered by available camera metadata',
+    view_kameraer_sub: 'Photos grouped by camera model',
     view_mapper_title: 'Folders',
     view_mapper_sub: 'Grouped by source folder',
     view_photoframe_title: 'Photoframe',
@@ -2747,7 +2747,7 @@ function navLabels() {
     timeline: [tr('view_timeline_title'), tr('view_timeline_sub')],
     favorites: [tr('view_favorites_title'), tr('view_favorites_sub')],
     steder: [tr('view_steder_title'), tr('view_steder_sub')],
-    kameraer: [tr('view_kameraer_title'), tr('view_kameraer_sub')],
+    kameraer: [state.cameraModel || tr('view_kameraer_title'), tr(state.cameraModel ? 'view_kameraer_title' : 'view_kameraer_sub')],
     // Remove subtitle for mapper view
     mapper: [tr('view_mapper_title'), ''],
     momenter: [tr('view_momenter_title'), tr('view_momenter_sub')],
@@ -2797,6 +2797,8 @@ let state = {
   showFaceBoxes: (() => { try { return localStorage.getItem('fl_show_face_boxes') !== '0'; } catch { return true; } })(),
   mapperPath: "",
   mapperFolders: [],
+  cameraModel: null,
+  cameras: [],
   mapperSort: "date_desc",
   settingsTab: '',
   videoAutoplay: APP_PROFILE.video_autoplay === true,
@@ -3103,7 +3105,8 @@ function _readRouteStateFromUrl() {
     const settingsTab = _normalizeSettingsTab(url.searchParams.get('tab') || url.searchParams.get('settings_tab') || '');
     const personRaw = url.searchParams.get('person') || '';
     const personId = /^(?:[1-9]\d*|unknown)$/.test(personRaw) ? personRaw : null;
-    return { view, mapperPath, settingsTab, personId };
+    const cameraModel = url.searchParams.get('camera') || null;
+    return { view, mapperPath, settingsTab, personId, cameraModel };
   } catch {
     return { view: null, mapperPath: '', settingsTab: '' };
   }
@@ -3122,6 +3125,8 @@ function _activeSettingsTabFromUi() {
 function _syncRouteStateToUrl() {
   try {
     const url = new URL(window.location.href);
+    if (state.view === 'kameraer' && state.cameraModel) url.searchParams.set('camera', state.cameraModel);
+    else url.searchParams.delete('camera');
     if (state.view && state.view !== 'timeline') {
       url.searchParams.set('view', state.view);
     } else {
@@ -3533,6 +3538,7 @@ async function fetchWeatherForItem(item, { force = false, silent = false } = {})
 
 function renderStats() {
   const inPeople = (state.view === 'personer');
+  const inCameraOverview = state.view === 'kameraer' && !state.cameraModel;
   if (els.photoCountLabel) els.photoCountLabel.textContent = inPeople ? tr('stat_people') : tr('stat_photos');
   if (els.favoriteCountLabel) els.favoriteCountLabel.textContent = tr('stat_favorites');
   if (els.selectedCountLabel) els.selectedCountLabel.textContent = tr('stat_selected');
@@ -3540,13 +3546,14 @@ function renderStats() {
   if (showHiddenLabel) showHiddenLabel.textContent = tr('stat_show_hidden');
   const singleLabel = document.querySelector('label[for="showSingleToggle"]');
   if (singleLabel) singleLabel.textContent = tr('stat_show_single');
-  if (els.statFavorites) els.statFavorites.style.display = inPeople ? 'none' : '';
-  if (els.statSelected) els.statSelected.style.display = inPeople ? 'none' : '';
+  if (els.statFavorites) els.statFavorites.style.display = inPeople || inCameraOverview ? 'none' : '';
+  if (els.statSelected) els.statSelected.style.display = inPeople || inCameraOverview ? 'none' : '';
 
   if (inPeople) {
     if (els.photoCount) els.photoCount.textContent = visiblePeople().length;
   } else {
-    if (els.photoCount) els.photoCount.textContent = state.items.length;
+    if (els.photoCount) els.photoCount.textContent = state.view === 'kameraer' && !state.cameraModel
+      ? state.cameras.reduce((sum, camera) => sum + camera.count, 0) : state.items.length;
     if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
     if (els.selectedCount) els.selectedCount.textContent = state.selectedId ? "1" : "0";
   }
@@ -6292,6 +6299,34 @@ function appendGalleryPage(items) {
   renderStats();
 }
 
+function renderCameraFolders() {
+  els.grid.replaceChildren();
+  els.grid.classList.remove('timeline-wrap');
+  els.grid.classList.add('gallery-grid');
+  if (els.sort) els.sort.style.display = 'none';
+  const fragment = document.createDocumentFragment();
+  for (const camera of state.cameras) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'photo-card folder-card camera-folder';
+    card.dataset.camera = camera.model;
+    card.style.textAlign = 'left';
+    card.style.cursor = 'pointer';
+    card.style.padding = '0';
+    card.style.font = 'inherit';
+    card.style.color = 'inherit';
+    card.innerHTML = `<div class="card-thumb${camera.thumb_url ? '' : ' placeholder'}">${camera.thumb_url
+      ? `<img src="${escapeHtml(camera.thumb_url)}" alt="" loading="lazy" decoding="async">` : '<span aria-hidden="true">📷</span>'}</div>
+      <div class="card-body"><h4 class="card-title">${escapeHtml(camera.model)}</h4>
+      <div class="card-meta">${Number(camera.count)} ${escapeHtml(tr('stat_photos'))}</div></div>`;
+    card.addEventListener('click', () => setView('kameraer', { cameraModel: camera.model }));
+    fragment.append(card);
+  }
+  els.grid.append(fragment);
+  if (state.cameras.length) hideEmpty(); else renderEmpty(tr('empty_no_matches'));
+  renderStats(); setDetail(null);
+}
+
 function renderGrid() {
   if (els.statPhotos) els.statPhotos.style.display = state.view === 'personer' && state.personView.mode === 'photos' ? 'none' : '';
   if (els.statSingleToggle) els.statSingleToggle.style.display = state.view === 'personer' && state.personView.mode === 'list' ? '' : 'none';
@@ -6499,6 +6534,10 @@ function renderGrid() {
     const hdrBtn = document.getElementById('peopleMatchScanBtn');
     if (hdrBtn) hdrBtn.style.display = 'none';
   }
+  if (state.view === 'kameraer' && !state.cameraModel) {
+    renderCameraFolders();
+    return;
+  }
   // Timeline view: group by year-month headers
   if (state.view === "timeline") {
     els.grid.innerHTML = "";
@@ -6542,6 +6581,14 @@ function renderGrid() {
   // Restore gallery grid layout for non-timeline views
   els.grid.classList.add('gallery-grid');
   els.grid.classList.remove('timeline-wrap');
+  if (state.view === 'kameraer' && state.cameraModel) {
+    const back = document.createElement('button');
+    back.type = 'button'; back.className = 'btn'; back.dataset.cameraBack = '1';
+    back.style.gridColumn = '1 / -1'; back.style.justifySelf = 'start';
+    back.textContent = `← ${tr('view_kameraer_title')}`;
+    back.addEventListener('click', () => setView('kameraer'));
+    els.grid.append(back);
+  }
   if (!state.items.length && state.view !== "mapper") {
     const msg = state.view === "personer"
       ? tr('empty_people')
@@ -7411,7 +7458,7 @@ const viewerPager = window.FjordLensMediaPreloader.createViewerPager({
   getIndex: () => state.selectedIndex,
   hasMore: () => !Array.isArray(state.viewerItems) && isPagedGalleryView(state.view) && state.photosHasMore,
   loadMore: () => loadPhotos(true),
-  getContext: () => JSON.stringify([state.view, state.mapperPath, state.folder, state.q, state.sort, state.mapperSort, viewerVideoSourceGeneration]),
+  getContext: () => JSON.stringify([state.view, state.cameraModel, state.mapperPath, state.folder, state.q, state.sort, state.mapperSort, viewerVideoSourceGeneration]),
   isOpen: () => !!els.viewer && !els.viewer.classList.contains('hidden'),
   onUpdate: () => viewerMediaPreloader.update(getViewerItems(), state.selectedIndex),
 });
@@ -8044,12 +8091,14 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   const controller = new AbortController();
   photosAbortController = controller;
   const requestedView = String(state.view || '');
+  const requestedCamera = state.cameraModel;
   const requestedMapperPath = requestedView === 'mapper'
     ? _normalizeMapperPath(state.mapperPath || '')
     : '';
   const requestIsCurrent = () => (
     requestSequence === photosRequestSequence
     && String(state.view || '') === requestedView
+    && (requestedView !== 'kameraer' || state.cameraModel === requestedCamera)
     && (requestedView !== 'mapper' || _normalizeMapperPath(state.mapperPath || '') === requestedMapperPath)
   );
 
@@ -8075,14 +8124,17 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     qs.set('limit', String(estimateMapperPageLimit(append)));
   }
   if (pagedView) qs.set('browse', '1');
+  if (state.view === 'kameraer' && state.cameraModel) qs.set('camera', state.cameraModel);
+  const cameraOverview = state.view === 'kameraer' && !state.cameraModel;
+  const photoUrl = `${cameraOverview ? '/api/cameras' : '/api/photos'}?${qs.toString()}`;
 
   state.photosLoading = true;
-  const cacheKey = galleryCacheKey(`/api/photos?${qs.toString()}`);
+  const cacheKey = galleryCacheKey(photoUrl);
   const cacheGeneration = galleryDataCache.generation();
   let data = pagedView && useCache ? galleryDataCache.get(cacheKey) : null;
   let res = { ok: true };
   if (!data) {
-    res = await fetch(`/api/photos?${qs.toString()}`, { signal: controller.signal });
+    res = await fetch(photoUrl, { signal: controller.signal });
     if (!requestIsCurrent()) return;
     try {
       const ct = String(res.headers.get('content-type') || '');
@@ -8102,6 +8154,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     throw new Error(data?.error || 'photos_failed');
   } else {
     const incoming = Array.isArray(data.items) ? data.items : [];
+    if (cameraOverview) state.cameras = Array.isArray(data.cameras) ? data.cameras : [];
     if (append) state.items = (state.items || []).concat(incoming);
     else state.items = incoming;
     state.photosHasMore = !!data.has_more;
@@ -13424,6 +13477,7 @@ async function setView(view, opts = {}) {
     if (nextView === 'settings' && role !== 'admin') nextView = 'timeline';
   } catch {}
   state.view = nextView;
+  if (nextView === 'kameraer') state.cameraModel = opts.cameraModel || null;
   if (nextView === 'mapper') {
     state.mapperSort = _normalizeMapperSort(state.mapperSort);
   }
@@ -18519,7 +18573,7 @@ async function startExistingConversion(type, btn = null) {
   } catch {}
 })();
 
-setView(state.view, { syncUrl: false, personId: _initialRoute.personId }).then(async () => {
+setView(state.view, { syncUrl: false, personId: _initialRoute.personId, cameraModel: _initialRoute.cameraModel }).then(async () => {
   // Start with a quick status check in case scan was running
   if (SCAN_FEATURES_ENABLED) {
     fetch("/api/scan/status").then(r => r.json()).then(d => {
