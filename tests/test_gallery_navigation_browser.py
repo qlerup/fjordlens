@@ -48,7 +48,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.goto('https://fjordlens.test/', wait_until='networkidle')
         if self.page.locator('#uiDesignIntroModal').is_visible():
             self.page.locator('#uiDesignIntroLater').click()
-        self.page.wait_for_function('state.items.length === 60 && !state.photosLoading')
+        self.page.wait_for_function('state.items.length > 0 && !state.photosLoading')
 
     def tearDown(self):
         for route in self.pending:
@@ -69,6 +69,8 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         view = qs.get('view', ['timeline'])[0]
         base = {'timeline': 10000, 'kameraer': 20000, 'favorites': 30000, 'mapper': 40000}.get(view, 0)
         indices = [i for i in range(self.total) if view != 'favorites' or i not in self.excluded_favorites]
+        if qs.get('sort') == ['date_asc']:
+            indices.reverse()
         end = min(len(indices), start + size)
         items = [{'id': base+i, 'filename': f'image-{i}.jpg', 'ext': '.jpg',
                   'favorite': view == 'favorites',
@@ -139,8 +141,8 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertNotEqual(self.page.evaluate('els.searchShell.style.display'), 'none')
         self.assertFalse(self.page.locator('#peopleMatchScanBtn').is_visible())
 
-    def test_viewer_continues_across_camera_and_favorite_page_boundaries(self):
-        for view in ('kameraer', 'favorites'):
+    def test_viewer_continues_across_gallery_page_boundaries(self):
+        for view in ('timeline', 'kameraer', 'favorites'):
             with self.subTest(view=view):
                 self.page.evaluate('(view) => setView(view)', view)
                 boundary = self.page.evaluate('state.items.length')
@@ -158,13 +160,16 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertEqual(ids, list(range(30000, 30000 + len(ids))))
 
     def test_timeline_merges_months_and_keeps_sorted_headers_across_pages(self):
-        for _ in range(4):
-            self.page.evaluate('loadPhotos(true)')
-        groups = self.page.locator('#galleryGrid .timeline-grid[data-month]')
-        self.assertEqual(groups.count(), 2)
-        self.assertEqual(groups.first.get_attribute('data-month'), '2026-09')
-        self.assertEqual(groups.first.locator('[data-photo-id]').count(), 200)
-        self.assertEqual(groups.last.locator('[data-photo-id]').count(), 100)
+        self.total = 300
+        for sort, months in [('date_desc', ['2026-09', '2026-08']), ('date_asc', ['2026-08', '2026-09'])]:
+            with self.subTest(sort=sort):
+                self.page.evaluate('(sort) => { galleryDataCache.clear(); state.sort = sort; return setView("timeline"); }', sort)
+                self.page.evaluate('async () => { while (state.photosHasMore) await loadPhotos(true); }')
+                groups = self.page.locator('#galleryGrid .timeline-grid[data-month]')
+                self.assertEqual(groups.count(), 2)
+                self.assertEqual(groups.evaluate_all('(nodes) => nodes.map(node => node.dataset.month)'), months)
+                self.assertEqual(self.page.locator('[data-month="2026-09"] [data-photo-id]').count(), 200)
+                self.assertEqual(self.page.locator('[data-month="2026-08"] [data-photo-id]').count(), 100)
 
     def test_fast_navigation_cancels_the_previous_photo_request(self):
         self.hold_view = 'kameraer'
@@ -206,10 +211,10 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.evaluate("setView('kameraer')")
         self.assertGreater(self.page.locator('#galleryGrid [data-photo-id]').count(), 0)
 
-    def test_camera_and_favorites_fetch_five_rows_and_load_more_on_scroll(self):
+    def test_galleries_fetch_five_rows_and_load_more_on_scroll(self):
         for width in (390, 1366):
             self.page.set_viewport_size({'width': width, 'height': 844})
-            for view in ('kameraer', 'favorites'):
+            for view in ('timeline', 'kameraer', 'favorites'):
                 with self.subTest(width=width, view=view):
                     self.page.evaluate('galleryDataCache.clear(); window.scrollTo(0, 0)')
                     start = len(self.requests)
@@ -218,7 +223,7 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
                     self.page.wait_for_function('!state.photosLoading')
                     count = self.page.evaluate('state.items.length')
                     self.assertLess(count, self.total)
-                    limit = self.page.evaluate('estimateMapperGridMetrics().cols * 5')
+                    limit = self.page.evaluate("estimateMapperGridMetrics(state.view === 'timeline' ? els.grid.querySelector('.timeline-grid') : null).cols * 5")
                     self.assertLess(limit, 60)
                     requests = [parse_qs(urlsplit(r).query) for r in self.requests[start:] if r.startswith('/api/photos?')]
                     self.assertTrue(requests)
@@ -228,9 +233,10 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
                     self.page.wait_for_function('(count) => state.items.length > count', arg=count)
                     self.assertTrue(self.page.evaluate('originalCard.isConnected'))
 
-    def test_camera_and_favorite_scroll_placeholders_disappear_at_end(self):
+    def test_gallery_scroll_placeholders_disappear_at_end(self):
         self.total = 53
-        for view in ('kameraer', 'favorites'):
+        for view in ('timeline', 'kameraer', 'favorites'):
+            self.page.evaluate('galleryDataCache.clear()')
             self.page.evaluate('(view) => setView(view)', view)
             self.page.evaluate('async () => { while (state.photosHasMore) await loadPhotos(true); }')
             self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), self.total)

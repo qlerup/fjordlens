@@ -2812,7 +2812,6 @@ let state = {
   mapperTreeExpanded: new Set([""]),
   // Small initial pages keep navigation responsive on phones as well as desktops.
   photosPageOffset: 0,
-  photosPageLimit: 60,
   mapperPageRows: 5,
   mapperTotalItems: 0,
   mapperGhostCapacity: 0,
@@ -6091,7 +6090,10 @@ function estimateMapperGridMetrics(gridEl) {
 }
 
 function estimateMapperPageLimit(append = false) {
-  const metrics = estimateMapperGridMetrics();
+  // Timeline's outer container stacks month groups; measure the photo grid
+  // inside it. Before the first page, the loading grid supplies the columns.
+  const grid = state.view === 'timeline' ? els.grid?.querySelector('.timeline-grid') : null;
+  const metrics = estimateMapperGridMetrics(grid);
   const rows = Math.max(1, Number(state.mapperPageRows || 5));
   return Math.max(metrics.cols * rows, metrics.cols);
 }
@@ -6182,7 +6184,7 @@ function appendGalleryGhostRows(expectedView) {
   else wrap.style.display = 'contents'; // Place placeholders in the existing grid tracks.
   wrap.dataset.gallerySentinel = '1';
   const fragment = document.createDocumentFragment();
-  for (let i = 0; i < cols * (timeline ? 2 : 10); i += 1) {
+  for (let i = 0; i < cols * 10; i += 1) {
     const ghost = document.createElement('article');
     ghost.className = 'photo-card mapper-ghost-card';
     ghost.setAttribute('aria-hidden', 'true');
@@ -6195,7 +6197,7 @@ function appendGalleryGhostRows(expectedView) {
     photoLoadMoreObserver = new IntersectionObserver((entries) => {
       if (state.view === expectedView && wrap.isConnected && state.photosHasMore
           && entries.some((entry) => entry.isIntersecting) && !state.photosLoading) loadPhotos(true);
-    }, { rootMargin: timeline ? '700px 0px' : `${Math.ceil((metrics.tileWidth + metrics.gap) * 5)}px 0px` });
+    }, { rootMargin: `${Math.ceil((metrics.tileWidth + metrics.gap) * 5)}px 0px` });
     photoLoadMoreObserver.observe(wrap.firstChild);
   }
 }
@@ -8070,8 +8072,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     qs.set('limit', String(estimateMapperPageLimit(append)));
   } else if (pagedView) {
     qs.set('offset', String(state.photosPageOffset || 0));
-    qs.set('limit', String(['kameraer', 'favorites'].includes(state.view)
-      ? estimateMapperPageLimit(append) : (state.photosPageLimit || 60)));
+    qs.set('limit', String(estimateMapperPageLimit(append)));
   }
   if (pagedView) qs.set('browse', '1');
 
