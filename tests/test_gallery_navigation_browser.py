@@ -200,6 +200,20 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_function('navigationDone')
         self.assertEqual(self.page.locator('#galleryGrid .folder-card').count(), 2)
 
+    def test_folder_cards_are_usable_while_photos_and_covers_are_pending(self):
+        self.hold_view = 'mapper'
+        self.page.route('**/api/folder-previews?*', lambda route: self.pending.append(route))
+        self.page.evaluate("void setView('mapper')")
+        self.page.wait_for_function("document.querySelectorAll('#galleryGrid .folder-card').length === 2")
+        self.assertTrue(self.page.evaluate('state.photosLoading'))
+        self.assertEqual(self.page.locator('#galleryGrid [data-photo-id]').count(), 0)
+        self.page.locator('#galleryGrid .folder-card[data-folder="Album"]').click()
+        self.page.wait_for_function("state.mapperPath === 'Album'")
+        self.assertTrue(self.page.evaluate('state.photosLoading'))
+        self.hold_view = None
+        self.page.evaluate("setView('favorites')")
+        self.assertEqual(self.page.evaluate('state.items[0].id'), 30000)
+
     def test_exhausted_mapper_pages_remove_placeholder_cards(self):
         self.total = 27
         self.page.evaluate("setView('mapper')")

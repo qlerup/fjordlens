@@ -6340,7 +6340,10 @@ function renderGrid() {
   if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
   const loading = isPagedGalleryView(state.view) && state.photosLoading && !state.items.length;
   if (els.grid) els.grid.setAttribute('aria-busy', loading ? 'true' : 'false');
-  if (loading) {
+  // Folder cards are usable before photos or cover thumbnails arrive.
+  const hasMapperChildren = state.view === 'mapper' && (state.mapperFolders || [])
+    .some(folder => mapperImmediateChildFolder(String(folder || ''), String(state.mapperPath || '')));
+  if (loading && !hasMapperChildren) {
     if (els.searchShell) els.searchShell.style.display = '';
     if (els.sort) els.sort.style.display = '';
     if (els.statHiddenToggle) els.statHiddenToggle.style.display = 'none';
@@ -13559,7 +13562,7 @@ async function setView(view, opts = {}) {
     if (nextView === 'mapper') {
       const path = String(state.mapperPath || '');
       const folders = loadMapperTools(path, true).then(() => {
-        if (navigation === viewNavigationSequence && state.view === 'mapper' && !state.photosLoading) renderGrid();
+        if (navigation === viewNavigationSequence && state.view === 'mapper' && String(state.mapperPath || '') === path) renderGrid();
       });
       await Promise.all([folders, loadPhotos(false, false, true)]);
       if (navigation === viewNavigationSequence && state.view === 'mapper') checkMapperDiskSyncNow().catch(() => {});
