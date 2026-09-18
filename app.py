@@ -6272,14 +6272,7 @@ def _photoframe_video_prepared_path(rel_path: str) -> Path:
 
 def _prepare_video_for_photoframe(src: Path, rel_path: str) -> Path:
     ext = str(src.suffix or "").lower()
-    if ext not in VIDEO_EXTS:
-        return src
-    if not PHOTOFRAME_VIDEO_PREPARE_ENABLED:
-        return src
-    if not src.exists():
-        return src
-    ffmpeg_bin = shutil.which("ffmpeg")
-    if not ffmpeg_bin:
+    if ext not in VIDEO_EXTS or not PHOTOFRAME_VIDEO_PREPARE_ENABLED or not src.exists():
         return src
 
     dest = _photoframe_video_prepared_path(rel_path)
@@ -6287,7 +6280,6 @@ def _prepare_video_for_photoframe(src: Path, rel_path: str) -> Path:
         src_mtime = src.stat().st_mtime
     except Exception:
         src_mtime = 0.0
-
     try:
         if dest.exists() and dest.stat().st_size > 0 and dest.stat().st_mtime >= src_mtime:
             return dest
@@ -6295,57 +6287,55 @@ def _prepare_video_for_photoframe(src: Path, rel_path: str) -> Path:
         pass
 
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if CONVERT_URL_EXPLICIT:
+        try:
+            conversion_client.convert(
+                "photoframe_video",
+                src,
+                dest,
+                quality=PHOTOFRAME_VIDEO_PREPARE_CRF,
+                cpu_preset=PHOTOFRAME_VIDEO_PREPARE_PRESET,
+            )
+            log_event("photoframe_video_prepared", rel_path=rel_path, prepared_path=str(dest))
+            return dest
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                try:
+                    log_event("error", rel_path=rel_path, error=f"photoframe_video_worker: {exc}")
+                except Exception:
+                    pass
+                return src
+            logger.warning("PhotoFrame worker failed; using local fallback: %s", exc)
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return src
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     try:
         cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(src),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            PHOTOFRAME_VIDEO_PREPARE_PRESET,
-            "-crf",
-            str(PHOTOFRAME_VIDEO_PREPARE_CRF),
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            str(tmp),
+            ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(src), "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", PHOTOFRAME_VIDEO_PREPARE_PRESET,
+            "-crf", str(PHOTOFRAME_VIDEO_PREPARE_CRF), "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tmp),
         ]
         subprocess.run(cmd, check=True, timeout=PHOTOFRAME_VIDEO_PREPARE_TIMEOUT_SEC)
-        if (not tmp.exists()) or tmp.stat().st_size <= 0:
+        if not tmp.exists() or tmp.stat().st_size <= 0:
             raise RuntimeError("ffmpeg produced empty output")
         os.replace(tmp, dest)
-        try:
-            log_event("photoframe_video_prepared", rel_path=rel_path, prepared_path=str(dest))
-        except Exception:
-            pass
+        log_event("photoframe_video_prepared", rel_path=rel_path, prepared_path=str(dest))
         return dest
-    except Exception as e:
+    except Exception as exc:
         try:
-            if tmp.exists():
-                tmp.unlink()
+            tmp.unlink(missing_ok=True)
         except Exception:
             pass
         try:
-            log_event("error", rel_path=rel_path, error=f"photoframe_video_prepare: {e}")
+            log_event("error", rel_path=rel_path, error=f"photoframe_video_prepare: {exc}")
         except Exception:
             pass
         return src
-
 
 def _prepare_video_for_photoframe_rel(rel_path: str) -> None:
     rel = str(rel_path or "").replace("\\", "/").lstrip("/")
@@ -11379,9 +11369,28 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
 
 
 def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: int) -> Optional[str]:
-    """Extract a representative frame via ffmpeg and save as JPEG thumbnail.
-    Returns the thumbnail file name or None on failure.
-    """
+    """Extract a representative frame and save as JPEG thumbnail."""
+    if CONVERT_URL_EXPLICIT:
+        key = hashlib.md5(f"{rel_path}|{file_mtime}|{file_size}".encode("utf-8")).hexdigest()
+        thumb_name = f"{key}.jpg"
+        thumb_path = THUMB_DIR / thumb_name
+        try:
+            THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            if thumb_path.exists() and thumb_path.stat().st_size > 0:
+                return thumb_name
+            conversion_client.video_thumb(path, thumb_path, seek_seconds=0.5)
+            if thumb_path.exists() and thumb_path.stat().st_size > 0:
+                return thumb_name
+            raise RuntimeError("conversion worker produced no thumbnail")
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                try:
+                    log_event("error", rel_path=rel_path, error=f"video_thumb_worker: {exc}")
+                except Exception:
+                    pass
+                return None
+            logger.warning("Video thumbnail worker failed; using local fallback: %s", exc)
+
     last_error: Optional[str] = None
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -11441,6 +11450,15 @@ def _ios_compatible_jpeg(path: Path, rel_path: str) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     dest_dir.mkdir(parents=True, exist_ok=True)
+    if CONVERT_URL_EXPLICIT:
+        try:
+            conversion_client.convert("jpeg_normalize", path, dest, max_edge=4096, quality=90)
+            return dest
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                raise
+            logger.warning("Browser JPEG worker failed; using local fallback: %s", exc)
+
     temp_dest = dest.with_name(f".{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         with Image.open(path) as image:
@@ -11508,16 +11526,17 @@ def ensure_viewable_copy(path: Path, rel_path: str, normalize_jpeg: bool = False
         # Rebuild if missing or source newer
         if (not dest.exists()) or (path.stat().st_mtime > dest.stat().st_mtime):
             if ext in {".heic", ".heif"}:
-                with Image.open(path) as im:
-                    try:
-                        im = ImageOps.exif_transpose(im)
-                    except Exception:
-                        pass
-                    rgb = im.convert("RGB")
-                    rgb.save(dest, format="JPEG", quality=92, optimize=True)
+                def _viewable_heic_local(local_src: Path, local_dst: Path) -> None:
+                    with Image.open(local_src) as im:
+                        try:
+                            im = ImageOps.exif_transpose(im)
+                        except Exception:
+                            pass
+                        im.convert("RGB").save(local_dst, format="JPEG", quality=92, optimize=True)
+
+                _convert_on_local_storage(path, dest, _viewable_heic_local, kind="heic")
             elif ext in RAW_EXTS:
-                # Try rawpy first; fallback to ffmpeg
-                _raw_to_jpeg(path, dest)
+                _convert_on_local_storage(path, dest, _raw_to_jpeg, kind="raw")
         return dest
     except Exception:
         return path
