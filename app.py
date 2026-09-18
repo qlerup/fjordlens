@@ -13092,6 +13092,8 @@ def api_faces_status():
         "ok": True,
         "running": _faces_running.is_set(),
         "auto_index": faces_auto_index_enabled(),
+        "batch_size": face_batch_size_enabled(),
+        "batch_mode": "ai_service_batch",
         **faces_counts,
         "coverage": _faces_index_coverage(),
         "runtime": {
