@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -60,7 +61,42 @@ try:
 except Exception:
     CONVERT_MAX_CONCURRENCY = 1
 CONVERT_MAX_CONCURRENCY = max(1, min(4, CONVERT_MAX_CONCURRENCY))
-CONVERT_SEMAPHORE = threading.BoundedSemaphore(CONVERT_MAX_CONCURRENCY)
+
+
+class _DynamicConversionLimiter:
+    """FIFO-ish slot limiter whose capacity can be changed live (1..4)."""
+
+    def __init__(self, limit: int):
+        self._condition = threading.Condition()
+        self._limit = max(1, min(4, int(limit)))
+        self._active = 0
+
+    def set_limit(self, limit: int) -> int:
+        value = max(1, min(4, int(limit)))
+        with self._condition:
+            self._limit = value
+            self._condition.notify_all()
+        return value
+
+    def snapshot(self) -> dict:
+        with self._condition:
+            return {"limit": self._limit, "active": self._active}
+
+    @contextmanager
+    def slot(self):
+        with self._condition:
+            while self._active >= self._limit:
+                self._condition.wait()
+            self._active += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._active = max(0, self._active - 1)
+                self._condition.notify_all()
+
+
+CONVERT_LIMITER = _DynamicConversionLimiter(CONVERT_MAX_CONCURRENCY)
 
 _NVENC_CACHE: Optional[bool] = None
 _NVDEC_CACHE: Optional[bool] = None
@@ -802,7 +838,7 @@ def video_thumb():
         seek = float(body.get("seek_seconds", 0.5) or 0.5)
         max_edge = max(0, min(4096, int(body.get("max_edge", 600) or 0)))
         dst.parent.mkdir(parents=True, exist_ok=True)
-        with CONVERT_SEMAPHORE:
+        with CONVERT_LIMITER.slot():
             _extract_video_thumb(src, dst, seek, max_edge=max_edge)
         return jsonify({"ok": True, "dst": str(dst), "bytes": dst.stat().st_size})
     except ValueError as exc:
@@ -824,7 +860,7 @@ def hls_item():
             raise ValueError("Ugyldig HLS-type")
         image_duration = max(2, min(30, int(body.get("image_duration", 8) or 8)))
         segment_seconds = max(2, min(8, int(body.get("segment_seconds", 4) or 4)))
-        with CONVERT_SEMAPHORE:
+        with CONVERT_LIMITER.slot():
             result = _hls_item(
                 src,
                 output_dir,
@@ -856,7 +892,7 @@ def moment_render():
         music = body.get("music")
         if music is not None and not isinstance(music, dict):
             raise ValueError("music skal være et objekt")
-        with CONVERT_SEMAPHORE:
+        with CONVERT_LIMITER.slot():
             result = _render_moment(
                 slides,
                 dst,
@@ -885,8 +921,23 @@ def health():
         "nvenc": bool(ffmpeg and _nvenc_available(ffmpeg, "auto")),
         "nvdec": bool(ffmpeg and _nvdec_available(ffmpeg, "auto")),
         "default_device": _normalize_video_device(),
-        "max_concurrency": CONVERT_MAX_CONCURRENCY,
+        "max_concurrency": CONVERT_LIMITER.snapshot()["limit"],
+        "active_conversions": CONVERT_LIMITER.snapshot()["active"],
     })
+
+
+@app.post("/config/concurrency")
+def configure_concurrency():
+    body = request.get_json(silent=True) or {}
+    try:
+        value = int(body.get("concurrency"))
+    except Exception:
+        return jsonify({"ok": False, "error": "concurrency skal være et tal fra 1 til 4"}), 400
+    if value < 1 or value > 4:
+        return jsonify({"ok": False, "error": "concurrency skal være mellem 1 og 4"}), 400
+    applied = CONVERT_LIMITER.set_limit(value)
+    state = CONVERT_LIMITER.snapshot()
+    return jsonify({"ok": True, "max_concurrency": applied, "active_conversions": state["active"]})
 
 
 @app.post("/convert")
@@ -899,7 +950,7 @@ def convert():
         if src == dst:
             raise ValueError("Kilde og destination må ikke være den samme")
 
-        with CONVERT_SEMAPHORE:
+        with CONVERT_LIMITER.slot():
             result = _convert(kind, src, dst, body)
 
         try:
