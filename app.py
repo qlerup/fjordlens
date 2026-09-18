@@ -3058,6 +3058,214 @@ def _uploaded_by_for_rel(rel_path: str, fallback: str = "") -> str:
     return resolved
 
 
+_CONVERSION_DEST_RESERVATION_LOCK = threading.Lock()
+_CONVERSION_DEST_RESERVATIONS: set[str] = set()
+
+
+def _reserve_postprocess_conversion_destination(
+    orig_rel_for_convert: str,
+    disk_path: Path,
+    target_suffix: str,
+) -> tuple[Path, bool, str, str]:
+    orig_rel_norm = str(orig_rel_for_convert).replace("\\", "/").lstrip("/")
+    orig_is_upload = orig_rel_norm.startswith("uploads/")
+    try:
+        if orig_rel_norm.startswith("uploads/originals/"):
+            sub_rel = orig_rel_norm[len("uploads/originals/"):]
+        elif orig_rel_norm.startswith("uploads/"):
+            sub_rel = orig_rel_norm[len("uploads/"):]
+        else:
+            sub_rel = Path(orig_rel_norm).name
+    except Exception:
+        sub_rel = Path(orig_rel_for_convert).name
+    subdir_only = str(Path(sub_rel).parent).replace("\\", "/").strip("./")
+    leaf_name = f"{Path(sub_rel).stem}{target_suffix}"
+
+    with _CONVERSION_DEST_RESERVATION_LOCK:
+        if orig_is_upload:
+            conv_dir = UPLOAD_DIR / "converted" / (subdir_only if subdir_only != "." else "")
+            conv_dir.mkdir(parents=True, exist_ok=True)
+            base = conv_dir / leaf_name
+        else:
+            base = disk_path.with_suffix(target_suffix)
+            base.parent.mkdir(parents=True, exist_ok=True)
+
+        candidate = base
+        suffix_index = 1
+        while candidate.exists() or str(candidate) in _CONVERSION_DEST_RESERVATIONS:
+            candidate = base.parent / f"{base.stem}_{suffix_index}{target_suffix}"
+            suffix_index += 1
+        _CONVERSION_DEST_RESERVATIONS.add(str(candidate))
+
+    return candidate, orig_is_upload, sub_rel, subdir_only
+
+
+def _release_postprocess_conversion_destination(path: Optional[Path]) -> None:
+    if path is None:
+        return
+    with _CONVERSION_DEST_RESERVATION_LOCK:
+        _CONVERSION_DEST_RESERVATIONS.discard(str(path))
+
+
+def _queued_upload_conversion(
+    orig_rel_for_convert: str,
+    mode: str,
+    stop_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Convert one upload item. Designed for the refillable conversion slot queue."""
+    if stop_event is not None and stop_event.is_set():
+        return {"attempted": False, "success": False, "stopped": True}
+
+    disk_path = _disk_path_from_rel_path(orig_rel_for_convert)
+    extl = disk_path.suffix.lower()
+    needs_mov_conversion = extl == ".mov" and mov_convert_on_upload_enabled()
+    needs_conversion = (
+        ((extl in {".heic", ".heif"}) and heic_convert_on_upload_enabled())
+        or ((extl in RAW_EXTS) and raw_convert_on_upload_enabled())
+        or needs_mov_conversion
+    )
+    if not needs_conversion or not disk_path.exists():
+        return {"attempted": False, "success": False}
+
+    source_metadata_before_conversion: Dict[str, Any] = {}
+    if extl in VIDEO_EXTS:
+        try:
+            source_metadata_before_conversion = extract_video_metadata_via_exiftool(disk_path)
+        except Exception as exc:
+            log_event("error", rel_path=orig_rel_for_convert, error=f"source_video_metadata: {exc}")
+
+    target_suffix = ".mp4" if needs_mov_conversion else ".jpg"
+    new_path: Optional[Path] = None
+    try:
+        try:
+            log_event("convert_start", rel_path=orig_rel_for_convert, ext=extl, workflow_mode=mode)
+        except Exception:
+            pass
+
+        new_path, orig_is_upload, sub_rel, subdir_only = _reserve_postprocess_conversion_destination(
+            orig_rel_for_convert,
+            disk_path,
+            target_suffix,
+        )
+
+        if extl in {".heic", ".heif"}:
+            def _convert_heic(local_src: Path, local_dst: Path) -> None:
+                with Image.open(local_src) as himg:
+                    try:
+                        himg = ImageOps.exif_transpose(himg)
+                    except Exception:
+                        pass
+                    rgb = himg.convert("RGB")
+                    exif_bytes = None
+                    try:
+                        exif_bytes = himg.info.get("exif") or himg.getexif().tobytes()
+                    except Exception:
+                        exif_bytes = None
+                    save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
+                    if exif_bytes:
+                        save_kwargs["exif"] = exif_bytes
+                    rgb.save(local_dst, **save_kwargs)
+
+            _convert_on_local_storage(disk_path, new_path, _convert_heic, kind="heic")
+        elif extl in RAW_EXTS:
+            _convert_on_local_storage(disk_path, new_path, _raw_to_jpeg, kind="raw")
+        else:
+            _convert_on_local_storage(disk_path, new_path, _mov_to_mp4, kind="mov")
+
+        try:
+            st = disk_path.stat()
+            os.utime(new_path, (st.st_atime, st.st_mtime))
+        except Exception:
+            pass
+
+        if orig_is_upload:
+            try:
+                if subdir_only not in {"", "."}:
+                    tail = (Path(subdir_only) / new_path.name).as_posix()
+                else:
+                    tail = new_path.name
+            except Exception:
+                tail = f"{Path(sub_rel).stem}{target_suffix}"
+            new_rel = f"uploads/converted/{tail}"
+        else:
+            try:
+                orig_rel_path = Path(orig_rel_for_convert)
+                if str(orig_rel_path.parent).replace("\\", "/") not in {"", "."}:
+                    new_rel = (orig_rel_path.parent / new_path.name).as_posix()
+                else:
+                    new_rel = new_path.name
+            except Exception:
+                new_rel = str(orig_rel_for_convert) + target_suffix
+
+        conversion_to_ext = str(new_path.suffix or "").lower() or target_suffix
+        try:
+            if extl in {".heic", ".heif"}:
+                event_name = "heic_converted"
+            elif extl in RAW_EXTS:
+                event_name = "raw_converted"
+            else:
+                event_name = "mov_converted"
+            log_event(
+                event_name,
+                rel_path=new_rel,
+                from_rel=orig_rel_for_convert,
+                from_ext=extl,
+                to_ext=conversion_to_ext,
+                workflow_mode=mode,
+            )
+        except Exception:
+            pass
+
+        try:
+            if extl in {".heic", ".heif"}:
+                keep = heic_keep_originals_enabled()
+                delete_event = "heic_original_deleted"
+            elif extl in RAW_EXTS:
+                keep = raw_keep_originals_enabled()
+                delete_event = "raw_original_deleted"
+            else:
+                keep = mov_keep_originals_enabled()
+                delete_event = "mov_original_deleted"
+            orig_path = _disk_path_from_rel_path(orig_rel_for_convert)
+            orig_rel_normalized = str(orig_rel_for_convert).replace("\\", "/")
+            if keep and orig_rel_normalized.startswith("uploads/"):
+                final_orig_path = UPLOAD_DIR / orig_rel_normalized[len("uploads/"):]
+                if orig_path != final_orig_path:
+                    _publish_local_file(orig_path, final_orig_path)
+                    orig_path.unlink(missing_ok=True)
+                    log_event("original_published", rel_path=orig_rel_for_convert)
+            elif not keep:
+                orig_path.unlink(missing_ok=True)
+                log_event(delete_event, rel_path=orig_rel_for_convert)
+        except Exception:
+            pass
+
+        return {
+            "attempted": True,
+            "success": True,
+            "rel": new_rel,
+            "disk_path": str(new_path),
+            "from_rel": orig_rel_for_convert,
+            "from_ext": extl,
+            "to_rel": new_rel,
+            "to_ext": conversion_to_ext,
+            "source_metadata": source_metadata_before_conversion,
+        }
+    except Exception as exc:
+        try:
+            log_event("error", rel_path=orig_rel_for_convert, error=f"convert: {exc}")
+        except Exception:
+            pass
+        return {
+            "attempted": True,
+            "success": False,
+            "error": str(exc),
+            "source_metadata": source_metadata_before_conversion,
+        }
+    finally:
+        _release_postprocess_conversion_destination(new_path)
+
+
 def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
@@ -3112,6 +3320,59 @@ def _postprocess_uploaded_rels(
         "stage_processed": 0,
         "stage_total": len(rels),
     })
+
+    # Conversion is a real slot queue, separate from face batching. If the user
+    # selects 4, four conversions stay active; as soon as one completes the next
+    # queued item starts immediately.
+    conversion_outcomes: Dict[str, Dict[str, Any]] = {}
+    conversion_candidates: list[str] = []
+    for candidate_rel in rels:
+        try:
+            candidate_path = _disk_path_from_rel_path(candidate_rel)
+            candidate_ext = candidate_path.suffix.lower()
+            candidate_needs = (
+                ((candidate_ext in {".heic", ".heif"}) and heic_convert_on_upload_enabled())
+                or ((candidate_ext in RAW_EXTS) and raw_convert_on_upload_enabled())
+                or (candidate_ext == ".mov" and mov_convert_on_upload_enabled())
+            )
+            if candidate_needs and candidate_path.exists():
+                conversion_candidates.append(candidate_rel)
+        except Exception:
+            pass
+
+    if conversion_candidates and not _should_stop():
+        conversion_workers = max(1, min(conversion_concurrency_enabled(), len(conversion_candidates)))
+        _sync_conversion_worker_concurrency(conversion_workers)
+        try:
+            log_event(
+                "conversion_queue_start",
+                items=len(conversion_candidates),
+                concurrency=conversion_workers,
+                mode="slot_queue",
+            )
+        except Exception:
+            pass
+        with ThreadPoolExecutor(max_workers=conversion_workers, thread_name_prefix="fjordlens-convert-slot") as pool:
+            futures = {
+                pool.submit(_queued_upload_conversion, candidate_rel, mode, stop_event): candidate_rel
+                for candidate_rel in conversion_candidates
+            }
+            completed_conversions = 0
+            for future in as_completed(futures):
+                candidate_rel = futures[future]
+                try:
+                    outcome = future.result()
+                except Exception as exc:
+                    outcome = {"attempted": True, "success": False, "error": str(exc)}
+                conversion_outcomes[candidate_rel] = outcome
+                completed_conversions += 1
+                _emit_progress({
+                    "phase": "converting",
+                    "current_rel": candidate_rel,
+                    "stage_processed": completed_conversions,
+                    "stage_total": len(conversion_candidates),
+                    "conversion_workers": conversion_workers,
+                })
 
     indexed_ok: list[str] = []
     heic_converted_count = 0
@@ -3170,14 +3431,28 @@ def _postprocess_uploaded_rels(
         conversion_to_rel: Optional[str] = None
         conversion_to_ext: Optional[str] = None
         source_metadata_before_conversion: Dict[str, Any] = {}
-        if needs_conversion and extl in VIDEO_EXTS and disk_path.exists():
+        conversion_prehandled = orig_rel_for_convert in conversion_outcomes
+        queued_conversion = conversion_outcomes.get(orig_rel_for_convert)
+        if queued_conversion:
+            raw_source_meta = queued_conversion.get("source_metadata")
+            if isinstance(raw_source_meta, dict):
+                source_metadata_before_conversion = dict(raw_source_meta)
+            if queued_conversion.get("success"):
+                rel = str(queued_conversion.get("rel") or rel)
+                disk_path = Path(str(queued_conversion.get("disk_path") or disk_path))
+                conversion_from_rel = str(queued_conversion.get("from_rel") or orig_rel_for_convert)
+                conversion_from_ext = str(queued_conversion.get("from_ext") or extl)
+                conversion_to_rel = str(queued_conversion.get("to_rel") or rel)
+                conversion_to_ext = str(queued_conversion.get("to_ext") or disk_path.suffix.lower())
+                heic_converted_count += 1
+        if (not conversion_prehandled) and needs_conversion and extl in VIDEO_EXTS and disk_path.exists():
             try:
                 source_metadata_before_conversion = extract_video_metadata_via_exiftool(disk_path)
             except Exception as exc:
                 log_event("error", rel_path=orig_rel_for_convert, error=f"source_video_metadata: {exc}")
-        # Optional: convert HEIC/HEIF/RAW to JPEG and MOV to MP4.
+        # Optional fallback path for items that were not eligible for the queued phase.
         try:
-            if needs_conversion and disk_path.exists():
+            if needs_conversion and disk_path.exists() and not conversion_prehandled:
                 try:
                     log_event(
                         "convert_start",
