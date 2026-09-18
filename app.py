@@ -6490,7 +6490,7 @@ def _upload_workflow_settings_payload() -> Dict[str, Any]:
         "ok": True,
         "mode": mode,
         "batch_size": int(face_batch_size_enabled()),
-        "face_batch_mode": "ai_service_batch",
+        "face_batch_mode": "slot_queue",
         "thumbnails_use_gpu": bool(UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU),
         "options": [UPLOAD_WORKFLOW_MODE_GENTLE, UPLOAD_WORKFLOW_MODE_AGGRESSIVE],
     }
