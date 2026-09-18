@@ -3463,12 +3463,9 @@ def _postprocess_uploaded_rels(
                         if disk_path.suffix.lower() in VIDEO_EXTS:
                             thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
                         else:
-                            with Image.open(disk_path) as img:
-                                try:
-                                    img = ImageOps.exif_transpose(img)
-                                except Exception:
-                                    pass
-                                thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
+                            thumb_name = _make_image_thumb(
+                                disk_path, rel, stat.st_mtime, stat.st_size
+                            )
                         if thumb_name:
                             with closing(get_conn()) as conn:
                                 conn.execute(
@@ -3673,12 +3670,9 @@ def _postprocess_uploaded_rels(
                 if disk_path.suffix.lower() in VIDEO_EXTS:
                     thumb_name = _make_video_thumb(disk_path, rel, stat.st_mtime, stat.st_size)
                 else:
-                    with Image.open(disk_path) as img:
-                        try:
-                            img = ImageOps.exif_transpose(img)
-                        except Exception:
-                            pass
-                        thumb_name = make_thumb(img, rel, stat.st_mtime, stat.st_size)
+                    thumb_name = _make_image_thumb(
+                        disk_path, rel, stat.st_mtime, stat.st_size
+                    )
                 if thumb_name:
                     with closing(get_conn()) as conn:
                         conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (thumb_name, now_iso(), rel))
@@ -11470,6 +11464,47 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     return thumb_name
 
 
+def _make_image_thumb(
+    path: Path,
+    rel_path: str,
+    file_mtime: float,
+    file_size: int,
+    *,
+    force: bool = False,
+) -> str:
+    key = hashlib.md5(f"{rel_path}|{file_mtime}|{file_size}".encode("utf-8")).hexdigest()
+    thumb_name = f"{key}.jpg"
+    thumb_path = THUMB_DIR / thumb_name
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+
+    if thumb_path.exists() and thumb_path.stat().st_size > 0 and not force:
+        return thumb_name
+
+    if CONVERT_URL_EXPLICIT:
+        try:
+            conversion_client.convert(
+                "image_thumb",
+                path,
+                thumb_path,
+                width=THUMB_SIZE[0],
+                height=THUMB_SIZE[1],
+            )
+            if thumb_path.exists() and thumb_path.stat().st_size > 0:
+                return thumb_name
+            raise RuntimeError("conversion worker produced no image thumbnail")
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                raise
+            logger.warning("Image thumbnail worker failed; using local fallback: %s", exc)
+
+    with Image.open(path) as image:
+        try:
+            image = ImageOps.exif_transpose(image)
+        except Exception:
+            pass
+        return make_thumb(image, rel_path, file_mtime, file_size, force=force)
+
+
 def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: int) -> Optional[str]:
     """Extract a representative frame and save as JPEG thumbnail."""
     if CONVERT_URL_EXPLICIT:
@@ -11852,7 +11887,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     metadata["width"], metadata["height"] = img.size
                     metadata.setdefault("captured_at", datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"))
                     if generate_thumb:
-                        thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
+                        thumb_name = _make_image_thumb(path, rel_path, stat.st_mtime, stat.st_size)
                     try:
                         hashes = image_hashes(img)
                         phash = hashes.get("phash")
@@ -11889,7 +11924,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     metadata["gps_lat"] = exif_map.get("_gps_lat")
                     metadata["gps_lon"] = exif_map.get("_gps_lon")
                     metadata["gps_name"] = None  # placeholder for future reverse geocoding
-                    thumb_name = make_thumb(img, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
+                    thumb_name = _make_image_thumb(path, rel_path, stat.st_mtime, stat.st_size) if generate_thumb else None
                     try:
                         hashes = image_hashes(img)
                         phash = hashes.get("phash")
@@ -19402,12 +19437,12 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
             continue
         try:
             stat = p.stat()
-            with Image.open(p) as img:
-                try:
-                    img = ImageOps.exif_transpose(img)
-                except Exception:
-                    pass
-                make_thumb(img, rel_path, stat.st_mtime, stat.st_size, force=True)
+            if p.suffix.lower() in VIDEO_EXTS:
+                thumb_name = _make_video_thumb(p, rel_path, stat.st_mtime, stat.st_size)
+                if not thumb_name:
+                    raise RuntimeError("Video-thumbnail kunne ikke oprettes")
+            else:
+                _make_image_thumb(p, rel_path, stat.st_mtime, stat.st_size, force=True)
             total += 1
             log_event("rethumb_ok", rel_path=rel_path)
         except Exception as e:
@@ -19487,12 +19522,7 @@ def rethumb_missing(stop_event=None) -> Dict[str, Any]:
             if p.suffix.lower() in VIDEO_EXTS:
                 tn = _make_video_thumb(p, rel_path, stat.st_mtime, stat.st_size)
             else:
-                with Image.open(p) as img:
-                    try:
-                        img = ImageOps.exif_transpose(img)
-                    except Exception:
-                        pass
-                    tn = make_thumb(img, rel_path, stat.st_mtime, stat.st_size)
+                tn = _make_image_thumb(p, rel_path, stat.st_mtime, stat.st_size)
             if tn:
                 with closing(get_conn()) as conn:
                     conn.execute("UPDATE photos SET thumb_name=?, last_scanned_at=? WHERE rel_path=?", (tn, now_iso(), rel_path))
@@ -21440,12 +21470,9 @@ def _rebuild_thumbnail_for_row(row: sqlite3.Row) -> str:
     if source.suffix.lower() in VIDEO_EXTS:
         thumb_name = _make_video_thumb(source, rel_path, stat.st_mtime, stat.st_size)
     else:
-        with Image.open(source) as image:
-            try:
-                image = ImageOps.exif_transpose(image)
-            except Exception:
-                pass
-            thumb_name = make_thumb(image, rel_path, stat.st_mtime, stat.st_size, force=True)
+        thumb_name = _make_image_thumb(
+            source, rel_path, stat.st_mtime, stat.st_size, force=True
+        )
     if not thumb_name:
         raise RuntimeError("Thumbnail kunne ikke oprettes")
     with closing(get_conn()) as conn:
