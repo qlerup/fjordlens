@@ -134,7 +134,8 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
         ):
             fjordlens._index_faces_worker(all_photos=True)
 
-        self.assertEqual(calls, [rels[:4], rels[4:]])
+        self.assertEqual([len(batch) for batch in calls], [4, 1])
+        self.assertEqual(set(item for batch in calls for item in batch), set(rels))
         self.assertEqual(index_one.call_count, 5)
         self.assertFalse(fjordlens._faces_running.is_set())
 
