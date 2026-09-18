@@ -236,9 +236,17 @@ Open `http://localhost:9080` (or your configured `APP_PORT`).
 Important: keep `GUNICORN_WORKERS=1`.
 Background jobs use in-process runtime state, so multiple workers can cause inconsistent job status.
 
-When updating an installation with the separate `fjordlens-ai` service, restart
-that service along with the web app and verify AI health and the expected GPU
-runtime after the update. The bundled music is included in the web-app image.
+FjordLens now runs three separate application roles:
+
+- `fjordlens` — web UI, API, database/state and job orchestration
+- `fjordlens-ai` — CUDA/AI, face and vision workloads
+- `fjordlens-convert` — media processing: HEIC/RAW/MOV conversion, image/video thumbnails,
+  browser/Cast/Google Photo JPEG preparation, Photo Frame video, AirPlay HLS and Moment MP4 rendering
+
+The conversion worker has its own queue/concurrency limit and receives NVIDIA
+`video,utility` capabilities when the GPU compose override is enabled. The AI
+container receives `compute,utility`. The web container does not need GPU access.
+Updates restart/rebuild all three services together.
 
 Weather enrichment is enabled by default with `WEATHER_AUTO_FETCH=1`. New uploads and metadata rescans store weather under each photo's metadata when the photo has a date plus either GPS coordinates or a city/country value. FjordLens uses Open-Meteo's historical weather endpoint and caches both weather lookups and city geocoding locally.
 
@@ -408,7 +416,7 @@ On iPhone/iPad:
 7. Press **Vælg AirPlay** and choose the TV/Apple TV.
 8. Use **Forrige**, **Næste** or the seek slider from the phone while the slideshow continues.
 
-FFmpeg is required for the HLS conversion and is installed by the provided Dockerfile.
+AirPlay HLS conversion runs in the dedicated `fjordlens-convert` container. FFmpeg and NVENC/CPU fallback support are installed in that worker image.
 
 ## Photoframe Quick Start
 
