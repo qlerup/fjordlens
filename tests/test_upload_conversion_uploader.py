@@ -1,5 +1,6 @@
 import shutil
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -262,6 +263,72 @@ class UploadConversionUploaderTests(unittest.TestCase):
             b"converted video",
         )
         self.assertFalse(fjordlens._staged_upload_path(rel).exists())
+
+    def test_upload_conversion_queue_refills_free_slots(self):
+        rels = []
+        for i in range(5):
+            source = fjordlens.UPLOAD_DIR / "originals" / f"slot_{i}.mov"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(f"source-{i}".encode())
+            rel = f"uploads/originals/slot_{i}.mov"
+            fjordlens._upsert_uploaded_stub(rel, source, "Anna")
+            rels.append(rel)
+
+        fjordlens._set_setting("conversion_concurrency", "3")
+        first_wave = threading.Barrier(3)
+        long_release = threading.Event()
+        refill_started = threading.Event()
+        active_lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def fake_convert_on_local_storage(src, dst, converter, *, kind=None, **options):
+            nonlocal active, max_active
+            idx = int(src.stem.split("_")[-1])
+            with active_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                if idx < 3:
+                    first_wave.wait(timeout=3)
+                    if idx == 0:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        dst.write_bytes(b"converted")
+                        return
+                    long_release.wait(timeout=3)
+                elif idx == 3:
+                    refill_started.set()
+                    long_release.set()
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(b"converted")
+            finally:
+                with active_lock:
+                    active -= 1
+
+        def fake_extract(_path, converted_rel, generate_thumb=False):
+            return {"rel_path": converted_rel, "ext": ".mp4"}
+
+        with (
+            patch.object(fjordlens, "mov_convert_on_upload_enabled", return_value=True),
+            patch.object(fjordlens, "mov_keep_originals_enabled", return_value=True),
+            patch.object(fjordlens, "faces_auto_index_enabled", return_value=False),
+            patch.object(fjordlens, "ai_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "ai_desc_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "_sync_conversion_worker_concurrency", return_value={"ok": True}),
+            patch.object(fjordlens, "_convert_on_local_storage", side_effect=fake_convert_on_local_storage),
+            patch.object(fjordlens, "extract_metadata", side_effect=fake_extract),
+            patch.object(fjordlens, "upsert_photo"),
+            patch.object(fjordlens, "_make_video_thumb", return_value=None),
+        ):
+            result = fjordlens._postprocess_uploaded_rels(
+                "Anna",
+                rels,
+                workflow_mode=fjordlens.UPLOAD_WORKFLOW_MODE_GENTLE,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(refill_started.is_set(), "A free conversion slot should start the next queued job")
+        self.assertEqual(max_active, 3)
 
     def test_conversion_worker_handles_media_when_configured(self):
         source = fjordlens.UPLOAD_DIR / "originals" / "worker.mov"
