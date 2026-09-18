@@ -67,6 +67,7 @@ class MovConversionTests(unittest.TestCase):
             with (
                 patch.object(fjordlens.shutil, "which", return_value="ffmpeg"),
                 patch.object(fjordlens, "_probe_mov_audio_stream", return_value=None),
+                patch.object(fjordlens, "_mov_nvenc_available", return_value=False),
                 patch.object(fjordlens.subprocess, "run", side_effect=fake_run) as run,
             ):
                 fjordlens._mov_to_mp4(src, dst)
@@ -80,6 +81,67 @@ class MovConversionTests(unittest.TestCase):
         self.assertEqual(command[command.index("-map_metadata") + 1], "0")
         self.assertTrue(output_exists)
 
+    def test_conversion_prefers_nvenc_when_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "iphone.mov"
+            dst = root / "iphone.mp4"
+            src.write_bytes(b"mov")
+
+            def fake_run(command, **kwargs):
+                Path(command[-1]).write_bytes(b"mp4")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with (
+                patch.object(fjordlens.shutil, "which", return_value="ffmpeg"),
+                patch.object(fjordlens, "_probe_mov_audio_stream", return_value=2),
+                patch.object(fjordlens, "_mov_nvenc_available", return_value=True),
+                patch.object(fjordlens.subprocess, "run", side_effect=fake_run) as run,
+            ):
+                fjordlens._mov_to_mp4(src, dst)
+
+            command = run.call_args.args[0]
+            self.assertIn("h264_nvenc", command)
+            self.assertNotIn("libx264", command)
+            self.assertIn("-cq", command)
+            self.assertTrue(dst.exists())
+
+    def test_nvenc_failure_retries_with_cpu(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "iphone.mov"
+            dst = root / "iphone.mp4"
+            src.write_bytes(b"mov")
+
+            gpu_error = subprocess.CalledProcessError(
+                1, ["ffmpeg"], stderr="Cannot load libnvidia-encode.so.1"
+            )
+
+            def cpu_success(command, **kwargs):
+                Path(command[-1]).write_bytes(b"mp4")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with (
+                patch.object(fjordlens.shutil, "which", return_value="ffmpeg"),
+                patch.object(fjordlens, "_probe_mov_audio_stream", return_value=2),
+                patch.object(fjordlens, "_mov_nvenc_available", return_value=True),
+                patch.object(fjordlens.subprocess, "run") as run,
+            ):
+                calls = {"count": 0}
+
+                def run_side_effect(command, **kwargs):
+                    calls["count"] += 1
+                    if calls["count"] == 1:
+                        raise gpu_error
+                    return cpu_success(command, **kwargs)
+
+                run.side_effect = run_side_effect
+                fjordlens._mov_to_mp4(src, dst)
+
+            self.assertIn("h264_nvenc", run.call_args_list[0].args[0])
+            self.assertIn("libx264", run.call_args_list[1].args[0])
+            self.assertTrue(dst.exists())
+
     def test_ffmpeg_error_includes_stderr(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -90,6 +152,7 @@ class MovConversionTests(unittest.TestCase):
             with (
                 patch.object(fjordlens.shutil, "which", return_value="ffmpeg"),
                 patch.object(fjordlens, "_probe_mov_audio_stream", return_value=2),
+                patch.object(fjordlens, "_mov_nvenc_available", return_value=False),
                 patch.object(fjordlens.subprocess, "run", side_effect=error),
                 self.assertLogs(fjordlens.logger, level="ERROR") as logs,
             ):
