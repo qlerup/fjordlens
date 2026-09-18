@@ -263,6 +263,66 @@ class UploadConversionUploaderTests(unittest.TestCase):
         )
         self.assertFalse(fjordlens._staged_upload_path(rel).exists())
 
+    def test_conversion_worker_handles_media_when_configured(self):
+        source = fjordlens.UPLOAD_DIR / "originals" / "worker.mov"
+        destination = fjordlens.UPLOAD_DIR / "converted" / "worker.mp4"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"source")
+        local_called = []
+
+        def local_converter(_src, _dst):
+            local_called.append(True)
+
+        def worker_convert(kind, src, dst, **options):
+            self.assertEqual(kind, "mov")
+            self.assertEqual(src, source)
+            self.assertEqual(dst, destination)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"worker output")
+            return {"ok": True, "engine": "nvenc"}
+
+        with (
+            patch.object(fjordlens, "CONVERT_URL_EXPLICIT", "http://fjordlens-convert:8010"),
+            patch.object(fjordlens, "CONVERT_SERVICE_FALLBACK_LOCAL", False),
+            patch.object(fjordlens.conversion_client, "convert", side_effect=worker_convert) as worker,
+        ):
+            fjordlens._convert_on_local_storage(
+                source,
+                destination,
+                local_converter,
+                kind="mov",
+            )
+
+        worker.assert_called_once()
+        self.assertEqual(local_called, [])
+        self.assertEqual(destination.read_bytes(), b"worker output")
+
+    def test_conversion_worker_failure_does_not_load_web_container_when_fallback_disabled(self):
+        source = fjordlens.UPLOAD_DIR / "originals" / "worker-fail.mov"
+        destination = fjordlens.UPLOAD_DIR / "converted" / "worker-fail.mp4"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"source")
+        local_called = []
+
+        with (
+            patch.object(fjordlens, "CONVERT_URL_EXPLICIT", "http://fjordlens-convert:8010"),
+            patch.object(fjordlens, "CONVERT_SERVICE_FALLBACK_LOCAL", False),
+            patch.object(
+                fjordlens.conversion_client,
+                "convert",
+                side_effect=RuntimeError("worker unavailable"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "worker unavailable"):
+                fjordlens._convert_on_local_storage(
+                    source,
+                    destination,
+                    lambda _src, _dst: local_called.append(True),
+                    kind="mov",
+                )
+
+        self.assertEqual(local_called, [])
+
     def test_recovery_merges_database_stubs_with_surviving_memory_queue(self):
         first = fjordlens.UPLOAD_DIR / "originals" / "first.jpeg"
         second = fjordlens.UPLOAD_DIR / "originals" / "second.jpeg"
