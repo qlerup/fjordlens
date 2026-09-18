@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
+import conversion_client
 from flask import Blueprint, Response, abort, jsonify, redirect, request, session
 from flask_login import current_user, login_required
 from PIL import Image, ImageOps
@@ -384,6 +385,31 @@ def _render_photo_jpeg(photo_id: int) -> Tuple[bytes, str]:
         if not path.exists() or not path.is_file():
             continue
         try:
+            if (
+                _core is not None
+                and bool(getattr(_core, "CONVERT_URL_EXPLICIT", ""))
+            ):
+                work_root = Path(getattr(_core, "CONVERSION_WORK_DIR", _data_dir() / "conversion_work"))
+                work_root.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(
+                    prefix="fjordlens-google-photo-",
+                    dir=str(work_root),
+                ) as temp_dir:
+                    output_path = Path(temp_dir) / "google-photo.jpg"
+                    conversion_client.convert(
+                        "jpeg_normalize",
+                        path,
+                        output_path,
+                        max_edge=max_edge,
+                        quality=quality,
+                        background="white",
+                    )
+                    data = output_path.read_bytes()
+                    if not data:
+                        raise RuntimeError("conversion worker produced empty Google Photos JPEG")
+                    stem = Path(str(row["filename"] or f"photo-{photo_id}")).stem
+                    return data, f"{stem}.jpg"
+
             with Image.open(path) as source:
                 image = ImageOps.exif_transpose(source)
                 try:
