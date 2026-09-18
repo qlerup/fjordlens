@@ -93,6 +93,23 @@ class ConversionSettingsTests(unittest.TestCase):
         self.assertEqual(reloaded_gpu.status_code, 200)
         self.assertEqual(reloaded_gpu.get_json()["device"], "gpu")
 
+    def test_mov_concurrency_setting_is_live_and_bounded_to_one_through_four(self):
+        client = self._authenticated_client()
+        for value in (1, 2, 3, 4):
+            with self.subTest(value=value):
+                response = client.post("/api/settings/mov", json={"concurrency": value})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["concurrency"], value)
+                reloaded = client.get("/api/settings/mov")
+                self.assertEqual(reloaded.status_code, 200)
+                self.assertEqual(reloaded.get_json()["concurrency"], value)
+
+        for invalid in (0, 5, "banana"):
+            with self.subTest(invalid=invalid):
+                response = client.post("/api/settings/mov", json={"concurrency": invalid})
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.get_json()["ok"])
+
     def test_mov_device_rejects_unknown_value(self):
         response = self._authenticated_client().post(
             "/api/settings/mov",
