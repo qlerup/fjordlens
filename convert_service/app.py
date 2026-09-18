@@ -34,8 +34,9 @@ logger = logging.getLogger("fjordlens-convert")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/uploads")).resolve()
 PHOTO_DIR = Path(os.environ.get("PHOTO_DIR", "/photos")).resolve()
+THUMB_DIR = Path(os.environ.get("THUMB_DIR", "/thumbs")).resolve()
 CONVERSION_WORK_DIR = Path(os.environ.get("CONVERSION_WORK_DIR", str(DATA_DIR / "conversion_work"))).resolve()
-ALLOWED_ROOTS = (DATA_DIR, UPLOAD_DIR, PHOTO_DIR)
+ALLOWED_ROOTS = (DATA_DIR, UPLOAD_DIR, PHOTO_DIR, THUMB_DIR)
 
 MOV_CONVERT_DEVICE = str(os.environ.get("MOV_CONVERT_DEVICE", "auto") or "auto").strip().lower()
 if MOV_CONVERT_DEVICE not in {"auto", "gpu", "cuda", "nvenc", "cpu"}:
