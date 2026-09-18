@@ -244,9 +244,10 @@ FjordLens now runs three separate application roles:
   browser/Cast/Google Photo JPEG preparation, Photo Frame video, AirPlay HLS and Moment MP4 rendering
 
 The conversion worker has its own queue/concurrency limit and receives NVIDIA
-`video,utility` capabilities when the GPU compose override is enabled. The AI
-container receives `compute,utility`. The web container does not need GPU access.
-Updates restart/rebuild all three services together.
+`video,utility` capabilities when the GPU compose override is enabled. For MOV/video
+conversion it tries NVDEC + NVENC first, then CPU decode + NVENC, then full CPU as a
+compatibility fallback. The AI container receives `compute,utility`. The web
+container does not need GPU access. Updates restart/rebuild all three services together.
 
 Weather enrichment is enabled by default with `WEATHER_AUTO_FETCH=1`. New uploads and metadata rescans store weather under each photo's metadata when the photo has a date plus either GPS coordinates or a city/country value. FjordLens uses Open-Meteo's historical weather endpoint and caches both weather lookups and city geocoding locally.
 
