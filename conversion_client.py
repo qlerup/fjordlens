@@ -50,10 +50,21 @@ def convert(kind: str, src: Path, dst: Path, **options: Any) -> dict[str, Any]:
     return _post("/convert", payload)
 
 
-def video_thumb(src: Path, dst: Path, *, seek_seconds: float = 0.5) -> dict[str, Any]:
+def video_thumb(
+    src: Path,
+    dst: Path,
+    *,
+    seek_seconds: float = 0.5,
+    max_edge: int = 600,
+) -> dict[str, Any]:
     return _post(
         "/video-thumb",
-        {"src": str(src), "dst": str(dst), "seek_seconds": float(seek_seconds)},
+        {
+            "src": str(src),
+            "dst": str(dst),
+            "seek_seconds": float(seek_seconds),
+            "max_edge": int(max_edge),
+        },
         timeout=120,
     )
 
