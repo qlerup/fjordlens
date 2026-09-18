@@ -5,7 +5,12 @@ from typing import Any, Optional
 
 import requests
 
-BASE_URL = str(os.environ.get("CONVERT_URL", "http://fjordlens-convert:8010") or "").rstrip("/")
+EXPLICIT_URL = str(os.environ.get("CONVERT_URL", "") or "").strip()
+BASE_URL = (EXPLICIT_URL or "http://fjordlens-convert:8010").rstrip("/")
+
+
+def enabled() -> bool:
+    return bool(EXPLICIT_URL)
 try:
     DEFAULT_TIMEOUT = float(os.environ.get("CONVERT_SERVICE_TIMEOUT_SEC", "21600") or 21600)
 except Exception:
