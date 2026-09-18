@@ -201,9 +201,18 @@ def _probe_audio_stream(src: Path, ffmpeg: str) -> Optional[int]:
     return None
 
 
-def _nvenc_available(ffmpeg: str) -> bool:
+def _normalize_video_device(value: Optional[str] = None) -> str:
+    raw = str(value or MOV_CONVERT_DEVICE or "auto").strip().lower()
+    if raw in {"gpu", "cuda", "nvenc"}:
+        return "gpu"
+    if raw == "cpu":
+        return "cpu"
+    return "auto"
+
+
+def _nvenc_available(ffmpeg: str, device_mode: Optional[str] = None) -> bool:
     global _NVENC_CACHE
-    if MOV_CONVERT_DEVICE == "cpu":
+    if _normalize_video_device(device_mode) == "cpu":
         return False
     if _NVENC_CACHE is not None:
         return _NVENC_CACHE
@@ -222,9 +231,9 @@ def _nvenc_available(ffmpeg: str) -> bool:
     return bool(_NVENC_CACHE)
 
 
-def _nvdec_available(ffmpeg: str) -> bool:
+def _nvdec_available(ffmpeg: str, device_mode: Optional[str] = None) -> bool:
     global _NVDEC_CACHE
-    if MOV_CONVERT_DEVICE == "cpu":
+    if _normalize_video_device(device_mode) == "cpu":
         return False
     if _NVDEC_CACHE is not None:
         return _NVDEC_CACHE
@@ -289,14 +298,15 @@ def _mov_command(
     return command
 
 
-def _convert_mov(src: Path, dst: Path) -> str:
+def _convert_mov(src: Path, dst: Path, device_mode: Optional[str] = None) -> str:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg not available")
 
     audio_index = _probe_audio_stream(src, ffmpeg)
-    nvenc = _nvenc_available(ffmpeg)
-    nvdec = nvenc and _nvdec_available(ffmpeg)
+    device = _normalize_video_device(device_mode)
+    nvenc = _nvenc_available(ffmpeg, device)
+    nvdec = nvenc and _nvdec_available(ffmpeg, device)
 
     attempts: list[tuple[bool, bool, str]] = []
     if nvdec:
@@ -743,7 +753,7 @@ def _convert(kind: str, src: Path, dst: Path, options: Optional[dict] = None) ->
         elif kind == "raw":
             _convert_raw(local_src, local_dst)
         elif kind == "mov":
-            engine = _convert_mov(local_src, local_dst)
+            engine = _convert_mov(local_src, local_dst, device_mode=options.get("device"))
         elif kind == "jpeg_normalize":
             max_width_raw = options.get("max_width")
             max_height_raw = options.get("max_height")
@@ -872,8 +882,9 @@ def health():
         "ok": True,
         "service": "fjordlens-convert",
         "ffmpeg": bool(ffmpeg),
-        "nvenc": bool(ffmpeg and _nvenc_available(ffmpeg)),
-        "nvdec": bool(ffmpeg and _nvdec_available(ffmpeg)),
+        "nvenc": bool(ffmpeg and _nvenc_available(ffmpeg, "auto")),
+        "nvdec": bool(ffmpeg and _nvdec_available(ffmpeg, "auto")),
+        "default_device": _normalize_video_device(),
         "max_concurrency": CONVERT_MAX_CONCURRENCY,
     })
 
