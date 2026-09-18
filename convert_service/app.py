@@ -278,15 +278,64 @@ def _convert_mov(src: Path, dst: Path) -> str:
 
 
 
-def _normalize_jpeg(src: Path, dst: Path, max_edge: int = 4096, quality: int = 90) -> None:
+def _to_rgb_with_black_background(image: Image.Image) -> Image.Image:
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, "black")
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    return image.convert("RGB")
+
+
+def _normalize_jpeg(
+    src: Path,
+    dst: Path,
+    max_edge: int = 4096,
+    quality: int = 90,
+    max_width: Optional[int] = None,
+    max_height: Optional[int] = None,
+) -> None:
     with Image.open(src) as image:
+        try:
+            image.seek(0)
+        except Exception:
+            pass
         try:
             image = ImageOps.exif_transpose(image)
         except Exception:
             pass
-        rgb = image.convert("RGB")
-        rgb.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+        rgb = _to_rgb_with_black_background(image)
+        if max_width and max_height:
+            bounds = (max(1, int(max_width)), max(1, int(max_height)))
+        else:
+            bounds = (max_edge, max_edge)
+        rgb.thumbnail(bounds, Image.Resampling.LANCZOS)
         rgb.save(dst, format="JPEG", quality=quality, optimize=True, progressive=False)
+
+
+def _image_thumb(src: Path, dst: Path, width: int = 600, height: int = 600) -> None:
+    source = src
+    temporary_raw: Optional[Path] = None
+    if src.suffix.lower() in {".dng", ".cr2", ".cr3", ".nef", ".arw", ".rw2", ".raf", ".orf", ".srw", ".pef"}:
+        temporary_raw = dst.with_name(f".{dst.stem}.raw-source.jpg")
+        _convert_raw(src, temporary_raw)
+        source = temporary_raw
+    try:
+        with Image.open(source) as image:
+            try:
+                image.seek(0)
+            except Exception:
+                pass
+            try:
+                image = ImageOps.exif_transpose(image)
+            except Exception:
+                pass
+            rgb = _to_rgb_with_black_background(image)
+            rgb.thumbnail((max(1, width), max(1, height)), Image.Resampling.LANCZOS)
+            rgb.save(dst, format="JPEG", quality=85, optimize=True)
+    finally:
+        if temporary_raw is not None:
+            temporary_raw.unlink(missing_ok=True)
 
 
 def _video_encoder_args(ffmpeg: str, *, quality: int = 23, cpu_preset: str = "veryfast") -> tuple[list[str], str]:
@@ -623,11 +672,22 @@ def _convert(kind: str, src: Path, dst: Path, options: Optional[dict] = None) ->
         elif kind == "mov":
             engine = _convert_mov(local_src, local_dst)
         elif kind == "jpeg_normalize":
+            max_width_raw = options.get("max_width")
+            max_height_raw = options.get("max_height")
             _normalize_jpeg(
                 local_src,
                 local_dst,
                 max_edge=max(512, min(8192, int(options.get("max_edge", 4096) or 4096))),
                 quality=max(60, min(100, int(options.get("quality", 90) or 90))),
+                max_width=(max(1, min(8192, int(max_width_raw))) if max_width_raw else None),
+                max_height=(max(1, min(8192, int(max_height_raw))) if max_height_raw else None),
+            )
+        elif kind == "image_thumb":
+            _image_thumb(
+                local_src,
+                local_dst,
+                width=max(64, min(2048, int(options.get("width", 600) or 600))),
+                height=max(64, min(2048, int(options.get("height", 600) or 600))),
             )
         elif kind == "photoframe_video":
             engine = _prepare_photoframe_video(
