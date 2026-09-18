@@ -1864,6 +1864,35 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
     """Extract one JPEG frame from video at a timestamp."""
     target_sec = max(0.0, float(at_sec or 0.0))
     last_error: Optional[str] = None
+
+    if CONVERT_URL_EXPLICIT:
+        try:
+            CONVERSION_WORK_DIR.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix="fjordlens-face-frame-",
+                dir=str(CONVERSION_WORK_DIR),
+            ) as td:
+                out_path = Path(td) / "face_frame.jpg"
+                conversion_client.video_thumb(
+                    path,
+                    out_path,
+                    seek_seconds=target_sec,
+                    max_edge=0,
+                )
+                if out_path.exists() and out_path.stat().st_size > 0:
+                    return out_path.read_bytes()
+                raise RuntimeError("conversion worker produced no video frame")
+        except Exception as exc:
+            last_error = str(exc)
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                log_event(
+                    "faces_video_frame_fail",
+                    rel_path=rel_path,
+                    at_sec=round(target_sec, 2),
+                    error=last_error,
+                )
+                return None
+            logger.warning("Video frame worker failed; using local fallback: %s", exc)
     try:
         with tempfile.TemporaryDirectory() as td:
             out_path = Path(td) / "face_frame.jpg"
