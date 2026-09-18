@@ -3557,75 +3557,73 @@ def _postprocess_uploaded_rels(
 
         def _faces_worker() -> None:
             nonlocal faces_done, faces_found, faces_errors
-            max_concurrency = max(1, int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE))
+            batch_size = max(1, int(face_batch_size_enabled()))
 
-            def _run_face_job(rel: str, start_event: threading.Event) -> None:
-                nonlocal faces_done, faces_found, faces_errors
-                err_inc = 0
-                found_inc = 0
-                try:
-                    # Ensure each batch starts work simultaneously.
-                    start_event.wait(timeout=5.0)
-                    if _should_stop():
-                        return
-                    fc = index_faces_for_photo(rel)
-                    try:
-                        if int(fc or 0) > 0:
-                            found_inc = 1
-                    except Exception:
-                        found_inc = 0
-                    with faces_metric_lock:
-                        faces_done += 1
-                        faces_found += found_inc
-                except Exception as e:
-                    err_inc = 1
-                    with faces_metric_lock:
-                        faces_errors += 1
-                    try:
-                        log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
-                    except Exception:
-                        pass
-                _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
-                _emit_parallel(rel)
-
-            for start in range(0, len(indexed_ok), max_concurrency):
+            for start_index in range(0, len(indexed_ok), batch_size):
                 if _should_stop():
                     break
-                batch = indexed_ok[start : start + max_concurrency]
+                batch = indexed_ok[start_index : start_index + batch_size]
                 if not batch:
                     continue
+
+                _update_stage("faces", in_flight_inc=len(batch))
+                _emit_parallel(batch[0] if batch else None)
                 try:
-                    log_event("faces_batch_start", batch_size=len(batch), concurrent=len(batch), mode="simultaneous")
+                    log_event(
+                        "faces_batch_start",
+                        batch_size=len(batch),
+                        mode="ai_service_batch",
+                    )
                 except Exception:
                     pass
 
-                start_event = threading.Event()
-                started_threads: list[threading.Thread] = []
+                stills: list[str] = []
+                videos: list[str] = []
                 for rel in batch:
                     try:
-                        t = threading.Thread(target=_run_face_job, args=(rel, start_event), daemon=True)
-                        t.start()
-                        started_threads.append(t)
-                    except Exception as e:
+                        path = _disk_path_from_rel_path(rel)
+                        if path.suffix.lower() in VIDEO_EXTS:
+                            videos.append(rel)
+                        else:
+                            stills.append(rel)
+                    except Exception:
+                        stills.append(rel)
+
+                batch_results = _ai_detect_faces_batch_paths(stills) if stills else {}
+
+                for rel in batch:
+                    if _should_stop():
+                        _update_stage("faces", in_flight_inc=-1)
+                        continue
+                    err_inc = 0
+                    found_inc = 0
+                    try:
+                        if rel in videos:
+                            count = index_faces_for_photo(rel)
+                        else:
+                            detected = batch_results.get(rel)
+                            # If the batch request failed for this item, use the
+                            # proven single-image path rather than skipping it.
+                            count = (
+                                index_faces_for_photo(rel, detected_faces=detected)
+                                if detected is not None
+                                else index_faces_for_photo(rel)
+                            )
+                        if int(count or 0) > 0:
+                            found_inc = 1
+                        with faces_metric_lock:
+                            faces_done += 1
+                            faces_found += found_inc
+                    except Exception as exc:
+                        err_inc = 1
                         with faces_metric_lock:
                             faces_errors += 1
                         try:
-                            log_event("error", rel_path=rel, error=f"postprocess_faces_start: {e}")
+                            log_event("error", rel_path=rel, error=f"postprocess_faces_batch: {exc}")
                         except Exception:
                             pass
-                        _update_stage("faces", processed_inc=1, errors_inc=1)
-                        _emit_parallel(rel)
-
-                if started_threads:
-                    _update_stage("faces", in_flight_inc=len(started_threads))
-                    _emit_parallel()
-                    start_event.set()
-
-                for t in started_threads:
-                    try:
-                        t.join()
-                    except Exception:
-                        pass
+                    _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
+                    _emit_parallel(rel)
 
             _update_stage("faces", set_running=False)
             _emit_parallel()
