@@ -1,3 +1,4 @@
+import ctypes
 import json
 import logging
 import os
@@ -62,6 +63,7 @@ CONVERT_MAX_CONCURRENCY = max(1, min(4, CONVERT_MAX_CONCURRENCY))
 CONVERT_SEMAPHORE = threading.BoundedSemaphore(CONVERT_MAX_CONCURRENCY)
 
 _NVENC_CACHE: Optional[bool] = None
+_NVDEC_CACHE: Optional[bool] = None
 
 
 def _safe_path(raw: str, *, must_exist: bool = False) -> Path:
@@ -220,17 +222,59 @@ def _nvenc_available(ffmpeg: str) -> bool:
     return bool(_NVENC_CACHE)
 
 
-def _mov_command(ffmpeg: str, src: Path, dst: Path, audio_index: Optional[int], use_nvenc: bool) -> list[str]:
-    command = [
-        ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+def _nvdec_available(ffmpeg: str) -> bool:
+    global _NVDEC_CACHE
+    if MOV_CONVERT_DEVICE == "cpu":
+        return False
+    if _NVDEC_CACHE is not None:
+        return _NVDEC_CACHE
+    try:
+        hwaccels = subprocess.run(
+            [ffmpeg, "-hide_banner", "-hwaccels"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        has_cuda = hwaccels.returncode == 0 and any(
+            line.strip().lower() == "cuda"
+            for line in (hwaccels.stdout or "").splitlines()
+        )
+        if not has_cuda:
+            _NVDEC_CACHE = False
+            logger.warning("NVDEC unavailable: ffmpeg does not expose CUDA hwaccel")
+            return False
+        ctypes.CDLL("libnvcuvid.so.1")
+        _NVDEC_CACHE = True
+    except Exception as exc:
+        _NVDEC_CACHE = False
+        logger.warning("NVDEC probe failed: %s", exc)
+    return bool(_NVDEC_CACHE)
+
+
+def _mov_command(
+    ffmpeg: str,
+    src: Path,
+    dst: Path,
+    audio_index: Optional[int],
+    use_nvenc: bool,
+    use_nvdec: bool = False,
+) -> list[str]:
+    command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
+    if use_nvdec:
+        command += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+    command += [
+        "-i", str(src),
         "-map_metadata", "0", "-map", "0:v:0",
     ]
     if use_nvenc:
         command += [
             "-c:v", "h264_nvenc", "-preset", MOV_CONVERT_GPU_PRESET,
             "-rc", "vbr", "-cq", str(MOV_CONVERT_CRF), "-b:v", "0",
-            "-pix_fmt", "yuv420p",
         ]
+        # With NVDEC the decoded frames stay in CUDA memory. Avoid forcing a
+        # software pixel format because that can trigger an unnecessary download.
+        if not use_nvdec:
+            command += ["-pix_fmt", "yuv420p"]
     else:
         command += [
             "-c:v", "libx264", "-preset", MOV_CONVERT_PRESET,
@@ -249,16 +293,31 @@ def _convert_mov(src: Path, dst: Path) -> str:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg not available")
-    audio_index = _probe_audio_stream(src, ffmpeg)
-    use_nvenc = _nvenc_available(ffmpeg)
-    attempts = [True, False] if use_nvenc else [False]
-    last_error = None
 
-    for gpu_attempt in attempts:
+    audio_index = _probe_audio_stream(src, ffmpeg)
+    nvenc = _nvenc_available(ffmpeg)
+    nvdec = nvenc and _nvdec_available(ffmpeg)
+
+    attempts: list[tuple[bool, bool, str]] = []
+    if nvdec:
+        attempts.append((True, True, "nvdec+nvenc"))
+    if nvenc:
+        attempts.append((True, False, "nvenc"))
+    attempts.append((False, False, "cpu"))
+
+    last_error = None
+    for use_nvenc, use_nvdec, engine in attempts:
         dst.unlink(missing_ok=True)
         try:
-            result = subprocess.run(
-                _mov_command(ffmpeg, src, dst, audio_index, gpu_attempt),
+            subprocess.run(
+                _mov_command(
+                    ffmpeg,
+                    src,
+                    dst,
+                    audio_index,
+                    use_nvenc=use_nvenc,
+                    use_nvdec=use_nvdec,
+                ),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -266,14 +325,27 @@ def _convert_mov(src: Path, dst: Path) -> str:
             )
             if not dst.exists() or dst.stat().st_size <= 0:
                 raise RuntimeError("ffmpeg produced empty output")
-            return "nvenc" if gpu_attempt else "cpu"
+            return engine
         except Exception as exc:
             last_error = exc
             stderr = getattr(exc, "stderr", "") or ""
-            if gpu_attempt:
-                logger.warning("NVENC conversion failed for %s; CPU fallback: %s", src, str(stderr or exc)[-800:])
+            detail = str(stderr or exc)[-800:]
+            if use_nvdec:
+                logger.warning(
+                    "NVDEC+NVENC conversion failed for %s; retrying CPU decode + NVENC: %s",
+                    src,
+                    detail,
+                )
+                continue
+            if use_nvenc:
+                logger.warning(
+                    "NVENC conversion failed for %s; retrying full CPU conversion: %s",
+                    src,
+                    detail,
+                )
                 continue
             raise RuntimeError(f"MOV conversion failed: {stderr or exc}") from exc
+
     raise RuntimeError(f"MOV conversion failed: {last_error}")
 
 
@@ -801,6 +873,7 @@ def health():
         "service": "fjordlens-convert",
         "ffmpeg": bool(ffmpeg),
         "nvenc": bool(ffmpeg and _nvenc_available(ffmpeg)),
+        "nvdec": bool(ffmpeg and _nvdec_available(ffmpeg)),
         "max_concurrency": CONVERT_MAX_CONCURRENCY,
     })
 
