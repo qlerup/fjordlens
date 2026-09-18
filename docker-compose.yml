@@ -22,6 +22,9 @@ services:
       UPLOAD_DIR: /uploads
       THUMB_DIR: /thumbs
       CONVERSION_WORK_DIR: /data/conversion_work
+      CONVERT_URL: http://fjordlens-convert:8010
+      CONVERT_SERVICE_TIMEOUT_SEC: ${CONVERT_SERVICE_TIMEOUT_SEC:-21600}
+      CONVERT_SERVICE_FALLBACK_LOCAL: ${CONVERT_SERVICE_FALLBACK_LOCAL:-1}
       AI_URL: http://fjordlens-ai:8000
       AI_DESC_MODEL: ${AI_DESC_MODEL:-qwen}
       AI_DESC_REQUEST_TIMEOUT_SEC: ${AI_DESC_REQUEST_TIMEOUT_SEC:-120}
@@ -55,7 +58,37 @@ services:
       retries: 10
       start_period: 30s
     depends_on:
-      fjordlens-ai:
+      fjordlens-convert:
+    build: ./convert_service
+    container_name: fjordlens-convert
+    environment:
+      DATA_DIR: /data
+      UPLOAD_DIR: /uploads
+      PHOTO_DIR: /photos
+      CONVERSION_WORK_DIR: /data/conversion_work
+      MOV_CONVERT_DEVICE: ${MOV_CONVERT_DEVICE:-auto}
+      MOV_CONVERT_PRESET: ${MOV_CONVERT_PRESET:-veryfast}
+      MOV_CONVERT_GPU_PRESET: ${MOV_CONVERT_GPU_PRESET:-p4}
+      MOV_CONVERT_CRF: ${MOV_CONVERT_CRF:-23}
+      MOV_CONVERT_AUDIO_BITRATE: ${MOV_CONVERT_AUDIO_BITRATE:-128k}
+      MOV_CONVERT_TIMEOUT_SEC: ${MOV_CONVERT_TIMEOUT_SEC:-7200}
+      CONVERT_MAX_CONCURRENCY: ${CONVERT_MAX_CONCURRENCY:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - "${PHOTO_DIR:-/tmp/fjordlens-unused-library}:/photos:ro"
+      - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
+      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordlens/data/uploads}:/uploads"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8010/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  fjordlens-ai:
+        condition: service_healthy
+      fjordlens-convert:
         condition: service_healthy
     volumes:
       - "${PHOTO_DIR:-/tmp/fjordlens-unused-library}:/photos:ro"
@@ -107,7 +140,7 @@ services:
       SERVICE_NAME: fjordlens
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-fjordlens}
       COMPOSE_FILE: ${COMPOSE_FILE:-docker-compose.yml}
-      COMPOSE_SERVICES: "fjordlens fjordlens-ai"
+      COMPOSE_SERVICES: "fjordlens fjordlens-ai fjordlens-convert"
       FJORDLENS_UPDATER_STATE_DIR: /state
       FJORDLENS_AUTO_UPDATE_CHECK: ${FJORDLENS_AUTO_UPDATE_CHECK:-1}
       FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES: ${FJORDLENS_AUTO_UPDATE_CHECK_INTERVAL_MINUTES:-30}
