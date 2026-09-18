@@ -109,7 +109,7 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
         fjordlens._set_setting("upload_workflow_face_batch_size", "8")
         payload = fjordlens._upload_workflow_settings_payload()
         self.assertEqual(payload["batch_size"], 8)
-        self.assertEqual(payload["face_batch_mode"], "ai_service_batch")
+        self.assertEqual(payload["face_batch_mode"], "slot_queue")
 
         fjordlens._set_setting("upload_workflow_face_batch_size", "999")
         self.assertEqual(fjordlens._upload_workflow_settings_payload()["batch_size"], 8)
@@ -117,26 +117,51 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
         fjordlens._set_setting("upload_workflow_face_batch_size", "0")
         self.assertEqual(fjordlens._upload_workflow_settings_payload()["batch_size"], 1)
 
-    def test_manual_face_indexer_uses_ai_service_batches(self):
-        rels = [self._make_photo(f"batch_{i}") for i in range(5)]
+    def test_manual_face_indexer_refills_free_slots_without_waiting_for_batch(self):
+        rels = [self._make_photo(f"batch_{i}") for i in range(6)]
         fjordlens._set_setting("upload_workflow_face_batch_size", "4")
-        calls = []
 
-        def fake_batch(batch):
-            calls.append(list(batch))
-            return {rel: [] for rel in batch}
+        first_wave = threading.Barrier(4)
+        long_release = threading.Event()
+        refill_started = threading.Event()
+        active_lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def fake_index(rel):
+            nonlocal active, max_active
+            idx = int(Path(rel).stem.split("_")[-1])
+            with active_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                if idx < 4:
+                    first_wave.wait(timeout=3)
+                    if idx == 0:
+                        return 0
+                    long_release.wait(timeout=3)
+                    return 0
+                if idx == 4:
+                    # This must start as soon as item 0 frees one of the four slots,
+                    # while items 1-3 are still deliberately blocked.
+                    refill_started.set()
+                    long_release.set()
+                    return 0
+                return 0
+            finally:
+                with active_lock:
+                    active -= 1
 
         fjordlens._faces_running.set()
         with (
-            patch.object(fjordlens, "_ai_detect_faces_batch_paths", side_effect=fake_batch),
-            patch.object(fjordlens, "index_faces_for_photo", return_value=0) as index_one,
+            patch.object(fjordlens, "index_faces_for_photo", side_effect=fake_index) as index_one,
             patch.object(fjordlens, "faces_index_throttle_enabled_sec", return_value=0.0),
         ):
             fjordlens._index_faces_worker(all_photos=True)
 
-        self.assertEqual([len(batch) for batch in calls], [4, 1])
-        self.assertEqual(set(item for batch in calls for item in batch), set(rels))
-        self.assertEqual(index_one.call_count, 5)
+        self.assertTrue(refill_started.is_set(), "A free face slot should be refilled immediately")
+        self.assertEqual(max_active, 4)
+        self.assertEqual(index_one.call_count, 6)
         self.assertFalse(fjordlens._faces_running.is_set())
 
 
