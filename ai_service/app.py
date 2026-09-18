@@ -129,12 +129,6 @@ try:
 except Exception:
     pass
 
-try:
-    FACE_BATCH_MAX_WORKERS = int(os.environ.get("FACE_BATCH_MAX_WORKERS", "4") or 4)
-except Exception:
-    FACE_BATCH_MAX_WORKERS = 4
-FACE_BATCH_MAX_WORKERS = max(1, min(8, FACE_BATCH_MAX_WORKERS))
-
 MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
 QWEN_VL_MODEL = str(os.environ.get("QWEN_VL_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct") or "Qwen/Qwen2.5-VL-3B-Instruct").strip()
@@ -1520,7 +1514,9 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
     for index, upload in enumerate(uploads):
         payloads.append((index, str(upload.filename or f"image-{index}.jpg"), upload.file.read()))
 
-    workers = max(1, min(FACE_BATCH_MAX_WORKERS, len(payloads)))
+    # Batch size is intentionally identical to concurrency:
+    # 8 files in the request means 8 face-detection jobs run at the same time.
+    workers = len(payloads)
     results: List[Optional[Dict[str, Any]]] = [None] * len(payloads)
 
     def run_one(item):
