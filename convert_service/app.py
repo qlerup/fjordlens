@@ -372,6 +372,12 @@ def _extract_video_thumb(src: Path, dst: Path, seek_seconds: float = 0.5) -> Non
         try:
             subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
             if dst.exists() and dst.stat().st_size > 0:
+                with Image.open(dst) as image:
+                    frame = image.convert("RGB")
+                    frame.thumbnail((600, 600), Image.Resampling.LANCZOS)
+                    temp = dst.with_name(f".{dst.name}.thumbtmp")
+                    frame.save(temp, format="JPEG", quality=85, optimize=True)
+                    os.replace(temp, dst)
                 return
         except Exception as exc:
             last_error = exc
@@ -593,7 +599,8 @@ def _render_moment(
         return {"bytes": dst.stat().st_size, "engine": "worker"}
 
 
-def _convert(kind: str, src: Path, dst: Path) -> dict:
+def _convert(kind: str, src: Path, dst: Path, options: Optional[dict] = None) -> dict:
+    options = options or {}
     CONVERSION_WORK_DIR.mkdir(parents=True, exist_ok=True)
     dst.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fjordlens-convert-", dir=str(CONVERSION_WORK_DIR)) as work:
@@ -610,9 +617,19 @@ def _convert(kind: str, src: Path, dst: Path) -> dict:
         elif kind == "mov":
             engine = _convert_mov(local_src, local_dst)
         elif kind == "jpeg_normalize":
-            _normalize_jpeg(local_src, local_dst)
+            _normalize_jpeg(
+                local_src,
+                local_dst,
+                max_edge=max(512, min(8192, int(options.get("max_edge", 4096) or 4096))),
+                quality=max(60, min(100, int(options.get("quality", 90) or 90))),
+            )
         elif kind == "photoframe_video":
-            engine = _prepare_photoframe_video(local_src, local_dst)
+            engine = _prepare_photoframe_video(
+                local_src,
+                local_dst,
+                quality=max(18, min(36, int(options.get("quality", 24) or 24))),
+                cpu_preset=str(options.get("cpu_preset") or "veryfast"),
+            )
         else:
             raise ValueError("Ukendt konverteringstype")
 
@@ -726,7 +743,7 @@ def convert():
             raise ValueError("Kilde og destination må ikke være den samme")
 
         with CONVERT_SEMAPHORE:
-            result = _convert(kind, src, dst)
+            result = _convert(kind, src, dst, body)
 
         try:
             stat = src.stat()
