@@ -497,8 +497,13 @@ try:
 except Exception:
     MOV_CONVERT_TIMEOUT_SEC = 7200
 MOV_CONVERT_TIMEOUT_SEC = max(60, min(21600, MOV_CONVERT_TIMEOUT_SEC))
+MOV_CONVERT_DEVICE = str(os.environ.get("MOV_CONVERT_DEVICE", "auto") or "auto").strip().lower()
+if MOV_CONVERT_DEVICE not in {"auto", "gpu", "cuda", "nvenc", "cpu"}:
+    MOV_CONVERT_DEVICE = "auto"
+MOV_CONVERT_GPU_PRESET = str(os.environ.get("MOV_CONVERT_GPU_PRESET", "p4") or "p4").strip() or "p4"
 
 logger = logging.getLogger(__name__)
+_MOV_NVENC_AVAILABLE_CACHE: Optional[bool] = None
 
 
 def _probe_mov_audio_stream(src: Path, ffmpeg_bin: str) -> Optional[int]:
@@ -561,28 +566,87 @@ def _probe_mov_audio_stream(src: Path, ffmpeg_bin: str) -> Optional[int]:
     return None
 
 
-def _mov_to_mp4(src: Path, dst: Path) -> None:
-    """Convert MOV uploads to browser-friendly MP4/H.264."""
-    ffmpeg_bin = shutil.which("ffmpeg")
-    if not ffmpeg_bin:
-        raise RuntimeError("ffmpeg not available for MOV conversion")
+def _mov_nvenc_available(ffmpeg_bin: str) -> bool:
+    """Return whether this container can perform a real H.264 NVENC encode."""
+    global _MOV_NVENC_AVAILABLE_CACHE
+    if MOV_CONVERT_DEVICE == "cpu":
+        return False
+    if _MOV_NVENC_AVAILABLE_CACHE is not None:
+        return _MOV_NVENC_AVAILABLE_CACHE
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.tmp{dst.suffix}")
     try:
-        audio_stream_index = _probe_mov_audio_stream(src, ffmpeg_bin)
-        cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(src),
-            "-map_metadata",
+        check = subprocess.run(
+            [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=s=640x360:d=0.1",
+                "-c:v",
+                "h264_nvenc",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        available = check.returncode == 0
+        if not available:
+            logger.warning(
+                "NVENC unavailable for MOV conversion; using CPU/libx264: %s",
+                (check.stderr or check.stdout or "").strip()[-800:],
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        available = False
+        logger.warning("NVENC probe failed; using CPU/libx264: %s", exc)
+
+    _MOV_NVENC_AVAILABLE_CACHE = available
+    return available
+
+
+def _mov_ffmpeg_command(
+    ffmpeg_bin: str,
+    src: Path,
+    tmp: Path,
+    audio_stream_index: Optional[int],
+    *,
+    use_nvenc: bool,
+) -> list[str]:
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(src),
+        "-map_metadata",
+        "0",
+        "-map",
+        "0:v:0",
+    ]
+    if use_nvenc:
+        cmd.extend([
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            MOV_CONVERT_GPU_PRESET,
+            "-rc",
+            "vbr",
+            "-cq",
+            str(MOV_CONVERT_CRF),
+            "-b:v",
             "0",
-            "-map",
-            "0:v:0",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+    else:
+        cmd.extend([
             "-c:v",
             "libx264",
             "-preset",
@@ -591,44 +655,94 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
             str(MOV_CONVERT_CRF),
             "-pix_fmt",
             "yuv420p",
-        ]
-        if audio_stream_index is not None:
-            cmd.extend([
-                "-map", f"0:{audio_stream_index}",
-                "-c:a", "aac",
-                "-b:a", MOV_CONVERT_AUDIO_BITRATE,
-            ])
-        else:
-            cmd.append("-an")
-        # use_metadata_tags retains Apple/QuickTime mdta keys such as the
-        # timezone-aware creation date in addition to standard MP4 metadata.
-        cmd.extend(["-movflags", "+faststart+use_metadata_tags", str(tmp)])
-        try:
-            subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=MOV_CONVERT_TIMEOUT_SEC,
+        ])
+
+    if audio_stream_index is not None:
+        cmd.extend([
+            "-map",
+            f"0:{audio_stream_index}",
+            "-c:a",
+            "aac",
+            "-b:a",
+            MOV_CONVERT_AUDIO_BITRATE,
+        ])
+    else:
+        cmd.append("-an")
+
+    # use_metadata_tags retains Apple/QuickTime mdta keys such as the
+    # timezone-aware creation date in addition to standard MP4 metadata.
+    cmd.extend(["-movflags", "+faststart+use_metadata_tags", str(tmp)])
+    return cmd
+
+
+def _mov_to_mp4(src: Path, dst: Path) -> None:
+    """Convert MOV uploads to browser-friendly MP4/H.264, preferring NVENC."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise RuntimeError("ffmpeg not available for MOV conversion")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.tmp{dst.suffix}")
+    try:
+        audio_stream_index = _probe_mov_audio_stream(src, ffmpeg_bin)
+        use_nvenc = _mov_nvenc_available(ffmpeg_bin)
+        attempts = [True, False] if use_nvenc else [False]
+
+        last_error: Optional[BaseException] = None
+        for gpu_attempt in attempts:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
+
+            cmd = _mov_ffmpeg_command(
+                ffmpeg_bin,
+                src,
+                tmp,
+                audio_stream_index,
+                use_nvenc=gpu_attempt,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            raw_stderr = exc.stderr or ""
-            stderr = raw_stderr.decode(errors="replace") if isinstance(raw_stderr, bytes) else raw_stderr
-            stderr = stderr.strip()
-            logger.error("ffmpeg MOV conversion failed for %s: %s", src, stderr or exc)
-            raise RuntimeError(
-                f"ffmpeg MOV conversion failed for {src}: {stderr or exc}"
-            ) from exc
-        if not tmp.exists() or tmp.stat().st_size <= 0:
-            raise RuntimeError("ffmpeg produced empty output")
-        os.replace(tmp, dst)
+            try:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=MOV_CONVERT_TIMEOUT_SEC,
+                )
+                if not tmp.exists() or tmp.stat().st_size <= 0:
+                    raise RuntimeError("ffmpeg produced empty output")
+                os.replace(tmp, dst)
+                if gpu_attempt:
+                    logger.info("MOV converted with NVIDIA NVENC: %s", src)
+                return
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as exc:
+                last_error = exc
+                raw_stderr = getattr(exc, "stderr", None) or ""
+                stderr = raw_stderr.decode(errors="replace") if isinstance(raw_stderr, bytes) else str(raw_stderr)
+                stderr = stderr.strip()
+
+                if gpu_attempt:
+                    logger.warning(
+                        "NVENC MOV conversion failed for %s; retrying with CPU/libx264: %s",
+                        src,
+                        stderr or exc,
+                    )
+                    continue
+
+                logger.error("ffmpeg MOV conversion failed for %s: %s", src, stderr or exc)
+                raise RuntimeError(
+                    f"ffmpeg MOV conversion failed for {src}: {stderr or exc}"
+                ) from exc
+
+        raise RuntimeError(f"ffmpeg MOV conversion failed for {src}: {last_error}")
     finally:
         try:
             if tmp.exists():
                 tmp.unlink()
         except Exception:
             pass
-
 
 def _convert_on_local_storage(src: Path, dst: Path, converter: Callable[[Path, Path], None]) -> None:
     """Stage source and output locally, then publish the completed file to storage."""
