@@ -105,12 +105,38 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
                 faces = conn.execute("SELECT COUNT(*) AS c FROM faces WHERE photo_id=?", (photo["id"],)).fetchone()
                 self.assertEqual(faces["c"], 1)
 
-    def test_upload_face_batch_uses_bounded_concurrency(self):
+    def test_upload_face_batch_setting_is_persisted_and_bounded(self):
+        fjordlens._set_setting("upload_workflow_face_batch_size", "8")
         payload = fjordlens._upload_workflow_settings_payload()
-        self.assertEqual(payload["batch_size"], fjordlens.UPLOAD_WORKFLOW_FACE_BATCH_SIZE)
-        self.assertGreaterEqual(payload["batch_size"], 1)
-        self.assertLessEqual(payload["batch_size"], 4)
-        self.assertLessEqual(fjordlens.FACE_DETECT_MAX_CONCURRENCY, 4)
+        self.assertEqual(payload["batch_size"], 8)
+        self.assertEqual(payload["face_batch_mode"], "ai_service_batch")
+
+        fjordlens._set_setting("upload_workflow_face_batch_size", "999")
+        self.assertEqual(fjordlens._upload_workflow_settings_payload()["batch_size"], 8)
+
+        fjordlens._set_setting("upload_workflow_face_batch_size", "0")
+        self.assertEqual(fjordlens._upload_workflow_settings_payload()["batch_size"], 1)
+
+    def test_manual_face_indexer_uses_ai_service_batches(self):
+        rels = [self._make_photo(f"batch_{i}") for i in range(5)]
+        fjordlens._set_setting("upload_workflow_face_batch_size", "4")
+        calls = []
+
+        def fake_batch(batch):
+            calls.append(list(batch))
+            return {rel: [] for rel in batch}
+
+        fjordlens._faces_running.set()
+        with (
+            patch.object(fjordlens, "_ai_detect_faces_batch_paths", side_effect=fake_batch),
+            patch.object(fjordlens, "index_faces_for_photo", return_value=0) as index_one,
+            patch.object(fjordlens, "faces_index_throttle_enabled_sec", return_value=0.0),
+        ):
+            fjordlens._index_faces_worker(all_photos=True)
+
+        self.assertEqual(calls, [rels[:4], rels[4:]])
+        self.assertEqual(index_one.call_count, 5)
+        self.assertFalse(fjordlens._faces_running.is_set())
 
 
 if __name__ == "__main__":
