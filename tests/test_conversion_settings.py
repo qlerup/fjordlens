@@ -74,6 +74,33 @@ class ConversionSettingsTests(unittest.TestCase):
                 self.assertTrue(reloaded.get_json()["convert_on_upload"])
                 self.assertTrue(reloaded.get_json()["keep_originals"])
 
+    def test_mov_device_setting_switches_live_between_cpu_and_gpu(self):
+        client = self._authenticated_client()
+
+        cpu = client.post("/api/settings/mov", json={"device": "cpu"})
+        self.assertEqual(cpu.status_code, 200)
+        self.assertEqual(cpu.get_json()["device"], "cpu")
+
+        reloaded_cpu = client.get("/api/settings/mov")
+        self.assertEqual(reloaded_cpu.status_code, 200)
+        self.assertEqual(reloaded_cpu.get_json()["device"], "cpu")
+
+        gpu = client.post("/api/settings/mov", json={"device": "gpu"})
+        self.assertEqual(gpu.status_code, 200)
+        self.assertEqual(gpu.get_json()["device"], "gpu")
+
+        reloaded_gpu = client.get("/api/settings/mov")
+        self.assertEqual(reloaded_gpu.status_code, 200)
+        self.assertEqual(reloaded_gpu.get_json()["device"], "gpu")
+
+    def test_mov_device_rejects_unknown_value(self):
+        response = self._authenticated_client().post(
+            "/api/settings/mov",
+            json={"device": "banana"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()["ok"])
+
     def test_conversion_write_failure_is_reported(self):
         client = self._authenticated_client()
         with patch.object(
