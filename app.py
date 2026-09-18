@@ -3157,11 +3157,11 @@ def _postprocess_uploaded_rels(
                                     save_kwargs["exif"] = exif_bytes
                                 rgb.save(local_dst, **save_kwargs)
 
-                        _convert_on_local_storage(disk_path, new_path, _convert_heic)
+                        _convert_on_local_storage(disk_path, new_path, _convert_heic, kind="heic")
                     elif extl in RAW_EXTS:
-                        _convert_on_local_storage(disk_path, new_path, _raw_to_jpeg)
+                        _convert_on_local_storage(disk_path, new_path, _raw_to_jpeg, kind="raw")
                     else:
-                        _convert_on_local_storage(disk_path, new_path, _mov_to_mp4)
+                        _convert_on_local_storage(disk_path, new_path, _mov_to_mp4, kind="mov")
                     # Preserve timestamps
                     try:
                         st = disk_path.stat()
