@@ -118,6 +118,11 @@ def render_moment(
     )
 
 
+def set_concurrency(concurrency: int) -> dict[str, Any]:
+    value = max(1, min(4, int(concurrency)))
+    return _post("/config/concurrency", {"concurrency": value}, timeout=10)
+
+
 def health(timeout: float = 5.0) -> dict[str, Any]:
     if not BASE_URL:
         return {"ok": False, "error": "not configured"}
