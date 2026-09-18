@@ -17,7 +17,7 @@ STATE_DIR = Path(os.environ.get("FJORDLENS_UPDATER_STATE_DIR", "/state")).resolv
 UPDATE_SCRIPT = Path(os.environ.get("FJORDLENS_UPDATE_SCRIPT", str(APP_DIR / "scripts" / "update.sh"))).resolve()
 SERVICE_NAME = str(os.environ.get("SERVICE_NAME", "fjordlens") or "fjordlens").strip()
 DEFAULT_BRANCH = str(os.environ.get("REPO_BRANCH", "") or "").strip()
-DEFAULT_COMPOSE_SERVICES = str(os.environ.get("COMPOSE_SERVICES", "fjordlens fjordlens-ai") or "").strip()
+DEFAULT_COMPOSE_SERVICES = str(os.environ.get("COMPOSE_SERVICES", "fjordlens fjordlens-ai fjordlens-convert") or "").strip()
 PORT = int(os.environ.get("PORT", "8090") or 8090)
 DEFAULT_AUTO_CHECK_ENABLED = str(os.environ.get("FJORDLENS_AUTO_UPDATE_CHECK", "1") or "1").strip().lower() in {"1", "true", "yes", "on"}
 try:
