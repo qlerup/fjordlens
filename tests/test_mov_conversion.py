@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import app as fjordlens
+from convert_service import app as convert_worker
 
 
 class MovConversionTests(unittest.TestCase):
@@ -140,6 +141,93 @@ class MovConversionTests(unittest.TestCase):
 
             self.assertIn("h264_nvenc", run.call_args_list[0].args[0])
             self.assertIn("libx264", run.call_args_list[1].args[0])
+            self.assertTrue(dst.exists())
+
+    def test_worker_nvdec_command_keeps_frames_on_gpu_for_nvenc(self):
+        command = convert_worker._mov_command(
+            "ffmpeg",
+            Path("/uploads/originals/iphone.mov"),
+            Path("/uploads/converted/iphone.mp4"),
+            2,
+            use_nvenc=True,
+            use_nvdec=True,
+        )
+
+        self.assertIn("-hwaccel", command)
+        self.assertEqual(command[command.index("-hwaccel") + 1], "cuda")
+        self.assertIn("-hwaccel_output_format", command)
+        self.assertEqual(command[command.index("-hwaccel_output_format") + 1], "cuda")
+        self.assertLess(command.index("-hwaccel"), command.index("-i"))
+        self.assertIn("h264_nvenc", command)
+        self.assertNotIn("-pix_fmt", command)
+
+    def test_worker_nvdec_failure_retries_cpu_decode_with_nvenc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "iphone.mov"
+            dst = root / "iphone.mp4"
+            src.write_bytes(b"mov")
+
+            first_error = subprocess.CalledProcessError(
+                1,
+                ["ffmpeg"],
+                stderr="CUDA hwaccel failed",
+            )
+
+            def run_side_effect(command, **kwargs):
+                if "-hwaccel" in command:
+                    raise first_error
+                Path(command[-1]).write_bytes(b"mp4")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with (
+                patch.object(convert_worker.shutil, "which", return_value="ffmpeg"),
+                patch.object(convert_worker, "_probe_audio_stream", return_value=2),
+                patch.object(convert_worker, "_nvenc_available", return_value=True),
+                patch.object(convert_worker, "_nvdec_available", return_value=True),
+                patch.object(convert_worker.subprocess, "run", side_effect=run_side_effect) as run,
+            ):
+                engine = convert_worker._convert_mov(src, dst)
+
+            self.assertEqual(engine, "nvenc")
+            self.assertIn("-hwaccel", run.call_args_list[0].args[0])
+            self.assertNotIn("-hwaccel", run.call_args_list[1].args[0])
+            self.assertIn("h264_nvenc", run.call_args_list[1].args[0])
+            self.assertTrue(dst.exists())
+
+    def test_worker_nvdec_and_nvenc_failure_retries_full_cpu(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "iphone.mov"
+            dst = root / "iphone.mp4"
+            src.write_bytes(b"mov")
+
+            calls = {"count": 0}
+
+            def run_side_effect(command, **kwargs):
+                calls["count"] += 1
+                if calls["count"] <= 2:
+                    raise subprocess.CalledProcessError(
+                        1,
+                        command,
+                        stderr="GPU path failed",
+                    )
+                Path(command[-1]).write_bytes(b"mp4")
+                return SimpleNamespace(returncode=0, stderr="")
+
+            with (
+                patch.object(convert_worker.shutil, "which", return_value="ffmpeg"),
+                patch.object(convert_worker, "_probe_audio_stream", return_value=None),
+                patch.object(convert_worker, "_nvenc_available", return_value=True),
+                patch.object(convert_worker, "_nvdec_available", return_value=True),
+                patch.object(convert_worker.subprocess, "run", side_effect=run_side_effect) as run,
+            ):
+                engine = convert_worker._convert_mov(src, dst)
+
+            self.assertEqual(engine, "cpu")
+            self.assertIn("-hwaccel", run.call_args_list[0].args[0])
+            self.assertIn("h264_nvenc", run.call_args_list[1].args[0])
+            self.assertIn("libx264", run.call_args_list[2].args[0])
             self.assertTrue(dst.exists())
 
     def test_ffmpeg_error_includes_stderr(self):
