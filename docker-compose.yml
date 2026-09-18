@@ -58,7 +58,18 @@ services:
       retries: 10
       start_period: 30s
     depends_on:
+      fjordlens-ai:
+        condition: service_healthy
       fjordlens-convert:
+        condition: service_healthy
+    volumes:
+      - "${PHOTO_DIR:-/tmp/fjordlens-unused-library}:/photos:ro"
+      - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
+      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordlens/data/uploads}:/uploads"
+      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordlens/data/thumbs}:/thumbs"
+    restart: unless-stopped
+
+  fjordlens-convert:
     build:
       context: .
       dockerfile: convert_service/Dockerfile
@@ -91,17 +102,6 @@ services:
     restart: unless-stopped
 
   fjordlens-ai:
-        condition: service_healthy
-      fjordlens-convert:
-        condition: service_healthy
-    volumes:
-      - "${PHOTO_DIR:-/tmp/fjordlens-unused-library}:/photos:ro"
-      - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
-      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordlens/data/uploads}:/uploads"
-      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordlens/data/thumbs}:/thumbs"
-    restart: unless-stopped
-
-  fjordlens-ai:
     build: ./ai_service
     container_name: fjordlens-ai
     environment:
@@ -118,10 +118,8 @@ services:
       QWEN_VL_MAX_IMAGE_SIDE: ${QWEN_VL_MAX_IMAGE_SIDE:-1280}
       QWEN_VL_MAX_IMAGE_PIXELS: ${QWEN_VL_MAX_IMAGE_PIXELS:-1500000}
       PORT: "8000"
-      # Persist model/weights downloads between restarts
       XDG_CACHE_HOME: /cache
     ports:
-      # Optional: expose for debugging from host
       - "${AI_DEBUG_PORT:-8001}:8000"
     volumes:
       - ai_cache:/cache
