@@ -116,6 +116,7 @@ const els = {
   movConvertToggle: document.getElementById("movConvertToggle"),
   movKeepToggle: document.getElementById("movKeepToggle"),
   movDeviceSelect: document.getElementById("movDeviceSelect"),
+  movConcurrencySelect: document.getElementById("movConcurrencySelect"),
   movDeviceInfo: document.getElementById("movDeviceInfo"),
   movStatus: document.getElementById("movStatus"),
   videoSettingsTitle: document.getElementById("videoSettingsTitle"),
@@ -18401,6 +18402,7 @@ function renderMovConversionSettings(data) {
   if (els.movConvertToggle) els.movConvertToggle.checked = !!data.convert_on_upload;
   if (els.movKeepToggle) els.movKeepToggle.checked = !!data.keep_originals;
   if (els.movDeviceSelect) els.movDeviceSelect.value = String(data.device || 'gpu') === 'cpu' ? 'cpu' : 'gpu';
+  if (els.movConcurrencySelect) els.movConcurrencySelect.value = String(Math.max(1, Math.min(4, Number(data.concurrency || 1))));
   if (els.movDeviceInfo) {
     if (String(data.device || 'gpu') === 'cpu') {
       els.movDeviceInfo.textContent = 'Aktiv: CPU · GPU-konvertering slået fra';
@@ -18747,6 +18749,18 @@ try {
       handleConversionSettingsSaveError('mov');
     } finally {
       els.movDeviceSelect.disabled = false;
+    }
+  });
+  if (els.movConcurrencySelect) els.movConcurrencySelect.addEventListener('change', async ()=>{
+    try {
+      els.movConcurrencySelect.disabled = true;
+      const concurrency = Math.max(1, Math.min(4, Number(els.movConcurrencySelect.value || 1)));
+      await saveConversionSettings('mov', { concurrency });
+      showStatus(`Konverteringskø sat til ${concurrency} samtidige job${concurrency === 1 ? '' : 's'}.`, 'ok');
+    } catch {
+      handleConversionSettingsSaveError('mov');
+    } finally {
+      els.movConcurrencySelect.disabled = false;
     }
   });
   if (els.conversionScopeModalClose) els.conversionScopeModalClose.addEventListener('click', ()=> closeConversionScopeModal({ restore: true }));
