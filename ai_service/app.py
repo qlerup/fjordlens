@@ -1533,6 +1533,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
             "faces": faces,
         }
 
+    failed: List[tuple[int, str, bytes, Exception]] = []
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-batch") as pool:
         future_map = {pool.submit(run_one, item): item for item in payloads}
         for future in as_completed(future_map):
@@ -1541,25 +1542,29 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
                 result_index, result = future.result()
                 results[result_index] = result
             except Exception as exc:
-                # Retry once serially. This protects installations whose ONNX
-                # provider does not tolerate concurrent session execution.
-                try:
-                    faces = _detect_faces_bytes(data)
-                    results[index] = {
-                        "filename": filename,
-                        "ok": True,
-                        "count": len(faces),
-                        "faces": faces,
-                        "retried_serially": True,
-                    }
-                except Exception as retry_exc:
-                    results[index] = {
-                        "filename": filename,
-                        "ok": False,
-                        "count": 0,
-                        "faces": [],
-                        "error": str(retry_exc or exc),
-                    }
+                failed.append((index, filename, data, exc))
+
+    # Only after every parallel inference has finished, retry failed items one
+    # at a time. This is a safe fallback for providers/drivers that dislike
+    # concurrent execution while still keeping the fast path parallel.
+    for index, filename, data, first_exc in failed:
+        try:
+            faces = _detect_faces_bytes(data)
+            results[index] = {
+                "filename": filename,
+                "ok": True,
+                "count": len(faces),
+                "faces": faces,
+                "retried_serially": True,
+            }
+        except Exception as retry_exc:
+            results[index] = {
+                "filename": filename,
+                "ok": False,
+                "count": 0,
+                "faces": [],
+                "error": str(retry_exc or first_exc),
+            }
 
     items = [item or {"ok": False, "count": 0, "faces": [], "error": "missing_result"} for item in results]
     return {
