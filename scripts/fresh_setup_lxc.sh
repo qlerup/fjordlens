@@ -220,6 +220,13 @@ load_env_with_defaults() {
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
   : "${AI_DEVICE:=cpu}"
+  if [ -z "${ENABLE_GPU_COMPOSE+x}" ]; then
+    if [ "$AI_DEVICE" = "cpu" ]; then
+      ENABLE_GPU_COMPOSE="0"
+    else
+      ENABLE_GPU_COMPOSE="1"
+    fi
+  fi
   : "${ENABLE_GPU_GUIDE:=1}"
   : "${GPU_PROXMOX_VMID:=}"
   : "${SQLITE_JOURNAL_MODE:=}"
@@ -251,6 +258,7 @@ THUMBS_HOST_DIR=${THUMBS_HOST_DIR}
 TZ=${TZ}
 LOG_LEVEL=${LOG_LEVEL}
 AI_DEVICE=${AI_DEVICE}
+ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE}
 ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE}
 GPU_PROXMOX_VMID=${GPU_PROXMOX_VMID}
 SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}
@@ -388,14 +396,14 @@ ensure_nvidia_no_cgroups() {
 }
 
 gpu_preflight_lxc() {
-  if [ "$AI_DEVICE" = "cpu" ]; then
+  if ! is_truthy "$ENABLE_GPU_COMPOSE"; then
     echo
-    echo "==> GPU preflight skipped (AI_DEVICE=cpu)"
+    echo "==> GPU preflight skipped (ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE})"
     return 0
   fi
 
   echo
-  echo "==> GPU preflight (LXC)"
+  echo "==> GPU preflight (LXC: CUDA/runtime + NVENC/NVDEC)"
 
   uvm_major="$(char_major /dev/nvidia-uvm || true)"
   caps_major="$(dir_char_major /dev/nvidia-caps || true)"
@@ -434,7 +442,23 @@ gpu_preflight_lxc() {
     print_gpu_host_fix_hint "$uvm_major" "$caps_major"
     return 1
   fi
-  echo "    CUDA container smoke test: OK"
+  echo "    NVIDIA runtime smoke test: OK"
+
+  print_cmd "docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video nvidia/cuda:12.4.1-base-ubuntu22.04 sh -c 'ldconfig -p | grep -F libnvidia-encode.so.1 && ldconfig -p | grep -F libnvcuvid.so.1'"
+  if ! docker run --rm --gpus all \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+      nvidia/cuda:12.4.1-base-ubuntu22.04 sh -c \
+      'ldconfig -p | grep -F libnvidia-encode.so.1 >/dev/null && ldconfig -p | grep -F libnvcuvid.so.1 >/dev/null'; then
+    echo "WARNING: NVIDIA video libraries (NVENC/NVDEC) are not available in Docker."
+    print_gpu_host_fix_hint "$uvm_major" "$caps_major"
+    return 1
+  fi
+  echo "    NVIDIA video libraries: OK"
+
+  if [ "$AI_DEVICE" = "cpu" ]; then
+    echo "    PyTorch CUDA probe skipped (AI_DEVICE=cpu); media GPU remains enabled."
+    return 0
+  fi
 
   print_cmd "docker run --rm --gpus all pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime python -c \"import torch; print(torch.cuda.is_available())\""
   torch_probe="$(docker run --rm --gpus all pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime python -c "import torch; print(torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no gpu')" 2>&1 || true)"
@@ -456,7 +480,7 @@ run_preflight_and_start() {
 
   if is_truthy "$ENABLE_GPU_GUIDE"; then
     if gpu_preflight_lxc; then
-      if [ "$AI_DEVICE" != "cpu" ]; then
+      if is_truthy "$ENABLE_GPU_COMPOSE"; then
         USE_GPU_COMPOSE=1
       fi
     else
@@ -488,6 +512,16 @@ run_preflight_and_start() {
   if [ "${USE_GPU_COMPOSE:-0}" = "1" ]; then
     print_cmd "docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build"
     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+    echo "==> Testing real NVENC inside fjordlens-convert"
+    if ! docker compose -f docker-compose.yml -f docker-compose.gpu.yml exec -T fjordlens-convert \
+      ffmpeg -hide_banner -loglevel error -f lavfi -i color=s=640x360:d=0.1 \
+      -c:v h264_nvenc -f null - >/dev/null 2>&1; then
+      echo "ERROR: fjordlens-convert started, but h264_nvenc failed."
+      echo "       Check NVIDIA video libraries/passthrough before relying on GPU conversion."
+      exit 1
+    fi
+    echo "    NVENC encode test: OK"
   else
     print_cmd "docker compose up -d --build"
     docker compose up -d --build
@@ -508,7 +542,16 @@ step_1_basic() {
 step_2_gpu() {
   echo
   echo "Step 2/8: GPU passthrough (optional)"
-  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "CPU works everywhere. auto/cuda only use GPU when the GPU override is active.")"
+
+  if ask_yes_no "Enable NVIDIA GPU acceleration for media conversion (NVENC/NVDEC) and optional AI?" "$(is_truthy "$ENABLE_GPU_COMPOSE" && echo y || echo n)"; then
+    ENABLE_GPU_COMPOSE="1"
+    ENABLE_GPU_GUIDE="1"
+  else
+    ENABLE_GPU_COMPOSE="0"
+    ENABLE_GPU_GUIDE="0"
+  fi
+
+  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "AI can stay on CPU even when media conversion uses the NVIDIA GPU.")"
   ai_device_choice_lc="$(printf "%s" "$ai_device_choice" | tr '[:upper:]' '[:lower:]')"
   case "$ai_device_choice_lc" in
     auto|cpu|cuda) AI_DEVICE="$ai_device_choice_lc" ;;
@@ -518,18 +561,20 @@ step_2_gpu() {
       ;;
   esac
 
-  if [ "$AI_DEVICE" = "cpu" ]; then
-    ENABLE_GPU_GUIDE="0"
-    echo "    GPU disabled. FjordLens will install using CPU-safe compose."
+  if ! is_truthy "$ENABLE_GPU_COMPOSE"; then
+    if [ "$AI_DEVICE" = "cuda" ]; then
+      echo "    AI_DEVICE=cuda requires GPU acceleration; switching AI_DEVICE to cpu."
+      AI_DEVICE="cpu"
+    fi
+    echo "    GPU disabled. Media conversion and AI will use CPU-safe compose."
     return 0
   fi
 
-  ENABLE_GPU_GUIDE="1"
-  GPU_PROXMOX_VMID="$(ask_input "Proxmox LXC VMID (GPU_PROXMOX_VMID)" "$GPU_PROXMOX_VMID" "100" "Used only for the generated PVE host commands if passthrough is missing.")"
+  GPU_PROXMOX_VMID="$(ask_input "Proxmox LXC VMID (GPU_PROXMOX_VMID)" "$GPU_PROXMOX_VMID" "100" "Used only for generated PVE host commands if passthrough is missing.")"
   if ask_yes_no "Show Proxmox host commands for NVIDIA passthrough now?" "y"; then
     print_gpu_host_fix_hint "$(char_major /dev/nvidia-uvm || true)" "$(dir_char_major /dev/nvidia-caps || true)"
   fi
-  if ask_yes_no "Run Docker GPU preflight before starting containers?" "y"; then
+  if ask_yes_no "Run Docker GPU + NVENC preflight before starting containers?" "y"; then
     ENABLE_GPU_GUIDE="1"
   else
     ENABLE_GPU_GUIDE="0"
@@ -640,6 +685,7 @@ print_summary() {
   echo "  APP_PORT=${APP_PORT}"
   echo "  APP_REPO_DIR=${APP_REPO_DIR}"
   echo "  AI_DEVICE=${AI_DEVICE}"
+  echo "  ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE}"
   echo "  ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE}"
   if [ -n "${GPU_PROXMOX_VMID:-}" ]; then
     echo "  GPU_PROXMOX_VMID=${GPU_PROXMOX_VMID}"
