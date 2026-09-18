@@ -18,6 +18,7 @@ from flask_login import current_user, login_required
 from PIL import Image, ImageOps
 
 import app as core
+import conversion_client
 
 try:
     import fcntl
@@ -291,6 +292,22 @@ def _image_cache_path(row: Dict[str, Any]) -> Path:
     dest = dest_dir / f"{int(row['id'])}_{stamp}.jpg"
     if dest.exists() and dest.stat().st_size > 0:
         return dest
+
+    if core.CONVERT_URL_EXPLICIT:
+        try:
+            conversion_client.convert(
+                "jpeg_normalize",
+                viewable,
+                dest,
+                max_width=1280,
+                max_height=720,
+                quality=88,
+            )
+            return dest
+        except Exception as exc:
+            if not core.CONVERT_SERVICE_FALLBACK_LOCAL:
+                raise
+            core.logger.warning("Cast image worker failed; using local fallback: %s", exc)
 
     with Image.open(viewable) as source:
         image = ImageOps.exif_transpose(source)
