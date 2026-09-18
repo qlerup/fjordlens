@@ -7258,7 +7258,7 @@ def _render_moment_video(moment_id: int) -> None:
         return
 
     ffmpeg_bin = shutil.which("ffmpeg")
-    if not ffmpeg_bin:
+    if not ffmpeg_bin and not CONVERT_URL_EXPLICIT:
         _set_moment_video_status(moment_id, "error", error="ffmpeg ikke tilgængelig")
         return
 
@@ -7271,6 +7271,79 @@ def _render_moment_video(moment_id: int) -> None:
                 photos_by_id[int(r["id"])] = r
 
     video_size = (MOMENT_VIDEO_WIDTH, MOMENT_VIDEO_HEIGHT)
+
+    if CONVERT_URL_EXPLICIT:
+        try:
+            slides: list[dict[str, Any]] = []
+            for item in script:
+                item_type = item.get("type")
+                photo_id = item.get("photo_id") or item.get("background_photo_id")
+                prow = photos_by_id.get(int(photo_id or 0))
+                src: Optional[Path] = None
+                if prow is not None:
+                    rel = str(prow["rel_path"] or "")
+                    candidate = _disk_path_from_rel_path(rel)
+                    if candidate.exists():
+                        if item_type == "video":
+                            src = candidate
+                        elif str(prow["ext"] or "").lower() not in VIDEO_EXTS:
+                            src = ensure_viewable_copy(candidate, rel)
+                if src is None and item_type != "text":
+                    continue
+
+                second_src: Optional[Path] = None
+                second_id = item.get("second_photo_id")
+                second = photos_by_id.get(int(second_id or 0)) if second_id else None
+                if item_type == "pair":
+                    if second is None:
+                        raise ValueError("Det andet billede på en slide mangler.")
+                    candidate = _disk_path_from_rel_path(second["rel_path"])
+                    second_src = ensure_viewable_copy(candidate, second["rel_path"])
+
+                slides.append({
+                    "item": dict(item),
+                    "src": str(src) if src else "",
+                    "second_src": str(second_src) if second_src else "",
+                })
+
+            if not slides:
+                raise RuntimeError("Ingen klip kunne laves")
+
+            dest_dir = CONVERT_DIR / "moments"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / f"moment_{moment_id}.mp4"
+            music = moment_music.descriptor(script, row["title"])
+            conversion_client.render_moment(
+                slides=slides,
+                dst=dest,
+                title=str(row["title"] or ""),
+                music=music,
+                width=MOMENT_VIDEO_WIDTH,
+                height=MOMENT_VIDEO_HEIGHT,
+                fps=MOMENT_VIDEO_FPS,
+                timeout_seconds=MOMENT_VIDEO_RENDER_TIMEOUT_SEC,
+            )
+            rel_out = f"moments/{dest.name}"
+            _set_moment_video_status(moment_id, "done", video_rel_path=rel_out)
+            try:
+                log_event("moment_video_done", rel_path=rel_out, worker="fjordlens-convert")
+            except Exception:
+                pass
+            return
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                _set_moment_video_status(moment_id, "error", error=str(exc))
+                try:
+                    log_event("error", error=f"moment_video_worker: {exc}")
+                except Exception:
+                    pass
+                return
+            logger.warning("Moment render worker failed; using local fallback: %s", exc)
+
+    if not ffmpeg_bin:
+        _set_moment_video_status(moment_id, "error", error="ffmpeg ikke tilgængelig")
+        return
+
     work_dir = Path(tempfile.mkdtemp(prefix=f"moment_{moment_id}_"))
     try:
         segment_paths: list[Path] = []
