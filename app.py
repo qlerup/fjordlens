@@ -16,7 +16,7 @@ import zipfile
 import unicodedata
 import math
 from contextlib import closing
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 import time
 from pathlib import Path
@@ -260,11 +260,10 @@ try:
 except Exception:
     UPLOAD_WORKFLOW_FACE_BATCH_SIZE = 4
 UPLOAD_WORKFLOW_FACE_BATCH_SIZE = max(1, min(8, UPLOAD_WORKFLOW_FACE_BATCH_SIZE))
-try:
-    FACE_DETECT_MAX_CONCURRENCY = int(os.environ.get("FACE_DETECT_MAX_CONCURRENCY", str(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)) or UPLOAD_WORKFLOW_FACE_BATCH_SIZE)
-except Exception:
-    FACE_DETECT_MAX_CONCURRENCY = UPLOAD_WORKFLOW_FACE_BATCH_SIZE
-FACE_DETECT_MAX_CONCURRENCY = max(1, min(4, FACE_DETECT_MAX_CONCURRENCY))
+# Queue-level concurrency is controlled by the selected face batch size (1..8).
+# This semaphore is only a global safety ceiling so separate face flows together
+# can never exceed eight simultaneous AI face requests.
+FACE_DETECT_MAX_CONCURRENCY = 8
 FACE_DETECT_SEMAPHORE = threading.BoundedSemaphore(FACE_DETECT_MAX_CONCURRENCY)
 # Thumbnail generation currently uses PIL/ffmpeg and does not use GPU in this service.
 UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU = False
@@ -3559,74 +3558,67 @@ def _postprocess_uploaded_rels(
         def _faces_worker() -> None:
             nonlocal faces_done, faces_found, faces_errors
             batch_size = max(1, int(face_batch_size_enabled()))
+            try:
+                log_event(
+                    "faces_queue_start",
+                    items=len(indexed_ok),
+                    concurrency=batch_size,
+                    mode="slot_queue",
+                )
+            except Exception:
+                pass
 
-            for start_index in range(0, len(indexed_ok), batch_size):
-                if _should_stop():
-                    break
-                batch = indexed_ok[start_index : start_index + batch_size]
-                if not batch:
-                    continue
-
-                _update_stage("faces", in_flight_inc=len(batch))
-                _emit_parallel(batch[0] if batch else None)
-                try:
-                    log_event(
-                        "faces_batch_start",
-                        batch_size=len(batch),
-                        mode="ai_service_batch",
-                    )
-                except Exception:
-                    pass
-
-                stills: list[str] = []
-                videos: list[str] = []
-                for rel in batch:
+            def completed(rel: str, count: int, error: Optional[Exception]) -> None:
+                nonlocal faces_done, faces_found, faces_errors
+                err_inc = 1 if error is not None else 0
+                found_inc = 1 if (error is None and int(count or 0) > 0) else 0
+                with faces_metric_lock:
+                    faces_done += 1
+                    faces_found += found_inc
+                    faces_errors += err_inc
+                if error is not None:
                     try:
-                        path = _disk_path_from_rel_path(rel)
-                        if path.suffix.lower() in VIDEO_EXTS:
-                            videos.append(rel)
-                        else:
-                            stills.append(rel)
+                        log_event("error", rel_path=rel, error=f"postprocess_faces_queue: {error}")
                     except Exception:
-                        stills.append(rel)
+                        pass
+                _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
+                _emit_parallel(rel)
 
-                batch_results = _ai_detect_faces_batch_paths(stills) if stills else {}
+            # Mark only the actual active slots as in-flight. The executor refills
+            # each free slot immediately instead of waiting for a whole batch.
+            initial_in_flight = min(batch_size, len(indexed_ok))
+            if initial_in_flight:
+                _update_stage("faces", in_flight_inc=initial_in_flight)
+                _emit_parallel(indexed_ok[0])
 
-                for rel in batch:
-                    if _should_stop():
-                        _update_stage("faces", in_flight_inc=-1)
-                        continue
-                    err_inc = 0
-                    found_inc = 0
-                    try:
-                        if rel in videos:
-                            count = index_faces_for_photo(rel)
-                        else:
-                            detected = batch_results.get(rel)
-                            # If the batch request failed for this item, use the
-                            # proven single-image path rather than skipping it.
-                            count = (
-                                index_faces_for_photo(rel, detected_faces=detected)
-                                if detected is not None
-                                else index_faces_for_photo(rel)
-                            )
-                        if int(count or 0) > 0:
-                            found_inc = 1
-                        with faces_metric_lock:
-                            faces_done += 1
-                            faces_found += found_inc
-                    except Exception as exc:
-                        err_inc = 1
-                        with faces_metric_lock:
-                            faces_errors += 1
-                        try:
-                            log_event("error", rel_path=rel, error=f"postprocess_faces_batch: {exc}")
-                        except Exception:
-                            pass
-                    _update_stage("faces", processed_inc=1, errors_inc=err_inc, in_flight_inc=-1)
-                    _emit_parallel(rel)
+            # As each task finishes the slot queue starts the next item. Mirror that
+            # in progress by adding a replacement in-flight slot while work remains.
+            completed_count = 0
+            def progress_completed(rel: str, count: int, error: Optional[Exception]) -> None:
+                nonlocal completed_count
+                completed(rel, count, error)
+                completed_count += 1
+                remaining = len(indexed_ok) - completed_count
+                current_in_flight = min(batch_size, max(0, remaining))
+                with process_lock:
+                    st = process_status.get("faces")
+                    if st is not None:
+                        st["in_flight"] = current_in_flight
+                        st["queued"] = max(0, remaining - current_in_flight)
+                _emit_parallel(rel)
 
+            _run_face_slot_queue(
+                list(indexed_ok),
+                batch_size,
+                should_continue=lambda: not _should_stop(),
+                on_complete=progress_completed,
+            )
             _update_stage("faces", set_running=False)
+            with process_lock:
+                st = process_status.get("faces")
+                if st is not None:
+                    st["in_flight"] = 0
+                    st["queued"] = max(0, int(st.get("total") or 0) - int(st.get("processed") or 0))
             _emit_parallel()
 
         def _embeddings_worker() -> None:
@@ -12991,6 +12983,74 @@ def _is_faces_index_supported_rel(rel_path: str) -> bool:
     return ext in SUPPORTED_EXTS
 
 
+def _run_face_slot_queue(
+    rel_paths: list[str],
+    concurrency: int,
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
+    on_complete: Optional[Callable[[str, int, Optional[Exception]], None]] = None,
+) -> Dict[str, int]:
+    """Keep exactly N face jobs in flight and refill a slot as soon as one finishes."""
+    items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
+    workers = max(1, min(8, int(concurrency or 1), len(items) or 1))
+    stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers}
+    if not items:
+        return stats
+
+    def allowed() -> bool:
+        return True if should_continue is None else bool(should_continue())
+
+    def run_one(rel: str):
+        if not allowed():
+            return rel, 0, None
+        try:
+            count = int(index_faces_for_photo(rel) or 0)
+            return rel, count, None
+        except Exception as exc:
+            return rel, 0, exc
+
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-slot")
+    pending: Dict[Any, str] = {}
+    next_index = 0
+
+    def fill_slots() -> None:
+        nonlocal next_index
+        while allowed() and len(pending) < workers and next_index < len(items):
+            rel = items[next_index]
+            next_index += 1
+            pending[executor.submit(run_one, rel)] = rel
+
+    try:
+        fill_slots()
+        while pending:
+            done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                rel = pending.pop(future)
+                try:
+                    _rel, count, error = future.result()
+                except Exception as exc:
+                    count, error = 0, exc
+                stats["processed"] += 1
+                if count > 0:
+                    stats["faces_found"] += 1
+                if error is not None:
+                    stats["errors"] += 1
+                if on_complete is not None:
+                    try:
+                        on_complete(rel, count, error)
+                    except Exception:
+                        pass
+            fill_slots()
+            if not allowed():
+                for future in pending:
+                    future.cancel()
+                break
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+    return stats
+
+
 def _faces_index_coverage() -> Dict[str, int]:
     counts = {"total": 0, "indexed": 0, "missing": 0, "with_faces": 0, "faces": 0, "unsupported": 0}
     try:
@@ -13035,47 +13095,35 @@ def _index_faces_worker(all_photos: bool = False):
         faces_counts = {"processed": 0, "total": total}
         batch_size = max(1, int(face_batch_size_enabled()))
 
-        for start in range(0, len(rels), batch_size):
-            if not _faces_running.is_set():
-                break
-            batch = rels[start : start + batch_size]
-            stills: list[str] = []
-            videos: list[str] = []
-            for rel in batch:
+        def completed(rel: str, count: int, error: Optional[Exception]) -> None:
+            if error is not None:
                 try:
-                    path = _disk_path_from_rel_path(rel)
-                    if path.suffix.lower() in VIDEO_EXTS:
-                        videos.append(rel)
-                    else:
-                        stills.append(rel)
+                    log_event("error", rel_path=rel, error=f"faces_index_queue: {error}")
                 except Exception:
-                    stills.append(rel)
-
-            detected = _ai_detect_faces_batch_paths(stills) if stills else {}
-            try:
-                log_event("faces_index_batch", batch_size=len(batch), stills=len(stills), videos=len(videos))
-            except Exception:
-                pass
-
-            for rel in batch:
-                if not _faces_running.is_set():
-                    break
-                log_event("faces_index", rel_path=rel)
-                if rel in videos:
-                    index_faces_for_photo(rel)
-                else:
-                    batch_faces = detected.get(rel)
-                    if batch_faces is not None:
-                        index_faces_for_photo(rel, detected_faces=batch_faces)
-                    else:
-                        index_faces_for_photo(rel)
-                faces_counts["processed"] += 1
-
+                    pass
+            else:
+                try:
+                    log_event("faces_index", rel_path=rel, count=count, queue_workers=batch_size)
+                except Exception:
+                    pass
+            faces_counts["processed"] += 1
             face_delay = faces_index_throttle_enabled_sec()
             if face_delay > 0 and _faces_running.is_set():
                 time.sleep(face_delay)
 
-        last_faces_result = {"ok": True, **faces_counts, "batch_size": batch_size}
+        stats = _run_face_slot_queue(
+            rels,
+            batch_size,
+            should_continue=_faces_running.is_set,
+            on_complete=completed,
+        )
+        last_faces_result = {
+            "ok": True,
+            **faces_counts,
+            "batch_size": batch_size,
+            "queue_mode": "slot_queue",
+            "errors": stats["errors"],
+        }
     finally:
         _faces_running.clear()
 
@@ -13114,7 +13162,7 @@ def api_faces_status():
         "running": _faces_running.is_set(),
         "auto_index": faces_auto_index_enabled(),
         "batch_size": face_batch_size_enabled(),
-        "batch_mode": "ai_service_batch",
+        "batch_mode": "slot_queue",
         **faces_counts,
         "coverage": _faces_index_coverage(),
         "runtime": {
