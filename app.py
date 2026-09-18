@@ -758,6 +758,8 @@ def _convert_on_local_storage(
     """Convert through the dedicated worker when configured; otherwise use local staging."""
     if kind and CONVERT_URL_EXPLICIT:
         try:
+            if kind == "mov" and "device" not in options:
+                options["device"] = video_conversion_device()
             conversion_client.convert(kind, src, dst, **options)
             return
         except Exception as exc:
@@ -5724,6 +5726,28 @@ def mov_convert_on_upload_enabled() -> bool:
     return _get_setting_bool("mov_convert_on_upload", MOV_CONVERT_ON_UPLOAD_DEFAULT)
 
 
+def _normalize_video_conversion_device(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw == "cpu":
+        return "cpu"
+    # auto/gpu/cuda/nvenc all mean: prefer the NVIDIA path and retain fallbacks.
+    return "gpu"
+
+
+def video_conversion_device() -> str:
+    return _normalize_video_conversion_device(
+        _get_setting("video_conversion_device", MOV_CONVERT_DEVICE)
+    )
+
+
+def face_batch_size_enabled() -> int:
+    try:
+        value = int(_get_setting("upload_workflow_face_batch_size", str(UPLOAD_WORKFLOW_FACE_BATCH_SIZE)) or UPLOAD_WORKFLOW_FACE_BATCH_SIZE)
+    except Exception:
+        value = UPLOAD_WORKFLOW_FACE_BATCH_SIZE
+    return max(1, min(8, value))
+
+
 def raw_convert_on_upload_enabled() -> bool:
     return _get_setting_bool("raw_convert_on_upload", RAW_CONVERT_ON_UPLOAD_DEFAULT)
 
@@ -6118,7 +6142,8 @@ def _upload_workflow_settings_payload() -> Dict[str, Any]:
     return {
         "ok": True,
         "mode": mode,
-        "batch_size": int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE),
+        "batch_size": int(face_batch_size_enabled()),
+        "face_batch_mode": "ai_service_batch",
         "thumbnails_use_gpu": bool(UPLOAD_WORKFLOW_THUMBNAILS_USE_GPU),
         "options": [UPLOAD_WORKFLOW_MODE_GENTLE, UPLOAD_WORKFLOW_MODE_AGGRESSIVE],
     }
@@ -23232,19 +23257,29 @@ def api_settings_mov():
         body = request.get_json(silent=True) or {}
         conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
+        device = body.get("device")
         try:
             if conv is not None:
                 _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
             if keep is not None:
                 _set_setting("mov_keep_originals", "1" if bool(keep) else "0")
+            if device is not None:
+                device_raw = str(device or "").strip().lower()
+                if device_raw not in {"cpu", "gpu"}:
+                    return jsonify({"ok": False, "error": "Enhed skal være cpu eller gpu."}), 400
+                _set_setting("video_conversion_device", device_raw)
         except Exception as e:
             return _conversion_settings_save_error("mov", e)
 
+    worker_health = conversion_client.health() if CONVERT_URL_EXPLICIT else {"ok": True, "mode": "local"}
     return jsonify(
         {
             "ok": True,
             "convert_on_upload": mov_convert_on_upload_enabled(),
             "keep_originals": mov_keep_originals_enabled(),
+            "device": video_conversion_device(),
+            "gpu_available": bool(worker_health.get("nvenc")),
+            "nvdec_available": bool(worker_health.get("nvdec")),
             "env_default_convert": MOV_CONVERT_ON_UPLOAD_DEFAULT,
         }
     )
@@ -23817,6 +23852,12 @@ def api_settings_upload_workflow():
         body = request.get_json(silent=True) or {}
         mode = _normalize_upload_workflow_mode(body.get("mode"))
         _set_setting("upload_workflow_mode", mode)
+        if body.get("batch_size") is not None:
+            try:
+                batch_size = max(1, min(8, int(body.get("batch_size"))))
+            except Exception:
+                return jsonify({"ok": False, "error": "batch_size skal være et tal mellem 1 og 8."}), 400
+            _set_setting("upload_workflow_face_batch_size", str(batch_size))
 
     return jsonify(_upload_workflow_settings_payload())
 
