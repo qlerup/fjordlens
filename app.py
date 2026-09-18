@@ -1752,40 +1752,33 @@ def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
         return {"ok": False, "error": str(exc)[:240]}
 
 
-def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
-    """Send a viewable, EXIF-orientation-corrected copy of the image to the AI
-    service for face detection/embeddings.
-
-    Stored bbox_x/y/w/h are later normalized against photos.width/height, which
-    extract_metadata() records *after* ImageOps.exif_transpose() (i.e. in
-    display orientation). ensure_viewable_copy() only re-encodes HEIC/RAW
-    files (which it already transposes); a plain JPEG/PNG is passed through
-    unchanged, so the AI service — which does not itself apply EXIF rotation —
-    was detecting faces in raw sensor orientation. For any rotated or mirrored
-    photo (essentially all portrait phone photos) that put the stored box in
-    the wrong place. Transposing here keeps detection in the same orientation
-    as the stored dimensions and the displayed image.
-    """
+def _prepare_face_detection_upload(path: Path) -> tuple[str, bytes]:
+    rel_guess = None
     try:
-        rel_guess = None
-        try:
-            rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
-        except Exception:
-            rel_guess = path.name
-        ai_src = ensure_viewable_copy(path, rel_guess)
-        data: Optional[bytes] = None
-        try:
-            with Image.open(ai_src) as im:
-                im = ImageOps.exif_transpose(im)
-                buf = io.BytesIO()
-                im.convert("RGB").save(buf, format="JPEG", quality=95)
-            data = buf.getvalue()
-        except Exception:
-            data = None
-        if data is None:
-            with ai_src.open("rb") as f:
-                data = f.read()
-        files = {"file": (ai_src.name, data, "application/octet-stream")}
+        rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
+    except Exception:
+        rel_guess = path.name
+    ai_src = ensure_viewable_copy(path, rel_guess)
+    data: Optional[bytes] = None
+    try:
+        with Image.open(ai_src) as im:
+            im = ImageOps.exif_transpose(im)
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, format="JPEG", quality=95)
+        data = buf.getvalue()
+    except Exception:
+        data = None
+    if data is None:
+        with ai_src.open("rb") as handle:
+            data = handle.read()
+    return ai_src.name, data
+
+
+def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
+    """Send one orientation-corrected image to the AI service."""
+    try:
+        filename, data = _prepare_face_detection_upload(path)
+        files = {"file": (filename, data, "application/octet-stream")}
         with FACE_DETECT_SEMAPHORE:
             r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
         if r.ok:
@@ -1799,6 +1792,68 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
     return None
 
 
+def _ai_detect_faces_batch_paths(rel_paths: list[str]) -> Dict[str, Optional[list[Dict[str, Any]]]]:
+    """Send a group of still images to one AI batch request.
+
+    Video items are intentionally excluded here because their sampled-frame flow
+    is different and remains handled by index_faces_for_photo().
+    """
+    results: Dict[str, Optional[list[Dict[str, Any]]]] = {}
+    files: list[tuple[str, tuple[str, bytes, str]]] = []
+    ordered_rels: list[str] = []
+    for rel in rel_paths:
+        rel_clean = str(rel or "").strip()
+        if not rel_clean:
+            continue
+        try:
+            path = _disk_path_from_rel_path(rel_clean)
+            if not path.exists() or path.suffix.lower() in VIDEO_EXTS:
+                results[rel_clean] = None
+                continue
+            filename, data = _prepare_face_detection_upload(path)
+            files.append(("files", (filename, data, "application/octet-stream")))
+            ordered_rels.append(rel_clean)
+        except Exception as exc:
+            results[rel_clean] = None
+            log_event("error", rel_path=rel_clean, error=f"ai_faces_batch_prepare: {exc}")
+
+    if not files:
+        return results
+
+    try:
+        timeout = max(90, min(600, 45 * len(files)))
+        with FACE_DETECT_SEMAPHORE:
+            response = requests.post(f"{AI_URL}/faces/detect-batch", files=files, timeout=timeout)
+        if not response.ok:
+            log_event("ai_http_error", error=f"faces_batch_status:{response.status_code}")
+            for rel in ordered_rels:
+                results.setdefault(rel, None)
+            return results
+
+        payload = response.json() or {}
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            for rel in ordered_rels:
+                results.setdefault(rel, None)
+            return results
+
+        for index, rel in enumerate(ordered_rels):
+            item = items[index] if index < len(items) and isinstance(items[index], dict) else {}
+            faces = item.get("faces") if item.get("ok") else None
+            results[rel] = faces if isinstance(faces, list) else None
+        try:
+            log_event(
+                "faces_batch_done",
+                batch_size=len(ordered_rels),
+                ai_workers=int(payload.get("workers") or 0),
+            )
+        except Exception:
+            pass
+    except Exception as exc:
+        log_event("error", error=f"ai_faces_batch: {exc}")
+        for rel in ordered_rels:
+            results.setdefault(rel, None)
+    return results
 def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional[list[Dict[str, Any]]]:
     """Send image bytes to AI service for face detection/embeddings."""
     try:
@@ -2130,20 +2185,26 @@ def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[flo
     return out
 
 
-def index_faces_for_photo(rel_path: str) -> int:
-    """Detect faces for a photo/video and store into DB; updates people_count."""
+def index_faces_for_photo(
+    rel_path: str,
+    detected_faces: Optional[list[Dict[str, Any]]] = None,
+) -> int:
+    """Detect/store faces for a photo/video; batch callers may supply detections."""
     try:
         disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
             return 0
         log_event("faces_index_start", rel_path=rel_path)
         is_video = disk_path.suffix.lower() in VIDEO_EXTS
-        if is_video:
+        if detected_faces is not None and not is_video:
+            faces = list(detected_faces)
+            log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="batch")
+        elif is_video:
             faces = _ai_detect_faces_video_path(disk_path, rel_path)
             log_event("faces_detect", rel_path=rel_path, media="video", count=len(faces))
         else:
             faces = _ai_detect_faces_path(disk_path) or []
-            log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces))
+            log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="single")
         with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
             row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
             if not row:
