@@ -23228,8 +23228,11 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                 dst.parent.mkdir(parents=True, exist_ok=True)
 
             extl = src.suffix.lower()
-            if extl in {".heic", ".heif"}:
-                with Image.open(src) as himg:
+            if extl not in {".heic", ".heif"}:
+                continue
+
+            def _bulk_heic_local(local_src: Path, local_dst: Path) -> None:
+                with Image.open(local_src) as himg:
                     try:
                         himg = ImageOps.exif_transpose(himg)
                     except Exception:
@@ -23243,10 +23246,9 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                     save_kwargs = {"format": "JPEG", "quality": 92, "optimize": True}
                     if exif_bytes:
                         save_kwargs["exif"] = exif_bytes
-                    rgb.save(dst, **save_kwargs)
-            else:
-                # Skip non-HEIC in this function
-                continue
+                    rgb.save(local_dst, **save_kwargs)
+
+            _convert_on_local_storage(src, dst, _bulk_heic_local, kind="heic")
 
             try:
                 st = src.stat()
@@ -23400,19 +23402,8 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 new_rel = str(Path(orig_rel).with_suffix(".jpg")).replace("\\", "/")
 
-            # RAW â†’ JPEG
-            if rawpy is None:
-                raise RuntimeError("RAW conversion requires rawpy")
-            with rawpy.imread(str(src)) as raw:  # type: ignore
-                rgb = raw.postprocess(
-                    use_auto_wb=True,
-                    no_auto_bright=True,
-                    output_color=rawpy.ColorSpace.sRGB,  # type: ignore
-                    output_bps=8,
-                    gamma=None,
-                    half_size=True,
-                )
-            Image.fromarray(rgb).save(dst, format="JPEG", quality=92, optimize=True)
+            # RAW → JPEG
+            _convert_on_local_storage(src, dst, _raw_to_jpeg, kind="raw")
             try:
                 st = src.stat()
                 os.utime(dst, (st.st_atime, st.st_mtime))
@@ -23558,7 +23549,7 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
                         i += 1
                 new_rel = str(Path(orig_rel).with_name(dst.name)).replace("\\", "/")
 
-            _mov_to_mp4(src, dst)
+            _convert_on_local_storage(src, dst, _mov_to_mp4, kind="mov")
             try:
                 st = src.stat()
                 os.utime(dst, (st.st_atime, st.st_mtime))
