@@ -466,6 +466,18 @@
                   </div>
                   <div class="mini-label" style="font-weight:800;margin:14px 0 8px 2px;">Videokonvertering</div>
                   <div class="sidebar-card" style="margin-bottom:12px;">
+                    <div class="sidebar-card-title">Konverteringsenhed</div>
+                    <p class="hint" style="margin:0 0 10px 0;">Vælg om videokonvertering skal bruge CPU eller NVIDIA GPU. GPU bruger NVDEC + NVENC når formatet understøttes og falder sikkert tilbage ved behov.</p>
+                    <div class="form-row" style="margin-bottom:8px;">
+                      <label for="movDeviceSelect">Enhed</label>
+                      <select id="movDeviceSelect" class="input-number" style="min-width:220px;">
+                        <option value="gpu">NVIDIA GPU</option>
+                        <option value="cpu">CPU</option>
+                      </select>
+                    </div>
+                    <div id="movDeviceInfo" class="mini-label">GPU-status: —</div>
+                  </div>
+                  <div class="sidebar-card" style="margin-bottom:12px;">
                     <div class="sidebar-card-title">MOV → MP4</div>
                     <div style="display:flex; flex-direction:column; gap:10px;">
                       <label class="ai-toggle-row" for="movConvertToggle">
@@ -611,10 +623,21 @@
                 <input id="uploadWorkflowModeAggressive" type="radio" name="uploadWorkflowMode" value="aggressive" />
                 <span class="mini-label">
                   <strong id="uploadWorkflowAggressiveTitle">Kraftig</strong><br />
-                  <span id="uploadWorkflowAggressiveDesc">Kører faser parallelt. Ansigter behandles i batch på 10 filer.</span>
+                  <span id="uploadWorkflowAggressiveDesc">Kører faser parallelt og sender ansigtsbilleder samlet til GPU'en.</span>
                 </span>
               </label>
-              <div id="uploadWorkflowExtraInfo" class="mini-label">Thumbnail runtime: CPU · Ansigtsbatch: 10</div>
+              <div class="form-row" style="margin-bottom:0;">
+                <label for="uploadWorkflowBatchSize">Ansigtsbatch</label>
+                <select id="uploadWorkflowBatchSize" class="input-number" style="min-width:140px;">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="4">4</option>
+                  <option value="6">6</option>
+                  <option value="8">8</option>
+                </select>
+                <span class="hint">Flere billeder pr. batch kan udnytte GPU'en bedre. 4 er et godt udgangspunkt til 6 GB VRAM.</span>
+              </div>
+              <div id="uploadWorkflowExtraInfo" class="mini-label">Thumbnail runtime: CPU · Ansigtsbatch: 2 · AI-service batch</div>
               <div class="actions" style="justify-content:flex-end;gap:8px;">
                 <button id="uploadWorkflowSaveBtn" class="btn">Gem workflow</button>
               </div>
