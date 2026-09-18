@@ -1,5 +1,6 @@
 import io
 import inspect
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import json
 import os
@@ -127,6 +128,12 @@ try:
     register_heif_opener()
 except Exception:
     pass
+
+try:
+    FACE_BATCH_MAX_WORKERS = int(os.environ.get("FACE_BATCH_MAX_WORKERS", "4") or 4)
+except Exception:
+    FACE_BATCH_MAX_WORKERS = 4
+FACE_BATCH_MAX_WORKERS = max(1, min(8, FACE_BATCH_MAX_WORKERS))
 
 MODEL_NAME = os.environ.get("CLIP_MODEL", "ViT-B-32")
 MODEL_PRETRAINED = os.environ.get("CLIP_PRETRAINED", "openai")
@@ -1461,36 +1468,104 @@ def describe_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"describe_image_failed: {exc}")
 
 
+def _serialize_face_result(face) -> Dict[str, Any]:
+    bbox = [float(x) for x in face.bbox.tolist()] if hasattr(face.bbox, "tolist") else [float(x) for x in face.bbox]
+    kps = face.kps.tolist() if hasattr(face.kps, "tolist") else [[float(x) for x in p] for p in face.kps]
+    emb = face.normed_embedding if hasattr(face, "normed_embedding") and face.normed_embedding is not None else face.embedding
+    if hasattr(emb, "tolist"):
+        emb = emb.tolist()
+    v = np.asarray(emb, dtype=np.float32).ravel()
+    n = float(np.linalg.norm(v)) or 1.0
+    v = (v / n).astype(np.float32)
+    return {
+        "bbox": bbox,
+        "landmarks": kps,
+        "embedding": v.tolist(),
+        "confidence": float(getattr(face, "det_score", 1.0)),
+    }
+
+
+def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
+    if not face_detection_available or face_app is None:
+        raise RuntimeError("Face detection model unavailable")
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    img_np = np.array(img)
+    return [_serialize_face_result(face) for face in face_app.get(img_np)]
+
+
 @app.post("/faces/detect")
 def detect_faces(file: UploadFile = File(...)):
     if not face_detection_available or face_app is None:
         raise HTTPException(status_code=503, detail="Face detection model unavailable")
-
-    data = file.file.read()
-    img = Image.open(io.BytesIO(data)).convert("RGB")
-    # InsightFace expects numpy array in RGB (H,W,C)
-    img_np = np.array(img)
-    faces = face_app.get(img_np)
-
-    out = []
-    for f in faces:
-        bbox = [float(x) for x in f.bbox.tolist()] if hasattr(f.bbox, 'tolist') else [float(x) for x in f.bbox]
-        kps = f.kps.tolist() if hasattr(f.kps, 'tolist') else [[float(x) for x in p] for p in f.kps]
-        emb = f.normed_embedding if hasattr(f, 'normed_embedding') and f.normed_embedding is not None else f.embedding
-        if hasattr(emb, 'tolist'):
-            emb = emb.tolist()
-        # Ensure float32 and unit length
-        v = np.asarray(emb, dtype=np.float32).ravel()
-        n = float(np.linalg.norm(v)) or 1.0
-        v = (v / n).astype(np.float32)
-        conf = float(getattr(f, 'det_score', 1.0))
-        out.append({
-            "bbox": bbox,  # [x1,y1,x2,y2]
-            "landmarks": kps,  # 5 keypoints
-            "embedding": v.tolist(),
-            "confidence": conf,
-        })
+    try:
+        out = _detect_faces_bytes(file.file.read())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"face_detect_failed: {exc}")
     return {"ok": True, "count": len(out), "faces": out}
+
+
+@app.post("/faces/detect-batch")
+def detect_faces_batch(files: List[UploadFile] = File(...)):
+    if not face_detection_available or face_app is None:
+        raise HTTPException(status_code=503, detail="Face detection model unavailable")
+    uploads = list(files or [])
+    if not uploads:
+        raise HTTPException(status_code=400, detail="No files supplied")
+    if len(uploads) > 16:
+        raise HTTPException(status_code=400, detail="Maximum 16 files per face batch")
+
+    payloads = []
+    for index, upload in enumerate(uploads):
+        payloads.append((index, str(upload.filename or f"image-{index}.jpg"), upload.file.read()))
+
+    workers = max(1, min(FACE_BATCH_MAX_WORKERS, len(payloads)))
+    results: List[Optional[Dict[str, Any]]] = [None] * len(payloads)
+
+    def run_one(item):
+        index, filename, data = item
+        faces = _detect_faces_bytes(data)
+        return index, {
+            "filename": filename,
+            "ok": True,
+            "count": len(faces),
+            "faces": faces,
+        }
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-batch") as pool:
+        future_map = {pool.submit(run_one, item): item for item in payloads}
+        for future in as_completed(future_map):
+            index, filename, data = future_map[future]
+            try:
+                result_index, result = future.result()
+                results[result_index] = result
+            except Exception as exc:
+                # Retry once serially. This protects installations whose ONNX
+                # provider does not tolerate concurrent session execution.
+                try:
+                    faces = _detect_faces_bytes(data)
+                    results[index] = {
+                        "filename": filename,
+                        "ok": True,
+                        "count": len(faces),
+                        "faces": faces,
+                        "retried_serially": True,
+                    }
+                except Exception as retry_exc:
+                    results[index] = {
+                        "filename": filename,
+                        "ok": False,
+                        "count": 0,
+                        "faces": [],
+                        "error": str(retry_exc or exc),
+                    }
+
+    items = [item or {"ok": False, "count": 0, "faces": [], "error": "missing_result"} for item in results]
+    return {
+        "ok": True,
+        "batch_size": len(items),
+        "workers": workers,
+        "items": items,
+    }
 
 
 if __name__ == "__main__":
