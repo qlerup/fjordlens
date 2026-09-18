@@ -131,7 +131,7 @@ Nye links gemmer deres egen version af tidslinje og musikvalg.
 
 Ved opdatering får eksisterende tidslinjer musik uden at miste manuelle
 tekst-/layoutændringer. Tidligere MP4-filer skal genereres igen. Genstart både
-`fjordlens` og `fjordlens-ai` ved en samlet opdatering, og kontrollér AI/GPU-status.
+`fjordlens`, `fjordlens-ai` og `fjordlens-convert` ved en samlet opdatering. MP4-rendering kører i convert-worker’en; kontrollér AI- og worker/GPU-status.
 
 ### Database og test
 
