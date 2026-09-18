@@ -13008,20 +13008,52 @@ def _index_faces_worker(all_photos: bool = False):
                     WHERE faces_indexed_at IS NULL OR TRIM(faces_indexed_at) = ''
                     """
                 ).fetchall()
-        rows = [row for row in rows if _is_faces_index_supported_rel(row["rel_path"])]
-        total = len(rows)
+        rels = [str(row["rel_path"] or "") for row in rows if _is_faces_index_supported_rel(row["rel_path"])]
+        total = len(rels)
         faces_counts = {"processed": 0, "total": total}
-        for row in rows:
+        batch_size = max(1, int(face_batch_size_enabled()))
+
+        for start in range(0, len(rels), batch_size):
             if not _faces_running.is_set():
                 break
-            rel = row["rel_path"]
-            log_event("faces_index", rel_path=rel)
-            index_faces_for_photo(rel)
-            faces_counts["processed"] += 1
+            batch = rels[start : start + batch_size]
+            stills: list[str] = []
+            videos: list[str] = []
+            for rel in batch:
+                try:
+                    path = _disk_path_from_rel_path(rel)
+                    if path.suffix.lower() in VIDEO_EXTS:
+                        videos.append(rel)
+                    else:
+                        stills.append(rel)
+                except Exception:
+                    stills.append(rel)
+
+            detected = _ai_detect_faces_batch_paths(stills) if stills else {}
+            try:
+                log_event("faces_index_batch", batch_size=len(batch), stills=len(stills), videos=len(videos))
+            except Exception:
+                pass
+
+            for rel in batch:
+                if not _faces_running.is_set():
+                    break
+                log_event("faces_index", rel_path=rel)
+                if rel in videos:
+                    index_faces_for_photo(rel)
+                else:
+                    batch_faces = detected.get(rel)
+                    if batch_faces is not None:
+                        index_faces_for_photo(rel, detected_faces=batch_faces)
+                    else:
+                        index_faces_for_photo(rel)
+                faces_counts["processed"] += 1
+
             face_delay = faces_index_throttle_enabled_sec()
-            if face_delay > 0:
+            if face_delay > 0 and _faces_running.is_set():
                 time.sleep(face_delay)
-        last_faces_result = {"ok": True, **faces_counts}
+
+        last_faces_result = {"ok": True, **faces_counts, "batch_size": batch_size}
     finally:
         _faces_running.clear()
 
