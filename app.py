@@ -16,6 +16,7 @@ import zipfile
 import unicodedata
 import math
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import time
 from pathlib import Path
@@ -5798,6 +5799,26 @@ def video_conversion_device() -> str:
     return _normalize_video_conversion_device(
         _get_setting("video_conversion_device", MOV_CONVERT_DEVICE)
     )
+
+
+def conversion_concurrency_enabled() -> int:
+    """Configured number of conversion slots. Kept independent from face batching."""
+    try:
+        value = int(_get_setting("conversion_concurrency", "1") or 1)
+    except Exception:
+        value = 1
+    return max(1, min(4, value))
+
+
+def _sync_conversion_worker_concurrency(value: Optional[int] = None) -> Dict[str, Any]:
+    concurrency = conversion_concurrency_enabled() if value is None else max(1, min(4, int(value)))
+    if not CONVERT_URL_EXPLICIT:
+        return {"ok": True, "mode": "local", "max_concurrency": concurrency}
+    try:
+        return conversion_client.set_concurrency(concurrency)
+    except Exception as exc:
+        logger.warning("Could not sync conversion concurrency to worker: %s", exc)
+        return {"ok": False, "error": str(exc), "max_concurrency": concurrency}
 
 
 def face_batch_size_enabled() -> int:
@@ -23352,6 +23373,7 @@ def api_settings_mov():
         conv = body.get("convert_on_upload")
         keep = body.get("keep_originals")
         device = body.get("device")
+        concurrency = body.get("concurrency")
         try:
             if conv is not None:
                 _set_setting("mov_convert_on_upload", "1" if bool(conv) else "0")
@@ -23362,9 +23384,19 @@ def api_settings_mov():
                 if device_raw not in {"cpu", "gpu"}:
                     return jsonify({"ok": False, "error": "Enhed skal være cpu eller gpu."}), 400
                 _set_setting("video_conversion_device", device_raw)
+            if concurrency is not None:
+                try:
+                    concurrency_value = int(concurrency)
+                except Exception:
+                    return jsonify({"ok": False, "error": "Samtidige konverteringer skal være et tal fra 1 til 4."}), 400
+                if concurrency_value < 1 or concurrency_value > 4:
+                    return jsonify({"ok": False, "error": "Samtidige konverteringer skal være mellem 1 og 4."}), 400
+                _set_setting("conversion_concurrency", str(concurrency_value))
         except Exception as e:
             return _conversion_settings_save_error("mov", e)
 
+    configured_concurrency = conversion_concurrency_enabled()
+    worker_sync = _sync_conversion_worker_concurrency(configured_concurrency)
     worker_health = conversion_client.health() if CONVERT_URL_EXPLICIT else {"ok": True, "mode": "local"}
     return jsonify(
         {
@@ -23372,6 +23404,9 @@ def api_settings_mov():
             "convert_on_upload": mov_convert_on_upload_enabled(),
             "keep_originals": mov_keep_originals_enabled(),
             "device": video_conversion_device(),
+            "concurrency": configured_concurrency,
+            "worker_concurrency": int(worker_health.get("max_concurrency") or worker_sync.get("max_concurrency") or configured_concurrency),
+            "active_conversions": int(worker_health.get("active_conversions") or 0),
             "gpu_available": bool(worker_health.get("nvenc")),
             "nvdec_available": bool(worker_health.get("nvdec")),
             "env_default_convert": MOV_CONVERT_ON_UPLOAD_DEFAULT,
