@@ -1124,6 +1124,8 @@ def health():
         "face_provider_options": _face_provider_options(FACE_PROVIDER_CHAIN),
         "face_allowed_modules": FACE_ALLOWED_MODULES,
         "face_onnx_threads": FACE_ONNX_THREADS,
+        "face_batch_max_workers": FACE_BATCH_MAX_WORKERS,
+        "face_batch_endpoint": True,
         "face_runtime_providers": runtime_providers,
         "face_detection_runtime_providers": detection_runtime_providers,
         "face_runtime_warning": runtime_warning,
