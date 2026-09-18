@@ -374,11 +374,18 @@ gpu_preflight_vm() {
       nvidia/cuda:12.4.1-base-ubuntu22.04 sh -c \
       'ldconfig -p | grep -F libnvidia-encode.so.1 >/dev/null && ldconfig -p | grep -F libnvcuvid.so.1 >/dev/null'; then
     echo "WARNING: NVIDIA video libraries (NVENC/NVDEC) are unavailable."
-    if [ -t 0 ] && [ -t 1 ] && ask_yes_no "Continue without GPU media acceleration?" "y"; then
-      ENABLE_GPU_COMPOSE="0"
-      if [ "$AI_DEVICE" = "cuda" ]; then AI_DEVICE="cpu"; fi
-      return 1
+    if [ "$AI_DEVICE" = "cuda" ]; then
+      echo "ERROR: AI_DEVICE=cuda was selected, but the complete requested GPU setup is not ready."
+      exit 1
     fi
+    if [ -t 0 ] && [ -t 1 ]; then
+      if ! ask_yes_no "Continue without GPU media acceleration?" "y"; then
+        echo "Stopped before container start."
+        exit 1
+      fi
+    fi
+    ENABLE_GPU_COMPOSE="0"
+    AI_DEVICE="cpu"
     return 1
   fi
   echo "    NVIDIA video libraries: OK"
