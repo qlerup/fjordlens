@@ -503,7 +503,11 @@ run_preflight_and_start() {
     fi
   else
     echo
-    echo "==> GPU guide skipped (ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE})"
+    echo "==> GPU preflight skipped (ENABLE_GPU_GUIDE=${ENABLE_GPU_GUIDE})"
+    if is_truthy "$ENABLE_GPU_COMPOSE"; then
+      USE_GPU_COMPOSE=1
+      echo "    GPU compose remains enabled because ENABLE_GPU_COMPOSE=1."
+    fi
   fi
 
   echo
