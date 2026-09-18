@@ -747,8 +747,24 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
         except Exception:
             pass
 
-def _convert_on_local_storage(src: Path, dst: Path, converter: Callable[[Path, Path], None]) -> None:
-    """Stage source and output locally, then publish the completed file to storage."""
+def _convert_on_local_storage(
+    src: Path,
+    dst: Path,
+    converter: Callable[[Path, Path], None],
+    *,
+    kind: Optional[str] = None,
+    **options: Any,
+) -> None:
+    """Convert through the dedicated worker when configured; otherwise use local staging."""
+    if kind and CONVERT_URL_EXPLICIT:
+        try:
+            conversion_client.convert(kind, src, dst, **options)
+            return
+        except Exception as exc:
+            if not CONVERT_SERVICE_FALLBACK_LOCAL:
+                raise
+            logger.warning("Conversion worker failed for %s; using local fallback: %s", src, exc)
+
     CONVERSION_WORK_DIR.mkdir(parents=True, exist_ok=True)
     dst.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fjordlens-convert-", dir=str(CONVERSION_WORK_DIR)) as work_dir:
