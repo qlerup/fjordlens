@@ -24,7 +24,7 @@ services:
       CONVERSION_WORK_DIR: /data/conversion_work
       CONVERT_URL: http://fjordlens-convert:8010
       CONVERT_SERVICE_TIMEOUT_SEC: ${CONVERT_SERVICE_TIMEOUT_SEC:-21600}
-      CONVERT_SERVICE_FALLBACK_LOCAL: ${CONVERT_SERVICE_FALLBACK_LOCAL:-1}
+      CONVERT_SERVICE_FALLBACK_LOCAL: ${CONVERT_SERVICE_FALLBACK_LOCAL:-0}
       AI_URL: http://fjordlens-ai:8000
       AI_DESC_MODEL: ${AI_DESC_MODEL:-qwen}
       AI_DESC_REQUEST_TIMEOUT_SEC: ${AI_DESC_REQUEST_TIMEOUT_SEC:-120}
@@ -67,6 +67,7 @@ services:
       DATA_DIR: /data
       UPLOAD_DIR: /uploads
       PHOTO_DIR: /photos
+      THUMB_DIR: /thumbs
       CONVERSION_WORK_DIR: /data/conversion_work
       MOV_CONVERT_DEVICE: ${MOV_CONVERT_DEVICE:-auto}
       MOV_CONVERT_PRESET: ${MOV_CONVERT_PRESET:-veryfast}
@@ -80,6 +81,7 @@ services:
       - "${PHOTO_DIR:-/tmp/fjordlens-unused-library}:/photos:ro"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}:/data"
       - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordlens/data/uploads}:/uploads"
+      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordlens/data/thumbs}:/thumbs"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8010/health || exit 1"]
       interval: 10s
