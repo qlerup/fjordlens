@@ -11115,7 +11115,7 @@ function _applyUploadWorkflowData(data) {
   if (!data || typeof data !== 'object') return;
   const mode = String(data.mode || 'gentle').toLowerCase() === 'aggressive' ? 'aggressive' : 'gentle';
   state.uploadWorkflowMode = mode;
-  state.uploadWorkflowBatchSize = Number(data.batch_size || 2) || 2;
+  state.uploadWorkflowBatchSize = Number(data.batch_size || 4) || 4;
   state.uploadWorkflowThumbnailsUseGpu = !!data.thumbnails_use_gpu;
   if (els.uploadWorkflowModeGentle) els.uploadWorkflowModeGentle.checked = mode === 'gentle';
   if (els.uploadWorkflowModeAggressive) els.uploadWorkflowModeAggressive.checked = mode === 'aggressive';
@@ -11124,7 +11124,7 @@ function _applyUploadWorkflowData(data) {
     const runtimeText = state.uploadWorkflowThumbnailsUseGpu ? tr('status_runtime_gpu') : tr('status_runtime_cpu');
     els.uploadWorkflowExtraInfo.textContent = tr('upload_workflow_extra_info')
       .replace('{thumb_runtime}', runtimeText)
-      .replace('{batch_size}', String(state.uploadWorkflowBatchSize || 2));
+      .replace('{batch_size}', String(state.uploadWorkflowBatchSize || 4));
   }
 }
 
@@ -11155,7 +11155,7 @@ async function saveUploadWorkflowSettings() {
       saveBtn.classList.add('loading');
     }
     const mode = (els.uploadWorkflowModeAggressive && els.uploadWorkflowModeAggressive.checked) ? 'aggressive' : 'gentle';
-    const batchSize = els.uploadWorkflowBatchSize ? Number(els.uploadWorkflowBatchSize.value || 2) : 2;
+    const batchSize = els.uploadWorkflowBatchSize ? Number(els.uploadWorkflowBatchSize.value || 4) : 4;
     const res = await fetch('/api/settings/upload-workflow', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
