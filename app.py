@@ -17410,6 +17410,7 @@ def api_health():
         "library_source_enabled": bool(ENABLE_LIBRARY_SOURCE),
         "scan_features_enabled": bool(ENABLE_SCAN_FEATURES),
         "rawpy_available": bool(rawpy is not None),
+        "conversion": conversion_client.health() if CONVERT_URL_EXPLICIT else {"ok": True, "mode": "local"},
         "ai": _ai_health(),
     })
 
