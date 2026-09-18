@@ -278,10 +278,10 @@ def _convert_mov(src: Path, dst: Path) -> str:
 
 
 
-def _to_rgb_with_black_background(image: Image.Image) -> Image.Image:
+def _to_rgb_with_background(image: Image.Image, background_color: str = "black") -> Image.Image:
     if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
         rgba = image.convert("RGBA")
-        background = Image.new("RGB", rgba.size, "black")
+        background = Image.new("RGB", rgba.size, background_color)
         background.paste(rgba, mask=rgba.getchannel("A"))
         return background
     return image.convert("RGB")
@@ -294,6 +294,7 @@ def _normalize_jpeg(
     quality: int = 90,
     max_width: Optional[int] = None,
     max_height: Optional[int] = None,
+    background_color: str = "black",
 ) -> None:
     with Image.open(src) as image:
         try:
@@ -304,7 +305,7 @@ def _normalize_jpeg(
             image = ImageOps.exif_transpose(image)
         except Exception:
             pass
-        rgb = _to_rgb_with_black_background(image)
+        rgb = _to_rgb_with_background(image, background_color)
         if max_width and max_height:
             bounds = (max(1, int(max_width)), max(1, int(max_height)))
         else:
@@ -330,7 +331,7 @@ def _image_thumb(src: Path, dst: Path, width: int = 600, height: int = 600) -> N
                 image = ImageOps.exif_transpose(image)
             except Exception:
                 pass
-            rgb = _to_rgb_with_black_background(image)
+            rgb = _to_rgb_with_background(image, "black")
             rgb.thumbnail((max(1, width), max(1, height)), Image.Resampling.LANCZOS)
             rgb.save(dst, format="JPEG", quality=85, optimize=True)
     finally:
@@ -681,6 +682,11 @@ def _convert(kind: str, src: Path, dst: Path, options: Optional[dict] = None) ->
                 quality=max(60, min(100, int(options.get("quality", 90) or 90))),
                 max_width=(max(1, min(8192, int(max_width_raw))) if max_width_raw else None),
                 max_height=(max(1, min(8192, int(max_height_raw))) if max_height_raw else None),
+                background_color=(
+                    "white"
+                    if str(options.get("background") or "black").strip().lower() == "white"
+                    else "black"
+                ),
             )
         elif kind == "image_thumb":
             _image_thumb(
