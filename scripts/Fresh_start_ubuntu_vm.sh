@@ -227,6 +227,13 @@ load_env_with_defaults() {
   : "${TZ:=Europe/Copenhagen}"
   : "${LOG_LEVEL:=INFO}"
   : "${AI_DEVICE:=cpu}"
+  if [ -z "${ENABLE_GPU_COMPOSE+x}" ]; then
+    if [ "$AI_DEVICE" = "cpu" ]; then
+      ENABLE_GPU_COMPOSE="0"
+    else
+      ENABLE_GPU_COMPOSE="1"
+    fi
+  fi
   : "${SQLITE_JOURNAL_MODE:=}"
   : "${SQLITE_BUSY_TIMEOUT_MS:=10000}"
   : "${ENABLE_LIBRARY_SOURCE:=0}"
@@ -258,6 +265,7 @@ THUMBS_HOST_DIR=${THUMBS_HOST_DIR}
 TZ=${TZ}
 LOG_LEVEL=${LOG_LEVEL}
 AI_DEVICE=${AI_DEVICE}
+ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE}
 SQLITE_JOURNAL_MODE=${SQLITE_JOURNAL_MODE}
 SQLITE_BUSY_TIMEOUT_MS=${SQLITE_BUSY_TIMEOUT_MS}
 ENABLE_LIBRARY_SOURCE=${ENABLE_LIBRARY_SOURCE}
@@ -328,32 +336,53 @@ configure_nfs_upload_mount_if_enabled() {
 }
 
 gpu_preflight_vm() {
-  if [ "$AI_DEVICE" = "cpu" ]; then
+  if ! is_truthy "$ENABLE_GPU_COMPOSE"; then
+    echo
+    echo "==> GPU preflight skipped (ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE})"
     return 1
   fi
+
   echo
-  echo "==> GPU preflight"
+  echo "==> GPU preflight (runtime + NVENC/NVDEC)"
+
   print_cmd "docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
-  if docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
-    echo "    Docker GPU test: OK"
-    return 0
+  if ! docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1; then
+    echo "WARNING: Docker cannot start a GPU container with --gpus all."
+    if [ "$AI_DEVICE" = "cuda" ]; then
+      echo "ERROR: AI_DEVICE=cuda requires working NVIDIA Docker runtime."
+      exit 1
+    fi
+    if [ -t 0 ] && [ -t 1 ]; then
+      if ask_yes_no "GPU preflight failed. Continue with CPU-safe install?" "y"; then
+        ENABLE_GPU_COMPOSE="0"
+        AI_DEVICE="cpu"
+        return 1
+      fi
+      echo "Stopped before container start."
+      exit 1
+    fi
+    echo "WARNING: Continuing with CPU-safe install."
+    ENABLE_GPU_COMPOSE="0"
+    AI_DEVICE="cpu"
+    return 1
   fi
-  echo "WARNING: Docker cannot start a GPU container with --gpus all."
-  if [ "$AI_DEVICE" = "cuda" ]; then
-    echo "ERROR: AI_DEVICE=cuda requires working NVIDIA Docker runtime."
-    exit 1
-  fi
-  if [ -t 0 ] && [ -t 1 ]; then
-    if ask_yes_no "GPU preflight failed. Continue with CPU-safe install?" "y"; then
-      AI_DEVICE="cpu"
+  echo "    NVIDIA runtime: OK"
+
+  print_cmd "docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video nvidia/cuda:12.4.1-base-ubuntu22.04 sh -c 'ldconfig -p | grep -F libnvidia-encode.so.1 && ldconfig -p | grep -F libnvcuvid.so.1'"
+  if ! docker run --rm --gpus all \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+      nvidia/cuda:12.4.1-base-ubuntu22.04 sh -c \
+      'ldconfig -p | grep -F libnvidia-encode.so.1 >/dev/null && ldconfig -p | grep -F libnvcuvid.so.1 >/dev/null'; then
+    echo "WARNING: NVIDIA video libraries (NVENC/NVDEC) are unavailable."
+    if [ -t 0 ] && [ -t 1 ] && ask_yes_no "Continue without GPU media acceleration?" "y"; then
+      ENABLE_GPU_COMPOSE="0"
+      if [ "$AI_DEVICE" = "cuda" ]; then AI_DEVICE="cpu"; fi
       return 1
     fi
-    echo "Stopped before container start."
-    exit 1
+    return 1
   fi
-  echo "WARNING: Continuing with CPU-safe install."
-  AI_DEVICE="cpu"
-  return 1
+  echo "    NVIDIA video libraries: OK"
+  return 0
 }
 
 run_preflight_and_start() {
@@ -400,6 +429,15 @@ run_preflight_and_start() {
   if gpu_preflight_vm; then
     print_cmd "docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build"
     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+    echo "==> Testing real NVENC inside fjordlens-convert"
+    if ! docker compose -f docker-compose.yml -f docker-compose.gpu.yml exec -T fjordlens-convert \
+      ffmpeg -hide_banner -loglevel error -f lavfi -i color=s=640x360:d=0.1 \
+      -c:v h264_nvenc -f null - >/dev/null 2>&1; then
+      echo "ERROR: fjordlens-convert started, but h264_nvenc failed."
+      exit 1
+    fi
+    echo "    NVENC encode test: OK"
   else
     print_cmd "docker compose up -d --build"
     docker compose up -d --build
@@ -415,7 +453,12 @@ step_1_basic() {
   APP_PORT="$(ask_input "Web port (APP_PORT)" "$APP_PORT" "9080 or 9090" "The port you open in your browser. Enter any free port number.")"
   TZ="$(ask_input "Timezone (TZ)" "$TZ" "Europe/Copenhagen" "Timezone in Region/City format. Affects timestamps in logs and UI.")"
   LOG_LEVEL="$(ask_input "Log level (LOG_LEVEL)" "$LOG_LEVEL" "INFO or DEBUG" "How verbose logs should be. DEBUG shows more details.")"
-  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "CPU works everywhere. For GPU, start with docker-compose.gpu.yml as an override.")"
+  if ask_yes_no "Enable NVIDIA GPU acceleration for media conversion (NVENC/NVDEC) and optional AI?" "$(is_truthy "$ENABLE_GPU_COMPOSE" && echo y || echo n)"; then
+    ENABLE_GPU_COMPOSE="1"
+  else
+    ENABLE_GPU_COMPOSE="0"
+  fi
+  ai_device_choice="$(ask_input "AI device preference (AI_DEVICE: cpu/auto/cuda)" "$AI_DEVICE" "cpu" "AI can stay on CPU even when media conversion uses the NVIDIA GPU.")"
   ai_device_choice_lc="$(printf "%s" "$ai_device_choice" | tr '[:upper:]' '[:lower:]')"
   case "$ai_device_choice_lc" in
     auto|cpu|cuda) AI_DEVICE="$ai_device_choice_lc" ;;
@@ -424,6 +467,10 @@ step_1_basic() {
       AI_DEVICE="cpu"
       ;;
   esac
+  if ! is_truthy "$ENABLE_GPU_COMPOSE" && [ "$AI_DEVICE" = "cuda" ]; then
+    echo "    AI_DEVICE=cuda requires GPU acceleration; switching AI_DEVICE to cpu."
+    AI_DEVICE="cpu"
+  fi
 }
 
 step_2_nfs() {
@@ -516,6 +563,7 @@ print_summary() {
   echo "  APP_PORT=${APP_PORT}"
   echo "  APP_REPO_DIR=${APP_REPO_DIR}"
   echo "  AI_DEVICE=${AI_DEVICE}"
+  echo "  ENABLE_GPU_COMPOSE=${ENABLE_GPU_COMPOSE}"
   echo "  DATA_DIR=${DATA_DIR}"
   echo "  UPLOADS_HOST_DIR=${UPLOADS_HOST_DIR}"
   echo "  THUMBS_HOST_DIR=${THUMBS_HOST_DIR}"
