@@ -112,15 +112,17 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 
 ### AI and face features
 
-Face detection supports batched processing in `fjordlens-ai`. The batch size is
-configured in **Settings → Upload workflow** and is shared by upload post-processing
-and manual face indexing. The default batch size is 4 (selectable up to 8); the AI
-service runs the selected batch size concurrently (for example, batch 8 means 8 jobs
-at the same time) and safely retries failed parallel items serially.
+Face detection uses a refillable slot queue. The batch size is configured in
+**Settings → Upload workflow** and is shared by upload post-processing and manual
+face indexing. The default is 4 (selectable 1, 2, 4, 6 or 8). A value of 8 means up
+to eight face jobs stay active; whenever one finishes, the next queued item starts
+immediately instead of waiting for the other seven.
 
-Video conversion device selection is available live under **Settings → Conversion**:
-choose CPU or NVIDIA GPU without restarting the containers. GPU mode prefers
-NVDEC + NVENC, falls back to CPU decode + NVENC, then full CPU.
+Video conversion device and queue size are available live under
+**Settings → Conversion**. Choose CPU or NVIDIA GPU and 1–4 simultaneous conversion
+slots without restarting the containers. The conversion queue uses the same refill
+behavior: a newly free slot immediately starts the next waiting conversion. GPU mode
+prefers NVDEC + NVENC, falls back to CPU decode + NVENC, then full CPU.
 
 - AI embedding ingest with start/stop/status
 - AI description ingest with start/stop/status
