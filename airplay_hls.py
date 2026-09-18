@@ -19,6 +19,7 @@ from flask_login import login_required
 
 import app as core
 import cast_airplay as cast_core
+import conversion_client
 
 bp = Blueprint("airplay_hls", __name__)
 
@@ -259,25 +260,92 @@ def _transcode_item_progressive(
     session: Dict[str, Any],
     entries: List[Tuple[float, str, bool]],
 ) -> int:
-    cmd, child = _item_hls_command(item, index, token, session)
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    child = _job_dir(token) / f"item_{index:05d}.m3u8"
     seen: set[str] = set()
     started = time.time()
     first_of_item = True
+
+    def collect_segments() -> None:
+        nonlocal first_of_item
+        for duration, filename in _parse_child_playlist(child):
+            if filename in seen:
+                continue
+            segment = _job_dir(token) / filename
+            if not segment.exists() or segment.stat().st_size <= 0:
+                continue
+            seen.add(filename)
+            entries.append((duration, filename, bool(index > 0 and first_of_item)))
+            first_of_item = False
+            _write_main_manifest(token, entries, finished=False)
+            _write_status(
+                token,
+                state="streaming",
+                playable=True,
+                segments=len(entries),
+                current=index + 1,
+            )
+
+    if conversion_client.enabled():
+        kind = str(item.get("kind") or "image").lower()
+        if kind == "video":
+            src = cast_core._disk_path(item)
+            if src is None:
+                raise FileNotFoundError("En video i valget findes ikke længere.")
+        else:
+            src = cast_core._image_cache_path(item)
+            kind = "image"
+
+        worker_result: Dict[str, Any] = {}
+        worker_error: Dict[str, BaseException] = {}
+
+        def run_worker() -> None:
+            try:
+                worker_result.update(
+                    conversion_client.hls_item(
+                        src=Path(src),
+                        output_dir=_job_dir(token),
+                        index=index,
+                        kind=kind,
+                        image_duration=max(
+                            2,
+                            min(
+                                30,
+                                int(session.get("image_duration") or AIRPLAY_IMAGE_DURATION),
+                            ),
+                        ),
+                        segment_seconds=AIRPLAY_HLS_SEGMENT_SECONDS,
+                    )
+                )
+            except BaseException as exc:
+                worker_error["error"] = exc
+
+        worker = threading.Thread(
+            target=run_worker,
+            daemon=True,
+            name=f"fjordlens-hls-worker-{_token_key(token)[:8]}-{index}",
+        )
+        worker.start()
+        while worker.is_alive():
+            collect_segments()
+            if time.time() - started > AIRPLAY_ITEM_TIMEOUT:
+                raise RuntimeError("Klargøringen af et AirPlay-medie tog for lang tid.")
+            time.sleep(0.25)
+        worker.join(timeout=1)
+        collect_segments()
+
+        if worker_error:
+            raise RuntimeError(str(worker_error["error"]))
+        if not worker_result.get("ok", True):
+            raise RuntimeError(str(worker_result.get("error") or "Worker kunne ikke klargøre AirPlay-mediet."))
+        if not seen:
+            raise RuntimeError("Der blev ikke oprettet HLS-segmenter for et af medierne.")
+        return len(seen)
+
+    cmd, child = _item_hls_command(item, index, token, session)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
         while True:
-            for duration, filename in _parse_child_playlist(child):
-                if filename in seen:
-                    continue
-                segment = _job_dir(token) / filename
-                if not segment.exists() or segment.stat().st_size <= 0:
-                    continue
-                seen.add(filename)
-                entries.append((duration, filename, bool(index > 0 and first_of_item)))
-                first_of_item = False
-                _write_main_manifest(token, entries, finished=False)
-                _write_status(token, state="streaming", playable=True, segments=len(entries), current=index + 1)
-
+            collect_segments()
             code = proc.poll()
             if code is not None:
                 break
@@ -286,16 +354,7 @@ def _transcode_item_progressive(
                 raise RuntimeError("Klargøringen af et AirPlay-medie tog for lang tid.")
             time.sleep(0.25)
 
-        for duration, filename in _parse_child_playlist(child):
-            if filename in seen:
-                continue
-            segment = _job_dir(token) / filename
-            if segment.exists() and segment.stat().st_size > 0:
-                seen.add(filename)
-                entries.append((duration, filename, bool(index > 0 and first_of_item)))
-                first_of_item = False
-        _write_main_manifest(token, entries, finished=False)
-
+        collect_segments()
         if code != 0:
             detail = ""
             try:
@@ -320,7 +379,6 @@ def _transcode_item_progressive(
                 proc.stderr.close()
         except Exception:
             pass
-
 
 def _render_hls(token: str) -> None:
     entries: List[Tuple[float, str, bool]] = []
