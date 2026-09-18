@@ -4037,40 +4037,39 @@ def _postprocess_uploaded_rels(
                     "stage_total": len(indexed_ok),
                 }
             )
-            for i, rel in enumerate(indexed_ok, start=1):
-                if _should_stop():
-                    break
+            batch_size = max(1, int(face_batch_size_enabled()))
+            gentle_face_processed = 0
+
+            def gentle_completed(rel: str, count: int, error: Optional[Exception]) -> None:
+                nonlocal faces_done, faces_found, faces_errors, gentle_face_processed
+                gentle_face_processed += 1
+                if error is not None:
+                    faces_errors += 1
+                    try:
+                        log_event("error", rel_path=rel, error=f"postprocess_faces_queue: {error}")
+                    except Exception:
+                        pass
+                else:
+                    faces_done += 1
+                    if int(count or 0) > 0:
+                        faces_found += 1
                 _emit_progress(
                     {
                         "phase": "faces",
                         "current_rel": rel,
-                        "stage_processed": max(0, i - 1),
+                        "stage_processed": gentle_face_processed,
                         "stage_total": len(indexed_ok),
+                        "face_workers": batch_size,
                     }
                 )
-                try:
-                    fc = index_faces_for_photo(rel)
-                    faces_done += 1
-                    try:
-                        if int(fc or 0) > 0:
-                            faces_found += 1
-                    except Exception:
-                        pass
-                    _emit_progress(
-                        {
-                            "phase": "faces",
-                            "current_rel": rel,
-                            "stage_processed": i,
-                            "stage_total": len(indexed_ok),
-                        }
-                    )
-                except Exception as e:
-                    faces_errors += 1
-                    try:
-                        log_event("error", rel_path=rel, error=f"postprocess_faces: {e}")
-                    except Exception:
-                        pass
-                _pause_between_items()
+
+            _run_face_slot_queue(
+                list(indexed_ok),
+                batch_size,
+                should_continue=lambda: not _should_stop(),
+                on_complete=gentle_completed,
+            )
+            _pause_between_items()
 
         if ai_enabled:
             _emit_progress(
