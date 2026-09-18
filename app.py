@@ -31,6 +31,7 @@ from PIL import Image, ExifTags, ImageOps, ImageDraw, ImageFont
 import piexif
 import exifread
 import requests
+import conversion_client
 import reverse_geocoder as rg
 import place_names
 import pycountry
@@ -77,6 +78,8 @@ _UPLOAD_DIR_ENV = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_DIR")
 UPLOAD_DIR = Path(_UPLOAD_DIR_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 CONVERSION_WORK_DIR = Path(os.environ.get("CONVERSION_WORK_DIR", str(DATA_DIR / "conversion_work"))).resolve()
+CONVERT_URL_EXPLICIT = str(os.environ.get("CONVERT_URL", "") or "").strip()
+CONVERT_SERVICE_FALLBACK_LOCAL = str(os.environ.get("CONVERT_SERVICE_FALLBACK_LOCAL", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 DB_PATH = DATA_DIR / "fjordlens.db"
 INSTALL_STATE_PATH = DATA_DIR / "fjordlens.install.json"
 INSTALL_STATE_LOCK = threading.Lock()
