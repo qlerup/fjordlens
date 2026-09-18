@@ -356,7 +356,12 @@ def _prepare_photoframe_video(src: Path, dst: Path, *, quality: int = 24, cpu_pr
     return engine
 
 
-def _extract_video_thumb(src: Path, dst: Path, seek_seconds: float = 0.5) -> None:
+def _extract_video_thumb(
+    src: Path,
+    dst: Path,
+    seek_seconds: float = 0.5,
+    max_edge: int = 600,
+) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg not available")
@@ -372,12 +377,13 @@ def _extract_video_thumb(src: Path, dst: Path, seek_seconds: float = 0.5) -> Non
         try:
             subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
             if dst.exists() and dst.stat().st_size > 0:
-                with Image.open(dst) as image:
-                    frame = image.convert("RGB")
-                    frame.thumbnail((600, 600), Image.Resampling.LANCZOS)
-                    temp = dst.with_name(f".{dst.name}.thumbtmp")
-                    frame.save(temp, format="JPEG", quality=85, optimize=True)
-                    os.replace(temp, dst)
+                if max_edge > 0:
+                    with Image.open(dst) as image:
+                        frame = image.convert("RGB")
+                        frame.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+                        temp = dst.with_name(f".{dst.name}.thumbtmp")
+                        frame.save(temp, format="JPEG", quality=85, optimize=True)
+                        os.replace(temp, dst)
                 return
         except Exception as exc:
             last_error = exc
@@ -646,9 +652,10 @@ def video_thumb():
         src = _safe_path(str(body.get("src") or ""), must_exist=True)
         dst = _safe_path(str(body.get("dst") or ""), must_exist=False)
         seek = float(body.get("seek_seconds", 0.5) or 0.5)
+        max_edge = max(0, min(4096, int(body.get("max_edge", 600) or 0)))
         dst.parent.mkdir(parents=True, exist_ok=True)
         with CONVERT_SEMAPHORE:
-            _extract_video_thumb(src, dst, seek)
+            _extract_video_thumb(src, dst, seek, max_edge=max_edge)
         return jsonify({"ok": True, "dst": str(dst), "bytes": dst.stat().st_size})
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
