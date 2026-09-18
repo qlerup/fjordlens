@@ -3965,9 +3965,10 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         while batch:
             if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
                 break
-            if workflow_mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE and len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE):
+            target_face_batch = max(1, int(face_batch_size_enabled()))
+            if workflow_mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE and len(batch) < target_face_batch:
                 gather_deadline = time.time() + 1.2
-                while len(batch) < int(UPLOAD_WORKFLOW_FACE_BATCH_SIZE) and time.time() < gather_deadline and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                while len(batch) < target_face_batch and time.time() < gather_deadline and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
                     time.sleep(0.12)
                     more = _pop_uploaded_rels(user)
                     if not more:
