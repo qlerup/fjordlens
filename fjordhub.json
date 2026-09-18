@@ -39,8 +39,14 @@
           "default": "INFO",
           "hint": "DEBUG viser flere detaljer",
           "options": [
-            {"value": "INFO", "label": "INFO (anbefalet)"},
-            {"value": "DEBUG", "label": "DEBUG"}
+            {
+              "value": "INFO",
+              "label": "INFO (anbefalet)"
+            },
+            {
+              "value": "DEBUG",
+              "label": "DEBUG"
+            }
           ]
         }
       ]
@@ -64,9 +70,18 @@
           "default": "cpu",
           "hint": "CPU virker på alle hosts. Auto/CUDA bruges sammen med GPU passthrough.",
           "options": [
-            {"value": "cpu", "label": "CPU (anbefalet)"},
-            {"value": "auto", "label": "Auto"},
-            {"value": "cuda", "label": "CUDA (NVIDIA GPU)"}
+            {
+              "value": "cpu",
+              "label": "CPU (anbefalet)"
+            },
+            {
+              "value": "auto",
+              "label": "Auto"
+            },
+            {
+              "value": "cuda",
+              "label": "CUDA (NVIDIA GPU)"
+            }
           ]
         }
       ]
@@ -115,7 +130,10 @@
           "type": "path",
           "default": "/mnt/photos",
           "hint": "Absolut sti til dit eksisterende fotoarkiv",
-          "show_if": {"key": "ENABLE_LIBRARY_SOURCE", "value": "1"}
+          "show_if": {
+            "key": "ENABLE_LIBRARY_SOURCE",
+            "value": "1"
+          }
         }
       ]
     },
@@ -136,9 +154,19 @@
           "type": "number",
           "default": "30",
           "hint": "Minimum 5 minutter",
-          "show_if": {"key": "FJORDLENS_AUTO_UPDATE_CHECK", "value": "1"}
+          "show_if": {
+            "key": "FJORDLENS_AUTO_UPDATE_CHECK",
+            "value": "1"
+          }
         }
       ]
     }
-  ]
+  ],
+  "gpu_service": "fjordlens-ai",
+  "gpu_services": [
+    "fjordlens-ai",
+    "fjordlens-convert"
+  ],
+  "gpu_video": true,
+  "gpu_video_service": "fjordlens-convert"
 }
