@@ -6632,8 +6632,12 @@ function renderGrid() {
         title,
         onOpen: async () => {
           const targetPath = beginMapperPathNavigation(folderPath);
-          await loadMapperTools(targetPath, true);
-          await loadPhotos(false, false, true);
+          // Folder index and first photo page are independent. Fetch both at
+          // once so NAS/filesystem latency cannot serialize navigation.
+          await Promise.all([
+            loadMapperTools(targetPath, true),
+            loadPhotos(false, false, true),
+          ]);
         },
       });
     }
