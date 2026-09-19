@@ -1,3 +1,9 @@
+function escapeShareHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
 const els = {
   title: document.getElementById('shareTitle'),
   meta: document.getElementById('shareMeta'),
@@ -1273,7 +1279,7 @@ function renderGrid() {
       : '<div class="card-thumb placeholder">No thumbnail</div>';
     const selectBadge = canSelectFromShare() ? `<span class="photo-select-badge">${isSelected ? '&#10003;' : ''}</span>` : '';
     const uploader = String(item && item.uploaded_by ? item.uploaded_by : '').trim();
-    const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${uploader}">${uploader}</div>` : '';
+    const uploaderTag = uploader ? `<div class="uploader-badge" title="Uploadet af ${escapeShareHtml(uploader)}">${escapeShareHtml(uploader)}</div>` : '';
     card.innerHTML = `${thumb}${selectBadge}${uploaderTag}`;
     let longPressTimer = null;
     let longPressActivated = false;
@@ -1405,7 +1411,7 @@ function createHydratedShareCard(item, index) {
     : '<div class="card-thumb placeholder">No thumbnail</div>';
   const badge = canSelectFromShare() ? '<span class="photo-select-badge"></span>' : '';
   const uploader = String(item && item.uploaded_by || '').trim();
-  const uploaderTag = uploader ? `<div class="uploader-badge">${uploader}</div>` : '';
+  const uploaderTag = uploader ? `<div class="uploader-badge">${escapeShareHtml(uploader)}</div>` : '';
   card.innerHTML = `${thumb}${badge}${uploaderTag}`;
   syncShareCardSelection(card, photoId);
 

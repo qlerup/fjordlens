@@ -595,7 +595,7 @@ See `.env.example` for defaults. Most-used variables:
 - `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
 - `AI_DEVICE`: AI runtime preference (`cpu`, `auto`, `cuda`; default `cpu`)
 - `ENABLE_GPU_GUIDE`: enable guided GPU preflight in `scripts/fresh_setup_lxc.sh` (`1` by default)
-- `AI_DEBUG_PORT`: optional host port for AI service
+- The AI service is internal to the Compose network; it has no host debug port. Its inference and control endpoints must not be exposed to untrusted networks. For health diagnostics use `docker compose exec fjordlens-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"`.
 - `AI_INGEST_THROTTLE_SEC`: pacing for embeddings ingest
 - `FACES_INDEX_THROTTLE_SEC`: pacing for face indexing
 - `PHOTOFRAME_TEXT_ONLY`: frame feed test card mode

@@ -119,8 +119,8 @@ services:
       QWEN_VL_MAX_IMAGE_PIXELS: ${QWEN_VL_MAX_IMAGE_PIXELS:-1500000}
       PORT: "8000"
       XDG_CACHE_HOME: /cache
-    ports:
-      - "${AI_DEBUG_PORT:-8001}:8000"
+    # AI inference/control is private to the Compose network.
+    # Do not publish this unauthenticated service on a host interface.
     volumes:
       - ai_cache:/cache
     healthcheck:

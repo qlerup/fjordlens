@@ -5403,6 +5403,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE login_audit ADD COLUMN user_agent TEXT")
         except Exception:
             pass
+        conn.execute("""CREATE TABLE IF NOT EXISTS totp_attempts (
+            user_id INTEGER PRIMARY KEY, window_start REAL NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0)""")
         # Add per-folder permission for user_folder_access
         try:
             conn.execute("ALTER TABLE user_folder_access ADD COLUMN permission TEXT DEFAULT 'view'")
@@ -5413,6 +5416,7 @@ def init_db() -> None:
             conn.execute("UPDATE user_folder_access SET permission='view' WHERE permission IS NULL OR TRIM(permission)='' ")
         except Exception:
             pass
+        _migrate_legacy_folder_grants(conn)
         try:
             conn.execute(
                 """
@@ -5682,6 +5686,21 @@ def _list_all_photo_folders(conn: sqlite3.Connection) -> list[str]:
     return sorted(folders, key=lambda x: x.lower())
 
 
+def _migrate_legacy_folder_grants(conn: sqlite3.Connection) -> None:
+    key = "folder_acl_explicit_grants_v1"
+    if conn.execute("SELECT 1 FROM settings WHERE key=?", (key,)).fetchone():
+        return
+    # Old navigation ancestors were stored as recursive view grants. There is
+    # no provenance to distinguish explicit parents: fail closed on ambiguity.
+    conn.execute("""DELETE FROM user_folder_access AS parent
+        WHERE COALESCE(parent.permission, 'view') = 'view'
+        AND EXISTS (SELECT 1 FROM user_folder_access AS child
+            WHERE child.user_id = parent.user_id
+            AND substr(child.folder_path, 1, length(parent.folder_path) + 1)
+                = parent.folder_path || '/')""")
+    conn.execute("INSERT INTO settings(key, value) VALUES(?, '1')", (key,))
+
+
 def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: list) -> list[dict]:
     """Persist per-folder access with permissions.
     Accepts list of strings (legacy: folder paths => 'view') or list of dicts
@@ -5726,16 +5745,6 @@ def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: l
     for path, perm in cleaned:
         cur = perm_map.get(path)
         perm_map[path] = perm if cur is None else max_perm(cur, perm)
-        # Ensure all ancestors are at least 'view' to allow navigating to this folder
-        parent = path.rsplit("/", 1)[0] if "/" in path else ""
-        while parent:
-            # Do NOT seed the absolute root 'uploads' with view, as that
-            # would unintentionally grant access to all sibling folders.
-            if parent == "uploads":
-                break
-            if parent not in perm_map:
-                perm_map[parent] = "view"
-            parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
 
     reduced = sorted([(p, perm_map[p]) for p in perm_map.keys()], key=lambda x: x[0].lower())
 
@@ -5839,6 +5848,27 @@ def _folder_owner_user_id_for_rel(rel_path: Optional[str], conn: Optional[sqlite
     return None
 
 
+def _is_rel_visible_for_user(user, rel_path: Optional[str], conn: sqlite3.Connection) -> bool:
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    rel = _normalize_rel_path_for_acl(rel_path)
+    if not rel:
+        return False
+    if getattr(user, "can_manage_media", False):
+        return True
+    uid = int(user.id)
+    if _folder_owner_user_id_for_rel(rel, conn) == uid:
+        return True
+    for grant in _get_user_allowed_folders(conn, uid):
+        p = grant["folder_path"]
+        if p == "uploads":
+            continue
+        p = p if p.startswith("uploads/") else f"uploads/{p}"
+        if rel == p or rel.startswith(p + "/"):
+            return True
+    return False
+
+
 def _is_rel_visible_for_current_user(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> bool:
     # Admins and media managers can always see.
     try:
@@ -5874,6 +5904,7 @@ def _filter_public_items_by_current_user_acl(items: list[Dict[str, Any]]) -> lis
 
 
 def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlite3.Connection] = None) -> list[str]:
+    prefixes = _current_user_acl_prefixes(conn)
     out: list[str] = []
     for raw in folders:
         try:
@@ -5888,7 +5919,8 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
         rel_check = folder
         if folder and not folder.startswith("uploads/"):
             rel_check = f"uploads/{folder}"
-        if _is_rel_visible_for_current_user(rel_check, conn):
+        if (_is_rel_visible_for_current_user(rel_check, conn)
+                or any(p.startswith(rel_check.rstrip("/") + "/") for p in (prefixes or []))):
             out.append(folder)
     # Only include root label when there is at least one visible folder
     if out and "" not in out:
@@ -8802,8 +8834,10 @@ def _share_scope_sql(prefixes: list[str]) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     for rel_prefix in prefixes:
-        clauses.append("(rel_path=? OR rel_path LIKE ?)")
-        params.extend([rel_prefix, rel_prefix + "/%"])
+        # Folder names are literal and case-sensitive on the deployed Linux
+        # filesystem. LIKE would also match differently-cased sibling folders.
+        clauses.append("(rel_path COLLATE BINARY=? OR substr(rel_path,1,?) COLLATE BINARY=?)")
+        params.extend([rel_prefix, len(rel_prefix) + 1, rel_prefix + "/"])
     return " OR ".join(clauses), params
 
 
@@ -9424,8 +9458,12 @@ def _photoframe_entries_to_setting_payload(entries: list[Dict[str, Any]]) -> str
     return json.dumps({"frames": frames}, ensure_ascii=False)
 
 
-def _load_photoframe_token_records() -> list[Dict[str, Any]]:
-    raw = str(_get_setting("photoframe_tokens", "") or "").strip()
+def _load_photoframe_token_records(conn: Optional[sqlite3.Connection] = None) -> list[Dict[str, Any]]:
+    if conn is None:
+        raw = str(_get_setting("photoframe_tokens", "") or "").strip()
+    else:
+        row = conn.execute("SELECT value FROM settings WHERE key='photoframe_tokens'").fetchone()
+        raw = str(row["value"] or "").strip() if row else ""
     if not raw:
         return []
     try:
@@ -9785,22 +9823,24 @@ def _photoframe_merge_update_state(candidate: Dict[str, Any], existing: Optional
     return _photoframe_merge_settings_session_state(_photoframe_merge_wifi_scan_state(candidate, existing), existing)
 
 
-def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
-    with PHOTOFRAME_TOKENS_LOCK:
-        existing_by_hash: Dict[str, Dict[str, Any]] = {}
-        try:
-            for prev in _load_photoframe_token_records():
-                h = _normalize_photoframe_token_hash(prev.get("token_hash"))
-                if h and h not in existing_by_hash:
-                    existing_by_hash[h] = prev
-        except Exception:
-            existing_by_hash = {}
-
+def _save_photoframe_token_records(records: list[Dict[str, Any]], *,
+                                  create_ids=(), delete_ids=(), scope_ids=()) -> None:
+    # Serialize read/merge/write across both threads and Gunicorn processes.
+    # By default this operation can update only existing identities, not their
+    # authorization policy. Administrative operations name their exact target.
+    with PHOTOFRAME_TOKENS_LOCK, closing(get_conn()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing_records = _load_photoframe_token_records(conn)
+        existing_by_hash = {r["token_hash"]: r for r in existing_records}
         clean: list[Dict[str, Any]] = []
         seen_hashes: set[str] = set()
         for it in records:
             token_hash = _normalize_photoframe_token_hash(it.get("token_hash"))
             if (not token_hash) or (token_hash in seen_hashes):
+                continue
+            existing = existing_by_hash.get(token_hash)
+            rec_id = _sanitize_photoframe_text(it.get("id"), 64)
+            if rec_id in delete_ids or (existing is None and rec_id not in create_ids):
                 continue
             seen_hashes.add(token_hash)
 
@@ -9848,13 +9888,26 @@ def _save_photoframe_token_records(records: list[Dict[str, Any]]) -> None:
                 "settings_web_last_activity_at": _sanitize_photoframe_text(it.get("settings_web_last_activity_at"), 40),
             }
 
-            existing = existing_by_hash.get(token_hash)
+            if existing is not None:
+                # Identity and scope belong to administrator policy, never to
+                # a telemetry or command snapshot read before a policy change.
+                for key in ("id", "token_hash", "token_plain", "token_hint", "created_at"):
+                    item[key] = existing.get(key)
+                if rec_id not in scope_ids:
+                    for key in ("scope_mode", "allowed_folders", "allowed_photo_ids"):
+                        item[key] = existing.get(key)
             item = _photoframe_merge_update_state(item, existing)
             clean.append(item)
 
+        for previous in existing_records:
+            if previous["token_hash"] not in seen_hashes and previous["id"] not in delete_ids:
+                clean.append(previous)
         if len(clean) > 500:
-            clean = clean[-500:]
-        _set_setting("photoframe_tokens", json.dumps({"tokens": clean}, ensure_ascii=False))
+            raise ValueError("Too many frame tokens")
+        conn.execute("INSERT INTO settings(key, value) VALUES('photoframe_tokens', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (json.dumps({"tokens": clean}, ensure_ascii=False),))
+        conn.commit()
 
 
 def _normalize_photoframe_scope_mode(raw: Any) -> str:
@@ -17712,6 +17765,19 @@ def api_share_tus_create(token: str):
     return resp
 
 
+def _tus_share_authorized(token: str, meta: dict) -> bool:
+    share = _load_share_from_token(token)
+    if (not share or not _share_is_authorized(share) or int(share["can_upload"] or 0) != 1
+            or meta.get("share_id") != int(share["id"])):
+        return False
+    with closing(get_conn()) as conn:
+        folders = _share_folder_paths(conn, share)
+    subdir = str(meta.get("subdir") or "")
+    return (subdir in folders and meta.get("destination") == UPLOAD_DEST_UPLOADS
+            and meta.get("rel_prefix") == "uploads/originals/"
+            and Path(str(meta.get("target_dir") or "")).resolve() == (UPLOAD_DIR / "originals" / subdir).resolve())
+
+
 @app.route("/api/share/<token>/upload/tus/<upload_id>", methods=["HEAD"])
 def api_share_tus_head(token: str, upload_id: str):
     fb = _tus_require_version()
@@ -17721,6 +17787,9 @@ def api_share_tus_head(token: str, upload_id: str):
     meta = _tus_load_meta(upload_id)
     if not meta:
         return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    if not _tus_share_authorized(token, meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
 
     data_path, _ = _tus_upload_paths(upload_id)
     offset = int(meta.get("upload_offset") or 0)
@@ -17751,6 +17820,9 @@ def api_share_tus_file(token: str, upload_id: str):
     if not meta:
         return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
 
+    if not _tus_share_authorized(token, meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
+
     data_path, meta_path = _tus_upload_paths(upload_id)
     if not data_path.exists():
         return jsonify({"ok": False, "error": "Upload data missing"}), 410, _tus_headers()
@@ -17769,6 +17841,8 @@ def api_share_tus_file(token: str, upload_id: str):
         return resp
 
     body = request.get_data(cache=False, as_text=False) or b""
+    if not _tus_share_authorized(token, meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
     try:
         with data_path.open("ab") as fh:
             if body:
@@ -18861,7 +18935,7 @@ def api_photoframes_create():
             "settings_web_last_activity_at": "",
         }
     )
-    _save_photoframe_token_records(records)
+    _save_photoframe_token_records(records, create_ids=(records[-1]["id"],))
 
     server_url = _request_public_base_url() or request.url_root.rstrip("/")
     feed_url = f"{server_url}/api/frame/{token}/feed"
@@ -19312,7 +19386,7 @@ def api_photoframes_delete(token_id: str):
     if len(kept) == len(records):
         return jsonify({"ok": False, "error": "Token ikke fundet"}), 404
 
-    _save_photoframe_token_records(kept)
+    _save_photoframe_token_records([], delete_ids=(target_id,))
     return jsonify({"ok": True, "deleted_id": target_id, "count": len(kept)})
 
 
@@ -19602,87 +19676,7 @@ def api_photoframes_settings_proxy(token_id: str, subpath: str):
         return _queue_scan_submit()
     if is_settings_close_post:
         return _queue_close_submit()
-    if not target_base_url:
-        return _photoframe_settings_proxy_error_page(
-            "Rammen har ingen brugbar lokal IP endnu. Brug fallback-fjernindstillinger og prøv igen.",
-            409,
-        )
-
-    target_url = f"{target_base_url}/{clean_subpath}"
-    raw_query = request.query_string.decode("utf-8", errors="ignore").strip()
-    if raw_query:
-        target_url = f"{target_url}?{raw_query}"
-
-    headers: Dict[str, str] = {}
-    for header_name in ("Content-Type", "Accept", "Accept-Language"):
-        value = str(request.headers.get(header_name) or "").strip()
-        if value:
-            headers[header_name] = value
-    body_bytes = request.get_data(cache=False) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-
-    def _proxy_request_once() -> tuple[Optional[requests.Response], str]:
-        try:
-            out = requests.request(
-                method=method,
-                url=target_url,
-                headers=headers or None,
-                data=body_bytes,
-                timeout=PHOTOFRAME_SETTINGS_PROXY_TIMEOUT_SEC,
-                allow_redirects=False,
-            )
-            return out, ""
-        except Exception as exc:
-            return None, str(exc)
-
-    upstream, upstream_error = _proxy_request_once()
-    if upstream is None:
-        extra = " Vent et par sekunder og prøv igen."
-        if is_settings_save_post:
-            return _fallback_submit(
-                transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
-            )
-        if is_settings_entry:
-            return _photoframe_settings_fallback_page(
-                rec,
-                proxy_root,
-                notice=_entry_notice_from_query(),
-                transport_error=f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
-            )
-        return _photoframe_settings_proxy_error_page(
-            f"Forbindelse til fotorammen fejlede ({target_base_url}): {upstream_error or 'ukendt fejl'}{extra}",
-            409,
-        )
-
-    try:
-        upstream_status = int(getattr(upstream, "status_code", 0) or 0)
-    except Exception:
-        upstream_status = 0
-    if upstream_status >= 500:
-        extra = ""
-        if upstream_error:
-            extra = f" Sidste fejl: {upstream_error}".strip()
-        transport_msg = f"Fotorammen svarede med HTTP {upstream_status} fra {target_base_url}. Tjek at photoframe-app er oppe.{extra}"
-        if is_settings_save_post:
-            return _fallback_submit(transport_error=transport_msg)
-        if is_settings_entry:
-            return _photoframe_settings_fallback_page(
-                rec,
-                proxy_root,
-                notice=_entry_notice_from_query(),
-                transport_error=transport_msg,
-            )
-        return _photoframe_settings_proxy_error_page(
-            transport_msg,
-            409,
-        )
-
-    try:
-        return _photoframe_proxy_response(upstream, proxy_root, target_base_url)
-    except Exception as exc:
-        return _photoframe_settings_proxy_error_page(
-            f"Kunne ikke gengive svar fra fotorammen ({target_base_url}): {exc}",
-            409,
-        )
+    return _photoframe_settings_proxy_error_page("Not found", 404)
 
 
 @app.route("/api/photoframes/<token_id>/scope", methods=["GET", "PUT"])
@@ -19713,7 +19707,7 @@ def api_photoframes_scope(token_id: str):
             filtered_photo_ids = _filter_photoframe_scope_photo_ids_to_images(photo_ids)
             if filtered_photo_ids != photo_ids:
                 records[rec_idx]["allowed_photo_ids"] = filtered_photo_ids
-                _save_photoframe_token_records(records)
+                # GET only filters its response; it never rewrites policy.
                 photo_ids = filtered_photo_ids
         return jsonify(
             {
@@ -19745,7 +19739,7 @@ def api_photoframes_scope(token_id: str):
     records[rec_idx]["allowed_folders"] = allowed_folders
     records[rec_idx]["allowed_photo_ids"] = allowed_photo_ids
     _photoframe_mark_feed_sync_pending(records[rec_idx], now_iso())
-    _save_photoframe_token_records(records)
+    _save_photoframe_token_records(records, scope_ids=(target_id,))
 
     return jsonify(
         {
@@ -22626,6 +22620,8 @@ def api_update_captured_at(photo_id: int):
             ).fetchone()
             if not previous:
                 return jsonify({"ok": False, "error": "Not found"}), 404
+            if not _perm_allows(_current_user_folder_permission_for_rel(previous["rel_path"], conn), "edit"):
+                return jsonify({"ok": False, "error": "Forbidden"}), 403
             # Update DB
             conn.execute("UPDATE photos SET captured_at=? WHERE id=?", (iso, photo_id))
             _clear_photo_weather_metadata(conn, photo_id)
@@ -22673,8 +22669,6 @@ def api_update_gps(photo_id: int):
             return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
         if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
             return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
-        country, city = reverse_geocode_with_cache(lat_f, lon_f)
-        name = ", ".join([x for x in [city, country] if x]) if (country or city) else None
         with closing(get_conn()) as conn:
             # Update columns + metadata_json.geo
             row0 = conn.execute(
@@ -22682,6 +22676,10 @@ def api_update_gps(photo_id: int):
             ).fetchone()
             if not row0:
                 return jsonify({"ok": False, "error": "Not found"}), 404
+            if not _perm_allows(_current_user_folder_permission_for_rel(row0["rel_path"], conn), "edit"):
+                return jsonify({"ok": False, "error": "Forbidden"}), 403
+            country, city = reverse_geocode_with_cache(lat_f, lon_f)
+            name = ", ".join([x for x in [city, country] if x]) if (country or city) else None
             mj = {}
             try:
                 mj = json.loads(row0["metadata_json"]) if row0 and row0["metadata_json"] else {}
@@ -22745,6 +22743,8 @@ def api_toggle_favorite(photo_id: int):
         row = conn.execute("SELECT favorite, rel_path FROM photos WHERE id = ?", (photo_id,)).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "Not found"}), 404
+        if not _perm_allows(_current_user_folder_permission_for_rel(row["rel_path"], conn), "edit"):
+            return jsonify({"ok": False, "error": "Forbidden"}), 403
         new_val = 0 if int(row["favorite"] or 0) else 1
         conn.execute("UPDATE photos SET favorite = ? WHERE id = ?", (new_val, photo_id))
         conn.commit()
@@ -22827,16 +22827,19 @@ def api_filters():
 
 @app.route("/api/thumbs/<path:thumb_name>")
 def api_thumb_file(thumb_name: str):
-    # Serve hashed thumbnail names with aggressive caching
-    safe = re.sub(r"[^a-zA-Z0-9._-]", "", str(thumb_name or ""))
-    if not safe:
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", thumb_name or ""):
         return ("Not found", 404)
-    p = THUMB_DIR / safe
-    if not p.exists() or not p.is_file():
-        return ("Not found", 404)
-    resp = send_from_directory(str(THUMB_DIR), safe)
-    # Filename is content-addressed (md5), safe to cache long-term
-    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    with closing(get_conn()) as conn:
+        face = re.fullmatch(r"face_([0-9]+)(?:_v[0-9]+)?\.jpg", thumb_name)
+        if face:
+            rows = conn.execute("SELECT p.rel_path FROM faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?",
+                                (int(face.group(1)),)).fetchall()
+        else:
+            rows = conn.execute("SELECT rel_path FROM photos WHERE thumb_name=?", (thumb_name,)).fetchall()
+        if not rows or not any(_is_rel_visible_for_current_user(r["rel_path"], conn) for r in rows):
+            return ("Not found", 404)
+    resp = send_from_directory(str(THUMB_DIR), thumb_name)
+    resp.headers["Cache-Control"] = "private, no-store"
     return resp
 
 
@@ -22900,11 +22903,7 @@ def api_thumbs_cleanup():
     res = _cleanup_orphan_thumbs(dry_run=dry)
     return jsonify({"ok": True, **res, "dry_run": dry})
 def api_thumbs(thumb_name: str):
-    with closing(get_conn()) as conn:
-        row = conn.execute("SELECT rel_path FROM photos WHERE thumb_name=? LIMIT 1", (thumb_name,)).fetchone()
-    if row and not _is_rel_path_allowed_for_current_user(row["rel_path"]):
-        return ("Forbidden", 403)
-    return send_from_directory(THUMB_DIR, thumb_name)
+    return api_thumb_file(thumb_name)
 
 
 @app.route("/api/original/<path:rel_path>")
@@ -23412,6 +23411,9 @@ def api_photos_download_zip():
 
 @app.route("/api/debug/sample")
 def api_debug_sample():
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos ORDER BY id DESC LIMIT 1").fetchone()
     return jsonify(row_to_public(row) if row else {"empty": True})
@@ -24964,6 +24966,19 @@ def api_upload_tus_options(upload_id: Optional[str] = None):
     return resp
 
 
+def _can_upload_to_destination(destination: str, subdir: str) -> bool:
+    if destination == UPLOAD_DEST_UPLOADS:
+        rel = f"uploads/{subdir}" if subdir else "uploads"
+        return _perm_allows(_current_user_folder_permission_for_rel(rel), "upload")
+    return destination == UPLOAD_DEST_LIBRARY and bool(getattr(current_user, "can_manage_media", False))
+
+
+def _tus_user_authorized(meta: dict) -> bool:
+    return (not meta.get("share_id")
+            and meta.get("uploaded_by_user_id") == int(current_user.id)
+            and _can_upload_to_destination(str(meta.get("destination") or ""), str(meta.get("subdir") or "")))
+
+
 @app.route("/api/upload/tus", methods=["POST"])
 @login_required
 def api_upload_tus_create():
@@ -25017,12 +25032,8 @@ def api_upload_tus_create():
     target_root, rel_prefix = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
-    # Enforce per-folder upload permission when uploading to user folders
-    if destination == UPLOAD_DEST_UPLOADS:
-        base_rel = f"uploads/{subdir}" if subdir else "uploads"
-        perm = _current_user_folder_permission_for_rel(base_rel)
-        if not _perm_allows(perm, "upload"):
-            return jsonify({"ok": False, "error": "Ingen upload-adgang til denne mappe"}), 403, _tus_headers()
+    if not _can_upload_to_destination(destination, subdir):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -25052,6 +25063,7 @@ def api_upload_tus_create():
         "rel_prefix": rel_prefix,
         "last_modified_ms": last_modified_ms,
         "uploaded_by": str(getattr(current_user, "username", "") or ""),
+        "uploaded_by_user_id": int(current_user.id),
         "created_at": now_iso(),
     }
     _tus_store_meta(upload_id, upload_meta)
@@ -25079,6 +25091,9 @@ def api_upload_tus_head(upload_id: str):
     meta = _tus_load_meta(upload_id)
     if not meta:
         return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
+
+    if not _tus_user_authorized(meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
 
     data_path, _ = _tus_upload_paths(upload_id)
     offset = int(meta.get("upload_offset") or 0)
@@ -25110,6 +25125,9 @@ def api_upload_tus_file(upload_id: str):
     if not meta:
         return jsonify({"ok": False, "error": "Upload not found"}), 404, _tus_headers()
 
+    if not _tus_user_authorized(meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
+
     data_path, meta_path = _tus_upload_paths(upload_id)
     if not data_path.exists():
         return jsonify({"ok": False, "error": "Upload data missing"}), 410, _tus_headers()
@@ -25128,6 +25146,8 @@ def api_upload_tus_file(upload_id: str):
         return resp
 
     body = request.get_data(cache=False, as_text=False) or b""
+    if not _tus_user_authorized(meta):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403, _tus_headers()
     try:
         with data_path.open("ab") as fh:
             if body:
@@ -25235,12 +25255,8 @@ def api_upload():
     target_root, rel_prefix = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
     target_dir = (target_root / subdir) if subdir else target_root
-    # Enforce per-folder upload permission when uploading to user folders
-    if destination == UPLOAD_DEST_UPLOADS:
-        base_rel = f"uploads/{subdir}" if subdir else "uploads"
-        perm = _current_user_folder_permission_for_rel(base_rel)
-        if not _perm_allows(perm, "upload"):
-            return jsonify({"ok": False, "error": "Ingen upload-adgang til denne mappe"}), 403
+    if not _can_upload_to_destination(destination, subdir):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -25560,6 +25576,7 @@ def _complete_managed_login(local_user: User, username_input: str, success_reaso
             login_user(local_user)
             return _no_store_response(redirect(safe_next))
         session["2fa_user_id"] = int(local_user.id)
+        session["2fa_issued_at"] = time.time()
         _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_password", "2fa_required")
         return _no_store_response(redirect(url_for("verify_2fa", next=safe_next)))
 
@@ -25627,6 +25644,7 @@ def login():
                     return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
+                session["2fa_issued_at"] = time.time()
                 _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_required")
                 return _no_store_response(redirect(url_for("verify_2fa", next=request.args.get("next"))))
             _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "password_ok")
@@ -25774,15 +25792,41 @@ def api_auth_session():
     }))
 
 
+TOTP_CHALLENGE_SECONDS = 300
+TOTP_MAX_ATTEMPTS = 5
+
+
+def _consume_totp_attempt(user_id: int) -> bool:
+    now = time.time()
+    with closing(get_conn()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT window_start, attempts FROM totp_attempts WHERE user_id=?", (user_id,)).fetchone()
+        if row and now - float(row["window_start"]) < TOTP_CHALLENGE_SECONDS:
+            if int(row["attempts"]) >= TOTP_MAX_ATTEMPTS:
+                return False
+            conn.execute("UPDATE totp_attempts SET attempts=attempts+1 WHERE user_id=?", (user_id,))
+        else:
+            conn.execute("INSERT OR REPLACE INTO totp_attempts(user_id, window_start, attempts) VALUES(?,?,1)", (user_id, now))
+        conn.commit()
+    return True
+
+
 @app.route("/login/2fa", methods=["GET", "POST"])
 def verify_2fa():
     from flask import session
     if current_user.is_authenticated:
         return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
     uid = session.get("2fa_user_id")
-    if not uid:
+    issued_at = float(session.get("2fa_issued_at") or 0)
+    if not uid or not (0 <= time.time() - issued_at < TOTP_CHALLENGE_SECONDS):
+        session.pop("2fa_user_id", None)
+        session.pop("2fa_issued_at", None)
         return _no_store_response(redirect(url_for("login")))
     if request.method == "POST":
+        if not _consume_totp_attempt(int(uid)):
+            session.pop("2fa_user_id", None)
+            session.pop("2fa_issued_at", None)
+            return _no_store_response(make_response(render_template("2fa_verify.html", error=_ui_text("invalid_code")), 429))
         code = (request.form.get("code") or "").strip()
         with closing(get_conn()) as conn:
             row = conn.execute("SELECT id, username, is_admin, role, totp_secret, totp_remember_days FROM users WHERE id= ?", (uid,)).fetchone()
@@ -25797,8 +25841,10 @@ def verify_2fa():
             # mark that initial setup is completed
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_setup_done=1 WHERE id=?", (current_user.id,))
+                conn.execute("DELETE FROM totp_attempts WHERE user_id=?", (current_user.id,))
                 conn.commit()
             session.pop("2fa_user_id", None)
+            session.pop("2fa_issued_at", None)
             # Set trusted-device cookie automatically if preference > 0
             pref_days = int(row["totp_remember_days"] or 0) if row else 0
             if pref_days > 0:
@@ -25929,8 +25975,11 @@ def setup_2fa():
 def admin_users():
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
+    csrf_token = session.setdefault("admin_users_csrf", secrets.token_urlsafe(32))
     msg = None
     if request.method == "POST":
+        if not hmac.compare_digest(str(request.form.get("csrf_token") or ""), csrf_token):
+            return jsonify({"ok": False, "error": "Invalid CSRF token"}), 403
         action = (request.form.get("action") or "create").strip()
         # Local user management is disabled when hub-managed (users come from
         # FjordHub), but the forgot-password toggle is independent of that.
@@ -26006,6 +26055,7 @@ def admin_users():
     return render_template(
         "admin_users.html",
         users=users,
+        csrf_token=csrf_token,
         msg=msg,
         fjordhub_managed=_fjordhub_managed(),
         mail_configured=bool(mail_settings),

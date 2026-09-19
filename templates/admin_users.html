@@ -15,6 +15,7 @@
 
     <div class="panel" style="margin-bottom:12px;">
       <form method="post" style="margin:0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="forgot_password_toggle">
         <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin:0;">
           <input type="checkbox" name="enabled" value="1" onchange="this.form.requestSubmit()" {% if forgot_password_enabled %}checked{% endif %}>
@@ -34,6 +35,7 @@
           <button id="closeCreateModal" class="btn">{{ 'Close' if en else 'Luk' }}</button>
         </div>
         <form method="post" style="display:grid;gap:10px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="action" value="create">
           <label>
             <div class="mini-label">{{ 'Username' if en else 'Brugernavn' }}</div>
@@ -77,6 +79,7 @@
       <h3 style="margin:0 0 4px;">{{ 'Email for "forgot password"' if en else 'Email til "glemt adgangskode"' }}</h3>
       <p class="mini-label" style="margin-bottom:14px;">{{ 'E.g. Gmail or Resend. Only used to send security codes.' if en else 'Fx Gmail eller Resend. Bruges kun til at sende sikkerhedskoder.' }}</p>
       <form method="post" style="display:grid;gap:10px;max-width:520px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="mail_settings">
         <label>
           <div class="mini-label">{{ 'Sender email' if en else 'Afsender-email' }}</div>
@@ -146,7 +149,8 @@
               {% endif %}
             </td>
             <td>
-              <form method="post" onsubmit="return confirm('{{ 'Delete user' if en else 'Slet bruger' }} \"{{ u.username }}\"?');" style="margin:0;">
+              <form method="post" onsubmit="return confirm(this.dataset.confirm);" data-confirm="{{ 'Delete user' if en else 'Slet bruger' }} &quot;{{ u.username }}&quot;?" style="margin:0;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
                 {% set role = (u.role or (u.is_admin and 'admin' or 'user')) %}

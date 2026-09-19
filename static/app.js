@@ -19002,7 +19002,7 @@ async function renderUsersPanel(){
       return `
       <tr>
         <td class="col-id muted">#${u.id}</td>
-        <td class="col-user"><strong>${u.username}</strong>${managedByHub ? ' <span class="badge muted">Hub</span>' : ''}</td>
+        <td class="col-user"><strong>${escapeHtml(u.username)}</strong>${managedByHub ? ' <span class="badge muted">Hub</span>' : ''}</td>
         <td class="col-role">${u.role}</td>
         <td class="col-lang">${(u.ui_language || 'da').toUpperCase()} / ${(u.search_language || 'da').toUpperCase()}</td>
         <td class="col-2fa">${u.totp_enabled ? '<span class="badge twofa">2FA</span>' : '<span class="badge muted">—</span>'}</td>

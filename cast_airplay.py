@@ -129,7 +129,21 @@ def _get_session(token: str) -> Optional[Dict[str, Any]]:
         return None
     state = _read_sessions()
     item = (state.get("sessions") or {}).get(token)
-    return item if isinstance(item, dict) else None
+    if not isinstance(item, dict):
+        return None
+    # Playback (including already-rendered HLS) must retain the creator's
+    # current authority. This helper also runs without a Flask request context.
+    with core.closing(core.get_conn()) as conn:
+        creator = conn.execute("SELECT * FROM users WHERE id=?", (item.get("created_by_user_id"),)).fetchone()
+        if not creator:
+            return None
+        user = core._row_to_user(creator)
+        for selected in item.get("items") or []:
+            row = conn.execute("SELECT rel_path FROM photos WHERE id=?", (selected.get("id"),)).fetchone()
+            if (not row or row["rel_path"] != selected.get("rel_path")
+                    or not core._is_rel_visible_for_user(user, row["rel_path"], conn)):
+                return None
+    return item
 
 
 def _is_admin() -> bool:
@@ -226,7 +240,8 @@ def _resolve_rows(photo_ids: List[int], folders: List[str], max_items: int = 150
             found = {int(row["id"]): row for row in rows}
             for pid in photo_ids:
                 row = found.get(pid)
-                if row is not None and pid not in by_id:
+                if (row is not None and pid not in by_id
+                        and core._is_rel_visible_for_user(current_user, row["rel_path"], conn)):
                     by_id[pid] = dict(row)
                     ordered_ids.append(pid)
 
@@ -238,6 +253,8 @@ def _resolve_rows(photo_ids: List[int], folders: List[str], max_items: int = 150
                 (pattern,),
             ).fetchall()
             for row in rows:
+                if not core._is_rel_visible_for_user(current_user, row["rel_path"], conn):
+                    continue
                 pid = int(row["id"])
                 if pid in by_id:
                     continue
