@@ -154,22 +154,26 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
 
         stored = []
 
-        def fake_store(rel, faces, *, source="queue"):
-            idx = int(Path(rel).stem.split("_")[-1])
-            if idx == 0:
-                # If DB persistence happens before the free GPU slot is refilled,
-                # this wait would time out and the assertion below fails.
-                self.assertTrue(
-                    refill_started.wait(timeout=2),
-                    "GPU detection slot was not refilled before DB persistence",
-                )
-            stored.append(rel)
-            return 0
+        def fake_store_batch(items, *, match_cache, touched_person_ids):
+            batch_results = []
+            for rel, _faces in items:
+                idx = int(Path(rel).stem.split("_")[-1])
+                if idx == 0:
+                    # Persistence is a separate consumer. GPU slot 0 must be
+                    # refilled while this DB writer is still waiting.
+                    self.assertTrue(
+                        refill_started.wait(timeout=2),
+                        "GPU detection slot was not refilled before DB persistence",
+                    )
+                stored.append(rel)
+                batch_results.append((rel, 0, None))
+            return batch_results, match_cache
 
         fjordlens._faces_running.set()
         with (
             patch.object(fjordlens, "_detect_faces_for_photo", side_effect=fake_detect) as detect,
-            patch.object(fjordlens, "_store_faces_for_photo", side_effect=fake_store) as store,
+            patch.object(fjordlens, "_store_face_results_batch", side_effect=fake_store_batch) as store_batch,
+            patch.object(fjordlens, "_recompute_person_centroids_bulk", return_value=None),
             patch.object(fjordlens, "faces_index_throttle_enabled_sec", return_value=0.0),
         ):
             fjordlens._index_faces_worker(all_photos=True)
@@ -177,7 +181,7 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
         self.assertTrue(refill_started.is_set(), "A free GPU face slot should be refilled immediately")
         self.assertEqual(max_active_detection, 4)
         self.assertEqual(detect.call_count, 6)
-        self.assertEqual(store.call_count, 6)
+        self.assertGreaterEqual(store_batch.call_count, 1)
         self.assertEqual(set(stored), set(rels))
         self.assertFalse(fjordlens._faces_running.is_set())
 
