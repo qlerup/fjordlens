@@ -13757,6 +13757,72 @@ def _dedupe_upload_sync_candidates(candidates: Iterable[tuple[Path, str]]) -> li
     return [best_by_key[k] for k in ordered_keys if k in best_by_key]
 
 
+def _is_managed_preserved_upload_original(rel_path: str) -> bool:
+    """Return True when an uploads/originals file belongs to an already indexed
+    FjordLens conversion and therefore must not be rediscovered as a manual file.
+    """
+    rel = str(rel_path or "").replace("\\", "/").lstrip("/").strip()
+    kind, _ = _upload_storage_tail(rel)
+    if kind != "originals":
+        return False
+
+    ext = Path(rel).suffix.lower()
+    if ext == ".mov":
+        converted_exts: Optional[Iterable[str]] = (".mp4",)
+    elif ext in {".heic", ".heif"} or ext in RAW_EXTS:
+        converted_exts = None
+    else:
+        return False
+
+    try:
+        converted_path = _find_existing_converted_for_upload_rel(rel, extensions=converted_exts)
+    except Exception:
+        converted_path = None
+    if converted_path is None or not converted_path.exists():
+        return False
+
+    try:
+        converted_rel = _upload_path_to_rel(converted_path)
+    except Exception:
+        try:
+            converted_rel = "uploads/" + str(converted_path.relative_to(UPLOAD_DIR)).replace("\\", "/")
+        except Exception:
+            converted_rel = ""
+    converted_rel = str(converted_rel or "").replace("\\", "/").lstrip("/")
+    if not converted_rel:
+        return False
+
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT uploaded_by, metadata_json FROM photos WHERE rel_path=? LIMIT 1",
+                (converted_rel,),
+            ).fetchone()
+    except Exception:
+        row = None
+    if not row:
+        return False
+
+    # Normal FjordLens/share/client uploads always carry uploader attribution.
+    if str(row["uploaded_by"] or "").strip():
+        return True
+
+    # Also recognize older rows from before uploader attribution was guaranteed.
+    try:
+        metadata = json.loads(str(row["metadata_json"] or "{}"))
+    except Exception:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    conv = metadata.get("conversion")
+    if isinstance(conv, dict):
+        source_rel = str(conv.get("from_rel_path") or "").replace("\\", "/").lstrip("/")
+        if source_rel == rel:
+            return True
+    legacy_source = str(metadata.get("converted_from_rel") or "").replace("\\", "/").lstrip("/")
+    return legacy_source == rel
+
+
 def _upload_rel_needs_postprocess_conversion(rel_path: str) -> bool:
     rel = str(rel_path or "").replace("\\", "/").lstrip("/")
     kind, _ = _upload_storage_tail(rel)
@@ -13892,6 +13958,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             continue
         seen.add(rel)
         rels.append(rel)
+    if rels:
+        rels = [rel for rel in rels if not _is_managed_preserved_upload_original(rel)]
     if not rels:
         return False
 
@@ -14212,6 +14280,11 @@ def _sync_upload_folder_from_disk(
                 continue
             if prev and str(prev["uploaded_by"] or "").strip():
                 unchanged += 1
+                continue
+            if prev is None and _is_managed_preserved_upload_original(rel):
+                # Kept originals from a completed FjordLens conversion are storage
+                # companions, not new manually copied files.
+                shadowed += 1
                 continue
             if not _photo_row_needs_disk_sync(prev, stat):
                 unchanged += 1
