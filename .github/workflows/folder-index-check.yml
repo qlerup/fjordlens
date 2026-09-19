@@ -2,7 +2,7 @@ name: Folder index checks
 on:
   push:
     branches: [perf/folder-index]
-    paths: [.folder-index-part-4.b64]
+    paths: [.folder-index-part-4.b64, .folder-index-corrections.json, .github/workflows/folder-index-check.yml, .folder-index-fix.py]
 permissions:
   contents: write
 jobs:
@@ -14,13 +14,17 @@ jobs:
       - name: Apply implementation in isolated checkout
         run: |
           python - <<'PY'
-          import base64, gzip, hashlib, pathlib, subprocess
-          encoded = ''.join(pathlib.Path(f'.folder-index-part-{i}.b64').read_text() for i in range(1,5))
-          data = gzip.decompress(base64.b64decode(encoded))
+          import base64, gzip, hashlib, json, pathlib, subprocess
+          lines = ''.join(pathlib.Path(f'.folder-index-part-{i}.b64').read_text() for i in range(1,5)).splitlines()
+          for number, value in json.loads(pathlib.Path('.folder-index-corrections.json').read_text()).items():
+              lines[int(number)-1] = value
+          data = gzip.decompress(base64.b64decode(''.join(lines)))
           assert hashlib.sha256(data).hexdigest() == '2c14940b0bbcb78b57ac9c6af126b3905907168c5b2315786f8f789dcc4ba52a'
           pathlib.Path('/tmp/folder-index.patch').write_bytes(data)
           subprocess.run(['git','apply','--check','/tmp/folder-index.patch'],check=True)
           subprocess.run(['git','apply','/tmp/folder-index.patch'],check=True)
+          if pathlib.Path('.folder-index-fix.py').exists():
+              subprocess.run(['python','.folder-index-fix.py'],check=True)
           PY
       - uses: actions/setup-python@v5
         with:
@@ -69,7 +73,8 @@ jobs:
         if: steps.node.outcome == 'success' && steps.python.outcome == 'success' && steps.browser.outcome == 'success'
         run: |
           git add app.py static/app.js wsgi.py folder_index.py docs/folder-index.md tests/folder_index_ui.test.cjs tests/folder_move_ui.test.cjs tests/mapper_views.test.cjs tests/test_folder_index.py tests/test_folder_index_api.py tests/test_gallery_navigation_browser.py
-          git rm .folder-index-part-*.b64
+          git rm .folder-index-part-*.b64 .folder-index-corrections.json
+          if test -f .folder-index-fix.py; then git rm .folder-index-fix.py; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Use persistent permission-aware folder index and independent loading states'
