@@ -93,6 +93,23 @@ class FolderPreviewTests(unittest.TestCase):
             self.assertEqual(fjordlens._list_upload_subdirs(fjordlens.UPLOAD_DIR), ['', 'Visible', 'Visible/Child'])
         self.assertEqual(walked, ['.', 'Visible', 'Visible/Child'])
 
+    def test_folder_index_reuses_database_without_second_disk_walk(self):
+        for rel in ['Visible', 'Visible/Child', 'Other']:
+            (fjordlens.UPLOAD_DIR / rel).mkdir(parents=True, exist_ok=True)
+        first = fjordlens._folder_index_rebuild(fjordlens.UPLOAD_DIR)
+        self.assertIn('Visible/Child', first)
+        with patch.object(fjordlens, '_list_upload_subdirs', side_effect=AssertionError('must use DB index')):
+            cached = fjordlens._folder_index_list()
+        self.assertIn('Visible', cached)
+        self.assertIn('Visible/Child', cached)
+
+    def test_folder_index_add_includes_missing_ancestors(self):
+        fjordlens._folder_index_add('Trips/2026/Sweden')
+        cached = fjordlens._folder_index_list()
+        self.assertIn('Trips', cached)
+        self.assertIn('Trips/2026', cached)
+        self.assertIn('Trips/2026/Sweden', cached)
+
 
 if __name__ == '__main__':
     unittest.main()

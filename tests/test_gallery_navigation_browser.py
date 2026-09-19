@@ -210,6 +210,9 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
 
     def test_removing_a_favorite_does_not_skip_the_next_page_first_photo(self):
         self.page.evaluate("setView('favorites')")
+        # This checks sequential cursor adjustment; scroll paging is tested separately.
+        # Settle any viewport-triggered page before mutating its result set.
+        self.page.evaluate('async () => { photoLoadMoreObserver?.disconnect(); await photosLoadPromise; photoLoadMoreObserver?.disconnect(); }')
         self.page.evaluate('state.selectedId = state.items[0].id; toggleFavorite()')
         self.page.evaluate('loadPhotos(true)')
         ids = self.page.evaluate('state.items.map(item => item.id)')

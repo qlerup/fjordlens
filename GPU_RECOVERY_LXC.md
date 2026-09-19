@@ -103,7 +103,7 @@ Expected:
 ```bash
 cd /opt/fjordlens
 docker compose up -d --build --force-recreate
-curl -s http://localhost:8001/health | python3 -m json.tool
+docker compose exec fjordlens-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"
 ```
 
 Expected in health output:
