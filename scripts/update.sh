@@ -201,16 +201,15 @@ compose_build_no_cache() {
 }
 
 compose_up() {
-	# --force-recreate when a specific service list is given: fjordlens-ai in
-	# particular only detects CUDA/onnxruntime GPU providers once at process
-	# startup, so if it never rebuilds (its image/config didn't change) plain
-	# "up -d" leaves the same long-running process in place and any GPU
-	# detection glitch from its last boot persists indefinitely. Forcing a
-	# recreate on every update guarantees a fresh device check.
+	# Always recreate the updated runtime. FjordLens keeps some runtime state
+	# in long-running processes (face queue configuration, CUDA/onnxruntime
+	# provider detection, converter workers, etc.). A plain "up -d" may keep
+	# an old process alive even though git/config changed, which can leave the
+	# app using stale workflow concurrency until somebody restarts it manually.
 	if [ -n "$COMPOSE_SERVICES" ]; then
 		docker_compose up -d --force-recreate $COMPOSE_SERVICES
 	else
-		docker_compose up -d
+		docker_compose up -d --force-recreate
 	fi
 }
 
@@ -218,7 +217,7 @@ compose_up_build() {
 	if [ -n "$COMPOSE_SERVICES" ]; then
 		docker_compose up -d --build --force-recreate $COMPOSE_SERVICES
 	else
-		docker_compose up -d --build
+		docker_compose up -d --build --force-recreate
 	fi
 }
 
