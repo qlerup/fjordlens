@@ -36,7 +36,7 @@ jobs:
           node-version: '22'
       - name: Install application and browser test dependencies
         run: |
-          pip install -r requirements.txt playwright
+          pip install -r requirements.txt playwright PyYAML
           python -m playwright install --with-deps chromium
           npm install --no-save --package-lock=false --ignore-scripts jsdom@26
       - name: JavaScript regressions
