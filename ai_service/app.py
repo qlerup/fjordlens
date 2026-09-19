@@ -1554,21 +1554,29 @@ def _serialize_face_result(face) -> Dict[str, Any]:
 
 
 def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
-    if not face_detection_available or face_app is None:
-        _ensure_face_runtime_loaded()
-    if not face_detection_available or face_app is None:
-        raise RuntimeError("Face detection model unavailable")
-    img = Image.open(io.BytesIO(data)).convert("RGB")
-    img_np = np.array(img)
-    return [_serialize_face_result(face) for face in face_app.get(img_np)]
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img_np = np.array(img)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
+    # Share the lifecycle lock with load/release. A single FaceAnalysis instance
+    # must not be used concurrently or released during inference.
+    with _face_runtime_lock:
+        if not face_detection_available or face_app is None:
+            _ensure_face_runtime_loaded()
+        if not face_detection_available or face_app is None:
+            raise RuntimeError("Face detection model unavailable")
+        return [_serialize_face_result(face) for face in face_app.get(img_np)]
 
 
 @app.post("/faces/detect")
 def detect_faces(file: UploadFile = File(...)):
     try:
         out = _detect_faces_bytes(file.file.read())
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"face_detect_failed: {exc}")
+        raise HTTPException(status_code=503, detail=f"face_detect_failed: {exc}") from exc
     return {"ok": True, "count": len(out), "faces": out}
 
 
@@ -1584,8 +1592,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
     for index, upload in enumerate(uploads):
         payloads.append((index, str(upload.filename or f"image-{index}.jpg"), upload.file.read()))
 
-    # Batch size is intentionally identical to concurrency:
-    # 8 files in the request means 8 face-detection jobs run at the same time.
+    # Decode batch inputs concurrently; shared model inference is serialized.
     workers = len(payloads)
     results: List[Optional[Dict[str, Any]]] = [None] * len(payloads)
 
@@ -1610,9 +1617,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
             except Exception as exc:
                 failed.append((index, filename, data, exc))
 
-    # Only after every parallel inference has finished, retry failed items one
-    # at a time. This is a safe fallback for providers/drivers that dislike
-    # concurrent execution while still keeping the fast path parallel.
+    # Keep the existing one-shot retry after all initial batch attempts finish.
     for index, filename, data, first_exc in failed:
         try:
             faces = _detect_faces_bytes(data)

@@ -1899,7 +1899,7 @@ def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional
             if js.get("ok") and isinstance(js.get("faces"), list):
                 return js.get("faces")
         else:
-            log_event("ai_http_error", file=filename, error=f"status:{r.status_code}")
+            log_event("ai_http_error", file=filename, error=f"status:{r.status_code}", detail=r.text[:500])
     except Exception as e:
         log_event("error", file=filename, error=f"ai_faces_bytes: {e}")
     return None
@@ -2058,12 +2058,16 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
         if not frame_bytes:
             continue
         frames_ok += 1
-        faces = _ai_detect_faces_bytes(frame_bytes, filename=f"{path.stem}_t{sec:.2f}.jpg") or []
+        faces = _ai_detect_faces_bytes(frame_bytes, filename=f"{path.stem}_t{sec:.2f}.jpg")
+        if faces is None:
+            raise RuntimeError(f"Face detection failed for video frame at {sec:.2f}s")
         log_event("faces_video_frame_detect", rel_path=rel_path, at_sec=round(sec, 2), count=len(faces))
         for fc in faces:
             if isinstance(fc, dict):
                 fc["frame_sec"] = sec
                 all_faces.append(fc)
+    if not frames_ok:
+        raise RuntimeError("No video frames could be decoded for face detection")
     unique_faces = _dedupe_faces_by_embedding(all_faces)
     log_event(
         "faces_video_detect_done",
