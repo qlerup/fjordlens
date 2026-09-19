@@ -16310,13 +16310,22 @@ def _query_term_groups(q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -
 
 
 def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -> bool:
+    # Match file names literally before natural-language stemming removes
+    # underscores/hyphens. The media extension is not part of the name search.
+    filename = Path(str(photo.get("filename") or "")).stem
+    name_query = _fold_danish(q or "").strip()
+    suffix = Path(name_query).suffix
+    if suffix in SUPPORTED_EXTS:
+        name_query = name_query[:-len(suffix)]
+    if name_query and name_query in _fold_danish(filename):
+        return True
     term_groups = _query_term_groups(q, search_language)
     if not term_groups:
         return True
 
     fields = [
-        str(photo.get("filename") or "").lower(),
-        str(photo.get("rel_path") or "").lower(),
+        filename.lower(),
+        str(Path(str(photo.get("rel_path") or "")).with_suffix("")).lower() if photo.get("rel_path") else "",
         str(photo.get("camera_make") or "").lower(),
         str(photo.get("camera_model") or "").lower(),
         str(photo.get("lens_model") or "").lower(),
