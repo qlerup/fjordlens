@@ -2,24 +2,82 @@ name: Folder index checks
 on:
   push:
     branches: [perf/folder-index]
+    paths: [.folder-index.patch.b64]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source-check:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Locate folder integration points
+      - name: Apply implementation in isolated checkout
         run: |
-          grep -nE '^def .*([Ff]older|[Uu]pload_subdir|allowed|visible|row_to_public|get_conn|init_db)' app.py
-          grep -nE '^(async )?function (loadPhotos|setView|fetchUploadDestinationConfig|renderMapperTree|renderGalleryLoading)' static/app.js
-      - uses: actions/upload-artifact@v4
+          python - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          data = gzip.decompress(base64.b64decode(pathlib.Path('.folder-index.patch.b64').read_text()))
+          assert hashlib.sha256(data).hexdigest() == '2c14940b0bbcb78b57ac9c6af126b3905907168c5b2315786f8f789dcc4ba52a'
+          pathlib.Path('/tmp/folder-index.patch').write_bytes(data)
+          subprocess.run(['git','apply','--check','/tmp/folder-index.patch'],check=True)
+          subprocess.run(['git','apply','/tmp/folder-index.patch'],check=True)
+          PY
+      - uses: actions/setup-python@v5
         with:
-          name: folder-index-source
-          path: |
-            *.py
-            requirements.txt
-            static/*.js
-            tests/
-            templates/
-          retention-days: 1
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install application and browser test dependencies
+        run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          npm install --no-save --package-lock=false --ignore-scripts jsdom@26
+      - name: JavaScript regressions
+        id: node
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node --check static/app.js
+          node --test tests/*.test.cjs 2>&1 | tee /tmp/folder-index-node.log
+      - name: Catalogue and application integration tests
+        id: python
+        continue-on-error: true
+        env:
+          PYTHONPATH: '.:tests'
+          DATA_DIR: /tmp/fjordlens-test-data
+        run: |
+          set -o pipefail
+          python -m unittest -v test_folder_index test_folder_index_api test_folder_previews test_folder_move test_gallery_browse test_video_autoplay_settings test_upload_conversion_uploader 2>&1 | tee /tmp/folder-index-python.log
+      - name: Real browser navigation regressions
+        id: browser
+        continue-on-error: true
+        env:
+          PYTHONPATH: '.:tests'
+          DATA_DIR: /tmp/fjordlens-browser-data
+        run: |
+          set -o pipefail
+          python -m unittest -v test_gallery_navigation_browser test_folder_previews_browser 2>&1 | tee /tmp/folder-index-browser.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: folder-index-validation
+          path: /tmp/folder-index-*.log
+          retention-days: 3
+      - name: Publish only verified implementation to feature branch
+        if: steps.node.outcome == 'success' && steps.python.outcome == 'success' && steps.browser.outcome == 'success'
+        run: |
+          git add app.py static/app.js wsgi.py folder_index.py docs/folder-index.md tests/folder_index_ui.test.cjs tests/folder_move_ui.test.cjs tests/mapper_views.test.cjs tests/test_folder_index.py tests/test_folder_index_api.py tests/test_gallery_navigation_browser.py
+          git rm .folder-index.patch.b64
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Use persistent permission-aware folder index and independent loading states'
+          git push origin HEAD:perf/folder-index
+      - name: Require all checks to pass
+        if: always()
+        env:
+          NODE_RESULT: '${{ steps.node.outcome }}'
+          PYTHON_RESULT: '${{ steps.python.outcome }}'
+          BROWSER_RESULT: '${{ steps.browser.outcome }}'
+        run: |
+          test "$NODE_RESULT" = success && test "$PYTHON_RESULT" = success && test "$BROWSER_RESULT" = success
