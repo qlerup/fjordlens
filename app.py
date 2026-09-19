@@ -1775,6 +1775,38 @@ def _prepare_face_detection_upload(path: Path) -> tuple[str, bytes]:
     return ai_src.name, data
 
 
+def _ai_face_runtime_warmup() -> bool:
+    """Best-effort pre-load so the face GPU runtime is ready before queue work starts."""
+    try:
+        response = requests.post(f"{AI_URL}/faces/warmup", timeout=120)
+        if response.ok:
+            payload = response.json() or {}
+            log_event(
+                "faces_gpu_warmup",
+                reloaded=bool(payload.get("reloaded")),
+                device=payload.get("device"),
+            )
+            return bool(payload.get("available", True))
+        log_event("ai_http_error", error=f"faces_warmup_status:{response.status_code}")
+    except Exception as exc:
+        log_event("error", error=f"faces_warmup: {exc}")
+    return False
+
+
+def _ai_face_runtime_release() -> bool:
+    """Best-effort full face runtime release after a complete workflow."""
+    try:
+        response = requests.post(f"{AI_URL}/faces/release", timeout=30)
+        if response.ok:
+            payload = response.json() or {}
+            log_event("faces_gpu_release", released=bool(payload.get("released")))
+            return True
+        log_event("ai_http_error", error=f"faces_release_status:{response.status_code}")
+    except Exception as exc:
+        log_event("error", error=f"faces_release: {exc}")
+    return False
+
+
 def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
     """Send one orientation-corrected image to the AI service."""
     try:
@@ -4560,6 +4592,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
     }
 
     batch = list(initial_rels or [])
+    if aggregate.get("faces_enabled") and batch:
+        _ai_face_runtime_warmup()
     try:
         while batch:
             if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
@@ -4688,6 +4722,9 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
             )
         except Exception:
             pass
+    finally:
+        if aggregate.get("faces_enabled"):
+            _ai_face_runtime_release()
 
 
 def _tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -13793,6 +13830,8 @@ def _index_faces_worker(all_photos: bool = False):
         total = len(rels)
         faces_counts = {"processed": 0, "total": total}
         batch_size = max(1, int(face_batch_size_enabled()))
+        if rels:
+            _ai_face_runtime_warmup()
 
         def completed(rel: str, count: int, error: Optional[Exception]) -> None:
             if error is not None:
@@ -13821,6 +13860,7 @@ def _index_faces_worker(all_photos: bool = False):
             "errors": stats["errors"],
         }
     finally:
+        _ai_face_runtime_release()
         _faces_running.clear()
 
 
@@ -14468,6 +14508,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
     def run() -> None:
         processed_total = 0
         known_total = len(rels)
+        if aggregate.get("faces_enabled") and rels:
+            _ai_face_runtime_warmup()
 
         def set_direct_progress(progress: Dict[str, Any]) -> None:
             stage_processed = int(progress.get("stage_processed") or 0)
@@ -14572,6 +14614,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             except Exception:
                 pass
         finally:
+            if aggregate.get("faces_enabled"):
+                _ai_face_runtime_release()
             with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
                 DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS.clear()
 

@@ -452,6 +452,76 @@ def _face_runtime_device() -> str:
     return face_device
 
 
+_face_runtime_lock = threading.RLock()
+
+
+def _ensure_face_runtime_loaded() -> bool:
+    """Load InsightFace again after an idle release. Returns True when reloaded."""
+    global face_app, face_detection_available, face_detection_error, face_device, face_providers_kw_supported
+    with _face_runtime_lock:
+        if face_detection_available and face_app is not None:
+            return False
+
+        errors: list[str] = []
+        if FACE_USE_CUDA:
+            for providers, label in ((FACE_PROVIDER_CHAIN, "chain"), (["CUDAExecutionProvider"], "cuda_only")):
+                try:
+                    app_obj, kw_supported, det_runtime_providers = _build_face_analysis(providers, ctx_id=0)
+                    if "CUDAExecutionProvider" not in det_runtime_providers:
+                        raise RuntimeError(
+                            f"{label}_runtime_providers={det_runtime_providers or ['none']}, providers_kw_supported={kw_supported}"
+                        )
+                    face_app = app_obj
+                    face_detection_available = True
+                    face_device = "cuda"
+                    face_providers_kw_supported = bool(kw_supported)
+                    face_detection_error = None
+                    face_cuda_init_errors[:] = errors
+                    return True
+                except Exception as exc:
+                    errors.append(f"{label}:{exc}")
+
+        try:
+            app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
+            face_app = app_obj
+            face_detection_available = True
+            face_device = "cpu"
+            face_providers_kw_supported = bool(kw_supported)
+            face_cuda_init_errors[:] = errors
+            face_detection_error = ("cuda_init_failed: " + " | ".join(errors)) if errors else None
+            return True
+        except Exception as exc:
+            face_app = None
+            face_detection_available = False
+            face_device = "cpu"
+            face_providers_kw_supported = None
+            face_cuda_init_errors[:] = errors
+            if errors:
+                face_detection_error = "cuda_init_failed: " + " | ".join(errors) + f"; cpu_fallback_failed: {exc}"
+            else:
+                face_detection_error = str(exc)
+            raise RuntimeError(face_detection_error)
+
+
+def _release_face_runtime() -> bool:
+    """Drop ONNX/InsightFace sessions so their CUDA allocations are returned."""
+    global face_app, face_detection_available, face_detection_error, face_device, face_providers_kw_supported
+    with _face_runtime_lock:
+        changed = face_app is not None or face_detection_available
+        old_app = face_app
+        face_app = None
+        face_detection_available = False
+        face_device = FACE_DEVICE_CONFIGURED
+        face_providers_kw_supported = None
+        face_detection_error = "released_after_workflow"
+        try:
+            del old_app
+        except Exception:
+            pass
+    _clear_cuda_cache()
+    return bool(changed)
+
+
 def _to_list(t: torch.Tensor) -> List[float]:
     v = t.detach().cpu().numpy().astype("float32").ravel()
     # Normalize (unit length)
@@ -1485,6 +1555,8 @@ def _serialize_face_result(face) -> Dict[str, Any]:
 
 def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
     if not face_detection_available or face_app is None:
+        _ensure_face_runtime_loaded()
+    if not face_detection_available or face_app is None:
         raise RuntimeError("Face detection model unavailable")
     img = Image.open(io.BytesIO(data)).convert("RGB")
     img_np = np.array(img)
@@ -1493,8 +1565,6 @@ def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
 
 @app.post("/faces/detect")
 def detect_faces(file: UploadFile = File(...)):
-    if not face_detection_available or face_app is None:
-        raise HTTPException(status_code=503, detail="Face detection model unavailable")
     try:
         out = _detect_faces_bytes(file.file.read())
     except Exception as exc:
@@ -1504,8 +1574,6 @@ def detect_faces(file: UploadFile = File(...)):
 
 @app.post("/faces/detect-batch")
 def detect_faces_batch(files: List[UploadFile] = File(...)):
-    if not face_detection_available or face_app is None:
-        raise HTTPException(status_code=503, detail="Face detection model unavailable")
     uploads = list(files or [])
     if not uploads:
         raise HTTPException(status_code=400, detail="No files supplied")
@@ -1565,12 +1633,37 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
             }
 
     items = [item or {"ok": False, "count": 0, "faces": [], "error": "missing_result"} for item in results]
+    _clear_cuda_cache()
     return {
         "ok": True,
         "batch_size": len(items),
         "workers": workers,
         "items": items,
     }
+
+
+@app.post("/faces/warmup")
+def faces_warmup():
+    try:
+        reloaded = _ensure_face_runtime_loaded()
+        return {
+            "ok": True,
+            "reloaded": bool(reloaded),
+            "available": bool(face_detection_available and face_app is not None),
+            "device": _face_runtime_device(),
+            "providers": _face_detection_runtime_providers(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"face_warmup_failed: {exc}")
+
+
+@app.post("/faces/release")
+def faces_release():
+    try:
+        released = _release_face_runtime()
+        return {"ok": True, "released": bool(released)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"face_release_failed: {exc}")
 
 
 if __name__ == "__main__":
