@@ -10,10 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assemble staged content
-        run: cat .folder-index-part-1.b64 .folder-index-part-2.b64 .folder-index-part-3.b64 .folder-index-part-4.b64 > /tmp/transport.b64
+        with:
+          fetch-depth: 0
+      - name: Export concurrent main changes for compatibility review
+        run: |
+          mkdir /tmp/main-review
+          git rev-parse origin/main > /tmp/main-review/sha.txt
+          git diff 3123ec3ad374b2bf1dedef1eb0a52d0823611198 origin/main -- app.py static/app.js tests/test_folder_previews.py > /tmp/main-review/main.diff
+          git show origin/main:app.py > /tmp/main-review/app.py
+          git show origin/main:static/app.js > /tmp/main-review/app.js
+          git show origin/main:tests/test_folder_previews.py > /tmp/main-review/test_folder_previews.py
       - uses: actions/upload-artifact@v4
         with:
-          name: folder-patch-transport
-          path: /tmp/transport.b64
+          name: folder-main-compatibility
+          path: /tmp/main-review/
           retention-days: 1
