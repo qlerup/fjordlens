@@ -1,0 +1,25 @@
+name: Folder index checks
+on:
+  push:
+    branches: [perf/folder-index]
+permissions:
+  contents: read
+jobs:
+  source-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate folder integration points
+        run: |
+          grep -nE '^def .*([Ff]older|[Uu]pload_subdir|allowed|visible|row_to_public|get_conn|init_db)' app.py
+          grep -nE '^(async )?function (loadPhotos|setView|fetchUploadDestinationConfig|renderMapperTree|renderGalleryLoading)' static/app.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folder-index-source
+          path: |
+            *.py
+            requirements.txt
+            static/*.js
+            tests/
+            templates/
+          retention-days: 1
