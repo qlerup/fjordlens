@@ -73,6 +73,50 @@ class HiddenPeopleExcludedFromMatchingTests(unittest.TestCase):
         self.assertEqual(found_pid, visible_pid)
         self.assertNotEqual(found_pid, hidden_pid)
 
+    def test_vectorized_face_cache_matches_visible_centroid_without_loading_all_faces(self):
+        target = [1.0, 0.0, 0.0, 0.0]
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            visible_pid = self._add_person(conn, "VisibleFast", target, hidden=0, with_face=True)
+            self._add_person(conn, "HiddenFast", target, hidden=1, with_face=True)
+            conn.commit()
+
+            cache = fjordlens._FaceMatchCache(conn)
+            found_pid, created, score = cache.match_or_create(conn, target)
+
+        self.assertFalse(created)
+        self.assertEqual(found_pid, visible_pid)
+        self.assertGreaterEqual(score, fjordlens.FACE_MATCH_THRESHOLD_CENTROID)
+        self.assertFalse(cache.fallback_loaded, "Centroid hit should not load every historical face embedding")
+
+    def test_bulk_centroid_rebuild_updates_touched_people_once(self):
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute(
+                "INSERT INTO people(name, created_at, hidden, centroid_json) VALUES (?,?,0,NULL)",
+                ("BulkPerson", fjordlens.now_iso()),
+            )
+            pid = int(conn.execute("SELECT id FROM people WHERE name='BulkPerson'").fetchone()["id"])
+            for index, vector in enumerate(([1.0, 0.0], [0.0, 1.0]), start=1):
+                rel = f"uploads/originals/bulk_{index}.jpg"
+                conn.execute(
+                    """INSERT INTO photos(rel_path, filename, ext, file_size, width, height, created_fs, modified_fs, captured_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (rel, f"bulk_{index}.jpg", "jpg", 10, 10, 10, fjordlens.now_iso(), fjordlens.now_iso(), fjordlens.now_iso()),
+                )
+                photo_id = int(conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel,)).fetchone()["id"])
+                conn.execute(
+                    "INSERT INTO faces(photo_id, person_id, embedding_json, confidence, created_at) VALUES (?,?,?,?,?)",
+                    (photo_id, pid, json.dumps(vector), 0.9, fjordlens.now_iso()),
+                )
+            conn.commit()
+
+        fjordlens._recompute_person_centroids_bulk({pid})
+
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            raw = conn.execute("SELECT centroid_json FROM people WHERE id=?", (pid,)).fetchone()["centroid_json"]
+        centroid = json.loads(raw)
+        self.assertAlmostEqual(centroid[0], 0.5, places=5)
+        self.assertAlmostEqual(centroid[1], 0.5, places=5)
+
     def test_load_person_centroids_excludes_hidden(self):
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             hidden_pid = self._add_person(conn, "HiddenGuy", [1.0, 0.0, 0.0, 0.0], hidden=1, with_face=False)
