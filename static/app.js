@@ -2801,6 +2801,15 @@ let state = {
   showFaceBoxes: (() => { try { return localStorage.getItem('fl_show_face_boxes') !== '0'; } catch { return true; } })(),
   mapperPath: "",
   mapperFolders: [],
+  mapperFolderPreviews: {},
+  mapperFoldersLoading: false,
+  mapperFoldersError: '',
+  mapperPhotosError: '',
+  mapperIndexing: false,
+  mapperIndexRevision: null,
+  mapperIndexScope: null,
+  mapperTreeFolders: [],
+  mapperTreeIndexKey: null,
   cameraModel: null,
   cameras: [],
   mapperSort: "date_desc",
@@ -3008,7 +3017,15 @@ function renderMapperTree() {
 
   if (els.mapperNavMenu) els.mapperNavMenu.classList.remove('hidden');
 
-  const tree = _buildMapperTree(state.mapperFolders || []);
+  if (state.mapperTreeIndexKey !== mapperTreeIndexCacheKey()) {
+    els.mapperTreeNav.classList.remove('hidden');
+    els.mapperTreeNav.textContent = state.uiLanguage === 'en' ? 'Loading folders…' : 'Indlæser mapper…';
+    loadMapperTreeIndex().then(() => renderMapperTree()).catch(error => {
+      if (state.view === 'mapper' && state.mapperTreeOpen) els.mapperTreeNav.textContent = error.message;
+    });
+    return;
+  }
+  const tree = _buildMapperTree(state.mapperTreeFolders || []);
   _expandMapperAncestors(state.mapperPath || '');
   const root = tree.get('');
   const rootChildren = root ? Array.from(root.children) : [];
@@ -3061,9 +3078,7 @@ function renderMapperTree() {
     link.type = 'button';
     link.textContent = node.name;
     link.addEventListener('click', async () => {
-      const targetPath = beginMapperPathNavigation(path);
-      await loadMapperTools(targetPath, true);
-      await loadPhotos(false, false, true);
+      await navigateMapperPath(path);
     });
     row.appendChild(link);
     els.mapperTreeNav.appendChild(row);
@@ -6012,15 +6027,25 @@ const galleryDataCache = window.FjordLensGalleryCache.createCache();
 const mapperViews = new Map();
 let pendingMapperView = null;
 let mapperUnchangedCards = null;
+let mapperRevalidation = null;
+function revalidateMapperView() {
+  const key = mapperViewKey(), sequence = photosRequestSequence;
+  if (mapperRevalidation?.key === key && mapperRevalidation.sequence === sequence) return;
+  const pending = {key, sequence};
+  mapperRevalidation = pending;
+  pending.promise = refreshMapperViewInBackground().catch(() => {}).finally(() => {
+    if (mapperRevalidation === pending) mapperRevalidation = null;
+  });
+}
 function mapperViewKey() {
   return galleryCacheKey(JSON.stringify([state.mapperPath || '', state.q, state.mapperSort, state.searchLanguage, state.uiLanguage]));
 }
 function rememberMapperView() {
-  if (state.view !== 'mapper' || state.photosLoading || state.mapperEditMode || !els.grid?.classList.contains('folders-view')) return;
+  if (state.view !== 'mapper' || state.photosLoading || state.mapperFoldersLoading || state.mapperIndexing || state.mapperFoldersError || state.mapperPhotosError || state.mapperEditMode || !els.grid?.classList.contains('folders-view')) return;
   if ((state.items || []).length > 2000) return;
   const key = mapperViewKey();
   mapperViews.delete(key);
-  mapperViews.set(key, {nodes:[...els.grid.childNodes], items:state.items.slice(), folders:(state.mapperFolders || []).slice(),
+  mapperViews.set(key, {nodes:[...els.grid.childNodes], items:state.items.slice(), folders:(state.mapperFolders || []).slice(), previews:{...(state.mapperFolderPreviews || {})},
     offset:state.photosPageOffset, more:state.photosHasMore, total:state.mapperTotalItems, capacity:state.mapperGhostCapacity,
     scroll:captureGalleryScrollAnchor(), generation:galleryDataCache.generation(), at:Date.now(), empty:!els.empty.classList.contains('hidden')});
   while (mapperViews.size > 6) mapperViews.delete(mapperViews.keys().next().value);
@@ -6029,14 +6054,17 @@ function restoreMapperView() {
   const entry = mapperViews.get(mapperViewKey());
   if (!entry || state.mapperEditMode || entry.generation !== galleryDataCache.generation() || Date.now() - entry.at > 600000) return false;
   if (entry.nodes.length && entry.nodes.every(node => node.parentNode === els.grid)
-      && state.items.length === entry.items.length && state.items.every((item, index) => item === entry.items[index])) return true;
+      && state.items.length === entry.items.length && state.items.every((item, index) => item === entry.items[index])) {revalidateMapperView(); return true;}
   photosRequestSequence++;
   state.items = entry.items.slice(); state.mapperFolders = entry.folders.slice();
+  state.mapperFolderPreviews = {...(entry.previews || {})};
+  state.mapperFoldersLoading = false; state.mapperIndexing = false;
+  state.mapperFoldersError = ''; state.mapperPhotosError = '';
   state.photosPageOffset = entry.offset; state.photosHasMore = entry.more; state.mapperTotalItems = entry.total;
   state.mapperGhostCapacity = entry.capacity; state.photosLoading = false;
   pendingMapperView = entry;
   renderGrid(); renderMapperContext(state.mapperPath || '');
-  refreshMapperViewInBackground().catch(() => {});
+  revalidateMapperView();
   return true;
 }
 async function refreshMapperViewInBackground() {
@@ -6046,36 +6074,60 @@ async function refreshMapperViewInBackground() {
   const qs = new URLSearchParams({view:'mapper',folder:state.mapperPath || '',direct:'1',q:state.q || '',
     sort:_normalizeMapperSort(state.mapperSort),search_lang:state.searchLanguage || 'da',offset:'0',
     limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false)))), browse:'1'});
-  const [photos, folders] = await Promise.all([
-    fetch(`/api/photos?${qs}`).then(async response => {if (!response.ok) throw new Error('photos'); return response.json();}),
-    fetchUploadDestinationConfig('uploads')
-  ]);
-  if (!current() || !Array.isArray(photos.items) || !folders.res.ok || !folders.data?.ok) return;
-  const nextFolders = (folders.data.folders || []).filter(Boolean);
-  const changed = JSON.stringify(state.items) !== JSON.stringify(photos.items)
-    || JSON.stringify(state.mapperFolders) !== JSON.stringify(nextFolders)
-    || Number(state.mapperTotalItems) !== Number(photos.total);
-  if (changed) {
-    const anchor = captureGalleryScrollAnchor();
-    const previous = new Map(state.items.map(item => [String(item.id), JSON.stringify(item)]));
-    mapperUnchangedCards = new Map();
-    for (const item of photos.items) {
-      if (previous.get(String(item.id)) === JSON.stringify(item)) {
-        const card = els.grid.querySelector(`.photo-card[data-photo-id="${Number(item.id)}"]`);
-        if (card) mapperUnchangedCards.set(String(item.id), card);
+  try {
+    const [photos, folders] = await Promise.all([
+      fetch(`/api/photos?${qs}`).then(async response => {
+        if (!response.ok) throw Object.assign(new Error('photos'), {status:response.status});
+        return response.json();
+      }),
+      fetchMapperFolderIndex(state.mapperPath || '')
+    ]);
+    if (!current() || !Array.isArray(photos.items)) return;
+    const nextFolders = folders.folders.filter(Boolean);
+    const previews = mapperIndexPreviews(folders);
+    if (folders.scope_revision && acceptMapperIndexScope(folders)) {
+      state.mapperFolders = nextFolders; state.mapperFolderPreviews = previews;
+      state.mapperIndexRevision = folders.revision;
+      renderGrid(); renderMapperContext(state.mapperPath || '');
+      scheduleMapperIndexRefresh(folders);
+      await loadPhotos(false, false, false);
+      return;
+    }
+    const changed = JSON.stringify(state.items) !== JSON.stringify(photos.items)
+      || JSON.stringify(state.mapperFolders) !== JSON.stringify(nextFolders)
+      || JSON.stringify(state.mapperFolderPreviews || {}) !== JSON.stringify(previews)
+      || state.mapperTotalItems !== photos.total;
+    state.mapperIndexRevision = folders.revision;
+    if (changed) {
+      const anchor = captureGalleryScrollAnchor();
+      const previous = new Map(state.items.map(item => [String(item.id), JSON.stringify(item)]));
+      mapperUnchangedCards = new Map();
+      for (const item of photos.items) {
+        if (previous.get(String(item.id)) === JSON.stringify(item)) {
+          const card = els.grid.querySelector(`.photo-card[data-photo-id="${Number(item.id)}"]`);
+          if (card) mapperUnchangedCards.set(String(item.id), card);
+        }
       }
+      state.items = photos.items; state.mapperFolders = nextFolders; state.mapperFolderPreviews = previews;
+      state.mapperTotalItems = photos.total; state.photosPageOffset = photos.next_offset;
+      state.photosHasMore = photos.total != null ? photos.next_offset < photos.total : !!photos.has_more;
+      renderGrid(); mapperUnchangedCards = null;
+      window.FjordLensFolderPreviews.resume?.(els.grid);
+      renderMapperContext(state.mapperPath || ''); restoreGalleryScrollAnchor(anchor, current);
     }
-    for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
-      mapperUnchangedCards.set('folder:' + card.dataset.folder, card);
-    }
-    state.items = photos.items; state.mapperFolders = nextFolders;
-    state.mapperTotalItems = photos.total; state.photosPageOffset = photos.next_offset;
-    state.photosHasMore = photos.total != null ? photos.next_offset < photos.total : !!photos.has_more;
-    renderGrid(); mapperUnchangedCards = null;
-    window.FjordLensFolderPreviews.resume?.(els.grid);
-    renderMapperContext(state.mapperPath || ''); restoreGalleryScrollAnchor(anchor, current);
+    scheduleMapperIndexRefresh(folders);
+    rememberMapperView();
+  } catch (error) {
+    if (!current()) return;
+    if ([401,403,404].includes(error.status)) {
+      // Cached DOM is never authority for a permission that has been revoked.
+      galleryDataCache.clear(); mapperViews.clear();
+      state.items = []; state.mapperFolders = []; state.mapperFolderPreviews = {};
+      state.mapperFoldersError = 'Mappen er ikke længere tilgængelig.';
+      state.mapperFoldersLoading = false; state.photosLoading = false;
+      renderGrid();
+    } else showStatus('Kunne ikke opdatere mappevisningen. Prøv igen.', 'err');
   }
-  rememberMapperView();
 }
 function galleryCacheKey(query) {
   return JSON.stringify([state.currentUser?.id, state.currentUser?.username, state.currentUser?.role, query]);
@@ -6332,6 +6384,14 @@ function renderCameraFolders() {
 }
 
 function renderGrid() {
+  const reusableFolders = new Map();
+  if (state.view === 'mapper' && !state.mapperEditMode && els.grid?.dataset.mapperPath === String(state.mapperPath || '')) {
+    for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
+      if (card.dataset.previewKey === JSON.stringify((state.mapperFolderPreviews || {})[card.dataset.folder] ?? null)) {
+        reusableFolders.set(card.dataset.folder, card);
+      }
+    }
+  }
   if (els.statPhotos) els.statPhotos.style.display = state.view === 'personer' && state.personView.mode === 'photos' ? 'none' : '';
   if (els.statSingleToggle) els.statSingleToggle.style.display = state.view === 'personer' && state.personView.mode === 'list' ? '' : 'none';
   if (els.showSingleToggle) els.showSingleToggle.checked = !!state.showSinglePeople;
@@ -6342,7 +6402,7 @@ function renderGrid() {
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
   if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
-  const loading = isPagedGalleryView(state.view) && state.photosLoading && !state.items.length;
+  const loading = isPagedGalleryView(state.view) && (state.photosLoading || (state.view === 'mapper' && (state.mapperFoldersLoading || state.mapperIndexing))) && !state.items.length;
   if (els.grid) els.grid.setAttribute('aria-busy', loading ? 'true' : 'false');
   // Folder cards are usable before photos or cover thumbnails arrive.
   const hasMapperChildren = state.view === 'mapper' && (state.mapperFolders || [])
@@ -6367,6 +6427,15 @@ function renderGrid() {
     els.grid.append(fragment);
     if (els.mapperTools && state.view === 'mapper') els.mapperTools.classList.remove('hidden');
     hideEmpty(); setDetail(null); renderStats();
+    return;
+  }
+  if (state.view === 'mapper' && !state.items.length && !hasMapperChildren && (state.mapperFoldersError || state.mapperPhotosError)) {
+    els.grid.replaceChildren();
+    renderEmpty(state.mapperFoldersError || state.mapperPhotosError);
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'btn'; retry.textContent = state.uiLanguage === 'en' ? 'Retry' : 'Prøv igen';
+    retry.addEventListener('click', () => navigateMapperPath(state.mapperPath || ''));
+    els.empty.appendChild(retry); renderStats();
     return;
   }
   // Handle Settings view
@@ -6610,6 +6679,7 @@ function renderGrid() {
   const items = state.items.slice();
   if (state.view === "mapper") {
     const current = String(state.mapperPath || "");
+    els.grid.dataset.mapperPath = current;
 
     // Build child folder list purely from the folder index (fast) — do not scan items
     const childSet = new Set();
@@ -6625,19 +6695,13 @@ function renderGrid() {
       return;
     }
     for (const folderPath of sorted) {
-      const existing = mapperUnchangedCards?.get('folder:' + folderPath);
+      const existing = reusableFolders.get(folderPath);
       if (existing) {els.grid.append(existing); continue;}
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
       appendFolderCard(folderPath, [], {
         title,
         onOpen: async () => {
-          const targetPath = beginMapperPathNavigation(folderPath);
-          // Folder index and first photo page are independent. Fetch both at
-          // once so NAS/filesystem latency cannot serialize navigation.
-          await Promise.all([
-            loadMapperTools(targetPath, true),
-            loadPhotos(false, false, true),
-          ]);
+          await navigateMapperPath(folderPath);
         },
       });
     }
@@ -6651,6 +6715,7 @@ function renderGrid() {
     state.mapperGhostCapacity = Math.min(total, cols * 50);
     appendMapperGhostSlots(items.length, state.mapperGhostCapacity);
     appendPhotoLoadMoreButton('mapperLoadMoreBtn', 'mapper');
+    window.FjordLensFolderPreviews.resume?.(els.grid);
   } else {
     items.forEach(item => appendCard(item));
     if (isPagedGalleryView(state.view)) appendPhotoLoadMoreButton(`${state.view}LoadMoreBtn`, state.view);
@@ -6925,6 +6990,10 @@ function invalidateStoredFolderPreviews(folders) {
     .map((f) => String(f || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
     .filter((f, i, a) => a.indexOf(f) === i);
   if (!list.length) return;
+  for (const key of Object.keys(state.mapperFolderPreviews || {})) {
+    if (list.some(folder => !folder || key === folder || key.startsWith(folder + '/'))) delete state.mapperFolderPreviews[key];
+  }
+  mapperViews.clear();
   // Drop cached previews for the affected folders (and their subfolders) so
   // the next render pulls the server's freshly computed previews instead of
   // showing thumbnails of deleted photos.
@@ -7037,7 +7106,9 @@ function appendFolderCard(folder, arr, opts = {}) {
   });
   els.grid.appendChild(card);
 
-  window.FjordLensFolderPreviews.watch(card, () => loadMapperFolderPreview(folder));
+  const savedPreviews = (state.mapperFolderPreviews || {})[folder];
+  card.dataset.previewKey = JSON.stringify(savedPreviews ?? null);
+  window.FjordLensFolderPreviews.watch(card, () => Array.isArray(savedPreviews) ? savedPreviews : loadMapperFolderPreview(folder));
 
 }
 
@@ -8073,6 +8144,7 @@ async function loadPhotos(append = false, preserveScroll = false, useCache = fal
   } catch (error) {
     if (photosLoadPromise === request && error?.name !== 'AbortError') {
       state.photosLoading = false;
+      if (state.view === 'mapper') state.mapperPhotosError = 'Kunne ikke hente billeder. Prøv igen.';
       renderGrid();
       showStatus('Kunne ikke hente billeder. Prøv igen.', 'err');
     }
@@ -8097,6 +8169,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   }
 
   const requestSequence = ++photosRequestSequence;
+  if (state.view === 'mapper') state.mapperPhotosError = '';
   const appendStart = append ? (state.items || []).length : 0;
   photosAbortController?.abort();
   const controller = new AbortController();
@@ -11899,49 +11972,114 @@ async function saveAppUpdateSettings() {
 }
 
 let mapperToolsRequestSequence = 0;
+let mapperIndexRefreshTimer = null;
+let mapperTreeIndexRequest = null;
+
+function mapperIndexPreviews(data) {
+  return Object.fromEntries((data.items || []).map(item => [item.path, Array.isArray(item.previews) ? item.previews : []]));
+}
+
+function acceptMapperIndexScope(data) {
+  const scope = data.scope_revision;
+  const changed = !!scope && !!state.mapperIndexScope && scope !== state.mapperIndexScope;
+  if (changed) {
+    galleryDataCache.clear(); mapperViews.clear();
+    state.mapperTreeFolders = []; state.mapperTreeIndexKey = null;
+    state.items = []; state.photosPageOffset = 0; state.photosHasMore = false;
+  }
+  if (scope) state.mapperIndexScope = scope;
+  return changed;
+}
+
+async function fetchMapperFolderIndex(parent = '', tree = false) {
+  const query = new URLSearchParams(tree ? {tree:'1'} : {parent});
+  const response = await fetch(`/api/folder-index?${query}`, {cache:'no-store'});
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok || !Array.isArray(data.folders)) {
+    throw Object.assign(new Error(data?.error || 'Kunne ikke hente mapper. Prøv igen.'), {status:response.status});
+  }
+  return data;
+}
+
+function scheduleMapperIndexRefresh(data = {}) {
+  clearTimeout(mapperIndexRefreshTimer);
+  const identity = galleryCacheKey('mapper-index'), path = String(state.mapperPath || '');
+  const sequence = mapperToolsRequestSequence;
+  // Covers/first discovery arrive independently. Other users' edits are also
+  // picked up while a folder stays open, without reloading its photos.
+  const delay = data.indexing || data.pending_previews ? 1200 : 20000;
+  mapperIndexRefreshTimer = setTimeout(() => {
+    if (identity !== galleryCacheKey('mapper-index') || state.view !== 'mapper'
+        || path !== String(state.mapperPath || '') || sequence !== mapperToolsRequestSequence) return;
+    if (document.hidden || state.mapperEditMode || state.photosLoading) {scheduleMapperIndexRefresh(data); return;}
+    loadMapperTools(path, true);
+  }, delay);
+}
+
+function mapperTreeIndexCacheKey() {
+  return galleryCacheKey(JSON.stringify(['mapper-tree-index', state.mapperIndexRevision, state.mapperIndexScope, galleryDataCache.generation()]));
+}
+
+async function loadMapperTreeIndex(force = false) {
+  const key = mapperTreeIndexCacheKey();
+  if (!force && state.mapperTreeIndexKey === key) return state.mapperTreeFolders;
+  if (mapperTreeIndexRequest?.key === key) return mapperTreeIndexRequest.promise;
+  const request = {key};
+  request.promise = fetchMapperFolderIndex('', true).then(data => {
+    if (key !== mapperTreeIndexCacheKey()) throw new Error('Mappeindekset er ændret. Prøv igen.');
+    state.mapperTreeFolders = data.folders;
+    state.mapperTreeIndexKey = key;
+    return data.folders;
+  }).finally(() => {if (mapperTreeIndexRequest === request) mapperTreeIndexRequest = null;});
+  mapperTreeIndexRequest = request;
+  return request.promise;
+}
 
 async function loadMapperTools(preferred = null, useCache = false) {
-  if (useCache && state.view === 'mapper' && mapperViews.has(mapperViewKey()) && restoreMapperView()) return true;
+  const path = _normalizeMapperPath(preferred !== null ? preferred : (state.mapperPath || ''));
   const requestSequence = ++mapperToolsRequestSequence;
+  const identity = galleryCacheKey('mapper-index');
+  const current = () => requestSequence === mapperToolsRequestSequence && identity === galleryCacheKey('mapper-index')
+    && state.view === 'mapper' && String(state.mapperPath || '') === path;
+  clearTimeout(mapperIndexRefreshTimer);
   if (!useCache) galleryDataCache.clear();
-  const cacheKey = galleryCacheKey('mapper-folder-index');
-  const cacheGeneration = galleryDataCache.generation();
+  state.mapperFoldersLoading = true;
+  state.mapperFoldersError = '';
   try {
-    let data = useCache ? galleryDataCache.get(cacheKey) : null;
-    let res = { ok: true };
-    if (!data) {
-      ({ res, data } = await fetchUploadDestinationConfig('uploads'));
-      if (res.ok && data?.ok && requestSequence === mapperToolsRequestSequence) {
-        galleryDataCache.set(cacheKey, data, cacheGeneration);
-      }
-    }
-    if (requestSequence !== mapperToolsRequestSequence) return false;
-    if (!res.ok || !data || !data.ok) {
-      const errMsg = String((data && data.error) || `HTTP ${res && res.status ? res.status : 'fejl'}`).trim();
-      if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
-      return false;
-    }
-    const folders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
+    // Always revalidate against the shared server index, even after another
+    // user edits folders. This never calls the upload-settings/disk walker.
+    const data = await fetchMapperFolderIndex(path);
+    if (!current()) return false;
+    const scopeChanged = acceptMapperIndexScope(data);
+    const folders = data.folders.filter(Boolean), previews = mapperIndexPreviews(data);
+    const changed = JSON.stringify(state.mapperFolders) !== JSON.stringify(folders)
+      || JSON.stringify(state.mapperFolderPreviews || {}) !== JSON.stringify(previews)
+      || state.mapperIndexing !== !!data.indexing;
     state.mapperFolders = folders;
-    if (state.mapperSelectedFolders && state.mapperSelectedFolders.size) {
-      state.mapperSelectedFolders = new Set(
-        Array.from(state.mapperSelectedFolders).filter(f => folders.includes(f))
-      );
+    state.mapperFolderPreviews = previews;
+    state.mapperIndexRevision = data.revision;
+    state.mapperIndexing = !!data.indexing;
+    state.mapperFoldersLoading = false;
+    state.folder = path || null;
+    if (state.mapperSelectedFolders?.size) {
+      state.mapperSelectedFolders = new Set([...state.mapperSelectedFolders].filter(folder => folders.includes(folder)));
     }
-    // An empty path explicitly means uploads root. The server's saved upload
-    // destination changes when folders are created and must not move navigation.
-    const wantedRaw = (preferred !== null) ? String(preferred || '') : String(state.mapperPath ?? '');
-    const wanted = _normalizeMapperPath(wantedRaw);
-    state.mapperPath = wanted;
-    state.folder = wanted || null;
-    _expandMapperAncestors(wanted);
-    renderMapperContext(state.mapperPath);
-    if (state.view === 'mapper') _syncRouteStateToUrl();
+    _expandMapperAncestors(path);
+    renderMapperContext(path); _syncRouteStateToUrl();
+    if (changed || !state.items.length) renderGrid();
+    scheduleMapperIndexRefresh(data);
+    if (scopeChanged) loadPhotos(false, false, false);
     return true;
-  } catch (e) {
-    if (requestSequence !== mapperToolsRequestSequence) return false;
-    const errMsg = String((e && e.message) || e || '').trim();
-    if (errMsg) showStatus(`Kunne ikke hente mapper: ${errMsg}`, 'err');
+  } catch (error) {
+    if (!current()) return false;
+    state.mapperFoldersLoading = false; state.mapperIndexing = false;
+    state.mapperFoldersError = error.message || 'Kunne ikke hente mapper. Prøv igen.';
+    if ([401,403,404].includes(error.status)) {
+      galleryDataCache.clear(); mapperViews.clear();
+      state.items = []; state.mapperFolders = []; state.mapperFolderPreviews = {};
+      photosRequestSequence++; photosAbortController?.abort(); state.photosLoading = false;
+    }
+    renderGrid(); showStatus(state.mapperFoldersError, 'err');
     return false;
   }
 }
@@ -11949,21 +12087,27 @@ async function loadMapperTools(preferred = null, useCache = false) {
 function beginMapperPathNavigation(path) {
   rememberMapperView();
   const nextPath = _normalizeMapperPath(path || '');
-  // Invalidate an in-flight photo response immediately and remove cards from
-  // the previous folder before any asynchronous mapper requests can repaint.
   photosRequestSequence += 1;
+  mapperToolsRequestSequence += 1;
+  photosAbortController?.abort(); photosLoadPromise = null;
+  clearTimeout(mapperIndexRefreshTimer);
   state.mapperPath = nextPath;
   state.folder = nextPath || null;
-  // Clear the previous folder's items, but let loadPhotos own photosLoading.
-  // Setting photosLoading here can leave Mapper permanently busy when a cached
-  // mapper view short-circuits before a photo request starts.
-  state.items = [];
-  state.photosPageOffset = 0;
-  state.photosHasMore = false;
+  state.items = []; state.mapperFolders = []; state.mapperFolderPreviews = {};
+  state.photosPageOffset = 0; state.photosHasMore = false; state.mapperTotalItems = null;
+  state.photosLoading = true; state.mapperFoldersLoading = true; state.mapperIndexing = false;
+  state.mapperFoldersError = ''; state.mapperPhotosError = '';
   _expandMapperAncestors(nextPath);
   renderMapperContext(nextPath);
-  if (state.view === 'mapper' && !restoreMapperView()) renderGrid();
+  if (state.view === 'mapper') renderGrid();
   return nextPath;
+}
+
+async function navigateMapperPath(path) {
+  const target = beginMapperPathNavigation(path);
+  if (restoreMapperView()) return true;
+  await Promise.all([loadMapperTools(target, true), loadPhotos(false, false, true)]);
+  return true;
 }
 
 async function createMapperFolder() {
@@ -11993,6 +12137,7 @@ async function createMapperFolder() {
       showStatus((data && data.error) || tr('mapper_create_failed'), 'err');
       return;
     }
+    galleryDataCache.clear(); mapperViews.clear(); state.mapperTreeIndexKey = null;
     els.mapperCreateModalInput.value = '';
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
     state.mapperPath = parent;
@@ -12005,9 +12150,7 @@ async function createMapperFolder() {
     const inserted = createdPath ? insertMapperFolderCard(createdPath, {
       title: createdPath.split('/').filter(Boolean).pop() || createdPath,
       onOpen: async () => {
-        const targetPath = beginMapperPathNavigation(createdPath);
-        await loadMapperTools(targetPath, true);
-        await loadPhotos(false, false, true);
+        await navigateMapperPath(createdPath);
       },
     }) : null;
     if (inserted) renderStats();
@@ -12079,6 +12222,7 @@ async function renameMapperFolder() {
       return;
     }
 
+    galleryDataCache.clear(); mapperViews.clear(); state.mapperTreeIndexKey = null;
     state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter((f) => !!f) : [];
     if (state.mapperSelectedFolders && state.mapperSelectedFolders.size) {
       const next = new Set();
@@ -12104,9 +12248,7 @@ async function renameMapperFolder() {
     const patched = !affectsCurrentView && replaceMapperFolderCard(oldPath, newPath, {
       title: newPath.split('/').filter(Boolean).pop() || newPath,
       onOpen: async () => {
-        const targetPath = beginMapperPathNavigation(newPath);
-        await loadMapperTools(targetPath, true);
-        await loadPhotos(false, false, true);
+        await navigateMapperPath(newPath);
       },
     });
     if (patched) {
@@ -13480,6 +13622,9 @@ async function setView(view, opts = {}) {
   const navigation = ++viewNavigationSequence;
   photosRequestSequence++;
   mapperToolsRequestSequence++;
+  clearTimeout(mapperIndexRefreshTimer);
+  state.mapperFoldersLoading = false; state.mapperIndexing = false;
+  state.mapperFoldersError = ''; state.mapperPhotosError = '';
   photosAbortController?.abort();
   photosLoadPromise = null;
   state.photosLoading = false;
@@ -13542,6 +13687,7 @@ async function setView(view, opts = {}) {
     state.photosHasMore = false;
     state.mapperTotalItems = null;
     state.photosLoading = true;
+    if (nextView === 'mapper') {state.mapperFolders = []; state.mapperFolderPreviews = {}; state.mapperFoldersLoading = true;}
     renderGrid();
   }
 
@@ -14483,9 +14629,11 @@ function mapperContextMenuItemsForFolder(folderPath) {
   ];
 }
 
-function openMapperMoveDialog(source) {
+async function openMapperMoveDialog(source) {
   source = _normalizeMapperPath(source || '');
   if (!source) {showStatus('Vælg én mappe, der skal flyttes.', 'err'); return;}
+  let allFolders;
+  try {allFolders = await loadMapperTreeIndex(true);} catch (error) {showStatus(error.message, 'err'); return;}
   const currentParent = source.includes('/') ? source.slice(0, source.lastIndexOf('/')) : '';
   const dialog = document.createElement('dialog');
   dialog.className = 'mapper-move-dialog'; dialog.setAttribute('aria-labelledby','mapper-move-title');
@@ -14497,7 +14645,7 @@ function openMapperMoveDialog(source) {
   dialog.querySelector('.move-source').textContent = 'Mappe: uploads/' + source;
   let destination = null, busy = false;
   const list = dialog.querySelector('.move-destinations'), search = dialog.querySelector('input'), save = dialog.querySelector('[data-save]');
-  const paths = ['', ...(state.mapperFolders || [])].filter((path, index, all) => all.indexOf(path) === index
+  const paths = ['', ...allFolders].filter((path, index, all) => all.indexOf(path) === index
     && path !== source && !path.startsWith(source + '/') && path !== currentParent);
   function render() {
     list.replaceChildren();
@@ -16864,9 +17012,7 @@ els.mapperUpBtn && els.mapperUpBtn.addEventListener('click', async () => {
   const parts = cur.split('/').filter(Boolean);
   parts.pop();
   const parent = parts.join('/');
-  const targetPath = beginMapperPathNavigation(parent);
-  await loadMapperTools(targetPath, true);
-  await loadPhotos(false, false, true);
+  await navigateMapperPath(parent);
 });
 if (els.mapperDropZone) {
   els.mapperDropZone.addEventListener('dragover', (e) => {

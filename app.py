@@ -34,6 +34,7 @@ import exifread
 import requests
 import numpy as np
 import conversion_client
+import folder_index
 import reverse_geocoder as rg
 import place_names
 import pycountry
@@ -5593,6 +5594,10 @@ def init_db() -> None:
         except Exception:
             pass
 
+        # Persistent topology migration; never scans the media filesystem.
+        folder_index.install(conn)
+        conn.commit()
+
 
 DB_BOOTSTRAP_LOCK = threading.Lock()
 DB_BOOTSTRAP_READY = False
@@ -5611,6 +5616,8 @@ def ensure_runtime_bootstrap() -> None:
         _load_persistent_logs()
         _ensure_install_state_for_existing_users()
         DB_BOOTSTRAP_READY = True
+        if app.config.get("FOLDER_INDEX_WORKERS", False):
+            folder_index.start_workers(DB_PATH, UPLOAD_DIR)
 
 
 def _normalize_folder_acl_path(value: Optional[str]) -> str:
@@ -5745,6 +5752,8 @@ def _set_user_allowed_folders(conn: sqlite3.Connection, user_id: int, folders: l
     for path, perm in cleaned:
         cur = perm_map.get(path)
         perm_map[path] = perm if cur is None else max_perm(cur, perm)
+        # Store only explicit grants. The folder index permits ancestor
+        # navigation separately; granting a parent here exposes private siblings.
 
     reduced = sorted([(p, perm_map[p]) for p in perm_map.keys()], key=lambda x: x[0].lower())
 
@@ -7347,82 +7356,84 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
 
 
 def _ensure_folder_index_table() -> None:
+    """Compatibility for explicit maintenance helpers, not a browse hot path."""
     with closing(get_conn()) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS folder_index (
-                folder_path TEXT PRIMARY KEY,
-                parent_path TEXT NOT NULL DEFAULT '',
-                name TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_parent ON folder_index(parent_path)")
+        folder_index.install(conn)
         conn.commit()
 
 
 def _folder_index_list() -> list[str]:
-    _ensure_folder_index_table()
-    try:
-        with closing(get_conn()) as conn:
-            rows = conn.execute("SELECT folder_path FROM folder_index ORDER BY folder_path COLLATE NOCASE").fetchall()
-        return [""] + [str(row["folder_path"]) for row in rows if str(row["folder_path"] or "").strip()]
-    except Exception:
-        return [""]
+    with closing(get_conn()) as conn:
+        return [""] + [row[0] for row in conn.execute("SELECT path FROM folder_index ORDER BY path COLLATE NOCASE")]
 
 
 def _folder_index_rebuild(base_dir: Path) -> list[str]:
-    folders = _list_upload_subdirs(base_dir)
-    now = now_iso()
-    _ensure_folder_index_table()
-    clean = [str(f).strip().replace("\\", "/") for f in folders if str(f or "").strip()]
+    # Explicit reconciliation preserves the catalogue if storage is offline.
     with closing(get_conn()) as conn:
-        conn.execute("DELETE FROM folder_index")
-        conn.executemany(
-            "INSERT INTO folder_index(folder_path,parent_path,name,updated_at) VALUES(?,?,?,?)",
-            [(f, f.rsplit("/", 1)[0] if "/" in f else "", f.rsplit("/", 1)[-1], now) for f in clean],
-        )
-        conn.commit()
-    return [""] + clean
+        folder_index.discover(conn, base_dir)
+    return _folder_index_list()
 
 
 def _folder_index_add(path: str) -> None:
-    clean = str(path or "").strip().replace("\\", "/").strip("/")
-    if not clean:
-        return
-    _ensure_folder_index_table()
-    parts = clean.split("/")
-    rows = []
-    for i in range(1, len(parts) + 1):
-        value = "/".join(parts[:i])
-        rows.append((value, value.rsplit("/", 1)[0] if "/" in value else "", parts[i - 1], now_iso()))
     with closing(get_conn()) as conn:
-        conn.executemany(
-            "INSERT OR REPLACE INTO folder_index(folder_path,parent_path,name,updated_at) VALUES(?,?,?,?)", rows
-        )
+        folder_index.ensure_path(conn, path)
         conn.commit()
+
+
+def _folder_index_visibility(conn):
+    return folder_index.visibility(
+        conn, int(getattr(current_user, "id", 0) or 0),
+        _current_user_acl_prefixes(conn),
+        can_manage=bool(getattr(current_user, "can_manage_media", False)),
+    )
+
+
+@app.route("/api/folder-index", methods=["GET"])
+@login_required
+def api_folder_index():
+    try:
+        parent = folder_index.normalize(request.args.get("parent", ""))
+    except ValueError:
+        return jsonify({"ok": False, "error": "Ugyldig mappe"}), 400
+    tree = request.args.get("tree") == "1"
+    with closing(get_conn()) as conn:
+        visible = _folder_index_visibility(conn)
+        if parent and not visible.navigable(parent):
+            return jsonify({"ok": False, "error": "Ingen adgang til mappen"}), 403
+        if parent and not conn.execute("SELECT 1 FROM folder_index WHERE path=?", (parent,)).fetchone():
+            return jsonify({"ok": False, "error": "Mappen findes ikke i indekset"}), 404
+        items = folder_index.list_folders(conn, parent, visible, tree=tree)
+        version = conn.execute("SELECT revision,disk_root FROM folder_index_state WHERE id=1").fetchone()
+        workers = bool(app.config.get("FOLDER_INDEX_WORKERS", False))
+        pending = workers and not tree and bool(conn.execute(
+            "SELECT 1 FROM folder_index_dirty d JOIN folder_index f ON f.path=d.path WHERE f.parent=? LIMIT 1", (parent,)
+        ).fetchone())
+        response = jsonify({"ok": True, "parent": parent,
+            "folders": items if tree else [item["path"] for item in items],
+            "items": [] if tree else items, "revision": version[0], "scope_revision": visible.scope,
+            "indexing": workers and version[1] != str(UPLOAD_DIR),
+            "pending_previews": bool(pending)})
+    # The index is shared; the authorization-filtered response must not be.
+    response.headers["Cache-Control"] = "private, no-store"
+    response.vary.add("Cookie")
+    return response
 
 
 def _upload_settings_payload(destination: str) -> dict:
     saved_destination = get_upload_destination()
     subdir = get_upload_subdir(destination)
-    target_root, _ = _upload_target_for_destination(destination)
-    subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
-    # Mapper navigation uses a persisted DB index instead of walking the NAS.
-    # The index is refreshed by folder mutations and can be rebuilt explicitly
-    # when files/folders are added outside FjordLens.
     if destination == UPLOAD_DEST_UPLOADS:
-        folders = _folder_index_list()
-        if not folders:
-            folders = _folder_index_rebuild(target_root)
+        with closing(get_conn()) as conn:
+            folders = [""] + folder_index.list_folders(conn, "", _folder_index_visibility(conn), tree=True)
+        # A filtered or not-yet-discovered folder is not proof of deletion.
+        # Only explicit mutation paths clear a saved upload destination.
     else:
-        folders = _list_upload_subdirs(target_root)
-    folders = _filter_folders_by_current_user_acl(folders)
-    if destination == UPLOAD_DEST_UPLOADS and "uploads" in folders:
-        folders = [f for f in folders if f != "uploads"]
-    if subdir and subdir not in folders:
-        # Stored folder no longer exists on disk: remove stale reference
-        _set_upload_subdir(destination, "")
-        subdir = ""
+        target_root, _ = _upload_target_for_destination(destination)
+        subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
+        folders = _filter_folders_by_current_user_acl(_list_upload_subdirs(target_root))
+        if subdir and subdir not in folders:
+            _set_upload_subdir(destination, "")
+            subdir = ""
     return {
         "ok": True,
         "destination": destination,
@@ -7433,8 +7444,8 @@ def _upload_settings_payload(destination: str) -> dict:
         "upload_dir": str(UPLOAD_DIR),
         "note": "Scan bruger filer direkte fra biblioteket og kopierer ikke.",
         "options": [
-            {"value": UPLOAD_DEST_UPLOADS, "label": "KopiÃ©r til uploads-mappen"},
-            {"value": UPLOAD_DEST_LIBRARY, "label": "KopiÃ©r til fotobiblioteket"},
+            {"value": UPLOAD_DEST_UPLOADS, "label": "Kopiér til uploads-mappen"},
+            {"value": UPLOAD_DEST_LIBRARY, "label": "Kopiér til fotobiblioteket"},
         ],
     }
 
@@ -23569,6 +23580,10 @@ def api_settings_upload_folder():
         except Exception as e:
             return jsonify({"ok": False, "error": f"Kunne ikke oprette konverteret mappe: {e}"}), 400
 
+    if destination == UPLOAD_DEST_UPLOADS:
+        with closing(get_conn()) as conn:
+            folder_index.ensure_path(conn, new_subdir)
+            conn.commit()
     _set_upload_subdir(destination, new_subdir)
     # Record folder owner for access control (owner and admins can always see; others need explicit ACL)
     try:
@@ -23720,16 +23735,14 @@ def api_settings_upload_folder_delete():
         rel_prefixes.extend([f"uploads/converted/{d}" for d in cleanup_folders])
         rel_prefixes.extend([f"uploads/{d}" for d in cleanup_folders])
     removed = _delete_indexed_photos_for_prefixes(rel_prefixes)
-    try:
-        with closing(get_conn()) as conn:
-            for folder in cleanup_folders:
-                conn.execute(
-                    "DELETE FROM folder_previews WHERE folder_path=? OR folder_path LIKE ?",
-                    (folder, folder + "/%"),
-                )
-            conn.commit()
-    except Exception:
-        pass
+    with closing(get_conn()) as conn:
+        for folder in cleanup_folders:
+            if destination == UPLOAD_DEST_UPLOADS:
+                folder_index.remove_tree(conn, folder)
+            else:
+                conn.execute("DELETE FROM folder_previews WHERE folder_path=? OR (folder_path>=? AND folder_path<?)",
+                             (folder, folder + "/", folder + "0"))
+        conn.commit()
 
     payload = _upload_settings_payload(destination)
     payload["deleted"] = deleted
@@ -23962,6 +23975,9 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str, *, reject_c
             conn.execute("UPDATE photos SET rel_path=? WHERE id=?", (next_rel, pid))
             photos_renamed += 1
 
+        # Same transaction as photo paths, ACLs and saved preview selections.
+        # Preserve empty descendants as well as folders inferred from photos.
+        folder_index.rename_tree(conn, old_sub, new_sub)
         conn.commit()
 
     # Best-effort cleanup of stale thumbs from removed conflict rows
@@ -27474,5 +27490,6 @@ def api_me_2fa():
 
 
 if __name__ == "__main__":
+    app.config["FOLDER_INDEX_WORKERS"] = True
     init_db()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)

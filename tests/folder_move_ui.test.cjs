@@ -12,11 +12,12 @@ test('destination picker excludes source and descendants and confirms root as an
   w._replaceMapperPathPrefix = path=>path;
   w.showStatus = ()=>{}; w.galleryDataCache={clear(){}}; w.mapperViews=new Map();
   w.loadMapperTools = w.loadPhotos = async()=>{};
+  w.loadMapperTreeIndex = async()=>w.state.mapperFolders;
   let payload;
   w.fetch = async(url,opts)=>{payload=JSON.parse(opts.body);return {ok:true,json:async()=>({ok:true,old_path:'Old/Album',new_path:'Album'})}};
   const source=readFileSync('static/app.js','utf8');
-  w.eval(source.slice(source.indexOf('function openMapperMoveDialog('),source.indexOf("document.getElementById('mapperHeaderMoveAction')")));
-  w.openMapperMoveDialog('Old/Album');
+  w.eval(source.slice(source.indexOf('async function openMapperMoveDialog('),source.indexOf("document.getElementById('mapperHeaderMoveAction')")));
+  await w.openMapperMoveDialog('Old/Album');
   const choices=[...w.document.querySelectorAll('.move-destinations button')];
   assert.equal(choices.length,2);
   assert.equal(choices[0].textContent,'uploads (rodmappe)');

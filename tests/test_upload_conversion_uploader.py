@@ -133,7 +133,7 @@ class UploadConversionUploaderTests(unittest.TestCase):
             patch.object(fjordlens, "ai_auto_ingest_enabled", return_value=False),
             patch.object(fjordlens, "ai_desc_auto_ingest_enabled", return_value=False),
             patch.object(fjordlens, "make_thumb", side_effect=lambda *args, **kwargs: events.append("thumb") or "order.webp"),
-            patch.object(fjordlens, "index_faces_for_photo", side_effect=lambda _rel: events.append("face") or 0),
+            patch.object(fjordlens, "_detect_faces_for_photo", side_effect=lambda _rel: events.append("face") or []),
         ):
             result = fjordlens._postprocess_uploaded_rels(
                 "Kamera",
