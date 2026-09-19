@@ -2350,23 +2350,18 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
 
 
 def _compute_centroid(vectors: list[list[float]]) -> Optional[list[float]]:
+    """Vectorized centroid helper used by manual people operations."""
     try:
-        if not vectors:
+        valid = [_np_face_vector(v) for v in vectors]
+        valid = [v for v in valid if v is not None]
+        if not valid:
             return None
-        L = max((len(v) for v in vectors if isinstance(v, list)), default=0)
-        if L <= 0:
+        dim = int(valid[0].size)
+        same_dim = [v for v in valid if int(v.size) == dim]
+        if not same_dim:
             return None
-        acc = [0.0] * L
-        n = 0
-        for v in vectors:
-            if not isinstance(v, list) or len(v) != L:
-                continue
-            for i, x in enumerate(v):
-                acc[i] += float(x or 0.0)
-            n += 1
-        if n <= 0:
-            return None
-        return [x / float(n) for x in acc]
+        centroid = np.mean(np.stack(same_dim, axis=0), axis=0)
+        return centroid.astype(float).tolist()
     except Exception:
         return None
 
