@@ -26,6 +26,12 @@ jobs:
           subprocess.run(['git','apply','--check','/tmp/folder-index.patch'],check=True)
           subprocess.run(['git','apply','/tmp/folder-index.patch'],check=True)
           subprocess.run(['python','.folder-index-fix.py'],check=True)
+          p = pathlib.Path('tests/test_gallery_navigation_browser.py')
+          source = p.read_text()
+          needle = "        self.page.evaluate('state.selectedId = state.items[0].id; toggleFavorite()')"
+          assert source.count(needle) == 1
+          isolation = "        # This checks sequential cursor adjustment; scroll paging is tested separately.\n        # Settle any viewport-triggered page before mutating its result set.\n        self.page.evaluate('async () => { photoLoadMoreObserver?.disconnect(); await photosLoadPromise; photoLoadMoreObserver?.disconnect(); }')\n"
+          p.write_text(source.replace(needle, isolation + needle))
           PY
       - uses: actions/setup-python@v5
         with:
