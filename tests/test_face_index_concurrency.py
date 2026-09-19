@@ -117,51 +117,68 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
         fjordlens._set_setting("upload_workflow_face_batch_size", "0")
         self.assertEqual(fjordlens._upload_workflow_settings_payload()["batch_size"], 1)
 
-    def test_manual_face_indexer_refills_free_slots_without_waiting_for_batch(self):
+    def test_manual_face_indexer_refills_gpu_slot_before_db_store_finishes(self):
         rels = [self._make_photo(f"batch_{i}") for i in range(6)]
         fjordlens._set_setting("upload_workflow_face_batch_size", "4")
 
         first_wave = threading.Barrier(4)
-        long_release = threading.Event()
+        long_detection_release = threading.Event()
         refill_started = threading.Event()
         active_lock = threading.Lock()
-        active = 0
-        max_active = 0
+        active_detection = 0
+        max_active_detection = 0
 
-        def fake_index(rel):
-            nonlocal active, max_active
+        def fake_detect(rel):
+            nonlocal active_detection, max_active_detection
             idx = int(Path(rel).stem.split("_")[-1])
             with active_lock:
-                active += 1
-                max_active = max(max_active, active)
+                active_detection += 1
+                max_active_detection = max(max_active_detection, active_detection)
             try:
                 if idx < 4:
                     first_wave.wait(timeout=3)
                     if idx == 0:
-                        return 0
-                    long_release.wait(timeout=3)
-                    return 0
+                        # Detection 0 completes immediately. The queue must refill
+                        # its GPU slot before persisting this result to SQLite.
+                        return []
+                    long_detection_release.wait(timeout=3)
+                    return []
                 if idx == 4:
-                    # This must start as soon as item 0 frees one of the four slots,
-                    # while items 1-3 are still deliberately blocked.
                     refill_started.set()
-                    long_release.set()
-                    return 0
-                return 0
+                    long_detection_release.set()
+                    return []
+                return []
             finally:
                 with active_lock:
-                    active -= 1
+                    active_detection -= 1
+
+        stored = []
+
+        def fake_store(rel, faces, *, source="queue"):
+            idx = int(Path(rel).stem.split("_")[-1])
+            if idx == 0:
+                # If DB persistence happens before the free GPU slot is refilled,
+                # this wait would time out and the assertion below fails.
+                self.assertTrue(
+                    refill_started.wait(timeout=2),
+                    "GPU detection slot was not refilled before DB persistence",
+                )
+            stored.append(rel)
+            return 0
 
         fjordlens._faces_running.set()
         with (
-            patch.object(fjordlens, "index_faces_for_photo", side_effect=fake_index) as index_one,
+            patch.object(fjordlens, "_detect_faces_for_photo", side_effect=fake_detect) as detect,
+            patch.object(fjordlens, "_store_faces_for_photo", side_effect=fake_store) as store,
             patch.object(fjordlens, "faces_index_throttle_enabled_sec", return_value=0.0),
         ):
             fjordlens._index_faces_worker(all_photos=True)
 
-        self.assertTrue(refill_started.is_set(), "A free face slot should be refilled immediately")
-        self.assertEqual(max_active, 4)
-        self.assertEqual(index_one.call_count, 6)
+        self.assertTrue(refill_started.is_set(), "A free GPU face slot should be refilled immediately")
+        self.assertEqual(max_active_detection, 4)
+        self.assertEqual(detect.call_count, 6)
+        self.assertEqual(store.call_count, 6)
+        self.assertEqual(set(stored), set(rels))
         self.assertFalse(fjordlens._faces_running.is_set())
 
 
