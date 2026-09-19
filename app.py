@@ -13685,6 +13685,12 @@ def _run_face_slot_queue(
                         count, store_error = stored_by_rel.get(rel, (0, RuntimeError("missing_store_result")))
                         complete(rel, count, store_error)
                     persistence_queue.task_done()
+
+                # Preserve the existing background-load control, but apply it once
+                # per DB transaction rather than once per individual photo.
+                batch_delay = faces_index_throttle_enabled_sec()
+                if batch_delay > 0 and allowed():
+                    time.sleep(batch_delay)
         finally:
             if touched_person_ids:
                 try:
@@ -13800,9 +13806,6 @@ def _index_faces_worker(all_photos: bool = False):
                 except Exception:
                     pass
             faces_counts["processed"] += 1
-            face_delay = faces_index_throttle_enabled_sec()
-            if face_delay > 0 and _faces_running.is_set():
-                time.sleep(face_delay)
 
         stats = _run_face_slot_queue(
             rels,
