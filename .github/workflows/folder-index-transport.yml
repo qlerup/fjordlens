@@ -1,0 +1,19 @@
+name: Verify folder patch transport
+on:
+  push:
+    branches: [perf/folder-index]
+    paths: [.github/workflows/folder-index-transport.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble staged content
+        run: cat .folder-index-part-1.b64 .folder-index-part-2.b64 .folder-index-part-3.b64 .folder-index-part-4.b64 > /tmp/transport.b64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folder-patch-transport
+          path: /tmp/transport.b64
+          retention-days: 1
