@@ -2429,6 +2429,146 @@ def _detect_faces_for_photo(rel_path: str) -> list[Dict[str, Any]]:
     return list(faces)
 
 
+def _store_faces_for_photo_conn(
+    conn: sqlite3.Connection,
+    rel_path: str,
+    faces: list[Dict[str, Any]],
+    *,
+    match_cache: _FaceMatchCache,
+    touched_person_ids: set[int],
+) -> Dict[str, Any]:
+    """Store one photo using an existing transaction/connection."""
+    row = conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+    if not row:
+        return {"count": 0, "matched": 0, "created": 0}
+
+    photo_id = int(row["id"])
+    old_rows = conn.execute(
+        "SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL",
+        (photo_id,),
+    ).fetchall()
+    for old in old_rows:
+        try:
+            touched_person_ids.add(int(old["person_id"]))
+        except Exception:
+            pass
+
+    conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+
+    insert_rows: list[tuple[Any, ...]] = []
+    created_new = 0
+    matched_existing = 0
+    now_value = now_iso()
+
+    for fc in faces:
+        emb = fc.get("embedding") or []
+        bbox = fc.get("bbox") or [0, 0, 0, 0]
+        try:
+            x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+            bx, by = max(0, x1), max(0, y1)
+            bw, bh = max(0, x2 - x1), max(0, y2 - y1)
+        except Exception:
+            bx = by = bw = bh = 0
+
+        pid: Optional[int] = None
+        created = False
+        if emb:
+            pid, created, _score = match_cache.match_or_create(conn, emb)
+        if pid is not None:
+            touched_person_ids.add(int(pid))
+            if created:
+                created_new += 1
+            else:
+                matched_existing += 1
+
+        frame_sec_val = None
+        try:
+            if fc.get("frame_sec") is not None:
+                frame_sec_val = max(0.0, float(fc.get("frame_sec")))
+        except Exception:
+            frame_sec_val = None
+
+        insert_rows.append(
+            (
+                photo_id,
+                pid,
+                bx, by, bw, bh,
+                json.dumps(emb, ensure_ascii=False, separators=(",", ":")),
+                float(fc.get("confidence") or 1.0),
+                frame_sec_val,
+                now_value,
+            )
+        )
+
+    if insert_rows:
+        conn.executemany(
+            """
+            INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+            insert_rows,
+        )
+
+    count = len(insert_rows)
+    conn.execute(
+        "UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?",
+        (count, now_value, photo_id),
+    )
+    return {"count": count, "matched": matched_existing, "created": created_new}
+
+
+def _store_face_results_batch(
+    items: list[tuple[str, list[Dict[str, Any]]]],
+    *,
+    match_cache: Optional[_FaceMatchCache],
+    touched_person_ids: set[int],
+) -> tuple[list[tuple[str, int, Optional[Exception]]], _FaceMatchCache]:
+    """Persist several photos in one SQLite transaction with per-photo savepoints."""
+    results: list[tuple[str, int, Optional[Exception]]] = []
+    summaries: list[tuple[str, Dict[str, Any]]] = []
+    with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
+        cache = match_cache or _FaceMatchCache(conn)
+        for index, (rel_path, faces) in enumerate(items):
+            savepoint = f"face_item_{index}"
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                summary = _store_faces_for_photo_conn(
+                    conn,
+                    rel_path,
+                    faces,
+                    match_cache=cache,
+                    touched_person_ids=touched_person_ids,
+                )
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                summaries.append((rel_path, summary))
+                results.append((rel_path, int(summary.get("count") or 0), None))
+            except Exception as exc:
+                try:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    pass
+                results.append((rel_path, 0, exc))
+                # A failed transaction may have modified the RAM cache before the
+                # savepoint rollback. Reload it from the transaction's real state.
+                cache = _FaceMatchCache(conn)
+        conn.commit()
+
+    for rel_path, summary in summaries:
+        try:
+            log_event(
+                "faces_index_done",
+                rel_path=rel_path,
+                faces=int(summary.get("count") or 0),
+                matched=int(summary.get("matched") or 0),
+                created=int(summary.get("created") or 0),
+                source="slot_queue",
+            )
+        except Exception:
+            pass
+    return results, cache
+
+
 def _store_faces_for_photo(
     rel_path: str,
     faces: list[Dict[str, Any]],
@@ -2438,109 +2578,34 @@ def _store_faces_for_photo(
     touched_person_ids: Optional[set[int]] = None,
     defer_centroids: bool = False,
 ) -> int:
-    """Persist one photo in one SQLite transaction; matching stays in RAM."""
-    owned_touched: set[int] = set()
-    touched = touched_person_ids if touched_person_ids is not None else owned_touched
-
+    """Persist one photo; queue mode uses the batched persistence path instead."""
+    touched = touched_person_ids if touched_person_ids is not None else set()
     with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
-        row = conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
-        if not row:
-            return 0
-        photo_id = int(row["id"])
-
-        # Remember people affected by replacing an existing face index.
-        old_rows = conn.execute(
-            "SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL",
-            (photo_id,),
-        ).fetchall()
-        for old in old_rows:
-            try:
-                touched.add(int(old["person_id"]))
-            except Exception:
-                pass
-
-        conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
         cache = match_cache or _FaceMatchCache(conn)
-
-        insert_rows: list[tuple[Any, ...]] = []
-        created_new = 0
-        matched_existing = 0
-        now_value = now_iso()
-
-        for fc in faces:
-            emb = fc.get("embedding") or []
-            bbox = fc.get("bbox") or [0, 0, 0, 0]
-            try:
-                x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
-                bx, by = max(0, x1), max(0, y1)
-                bw, bh = max(0, x2 - x1), max(0, y2 - y1)
-            except Exception:
-                bx = by = bw = bh = 0
-
-            pid: Optional[int] = None
-            created = False
-            score = -1.0
-            if emb:
-                try:
-                    pid, created, score = cache.match_or_create(conn, emb)
-                except Exception as exc:
-                    log_event("error", rel_path=rel_path, error=f"face_match: {exc}")
-                    pid = None
-            if pid is not None:
-                touched.add(int(pid))
-                if created:
-                    created_new += 1
-                else:
-                    matched_existing += 1
-
-            frame_sec_val = None
-            try:
-                if fc.get("frame_sec") is not None:
-                    frame_sec_val = max(0.0, float(fc.get("frame_sec")))
-            except Exception:
-                frame_sec_val = None
-
-            insert_rows.append(
-                (
-                    photo_id,
-                    pid,
-                    bx, by, bw, bh,
-                    json.dumps(emb, ensure_ascii=False, separators=(",", ":")),
-                    float(fc.get("confidence") or 1.0),
-                    frame_sec_val,
-                    now_value,
-                )
-            )
-
-        if insert_rows:
-            conn.executemany(
-                """
-                INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-                """,
-                insert_rows,
-            )
-
-        count = len(insert_rows)
-        conn.execute(
-            "UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?",
-            (count, now_value, photo_id),
+        summary = _store_faces_for_photo_conn(
+            conn,
+            rel_path,
+            faces,
+            match_cache=cache,
+            touched_person_ids=touched,
         )
         conn.commit()
 
-        # One summary log instead of one log write for every face row.
+    try:
         log_event(
             "faces_index_done",
             rel_path=rel_path,
-            faces=count,
-            matched=matched_existing,
-            created=created_new,
+            faces=int(summary.get("count") or 0),
+            matched=int(summary.get("matched") or 0),
+            created=int(summary.get("created") or 0),
             source=source,
         )
+    except Exception:
+        pass
 
     if not defer_centroids and touched:
         _recompute_person_centroids_bulk(set(touched))
-    return int(count)
+    return int(summary.get("count") or 0)
 
 
 def index_faces_for_photo(
@@ -13531,7 +13596,7 @@ def _run_face_slot_queue(
     should_continue: Optional[Callable[[], bool]] = None,
     on_complete: Optional[Callable[[str, int, Optional[Exception]], None]] = None,
 ) -> Dict[str, int]:
-    """Two-stage face pipeline with a hot RAM matcher and batched centroid writes."""
+    """Independent GPU producer + batched SQLite consumer."""
     items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
     workers = max(1, min(8, int(concurrency or 1), len(items) or 1))
     stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers}
@@ -13546,16 +13611,94 @@ def _run_face_slot_queue(
             return rel, [], None
         try:
             log_event("faces_index_start", rel_path=rel, queue_workers=workers)
-            faces = _detect_faces_for_photo(rel)
-            return rel, faces, None
+            return rel, _detect_faces_for_photo(rel), None
         except Exception as exc:
             return rel, [], exc
 
-    # Build matching state once for the entire queue instead of re-reading all
-    # people/faces for every detected face.
-    with FACE_DB_WRITE_LOCK, closing(get_conn()) as cache_conn:
-        match_cache = _FaceMatchCache(cache_conn)
+    persistence_queue: queue.Queue = queue.Queue(maxsize=max(32, workers * 8))
+    persistence_done = threading.Event()
+    persistence_sentinel = object()
     touched_person_ids: set[int] = set()
+
+    def complete(rel: str, count: int, error: Optional[Exception]) -> None:
+        stats["processed"] += 1
+        if count > 0:
+            stats["faces_found"] += 1
+        if error is not None:
+            stats["errors"] += 1
+        if on_complete is not None:
+            try:
+                on_complete(rel, count, error)
+            except Exception:
+                pass
+
+    def persistence_worker() -> None:
+        match_cache: Optional[_FaceMatchCache] = None
+        try:
+            while True:
+                first = persistence_queue.get()
+                if first is persistence_sentinel:
+                    persistence_queue.task_done()
+                    break
+
+                batch = [first]
+                # Drain already-ready results so several photos share one transaction.
+                while len(batch) < max(4, workers * 2):
+                    try:
+                        nxt = persistence_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if nxt is persistence_sentinel:
+                        persistence_queue.task_done()
+                        # Put sentinel back so the normal termination path sees it.
+                        persistence_queue.put(persistence_sentinel)
+                        break
+                    batch.append(nxt)
+
+                store_items: list[tuple[str, list[Dict[str, Any]]]] = []
+                detection_errors: list[tuple[str, Exception]] = []
+                for rel, faces, error in batch:
+                    if error is not None:
+                        detection_errors.append((rel, error))
+                    elif allowed():
+                        store_items.append((rel, faces))
+                    else:
+                        detection_errors.append((rel, RuntimeError("stopped")))
+
+                stored_by_rel: dict[str, tuple[int, Optional[Exception]]] = {}
+                if store_items:
+                    try:
+                        stored, match_cache = _store_face_results_batch(
+                            store_items,
+                            match_cache=match_cache,
+                            touched_person_ids=touched_person_ids,
+                        )
+                        stored_by_rel = {rel: (count, error) for rel, count, error in stored}
+                    except Exception as exc:
+                        for rel, _faces in store_items:
+                            stored_by_rel[rel] = (0, exc)
+
+                for rel, faces, detection_error in batch:
+                    if detection_error is not None:
+                        complete(rel, 0, detection_error)
+                    else:
+                        count, store_error = stored_by_rel.get(rel, (0, RuntimeError("missing_store_result")))
+                        complete(rel, count, store_error)
+                    persistence_queue.task_done()
+        finally:
+            if touched_person_ids:
+                try:
+                    _recompute_person_centroids_bulk(touched_person_ids)
+                except Exception as exc:
+                    log_event("error", error=f"face_centroid_bulk: {exc}")
+            persistence_done.set()
+
+    writer = threading.Thread(
+        target=persistence_worker,
+        name="fjordlens-face-db-writer",
+        daemon=True,
+    )
+    writer.start()
 
     executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-detect")
     pending: Dict[Any, str] = {}
@@ -13572,44 +13715,20 @@ def _run_face_slot_queue(
         fill_detection_slots()
         while pending:
             done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
-            completed_detection: list[tuple[str, list[Dict[str, Any]], Optional[Exception]]] = []
+            completed: list[tuple[str, list[Dict[str, Any]], Optional[Exception]]] = []
             for future in done:
                 rel = pending.pop(future)
                 try:
                     _rel, faces, detection_error = future.result()
                 except Exception as exc:
                     faces, detection_error = [], exc
-                completed_detection.append((rel, list(faces or []), detection_error))
+                completed.append((rel, list(faces or []), detection_error))
 
-            # Refill GPU slots before doing any DB work.
+            # GPU slots are refilled before persistence_queue.put can ever block.
             fill_detection_slots()
 
-            for rel, faces, error in completed_detection:
-                count = 0
-                final_error = error
-                if final_error is None and allowed():
-                    try:
-                        count = _store_faces_for_photo(
-                            rel,
-                            faces,
-                            source="slot_queue",
-                            match_cache=match_cache,
-                            touched_person_ids=touched_person_ids,
-                            defer_centroids=True,
-                        )
-                    except Exception as exc:
-                        final_error = exc
-
-                stats["processed"] += 1
-                if count > 0:
-                    stats["faces_found"] += 1
-                if final_error is not None:
-                    stats["errors"] += 1
-                if on_complete is not None:
-                    try:
-                        on_complete(rel, count, final_error)
-                    except Exception:
-                        pass
+            for item in completed:
+                persistence_queue.put(item)
 
             if not allowed():
                 for future in pending:
@@ -13617,13 +13736,10 @@ def _run_face_slot_queue(
                 break
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
-
-    # Exact centroid rebuild once per touched person, after all face rows are stored.
-    if touched_person_ids:
-        try:
-            _recompute_person_centroids_bulk(touched_person_ids)
-        except Exception as exc:
-            log_event("error", error=f"face_centroid_bulk: {exc}")
+        persistence_queue.put(persistence_sentinel)
+        persistence_queue.join()
+        persistence_done.wait(timeout=300)
+        writer.join(timeout=5)
 
     return stats
 
