@@ -188,6 +188,47 @@ class UploadConversionUploaderTests(unittest.TestCase):
         self.assertEqual(result["postprocess_queued"], 0)
         start_direct.assert_not_called()
 
+    def test_disk_sync_ignores_preserved_original_when_managed_converted_copy_exists(self):
+        original = fjordlens.UPLOAD_DIR / "originals" / "clip.mov"
+        converted = fjordlens.UPLOAD_DIR / "converted" / "clip_1.mp4"
+        original.parent.mkdir(parents=True, exist_ok=True)
+        converted.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(b"original")
+        converted.write_bytes(b"converted")
+
+        converted_rel = "uploads/converted/clip_1.mp4"
+        fjordlens._upsert_uploaded_stub(converted_rel, converted, "Anna")
+
+        with (
+            patch.object(fjordlens, "UPLOAD_FOLDER_SYNC_SETTLE_SEC", 0),
+            patch.object(fjordlens, "UPLOAD_FOLDER_SYNC_TTL_SEC", 0),
+            patch.object(fjordlens, "_start_direct_upload_postprocess") as start_direct,
+        ):
+            result = fjordlens._sync_upload_folder_from_disk(
+                "",
+                recursive=True,
+                queue_postprocess=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["shadowed"], 1)
+        self.assertEqual(result["postprocess_queued"], 0)
+        start_direct.assert_not_called()
+
+    def test_direct_background_queue_rejects_preserved_managed_original(self):
+        original = fjordlens.UPLOAD_DIR / "originals" / "movie.mov"
+        converted = fjordlens.UPLOAD_DIR / "converted" / "movie_2.mp4"
+        original.parent.mkdir(parents=True, exist_ok=True)
+        converted.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(b"original")
+        converted.write_bytes(b"converted")
+        fjordlens._upsert_uploaded_stub("uploads/converted/movie_2.mp4", converted, "Anna")
+
+        started = fjordlens._start_direct_upload_postprocess(["uploads/originals/movie.mov"])
+
+        self.assertFalse(started)
+        self.assertFalse(fjordlens._is_upload_postprocess_running(fjordlens.DIRECT_UPLOAD_POSTPROCESS_USER))
+
     def test_conversion_uses_local_work_dir_before_publishing(self):
         source = fjordlens.UPLOAD_DIR / "originals" / "clip.mov"
         destination = fjordlens.UPLOAD_DIR / "converted" / "clip.mp4"
