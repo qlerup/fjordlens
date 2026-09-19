@@ -8571,9 +8571,9 @@ function _maybeAnnounceAutoResumeForBatch(files, destination = '', subdir = '') 
 }
 
 function shouldWarnOnPageLeaveDuringUpload() {
-  if (isUploadRunning() || uploadQueuePumpRunning) return true;
-  const draft = _readUploadResumeDraft();
-  return !!(draft && Array.isArray(draft.pending) && draft.pending.length > 0);
+  // Only browser-held transfers/queued files are lost on navigation. Saved
+  // resume drafts and server-side postprocessing can survive a page reload.
+  return isUploadRunning() || uploadQueue.length > 0;
 }
 
 window.addEventListener('beforeunload', (event) => {
