@@ -32,6 +32,7 @@ from PIL import Image, ExifTags, ImageOps, ImageDraw, ImageFont
 import piexif
 import exifread
 import requests
+import numpy as np
 import conversion_client
 import reverse_geocoder as rg
 import place_names
@@ -2042,6 +2043,239 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
     return unique_faces
 
 
+def _np_face_vector(values: Any) -> Optional[np.ndarray]:
+    try:
+        arr = np.asarray(values, dtype=np.float32).reshape(-1)
+        if arr.size <= 0 or not np.isfinite(arr).all():
+            return None
+        return arr
+    except Exception:
+        return None
+
+
+def _np_unit_vector(values: Any) -> Optional[np.ndarray]:
+    arr = _np_face_vector(values)
+    if arr is None:
+        return None
+    norm = float(np.linalg.norm(arr))
+    if norm <= 1e-12:
+        return None
+    return arr / norm
+
+
+class _FaceMatchCache:
+    """In-memory, vectorized person matcher shared across one face queue run."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.centroid_pids: dict[int, list[int]] = {}
+        self.centroid_vectors: dict[int, list[np.ndarray]] = {}
+        self.centroid_pid_index: dict[int, tuple[int, int]] = {}
+        self.centroid_matrix_cache: dict[int, np.ndarray] = {}
+        self.person_counts: dict[int, int] = {}
+        self.person_centroid_raw: dict[int, np.ndarray] = {}
+        self.fallback_loaded = False
+        self.face_pids: dict[int, list[Optional[int]]] = {}
+        self.face_vectors: dict[int, list[np.ndarray]] = {}
+        self.face_matrix_cache: dict[int, np.ndarray] = {}
+        self.next_unknown_number = 1
+        self._load_people(conn)
+
+    def _load_people(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.name, p.centroid_json, COUNT(f.id) AS face_count
+            FROM people p
+            LEFT JOIN faces f ON f.person_id=p.id
+            WHERE COALESCE(p.hidden,0)=0
+            GROUP BY p.id, p.name, p.centroid_json
+            """
+        ).fetchall()
+        highest_unknown = 0
+        for row in rows:
+            pid = int(row["id"])
+            self.person_counts[pid] = int(row["face_count"] or 0)
+            name = str(row["name"] or "")
+            match = re.fullmatch(r"Ukendt-(\d+)", name)
+            if match:
+                highest_unknown = max(highest_unknown, int(match.group(1)))
+            try:
+                raw = json.loads(row["centroid_json"]) if row["centroid_json"] else None
+            except Exception:
+                raw = None
+            arr = _np_face_vector(raw)
+            unit = _np_unit_vector(raw)
+            if arr is None or unit is None:
+                continue
+            self.person_centroid_raw[pid] = arr
+            self._set_centroid(pid, unit)
+        self.next_unknown_number = highest_unknown + 1
+
+    def _set_centroid(self, pid: int, unit: np.ndarray) -> None:
+        dim = int(unit.size)
+        existing = self.centroid_pid_index.get(int(pid))
+        if existing is not None:
+            old_dim, index = existing
+            if old_dim == dim:
+                self.centroid_vectors[dim][index] = unit
+                self.centroid_matrix_cache.pop(dim, None)
+                return
+        pids = self.centroid_pids.setdefault(dim, [])
+        vectors = self.centroid_vectors.setdefault(dim, [])
+        pids.append(int(pid))
+        vectors.append(unit)
+        self.centroid_pid_index[int(pid)] = (dim, len(vectors) - 1)
+        self.centroid_matrix_cache.pop(dim, None)
+
+    def _matrix(self, vectors: dict[int, list[np.ndarray]], cache: dict[int, np.ndarray], dim: int) -> Optional[np.ndarray]:
+        rows = vectors.get(dim) or []
+        if not rows:
+            return None
+        matrix = cache.get(dim)
+        if matrix is None or matrix.shape[0] != len(rows):
+            matrix = np.stack(rows, axis=0).astype(np.float32, copy=False)
+            cache[dim] = matrix
+        return matrix
+
+    def _best_centroid(self, emb: np.ndarray) -> tuple[Optional[int], float]:
+        dim = int(emb.size)
+        matrix = self._matrix(self.centroid_vectors, self.centroid_matrix_cache, dim)
+        if matrix is None:
+            return None, -1.0
+        scores = matrix @ emb
+        if scores.size <= 0:
+            return None, -1.0
+        index = int(np.argmax(scores))
+        return int(self.centroid_pids[dim][index]), float(scores[index])
+
+    def _ensure_fallback_faces(self, conn: sqlite3.Connection) -> None:
+        if self.fallback_loaded:
+            return
+        rows = conn.execute(
+            """
+            SELECT f.embedding_json, f.person_id
+            FROM faces f
+            LEFT JOIN people p ON p.id=f.person_id
+            WHERE f.embedding_json IS NOT NULL
+              AND f.person_id IS NOT NULL
+              AND COALESCE(p.hidden,0)=0
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                raw = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+            except Exception:
+                raw = None
+            unit = _np_unit_vector(raw)
+            if unit is None:
+                continue
+            dim = int(unit.size)
+            self.face_pids.setdefault(dim, []).append(int(row["person_id"]))
+            self.face_vectors.setdefault(dim, []).append(unit)
+        self.fallback_loaded = True
+
+    def _best_face(self, conn: sqlite3.Connection, emb: np.ndarray) -> tuple[Optional[int], float]:
+        self._ensure_fallback_faces(conn)
+        dim = int(emb.size)
+        matrix = self._matrix(self.face_vectors, self.face_matrix_cache, dim)
+        if matrix is None:
+            return None, -1.0
+        scores = matrix @ emb
+        if scores.size <= 0:
+            return None, -1.0
+        index = int(np.argmax(scores))
+        pid = self.face_pids[dim][index]
+        return (int(pid) if pid is not None else None), float(scores[index])
+
+    def _create_unknown(self, conn: sqlite3.Connection) -> int:
+        while True:
+            name = f"Ukendt-{self.next_unknown_number}"
+            self.next_unknown_number += 1
+            try:
+                cur = conn.execute("INSERT INTO people(name, created_at) VALUES(?,?)", (name, now_iso()))
+                row_id = getattr(cur, "lastrowid", None)
+                if row_id is not None:
+                    return int(row_id)
+                row = conn.execute("SELECT id FROM people WHERE name=? ORDER BY id DESC LIMIT 1", (name,)).fetchone()
+                if row:
+                    return int(row["id"])
+            except sqlite3.IntegrityError:
+                continue
+
+    def _learn(self, pid: int, raw_emb: np.ndarray) -> None:
+        old_count = max(0, int(self.person_counts.get(pid, 0)))
+        old_centroid = self.person_centroid_raw.get(pid)
+        if old_centroid is not None and old_centroid.size == raw_emb.size and old_count > 0:
+            new_centroid = ((old_centroid * float(old_count)) + raw_emb) / float(old_count + 1)
+        else:
+            new_centroid = raw_emb.astype(np.float32, copy=True)
+        self.person_counts[pid] = old_count + 1
+        self.person_centroid_raw[pid] = new_centroid
+        unit = _np_unit_vector(new_centroid)
+        if unit is not None:
+            self._set_centroid(pid, unit)
+
+    def match_or_create(self, conn: sqlite3.Connection, embedding: Any) -> tuple[int, bool, float]:
+        raw = _np_face_vector(embedding)
+        unit = _np_unit_vector(embedding)
+        if raw is None or unit is None:
+            pid = self._create_unknown(conn)
+            return pid, True, -1.0
+
+        pid, score = self._best_centroid(unit)
+        if pid is not None and score >= FACE_MATCH_THRESHOLD_CENTROID:
+            self._learn(pid, raw)
+            return pid, False, score
+
+        face_pid, face_score = self._best_face(conn, unit)
+        if face_pid is not None and face_score >= FACE_MATCH_THRESHOLD:
+            self._learn(face_pid, raw)
+            return face_pid, False, face_score
+
+        pid = self._create_unknown(conn)
+        self.person_counts[pid] = 0
+        self._learn(pid, raw)
+        return pid, True, max(score, face_score)
+
+
+def _recompute_person_centroids_bulk(person_ids: set[int]) -> None:
+    """Recompute all touched centroids with one read pass and one write transaction."""
+    ids = sorted({int(pid) for pid in person_ids if pid is not None})
+    if not ids:
+        return
+    with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
+        grouped: dict[int, list[np.ndarray]] = {pid: [] for pid in ids}
+        for start in range(0, len(ids), 400):
+            chunk = ids[start:start + 400]
+            placeholders = ",".join(["?"] * len(chunk))
+            rows = conn.execute(
+                f"SELECT person_id, embedding_json FROM faces WHERE person_id IN ({placeholders}) AND embedding_json IS NOT NULL",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                pid = int(row["person_id"])
+                try:
+                    raw = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+                except Exception:
+                    raw = None
+                arr = _np_face_vector(raw)
+                if arr is not None:
+                    grouped.setdefault(pid, []).append(arr)
+
+        updates: list[tuple[Optional[str], int]] = []
+        for pid in ids:
+            vectors = grouped.get(pid) or []
+            centroid_json: Optional[str] = None
+            if vectors:
+                dim = int(vectors[0].size)
+                same_dim = [v for v in vectors if int(v.size) == dim]
+                if same_dim:
+                    centroid = np.mean(np.stack(same_dim, axis=0), axis=0)
+                    centroid_json = json.dumps(centroid.astype(float).tolist(), separators=(",", ":"))
+            updates.append((centroid_json, pid))
+        conn.executemany("UPDATE people SET centroid_json=? WHERE id=?", updates)
+        conn.commit()
+
+
 def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tuple[int, bool, float]:
     """Return (person_id, created_new, score).
     1) Try matching against person centroids (if available)
@@ -2205,22 +2439,39 @@ def _store_faces_for_photo(
     faces: list[Dict[str, Any]],
     *,
     source: str = "queue",
+    match_cache: Optional[_FaceMatchCache] = None,
+    touched_person_ids: Optional[set[int]] = None,
+    defer_centroids: bool = False,
 ) -> int:
-    """SQLite/person stage. Serialized independently from GPU detection."""
+    """Persist one photo in one SQLite transaction; matching stays in RAM."""
+    owned_touched: set[int] = set()
+    touched = touched_person_ids if touched_person_ids is not None else owned_touched
+
     with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
-        row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+        row = conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
         if not row:
             return 0
         photo_id = int(row["id"])
-        try:
-            conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
-            conn.commit()
-        except Exception:
-            pass
 
-        count = 0
+        # Remember people affected by replacing an existing face index.
+        old_rows = conn.execute(
+            "SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL",
+            (photo_id,),
+        ).fetchall()
+        for old in old_rows:
+            try:
+                touched.add(int(old["person_id"]))
+            except Exception:
+                pass
+
+        conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+        cache = match_cache or _FaceMatchCache(conn)
+
+        insert_rows: list[tuple[Any, ...]] = []
         created_new = 0
         matched_existing = 0
+        now_value = now_iso()
+
         for fc in faces:
             emb = fc.get("embedding") or []
             bbox = fc.get("bbox") or [0, 0, 0, 0]
@@ -2230,62 +2481,59 @@ def _store_faces_for_photo(
                 bw, bh = max(0, x2 - x1), max(0, y2 - y1)
             except Exception:
                 bx = by = bw = bh = 0
-            try:
-                if emb:
-                    pid, created, score = _find_or_create_person_id(conn, emb)
-                    if created:
-                        created_new += 1
-                    else:
-                        matched_existing += 1
-                else:
-                    pid, created, score = (None, False, -1.0)
-            except Exception:
-                pid, created, score = (None, False, -1.0)
 
-            try:
-                frame_sec_val = None
+            pid: Optional[int] = None
+            created = False
+            score = -1.0
+            if emb:
                 try:
-                    if fc.get("frame_sec") is not None:
-                        frame_sec_val = max(0.0, float(fc.get("frame_sec")))
-                except Exception:
-                    frame_sec_val = None
-                conn.execute(
-                    """
-                    INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        photo_id,
-                        pid,
-                        bx, by, bw, bh,
-                        json.dumps(emb, ensure_ascii=False),
-                        float(fc.get("confidence") or 1.0),
-                        frame_sec_val,
-                        now_iso(),
-                    ),
-                )
-                count += 1
-                log_event(
-                    "face_saved",
-                    rel_path=rel_path,
-                    photo_id=photo_id,
-                    person_id=pid,
-                    bbox=[bx, by, bw, bh],
-                    score=score,
-                    frame_sec=fc.get("frame_sec"),
-                )
-            except Exception as exc:
-                log_event("error", rel_path=rel_path, error=f"face_insert: {exc}")
+                    pid, created, score = cache.match_or_create(conn, emb)
+                except Exception as exc:
+                    log_event("error", rel_path=rel_path, error=f"face_match: {exc}")
+                    pid = None
+            if pid is not None:
+                touched.add(int(pid))
+                if created:
+                    created_new += 1
+                else:
+                    matched_existing += 1
 
-        try:
-            conn.execute(
-                "UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?",
-                (count, now_iso(), photo_id),
+            frame_sec_val = None
+            try:
+                if fc.get("frame_sec") is not None:
+                    frame_sec_val = max(0.0, float(fc.get("frame_sec")))
+            except Exception:
+                frame_sec_val = None
+
+            insert_rows.append(
+                (
+                    photo_id,
+                    pid,
+                    bx, by, bw, bh,
+                    json.dumps(emb, ensure_ascii=False, separators=(",", ":")),
+                    float(fc.get("confidence") or 1.0),
+                    frame_sec_val,
+                    now_value,
+                )
             )
-            conn.commit()
-        except Exception:
-            pass
 
+        if insert_rows:
+            conn.executemany(
+                """
+                INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                insert_rows,
+            )
+
+        count = len(insert_rows)
+        conn.execute(
+            "UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?",
+            (count, now_value, photo_id),
+        )
+        conn.commit()
+
+        # One summary log instead of one log write for every face row.
         log_event(
             "faces_index_done",
             rel_path=rel_path,
@@ -2295,22 +2543,9 @@ def _store_faces_for_photo(
             source=source,
         )
 
-        try:
-            pids = [
-                int(r["person_id"])
-                for r in conn.execute(
-                    "SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL",
-                    (photo_id,),
-                ).fetchall()
-            ]
-        except Exception:
-            pids = []
-        for pid in pids:
-            try:
-                _recompute_person_centroid(conn, int(pid))
-            except Exception:
-                pass
-        return int(count)
+    if not defer_centroids and touched:
+        _recompute_person_centroids_bulk(set(touched))
+    return int(count)
 
 
 def index_faces_for_photo(
@@ -13301,13 +13536,7 @@ def _run_face_slot_queue(
     should_continue: Optional[Callable[[], bool]] = None,
     on_complete: Optional[Callable[[str, int, Optional[Exception]], None]] = None,
 ) -> Dict[str, int]:
-    """Two-stage face pipeline.
-
-    Detection/GPU has N refillable slots. As soon as a detection future completes,
-    its slot is refilled *before* the result is written to SQLite. Database/person
-    writes remain serialized through FACE_DB_WRITE_LOCK and therefore cannot idle
-    the GPU detection queue.
-    """
+    """Two-stage face pipeline with a hot RAM matcher and batched centroid writes."""
     items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
     workers = max(1, min(8, int(concurrency or 1), len(items) or 1))
     stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers}
@@ -13327,6 +13556,12 @@ def _run_face_slot_queue(
         except Exception as exc:
             return rel, [], exc
 
+    # Build matching state once for the entire queue instead of re-reading all
+    # people/faces for every detected face.
+    with FACE_DB_WRITE_LOCK, closing(get_conn()) as cache_conn:
+        match_cache = _FaceMatchCache(cache_conn)
+    touched_person_ids: set[int] = set()
+
     executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-detect")
     pending: Dict[Any, str] = {}
     next_index = 0
@@ -13342,7 +13577,6 @@ def _run_face_slot_queue(
         fill_detection_slots()
         while pending:
             done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
-
             completed_detection: list[tuple[str, list[Dict[str, Any]], Optional[Exception]]] = []
             for future in done:
                 rel = pending.pop(future)
@@ -13352,16 +13586,22 @@ def _run_face_slot_queue(
                     faces, detection_error = [], exc
                 completed_detection.append((rel, list(faces or []), detection_error))
 
-            # Critical ordering: refill GPU/detection slots first.
+            # Refill GPU slots before doing any DB work.
             fill_detection_slots()
 
-            # Then serialize DB/person persistence while fresh GPU work is already running.
             for rel, faces, error in completed_detection:
                 count = 0
                 final_error = error
                 if final_error is None and allowed():
                     try:
-                        count = _store_faces_for_photo(rel, faces, source="slot_queue")
+                        count = _store_faces_for_photo(
+                            rel,
+                            faces,
+                            source="slot_queue",
+                            match_cache=match_cache,
+                            touched_person_ids=touched_person_ids,
+                            defer_centroids=True,
+                        )
                     except Exception as exc:
                         final_error = exc
 
@@ -13382,6 +13622,13 @@ def _run_face_slot_queue(
                 break
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
+
+    # Exact centroid rebuild once per touched person, after all face rows are stored.
+    if touched_person_ids:
+        try:
+            _recompute_person_centroids_bulk(touched_person_ids)
+        except Exception as exc:
+            log_event("error", error=f"face_centroid_bulk: {exc}")
 
     return stats
 
