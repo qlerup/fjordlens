@@ -100,11 +100,11 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         elif url.path.startswith('/api/photos/') and url.path.endswith('/favorite'):
             self.excluded_favorites.add(int(url.path.split('/')[3]) - 30000)
             route.fulfill(json={'ok': True, 'favorite': False})
-        elif url.path == '/api/settings/upload-destination':
+        elif url.path in ('/api/settings/upload-destination', '/api/folder-index'):
             if self.hold_folders:
                 self.pending.append(route)
             else:
-                route.fulfill(json={'ok': True, 'folders': ['Album', 'Second'], 'subdir': ''})
+                self.folder_response(route)
         elif url.path == '/api/upload/folder-sync/status' and self.hold_sync:
             self.pending.append(route)
         elif url.path.startswith('/api/'):
@@ -115,6 +115,55 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
             response = self.client.get(url.path + ('?' + url.query if url.query else ''))
             route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
             response.close()
+
+    def folder_response(self, route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        parent = query.get('parent', [''])[0]
+        paths = ['Album', 'Second'] if not parent or query.get('tree') == ['1'] else []
+        route.fulfill(json={'ok': True, 'folders': paths, 'parent': parent, 'revision': 1,
+                            'items': [{'path': p, 'name': p.split('/')[-1], 'previews': ['/test/thumb.jpg']} for p in paths],
+                            'indexing': False, 'pending_previews': False})
+
+    def test_empty_photo_page_does_not_flash_empty_while_folder_index_is_pending(self):
+        self.total = 0
+        self.hold_folders = True
+        self.page.evaluate("void setView('mapper')")
+        self.page.wait_for_function('!state.photosLoading && state.mapperFoldersLoading')
+        self.assertTrue(self.page.evaluate("els.empty.classList.contains('hidden')"))
+        self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 12)
+        route = next(r for r in self.pending if '/folder-index' in r.request.url)
+        self.hold_folders = False
+        self.folder_response(route)
+        self.page.wait_for_function('!state.mapperFoldersLoading')
+        self.assertEqual(self.page.locator('#galleryGrid .folder-card').count(), 2)
+        self.assertTrue(self.page.evaluate("els.empty.classList.contains('hidden')"))
+
+    def test_folder_lookup_failure_shows_retry_instead_of_empty(self):
+        self.total = 0
+        self.hold_folders = True
+        self.page.evaluate("void setView('mapper')")
+        self.page.wait_for_function('!state.photosLoading && state.mapperFoldersLoading')
+        route = next(r for r in self.pending if '/folder-index' in r.request.url)
+        route.fulfill(status=503, json={'ok': False, 'error': 'Midlertidig fejl'})
+        self.page.wait_for_function('!state.mapperFoldersLoading')
+        self.assertFalse(self.page.evaluate("els.empty.classList.contains('hidden')"))
+        self.assertIn('Midlertidig fejl',self.page.evaluate('els.empty.textContent'))
+        self.hold_folders = False
+        self.page.evaluate("els.empty.querySelector('button').click()")
+        self.page.wait_for_function('state.mapperFolders.length === 2 && !state.mapperFoldersLoading')
+        self.assertTrue(self.page.evaluate("els.empty.classList.contains('hidden')"))
+
+    def test_index_covers_need_no_extra_preview_metadata_request_and_survive_photo_arrival(self):
+        self.hold_view = 'mapper'
+        self.page.evaluate("void setView('mapper')")
+        self.page.wait_for_function("document.querySelectorAll('#galleryGrid .folder-grid img').length === 2")
+        self.page.evaluate("window.savedFolder = document.querySelector('#galleryGrid .folder-card'); window.savedCover = savedFolder.querySelector('img')")
+        self.assertFalse(any('/api/folder-previews?' in r for r in self.requests))
+        self.hold_view = None
+        photo = next(r for r in self.pending if '/api/photos?' in r.request.url and 'view=mapper' in r.request.url)
+        self.photo_response(photo)
+        self.page.wait_for_function('!state.photosLoading && state.items.length > 0')
+        self.assertTrue(self.page.evaluate('savedFolder.isConnected && savedCover.isConnected'))
 
     def test_menu_closes_and_skeleton_is_visible_while_photos_are_pending(self):
         self.hold_view = 'kameraer'
@@ -194,9 +243,9 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.page.wait_for_function('state.items.length > 0 && !state.photosLoading')
         self.assertTrue(self.page.locator('#galleryGrid [data-photo-id]').count() > 0)
         self.assertFalse(self.page.evaluate("document.body.classList.contains('drawer-open')"))
-        folder = next(r for r in self.pending if '/upload-destination' in r.request.url)
+        folder = next(r for r in self.pending if '/folder-index' in r.request.url)
         self.hold_folders = False
-        folder.fulfill(json={'ok': True, 'folders': ['Album', 'Second'], 'subdir': ''})
+        self.folder_response(folder)
         self.page.wait_for_function('navigationDone')
         self.assertEqual(self.page.locator('#galleryGrid .folder-card').count(), 2)
 

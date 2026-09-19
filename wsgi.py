@@ -1,4 +1,7 @@
 from app import app as application
+
+# Start lazy catalogue workers at runtime, never during imports or test fixtures.
+application.config["FOLDER_INDEX_WORKERS"] = True
 from airplay_controls import init_airplay_controls
 from airplay_hls import init_airplay_hls
 from airplay_seek_fix import init_airplay_seek_fix

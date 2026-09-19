@@ -45,7 +45,8 @@ test('background refresh ignores replies after leaving a folder and skips unchan
   const context = vm.createContext({state,photosRequestSequence:1,URLSearchParams,
     mapperViewKey:()=>state.mapperPath,galleryDataCache:{generation:()=>0},
     _normalizeMapperSort:x=>x,estimateMapperPageLimit:()=>50,
-    fetch:()=>new Promise(r=>resolve=r),fetchUploadDestinationConfig:async()=>({res:{ok:true},data:{ok:true,folders:['A']}}),
+    fetch:()=>new Promise(r=>resolve=r),fetchMapperFolderIndex:async()=>({ok:true,folders:['A'],items:[]}),
+    mapperIndexPreviews:()=>({}),scheduleMapperIndexRefresh:()=>{},showStatus:()=>{},
     rememberMapperView:()=>remembered++,renderGrid:()=>renders++});
   vm.runInContext(source.slice(source.indexOf('async function refreshMapperViewInBackground'),source.indexOf('function galleryCacheKey')),context);
   const run = context.refreshMapperViewInBackground();
