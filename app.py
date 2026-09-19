@@ -7314,12 +7314,76 @@ def _list_upload_subdirs(base_dir: Path, limit: int = 400) -> list[str]:
     return out
 
 
+def _ensure_folder_index_table() -> None:
+    with closing(get_conn()) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS folder_index (
+                folder_path TEXT PRIMARY KEY,
+                parent_path TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_parent ON folder_index(parent_path)")
+        conn.commit()
+
+
+def _folder_index_list() -> list[str]:
+    _ensure_folder_index_table()
+    try:
+        with closing(get_conn()) as conn:
+            rows = conn.execute("SELECT folder_path FROM folder_index ORDER BY folder_path COLLATE NOCASE").fetchall()
+        return [""] + [str(row["folder_path"]) for row in rows if str(row["folder_path"] or "").strip()]
+    except Exception:
+        return [""]
+
+
+def _folder_index_rebuild(base_dir: Path) -> list[str]:
+    folders = _list_upload_subdirs(base_dir)
+    now = now_iso()
+    _ensure_folder_index_table()
+    clean = [str(f).strip().replace("\\", "/") for f in folders if str(f or "").strip()]
+    with closing(get_conn()) as conn:
+        conn.execute("DELETE FROM folder_index")
+        conn.executemany(
+            "INSERT INTO folder_index(folder_path,parent_path,name,updated_at) VALUES(?,?,?,?)",
+            [(f, f.rsplit("/", 1)[0] if "/" in f else "", f.rsplit("/", 1)[-1], now) for f in clean],
+        )
+        conn.commit()
+    return [""] + clean
+
+
+def _folder_index_add(path: str) -> None:
+    clean = str(path or "").strip().replace("\\", "/").strip("/")
+    if not clean:
+        return
+    _ensure_folder_index_table()
+    parts = clean.split("/")
+    rows = []
+    for i in range(1, len(parts) + 1):
+        value = "/".join(parts[:i])
+        rows.append((value, value.rsplit("/", 1)[0] if "/" in value else "", parts[i - 1], now_iso()))
+    with closing(get_conn()) as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO folder_index(folder_path,parent_path,name,updated_at) VALUES(?,?,?,?)", rows
+        )
+        conn.commit()
+
+
 def _upload_settings_payload(destination: str) -> dict:
     saved_destination = get_upload_destination()
     subdir = get_upload_subdir(destination)
     target_root, _ = _upload_target_for_destination(destination)
     subdir = _ensure_default_upload_subdir(destination, target_root, subdir)
-    folders = _list_upload_subdirs(target_root)
+    # Mapper navigation uses a persisted DB index instead of walking the NAS.
+    # The index is refreshed by folder mutations and can be rebuilt explicitly
+    # when files/folders are added outside FjordLens.
+    if destination == UPLOAD_DEST_UPLOADS:
+        folders = _folder_index_list()
+        if not folders:
+            folders = _folder_index_rebuild(target_root)
+    else:
+        folders = _list_upload_subdirs(target_root)
     folders = _filter_folders_by_current_user_acl(folders)
     if destination == UPLOAD_DEST_UPLOADS and "uploads" in folders:
         folders = [f for f in folders if f != "uploads"]
@@ -23512,6 +23576,8 @@ def api_settings_upload_folder():
             conn.commit()
     except Exception:
         pass
+    if destination == UPLOAD_DEST_UPLOADS:
+        _folder_index_add(new_subdir)
     payload = _upload_settings_payload(destination)
     payload["created"] = new_subdir
     log_event("folder_created", actor=_audit_actor(), path=new_subdir, destination=destination)
