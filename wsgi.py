@@ -1,4 +1,10 @@
+import app as core
 from app import app as application
+
+# Prevent permanently corrupt recovered JPEG uploads from being retried after
+# every later upload while preserving retries for transient failures.
+from upload_recovery_guard import init_upload_recovery_guard
+init_upload_recovery_guard(core)
 
 # Start lazy catalogue workers at runtime, never during imports or test fixtures.
 application.config["FOLDER_INDEX_WORKERS"] = True
