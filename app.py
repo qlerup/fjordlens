@@ -2185,11 +2185,139 @@ def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[flo
     return out
 
 
+def _detect_faces_for_photo(rel_path: str) -> list[Dict[str, Any]]:
+    """Detection-only stage. No SQLite/person writes happen here."""
+    disk_path = _disk_path_from_rel_path(rel_path)
+    if not disk_path.exists():
+        return []
+    is_video = disk_path.suffix.lower() in VIDEO_EXTS
+    if is_video:
+        faces = _ai_detect_faces_video_path(disk_path, rel_path) or []
+        log_event("faces_detect", rel_path=rel_path, media="video", count=len(faces), source="queue")
+    else:
+        faces = _ai_detect_faces_path(disk_path) or []
+        log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="queue")
+    return list(faces)
+
+
+def _store_faces_for_photo(
+    rel_path: str,
+    faces: list[Dict[str, Any]],
+    *,
+    source: str = "queue",
+) -> int:
+    """SQLite/person stage. Serialized independently from GPU detection."""
+    with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
+        if not row:
+            return 0
+        photo_id = int(row["id"])
+        try:
+            conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
+            conn.commit()
+        except Exception:
+            pass
+
+        count = 0
+        created_new = 0
+        matched_existing = 0
+        for fc in faces:
+            emb = fc.get("embedding") or []
+            bbox = fc.get("bbox") or [0, 0, 0, 0]
+            try:
+                x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+                bx, by = max(0, x1), max(0, y1)
+                bw, bh = max(0, x2 - x1), max(0, y2 - y1)
+            except Exception:
+                bx = by = bw = bh = 0
+            try:
+                if emb:
+                    pid, created, score = _find_or_create_person_id(conn, emb)
+                    if created:
+                        created_new += 1
+                    else:
+                        matched_existing += 1
+                else:
+                    pid, created, score = (None, False, -1.0)
+            except Exception:
+                pid, created, score = (None, False, -1.0)
+
+            try:
+                frame_sec_val = None
+                try:
+                    if fc.get("frame_sec") is not None:
+                        frame_sec_val = max(0.0, float(fc.get("frame_sec")))
+                except Exception:
+                    frame_sec_val = None
+                conn.execute(
+                    """
+                    INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        photo_id,
+                        pid,
+                        bx, by, bw, bh,
+                        json.dumps(emb, ensure_ascii=False),
+                        float(fc.get("confidence") or 1.0),
+                        frame_sec_val,
+                        now_iso(),
+                    ),
+                )
+                count += 1
+                log_event(
+                    "face_saved",
+                    rel_path=rel_path,
+                    photo_id=photo_id,
+                    person_id=pid,
+                    bbox=[bx, by, bw, bh],
+                    score=score,
+                    frame_sec=fc.get("frame_sec"),
+                )
+            except Exception as exc:
+                log_event("error", rel_path=rel_path, error=f"face_insert: {exc}")
+
+        try:
+            conn.execute(
+                "UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?",
+                (count, now_iso(), photo_id),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+        log_event(
+            "faces_index_done",
+            rel_path=rel_path,
+            faces=count,
+            matched=matched_existing,
+            created=created_new,
+            source=source,
+        )
+
+        try:
+            pids = [
+                int(r["person_id"])
+                for r in conn.execute(
+                    "SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL",
+                    (photo_id,),
+                ).fetchall()
+            ]
+        except Exception:
+            pids = []
+        for pid in pids:
+            try:
+                _recompute_person_centroid(conn, int(pid))
+            except Exception:
+                pass
+        return int(count)
+
+
 def index_faces_for_photo(
     rel_path: str,
     detected_faces: Optional[list[Dict[str, Any]]] = None,
 ) -> int:
-    """Detect/store faces for a photo/video; batch callers may supply detections."""
+    """Detect/store faces for one item; queue callers can separate both stages."""
     try:
         disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
@@ -2199,103 +2327,12 @@ def index_faces_for_photo(
         if detected_faces is not None and not is_video:
             faces = list(detected_faces)
             log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="batch")
-        elif is_video:
-            faces = _ai_detect_faces_video_path(disk_path, rel_path)
-            log_event("faces_detect", rel_path=rel_path, media="video", count=len(faces))
         else:
-            faces = _ai_detect_faces_path(disk_path) or []
-            log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="single")
-        with FACE_DB_WRITE_LOCK, closing(get_conn()) as conn:
-            row = conn.execute("SELECT id, metadata_json FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
-            if not row:
-                return 0
-            photo_id = int(row["id"])
-            # Clear previous faces for this photo (re-index)
-            try:
-                conn.execute("DELETE FROM faces WHERE photo_id=?", (photo_id,))
-                conn.commit()
-            except Exception:
-                pass
-            count = 0
-            created_new = 0
-            matched_existing = 0
-            for fc in faces:
-                emb = fc.get("embedding") or []
-                bbox = fc.get("bbox") or [0, 0, 0, 0]
-                try:
-                    x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
-                    bx, by = max(0, x1), max(0, y1)
-                    bw, bh = max(0, x2 - x1), max(0, y2 - y1)
-                except Exception:
-                    bx = by = bw = bh = 0
-                try:
-                    if emb:
-                        pid, created, score = _find_or_create_person_id(conn, emb)
-                        if created:
-                            created_new += 1
-                        else:
-                            matched_existing += 1
-                    else:
-                        pid, created, score = (None, False, -1.0)
-                except Exception:
-                    pid, created, score = (None, False, -1.0)
-                try:
-                    frame_sec_val = None
-                    try:
-                        if fc.get("frame_sec") is not None:
-                            frame_sec_val = max(0.0, float(fc.get("frame_sec")))
-                    except Exception:
-                        frame_sec_val = None
-                    conn.execute(
-                        """
-                        INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, embedding_json, confidence, frame_sec, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            photo_id,
-                            pid,
-                            bx, by, bw, bh,
-                            json.dumps(emb, ensure_ascii=False),
-                            float(fc.get("confidence") or 1.0),
-                            frame_sec_val,
-                            now_iso(),
-                        ),
-                    )
-                    count += 1
-                    log_event(
-                        "face_saved",
-                        rel_path=rel_path,
-                        photo_id=photo_id,
-                        person_id=pid,
-                        bbox=[bx, by, bw, bh],
-                        score=score,
-                        frame_sec=fc.get("frame_sec"),
-                    )
-                except Exception as e:
-                    log_event("error", rel_path=rel_path, error=f"face_insert: {e}")
-            try:
-                conn.execute("UPDATE photos SET people_count=?, faces_indexed_at=? WHERE id=?", (count, now_iso(), photo_id))
-                conn.commit()
-            except Exception:
-                pass
-            log_event("faces_index_done", rel_path=rel_path, faces=count, matched=matched_existing, created=created_new)
-            # Optional: update centroids for any persons touched in this photo
-            try:
-                pids = [int(r["person_id"]) for r in conn.execute("SELECT DISTINCT person_id FROM faces WHERE photo_id=? AND person_id IS NOT NULL", (photo_id,)).fetchall()]
-            except Exception:
-                pids = []
-            for pid in pids:
-                try:
-                    _recompute_person_centroid(conn, int(pid))
-                except Exception:
-                    pass
-            return int(count)
-    except Exception as e:
-        log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {e}")
+            faces = _detect_faces_for_photo(rel_path)
+        return _store_faces_for_photo(rel_path, faces, source="single")
+    except Exception as exc:
+        log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {exc}")
         return 0
-
-
-    
 
 
 # Zero-shot labels (initial simple vocabulary; can expand/customize later)
@@ -13264,7 +13301,13 @@ def _run_face_slot_queue(
     should_continue: Optional[Callable[[], bool]] = None,
     on_complete: Optional[Callable[[str, int, Optional[Exception]], None]] = None,
 ) -> Dict[str, int]:
-    """Keep exactly N face jobs in flight and refill a slot as soon as one finishes."""
+    """Two-stage face pipeline.
+
+    Detection/GPU has N refillable slots. As soon as a detection future completes,
+    its slot is refilled *before* the result is written to SQLite. Database/person
+    writes remain serialized through FACE_DB_WRITE_LOCK and therefore cannot idle
+    the GPU detection queue.
+    """
     items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
     workers = max(1, min(8, int(concurrency or 1), len(items) or 1))
     stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers}
@@ -13274,47 +13317,65 @@ def _run_face_slot_queue(
     def allowed() -> bool:
         return True if should_continue is None else bool(should_continue())
 
-    def run_one(rel: str):
+    def detect_one(rel: str):
         if not allowed():
-            return rel, 0, None
+            return rel, [], None
         try:
-            count = int(index_faces_for_photo(rel) or 0)
-            return rel, count, None
+            log_event("faces_index_start", rel_path=rel, queue_workers=workers)
+            faces = _detect_faces_for_photo(rel)
+            return rel, faces, None
         except Exception as exc:
-            return rel, 0, exc
+            return rel, [], exc
 
-    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-slot")
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fjordlens-face-detect")
     pending: Dict[Any, str] = {}
     next_index = 0
 
-    def fill_slots() -> None:
+    def fill_detection_slots() -> None:
         nonlocal next_index
         while allowed() and len(pending) < workers and next_index < len(items):
             rel = items[next_index]
             next_index += 1
-            pending[executor.submit(run_one, rel)] = rel
+            pending[executor.submit(detect_one, rel)] = rel
 
     try:
-        fill_slots()
+        fill_detection_slots()
         while pending:
             done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
+
+            completed_detection: list[tuple[str, list[Dict[str, Any]], Optional[Exception]]] = []
             for future in done:
                 rel = pending.pop(future)
                 try:
-                    _rel, count, error = future.result()
+                    _rel, faces, detection_error = future.result()
                 except Exception as exc:
-                    count, error = 0, exc
+                    faces, detection_error = [], exc
+                completed_detection.append((rel, list(faces or []), detection_error))
+
+            # Critical ordering: refill GPU/detection slots first.
+            fill_detection_slots()
+
+            # Then serialize DB/person persistence while fresh GPU work is already running.
+            for rel, faces, error in completed_detection:
+                count = 0
+                final_error = error
+                if final_error is None and allowed():
+                    try:
+                        count = _store_faces_for_photo(rel, faces, source="slot_queue")
+                    except Exception as exc:
+                        final_error = exc
+
                 stats["processed"] += 1
                 if count > 0:
                     stats["faces_found"] += 1
-                if error is not None:
+                if final_error is not None:
                     stats["errors"] += 1
                 if on_complete is not None:
                     try:
-                        on_complete(rel, count, error)
+                        on_complete(rel, count, final_error)
                     except Exception:
                         pass
-            fill_slots()
+
             if not allowed():
                 for future in pending:
                     future.cancel()
