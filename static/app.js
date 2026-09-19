@@ -11954,9 +11954,12 @@ function beginMapperPathNavigation(path) {
   photosRequestSequence += 1;
   state.mapperPath = nextPath;
   state.folder = nextPath || null;
+  // Keep the previous cards until the indexed folder response arrives.
+  // This avoids briefly claiming that a folder is empty while navigation is loading.
   state.items = [];
   state.photosPageOffset = 0;
   state.photosHasMore = false;
+  state.photosLoading = true;
   _expandMapperAncestors(nextPath);
   renderMapperContext(nextPath);
   if (state.view === 'mapper' && !restoreMapperView()) renderGrid();
