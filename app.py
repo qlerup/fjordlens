@@ -24473,6 +24473,55 @@ def _attach_conversion_metadata(
     meta["metadata_json"] = mj
 
 
+def _bulk_conversion_missing_rows(rows, suffix: str):
+    """Skip existing outputs, including renamed outputs linked by conversion metadata."""
+    by_source = {}
+    owners = {}
+    with closing(get_conn()) as conn:
+        linked = conn.execute("SELECT rel_path, metadata_json FROM photos WHERE metadata_json IS NOT NULL").fetchall()
+    for row in linked:
+        try:
+            meta = json.loads(row['metadata_json'] or '{}')
+            conversion = meta.get('conversion') or {}
+            source = conversion.get('from_rel_path') or meta.get('converted_from_rel')
+            target = conversion.get('to_rel_path') or meta.get('converted_to_rel') or row['rel_path']
+            if source and target:
+                by_source.setdefault(source, set()).add(target)
+                owners.setdefault(target, set()).add(source)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    missing = []
+    for row in rows:
+        rel = row['rel_path']
+        candidates = set(by_source.get(rel, ()))
+        if rel.startswith('uploads/'):
+            _, tail = _upload_storage_tail(rel)
+            base = 'uploads/converted/' + str(Path(tail).with_suffix(suffix)).replace('\\', '/')
+        else:
+            base = str(Path(rel).with_suffix(suffix)).replace('\\', '/')
+        canonical = [base]
+        if suffix == '.jpg':
+            canonical.append(str(Path(base).with_suffix('.jpeg')).replace('\\', '/'))
+        for candidate in canonical:
+            # A same-named output explicitly linked to another source is not ours.
+            if candidate not in owners or rel in owners[candidate]:
+                candidates.add(candidate)
+        found = False
+        for candidate in candidates:
+            if Path(candidate).suffix.lower() not in ({'.jpg', '.jpeg'} if suffix == '.jpg' else {suffix}):
+                continue
+            path = _disk_path_from_rel_path(candidate)
+            try:
+                if path.is_file() and path.stat().st_size > 0:
+                    found = True
+                    break
+            except OSError:
+                pass
+        if not found:
+            missing.append(row)
+    return missing, len(rows) - len(missing)
+
+
 def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("heic_bulk_start")
@@ -24481,6 +24530,8 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     # HEIC/HEIF only in this function
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg')
+    log_event('heic_bulk_candidates', pending=len(rows), skipped=skipped)
     # initialize global progress snapshot
     try:
         global heic_convert_progress
@@ -24525,9 +24576,9 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
                             break
                         i += 1
                 tail = (
-                    Path(sub_rel).with_suffix(".jpg").name
+                    dst.name
                     if subdir_only in {"", "."}
-                    else (Path(subdir_only) / Path(sub_rel).with_suffix(".jpg").name).as_posix()
+                    else (Path(subdir_only) / dst.name).as_posix()
                 )
                 new_rel = f"uploads/converted/{tail}"
             else:
@@ -24600,7 +24651,7 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
             heic_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors}
+    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
     log_event("heic_bulk_done", **res)
     # final snapshot stays available in status until next run
     try:
@@ -24660,6 +24711,8 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
     where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
     with closing(get_conn()) as conn:
         rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg')
+    log_event('raw_bulk_candidates', pending=len(rows), skipped=skipped)
     global raw_convert_progress
     try:
         raw_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
@@ -24699,9 +24752,9 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
                             break
                         i += 1
                 tail = (
-                    Path(sub_rel).with_suffix(".jpg").name
+                    dst.name
                     if subdir_only in {"", "."}
-                    else (Path(subdir_only) / Path(sub_rel).with_suffix(".jpg").name).as_posix()
+                    else (Path(subdir_only) / dst.name).as_posix()
                 )
                 new_rel = f"uploads/converted/{tail}"
             else:
@@ -24751,7 +24804,7 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
             raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors}
+    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
     log_event("raw_bulk_done", **res)
     try:
         raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
@@ -24802,6 +24855,8 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
     errors = 0
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.mov'").fetchall()
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.mp4')
+    log_event('mov_bulk_candidates', pending=len(rows), skipped=skipped)
     global mov_convert_progress
     try:
         mov_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
@@ -24898,7 +24953,7 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
             mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors}
+    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
     log_event("mov_bulk_done", **res)
     try:
         mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
