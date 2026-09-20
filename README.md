@@ -4,7 +4,7 @@ FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with
 
 This repository contains the FjordLens web app/API plus the Raspberry Pi photoframe client.
 
-See [Momenter](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
+See [Minder](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
 photo selection, editing, splitting and merging moments, cinematic slideshows,
 music, public links and MP4 export.
 

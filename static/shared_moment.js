@@ -12,6 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
   button.onclick = play;
   fetch(document.getElementById('shareBootstrap').dataset.url,{cache:'no-store'})
     .then(async response => { if (!response.ok) throw new Error(); return response.json(); })
-    .then(data => { item=data.item; document.getElementById('shareStatus').textContent=momentIsPhone() ? 'Se momentet i bredformat. Drej telefonen, når du trykker afspil.' : 'Læn dig tilbage og se momentet med billeder, video og musik.'; button.disabled=false; })
+    .then(data => { item=data.item; document.getElementById('shareStatus').textContent=momentIsPhone() ? 'Se mindet i bredformat. Drej telefonen, når du trykker afspil.' : 'Læn dig tilbage og se mindet med billeder, video og musik.'; button.disabled=false; })
     .catch(() => { document.getElementById('shareStatus').textContent='Linket er ikke længere tilgængeligt.'; });
 });

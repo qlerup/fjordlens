@@ -1,6 +1,6 @@
-# Momenter
+# Minder
 
-Åbn **Momenter → Find nye momenter** som administrator. Scanningen bruger hele
+Åbn **Minder → Find nye minder** som administrator. Scanningen bruger hele
 det indekserede bibliotek, inklusive uploads, og fjerner ekstra lagerkopier af
 samme upload. Der foretages ingen nye billedanalyser eller eksterne AI-kald under
 scanningen. GPS uden stednavn slås op i den allerede installerede lokale
@@ -35,13 +35,13 @@ billedbeskrivelserne. AI-fortælling bruges fortsat først, når diasshowet åbn
   usikkerheden. Historiske optagelsesdatoer, der allerede blev udledt af fildato
   ved import, kan ikke skelnes sikkert uden yderligere dataproveniens.
 
-**Hvorfor dette moment?** viser grundlaget og turens steder som kapitler.
+**Hvorfor dette minde?** viser grundlaget og turens steder som kapitler.
 Forslagene er heuristikker, ikke sikre konklusioner om ferie eller personers
 ophold. Biblioteker med begrænset GPS/historik får mere forsigtige forslag.
 
 ## Attraktioner ved koordinaterne
 
-Momentets GPS-positioner samles og sammenholdes med dynamiske kortopslag efter
+Mindets GPS-positioner samles og sammenholdes med dynamiske kortopslag efter
 navngivne seværdigheder og deres områder. Mange billeder i samme park vejer
 tungere end et enkelt nærliggende punkt. Det virker også i udlandet og bygger
 ikke på en fast liste over danske seværdigheder. En tilknytning kan give en
@@ -80,22 +80,22 @@ Administratorer og medieadministratorer kan bruge **Rediger** til at:
 
 - ændre titel og datoer;
 - vælge/fravælge billeder og søge efter flere inden for datoer og gemte stednavne;
-- flytte de valgte billeder til et nyt moment, mens resten bliver i det gamle;
-- samle to momenter. Årsoversigter kan redigeres, men ikke opdeles eller samles.
+- flytte de valgte billeder til et nyt minde, mens resten bliver i det gamle;
+- samle to minder. Årsoversigter kan redigeres, men ikke opdeles eller samles.
 
 Gem titel-/datoændringer før opdeling eller sammenlægning. Billederne slettes
-ikke fra biblioteket, når de fravælges. En redigering låser momentets automatiske
+ikke fra biblioteket, når de fravælges. En redigering låser mindets automatiske
 medlemskab. Ny scanning opdaterer kun urørte forslag og genskaber ikke afviste,
-slettede eller manuelt opdelte momenter. Gemte momenter bevares også, herunder
-ældre gemte momenter, som kun indeholdt et udvalg fra den tidligere algoritme.
+slettede eller manuelt opdelte minder. Gemte minder bevares også, herunder
+ældre gemte minder, som kun indeholdt et udvalg fra den tidligere algoritme.
 Manglende billeder kan tilføjes via søgningen i redigeringen.
 
-Alle relevante billeder gemmes på nye momenter. Diasshowet vælger særskilt et
+Alle relevante billeder gemmes på nye minder. Diasshowet vælger særskilt et
 udvalg fordelt på dage og steder, prioriterer favoritter inden for grupperne og
-fravælger lignende billedhashes. Det ændrer ikke momentets fulde billedliste.
+fravælger lignende billedhashes. Det ændrer ikke mindets fulde billedliste.
 
-Almindelige brugere ser kun et moment, hvis de har adgang til alle dets billeder.
-Redigering afvises med en konfliktbesked, hvis momentet er ændret siden åbningen,
+Almindelige brugere ser kun et minde, hvis de har adgang til alle dets billeder.
+Redigering afvises med en konfliktbesked, hvis mindet er ændret siden åbningen,
 eller hvis en video er under opbygning.
 
 ## Drift og validering
@@ -124,7 +124,7 @@ intet diasshow eller musik starter automatisk. På telefoner vises en rund
 drejepil i tre sekunder før afspilning. Browseren forsøger fuldskærm og liggende
 visning. Hvis det ikke understøttes, drejes selve 16:9-afspilleren på siden,
 mens telefonen holdes lodret. Når telefonen vendes, tilpasses afspilleren uden
-at genstarte momentet. Billeder, tekst og billedpar har samme brede layout
+at genstarte mindet. Billeder, tekst og billedpar har samme brede layout
 på alle enheder. Indstillinger → Delte administrerer
 kopiering, QR, udløb, forlængelse, aktivering, deaktivering og sletning.
 Nye links gemmer deres egen version af tidslinje og musikvalg.
@@ -137,7 +137,7 @@ tekst-/layoutændringer. Tidligere MP4-filer skal genereres igen. Genstart både
 
 Databasefelter til forklaringer, redigeringsmarkering og revision samt tabeller
 til hjemområde og scanningsstatus oprettes automatisk af `init_db()`. Opgraderingen
-bevarer eksisterende momenter. Scanningsstatus deles mellem serverprocesser;
+bevarer eksisterende minder. Scanningsstatus deles mellem serverprocesser;
 en efterladt status kan genstartes efter en time.
 
 De eksisterende `MOMENT_MIN_PHOTOS` (10, kan ikke sættes lavere), `MOMENT_MIN_SPAN_HOURS` (4),

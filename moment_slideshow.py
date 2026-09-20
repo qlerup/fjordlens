@@ -55,7 +55,7 @@ def validate(script, photos, video_exts):
             if key == 'background_photo_id' and pid is None:
                 continue
             if type(pid) is not int or pid not in photos:
-                raise service.EditError('Alle billeder og videoer skal høre til momentet.')
+                raise service.EditError('Alle billeder og videoer skal høre til mindet.')
             is_video = str(photos[pid].get('ext') or '').lower() in video_exts
             if is_video != (kind == 'video'):
                 raise service.EditError('Vælg et billede til billedslides og en video til videoklip.')

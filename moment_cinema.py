@@ -57,7 +57,7 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
             film_title = folder.get('name') or film_title
         film_title = moment_titles.base_title(film_title)
     script = [dict(type='text', style='intro', text=film_title,
-                   eyebrow=moment['primary_place'] or 'ET MOMENT', detail=period,
+                   eyebrow=moment['primary_place'] or 'ET MINDE', detail=period,
                    background_photo_id=rows[0]['id'], duration=4.6, design_version=VERSION)]
     last_place, last_day, last_chapter = None, None, 0
     quotes = [str(c).strip() for c in cards if str(c).strip()][:2]
@@ -94,7 +94,7 @@ def timeline(moment, rows, *, title=None, subtitle=None, cards=(), video_exts=()
                                detail='', background_photo_id=row['id'], duration=4.2, design_version=VERSION))
         last_place, last_day = place or last_place, day or last_day
     script.append(dict(type='text', style='outro', text='Minder at vende tilbage til',
-                       eyebrow=moment['primary_place'] or 'DIT MOMENT', detail=period,
+                       eyebrow=moment['primary_place'] or 'DIT MINDE', detail=period,
                        background_photo_id=rows[-1]['id'], duration=3.8, design_version=VERSION))
     # Pair occasional adjacent portraits from the same part of an outing.
     # Keep the opening/closing photographs and chronological selection intact.

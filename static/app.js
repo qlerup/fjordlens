@@ -1356,34 +1356,34 @@ const I18N = {
     detail_rethumb_title: 'Genskab thumbnail',
     detail_rethumb_success: 'Thumbnail genskabt',
     detail_rethumb_failed: 'Thumbnail kunne ikke genskabes',
-    nav_momenter: '🧳 Momenter',
-    view_momenter_title: 'Momenter',
+    nav_momenter: '🧳 Minder',
+    view_momenter_title: 'Minder',
     view_momenter_sub: 'Automatisk fundne rejser og årsoverblik',
-    momenter_find_new: 'Find nye momenter',
-    momenter_finding: 'Leder efter momenter...',
+    momenter_find_new: 'Find nye minder',
+    momenter_finding: 'Leder efter minder...',
     momenter_scan_grouping: 'Grupperer billeder efter dato og sted…',
-    momenter_scan_places: 'Undersøger seværdigheder · moment {current} af {total}…',
+    momenter_scan_places: 'Undersøger seværdigheder · minde {current} af {total}…',
     momenter_scan_regions: '{photos} GPS-billeder · område {region} af {regions}',
-    momenter_scan_saving: 'Gemmer og opdaterer momenter…',
+    momenter_scan_saving: 'Gemmer og opdaterer minder…',
     momenter_possible_place: 'Muligt besøg: {place}',
-    momenter_find_done: 'Fandt {n} nye momenter',
-    momenter_find_failed: 'Kunne ikke finde momenter',
-    momenter_find_zero_debug: 'Ingen nye momenter. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
+    momenter_find_done: 'Fandt {n} nye minder',
+    momenter_find_failed: 'Kunne ikke finde minder',
+    momenter_find_zero_debug: 'Ingen nye minder. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
     momenter_suggested_heading: 'Forslag',
-    momenter_saved_heading: 'Gemte momenter',
-    momenter_empty: 'Ingen momenter endnu. En administrator kan bruge «Find nye momenter» til at finde ture, dagsoplevelser og årsoverblik.',
+    momenter_saved_heading: 'Gemte minder',
+    momenter_empty: 'Ingen minder endnu. En administrator kan bruge «Find nye minder» til at finde ture, dagsoplevelser og årsoverblik.',
     momenter_empty_suggested: 'Ingen nye forslag lige nu.',
     momenter_accept: 'Gem',
     momenter_dismiss: 'Afvis',
     momenter_play: 'Afspil',
     momenter_opening: 'Åbner...',
     momenter_delete: 'Slet',
-    momenter_rename_prompt: 'Titel på momentet',
-    momenter_accept_failed: 'Kunne ikke gemme momentet',
-    momenter_dismiss_failed: 'Kunne ikke afvise momentet',
-    momenter_delete_confirm: 'Slet dette moment?',
-    momenter_delete_failed: 'Kunne ikke slette momentet',
-    momenter_load_failed: 'Kunne ikke hente momenter',
+    momenter_rename_prompt: 'Titel på mindet',
+    momenter_accept_failed: 'Kunne ikke gemme mindet',
+    momenter_dismiss_failed: 'Kunne ikke afvise mindet',
+    momenter_delete_confirm: 'Slet dette minde?',
+    momenter_delete_failed: 'Kunne ikke slette mindet',
+    momenter_load_failed: 'Kunne ikke hente minder',
     momenter_kind_trip: 'Rejse',
     momenter_kind_year_review: 'Årsoverblik',
     momenter_make_video: '🎬 Lav video',
@@ -2224,34 +2224,34 @@ const I18N = {
     detail_rethumb_title: 'Rebuild thumbnail',
     detail_rethumb_success: 'Thumbnail rebuilt',
     detail_rethumb_failed: 'Thumbnail could not be rebuilt',
-    nav_momenter: '🧳 Moments',
-    view_momenter_title: 'Moments',
+    nav_momenter: '🧳 Memories',
+    view_momenter_title: 'Memories',
     view_momenter_sub: 'Automatically detected trips and year reviews',
-    momenter_find_new: 'Find new moments',
-    momenter_finding: 'Looking for moments...',
+    momenter_find_new: 'Find new memories',
+    momenter_finding: 'Looking for memories...',
     momenter_scan_grouping: 'Grouping photos by date and place…',
-    momenter_scan_places: 'Checking attractions · moment {current} of {total}…',
+    momenter_scan_places: 'Checking attractions · memory {current} of {total}…',
     momenter_scan_regions: '{photos} GPS photos · area {region} of {regions}',
-    momenter_scan_saving: 'Saving and updating moments…',
+    momenter_scan_saving: 'Saving and updating memories…',
     momenter_possible_place: 'Possible visit: {place}',
-    momenter_find_done: 'Found {n} new moments',
-    momenter_find_failed: 'Could not find moments',
-    momenter_find_zero_debug: 'No new moments. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
+    momenter_find_done: 'Found {n} new memories',
+    momenter_find_failed: 'Could not find memories',
+    momenter_find_zero_debug: 'No new memories. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
     momenter_suggested_heading: 'Suggestions',
-    momenter_saved_heading: 'Saved moments',
-    momenter_empty: 'No moments yet. Press "Find new moments" to look for trips and year reviews.',
+    momenter_saved_heading: 'Saved memories',
+    momenter_empty: 'No memories yet. Press "Find new memories" to look for trips and year reviews.',
     momenter_empty_suggested: 'No new suggestions right now.',
     momenter_accept: 'Save',
     momenter_dismiss: 'Dismiss',
     momenter_play: 'Play',
     momenter_opening: 'Opening...',
     momenter_delete: 'Delete',
-    momenter_rename_prompt: 'Title for this moment',
-    momenter_accept_failed: 'Could not save the moment',
-    momenter_dismiss_failed: 'Could not dismiss the moment',
-    momenter_delete_confirm: 'Delete this moment?',
-    momenter_delete_failed: 'Could not delete the moment',
-    momenter_load_failed: 'Could not load moments',
+    momenter_rename_prompt: 'Title for this memory',
+    momenter_accept_failed: 'Could not save the memory',
+    momenter_dismiss_failed: 'Could not dismiss the memory',
+    momenter_delete_confirm: 'Delete this memory?',
+    momenter_delete_failed: 'Could not delete the memory',
+    momenter_load_failed: 'Could not load memories',
     momenter_kind_trip: 'Trip',
     momenter_kind_year_review: 'Year review',
     momenter_make_video: '🎬 Make video',
@@ -3821,7 +3821,7 @@ function _momentCardHtml(m, mode) {
           <span>${escapeHtml(countLabel)}</span>
         </div>
         ${momentEvidenceHtml(m)}
-        <div class="moment-card-actions">${actionsHtml}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="share">Del link</button>' : ''}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se moment</button>' : ''}</div>
+        <div class="moment-card-actions">${actionsHtml}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="share">Del link</button>' : ''}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se minde</button>' : ''}</div>
       </div>
     </article>`;
 }
@@ -3948,7 +3948,7 @@ async function pollMomentDetection() {
       if (result && result.ok) {
         const created = Number(result.created || 0);
         if (Number(result.updated || 0) > 0 || Number(result.retired || 0) > 0) {
-          showStatus(`${created} nye momenter · ${result.updated || 0} opdateret · ${result.retired || 0} forældede forslag fjernet`, 'ok');
+          showStatus(`${created} nye minder · ${result.updated || 0} opdateret · ${result.retired || 0} forældede forslag fjernet`, 'ok');
         } else if (created === 0 && result.debug) {
           const d = result.debug;
           const msg = tr('momenter_find_zero_debug')
@@ -3968,7 +3968,7 @@ async function pollMomentDetection() {
         const pendingPlaces = Number(result.debug?.poi_pending || 0);
         const failedPlaces = Number(result.debug?.poi_failed || 0);
         if (pendingPlaces || failedPlaces) {
-          showStatus(`${created} nye momenter · ${result.updated || 0} opdateret. ${pendingPlaces ? 'Flere steder kan undersøges ved næste scanning. ' : ''}${failedPlaces ? 'Nogle stedsopslag kunne ikke gennemføres; de forsøges igen senere.' : ''}`, 'ok');
+          showStatus(`${created} nye minder · ${result.updated || 0} opdateret. ${pendingPlaces ? 'Flere steder kan undersøges ved næste scanning. ' : ''}${failedPlaces ? 'Nogle stedsopslag kunne ikke gennemføres; de forsøges igen senere.' : ''}`, 'ok');
         }
       } else {
         showStatus((result && result.error) || tr('momenter_find_failed'), 'err');
@@ -6467,7 +6467,7 @@ function renderGrid() {
     renderStats();
     return;
   }
-  // Handle Moments (Momenter) view: custom cards, not the photo/folder grid
+  // Handle Moments (Minder) view: custom cards, not the photo/folder grid
   if (state.view === "momenter") {
     if (els.searchShell) els.searchShell.style.display = 'none';
     if (els.sort) els.sort.style.display = 'none';
@@ -10379,7 +10379,7 @@ function renderDnsSharesList() {
     const qrBtn = `<button type="button" class="btn small" data-share-qr="${Number(item.id || 0)}">QR</button>`;
     return `
       <tr>
-        <td class="col-folder">${item.kind === 'moment' ? '<span class="mini-label">Moment · </span>' : ''}${escapeHtml(folder)}</td>
+        <td class="col-folder">${item.kind === 'moment' ? '<span class="mini-label">Minde · </span>' : ''}${escapeHtml(folder)}</td>
         <td class="col-access" data-label="${escapeHtml(tr('dns_shares_col_access'))}">${escapeHtml(permissionLabel)}</td>
         <td class="col-expires" data-label="${escapeHtml(tr('dns_shares_col_expires'))}">${escapeHtml(_fmtDnsShareTime(item.expires_at))}</td>
         <td class="col-last-used">${escapeHtml(_fmtDnsShareTime(item.last_used_at))}</td>

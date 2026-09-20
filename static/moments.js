@@ -4,7 +4,7 @@ function momentEvidenceHtml(moment) {
   if (!info?.reasons?.length) return '';
   const chapters = info.chapters?.length ? `<ol>${info.chapters.map(c => `<li>${escapeHtml(c.place)} · ${escapeHtml(c.start_date)}${c.end_date !== c.start_date ? ' – ' + escapeHtml(c.end_date) : ''} · ${Number(c.photo_count)} billeder</li>`).join('')}</ol>` : '';
   const attribution = info.attraction ? '<p><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Steddata © OpenStreetMap-bidragydere</a></p>' : '';
-  return `<details class="moment-evidence"><summary>Hvorfor dette moment?${info.confidence === 'low' ? ' · Tjek dato og sted' : ''}</summary><p>${escapeHtml(info.reasons.join(' '))}</p><p>${escapeHtml(info.date_basis || '')}</p>${chapters}${attribution}</details>`;
+  return `<details class="moment-evidence"><summary>Hvorfor dette minde?${info.confidence === 'low' ? ' · Tjek dato og sted' : ''}</summary><p>${escapeHtml(info.reasons.join(' '))}</p><p>${escapeHtml(info.date_basis || '')}</p>${chapters}${attribution}</details>`;
 }
 
 async function momentRequest(url, method = 'GET', body) {
@@ -30,7 +30,7 @@ function momentDialog(title) {
 }
 
 async function editMoment(id) {
-  const dialog = momentDialog('Rediger moment');
+  const dialog = momentDialog('Rediger minde');
   const body = dialog.querySelector('[data-body]');
   const status = dialog.querySelector('[data-status]');
   status.textContent = 'Henter billeder…';
@@ -64,13 +64,13 @@ async function editMoment(id) {
       <div class="moment-editor-photos" data-photos></div>
       <footer class="moment-editor-actions">
         <button type="button" class="btn primary" data-save>Gem ændringer</button>
-        ${item.kind !== 'year_review' ? '<button type="button" class="btn" data-split>Flyt valgte til nyt moment</button>' : ''}
+        ${item.kind !== 'year_review' ? '<button type="button" class="btn" data-split>Flyt valgte til nyt minde</button>' : ''}
       </footer>
-      ${item.kind !== 'year_review' && others.length ? `<details><summary>Saml med et andet moment</summary>
-        <label>Moment<select data-other>${others.map(m => `<option value="${m.id}">${escapeHtml(m.title)} · ${escapeHtml(_momentDateRangeLabel(m))}</option>`).join('')}</select></label>
-        <p class="mini-label">Alle billeder fra de to gemte momenter samles. Gem eventuelle ændringer ovenfor først.</p>
-        <button type="button" class="btn" data-merge>Saml momenter</button></details>` : ''}
-      <p class="mini-label">Ved opdeling flyttes de valgte billeder til et nyt moment, mens resten bliver her. De to perioder beregnes fra billederne. Gem eventuelle titelændringer først.</p>`;
+      ${item.kind !== 'year_review' && others.length ? `<details><summary>Saml med et andet minde</summary>
+        <label>Minde<select data-other>${others.map(m => `<option value="${m.id}">${escapeHtml(m.title)} · ${escapeHtml(_momentDateRangeLabel(m))}</option>`).join('')}</select></label>
+        <p class="mini-label">Alle billeder fra de to gemte minder samles. Gem eventuelle ændringer ovenfor først.</p>
+        <button type="button" class="btn" data-merge>Saml minder</button></details>` : ''}
+      <p class="mini-label">Ved opdeling flyttes de valgte billeder til et nyt minde, mens resten bliver her. De to perioder beregnes fra billederne. Gem eventuelle titelændringer først.</p>`;
     const start = body.querySelector('[data-start]');
     const end = body.querySelector('[data-end]');
     const inRange = p => p.date && p.date.slice(0, 10) >= start.value && p.date.slice(0, 10) <= end.value;
@@ -170,14 +170,14 @@ async function editMomentHome() {
         const known = (data.places || []).find(p => p.name === name);
         await momentRequest('/api/moments/settings', 'PUT', { home: name ? known || { name } : null });
         dialog.close();
-        showStatus('Hjemområde gemt. Brug Find nye momenter for at opdatere forslagene.', 'ok');
+        showStatus('Hjemområde gemt. Brug Find nye minder for at opdatere forslagene.', 'ok');
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = false; }
     };
   } catch (error) { status.textContent = error.message; }
 }
 async function shareMoment(id) {
-  const dialog = momentDialog('Del moment');
+  const dialog = momentDialog('Del minde');
   const body = dialog.querySelector('[data-body]');
   const status = dialog.querySelector('[data-status]');
   body.innerHTML = `<p>Alle med linket kan se denne version af diasshowet.</p><div class="moment-editor-fields"><label>Gyldighed<input data-expire-value type="number" min="1" max="3650" step="1" value="7" required></label><label>Enhed<select data-expire-unit><option value="days">Dage</option><option value="hours">Timer</option></select></label></div><label><input data-never type="checkbox"> Uden udløb</label><p class="mini-label">Du kan senere forlænge eller ophæve linket under Indstillinger → Delte.</p><button type="button" class="btn primary" data-create>Opret delelink</button>`;
@@ -202,7 +202,7 @@ async function shareMoment(id) {
         catch { body.querySelector('input').select(); status.textContent='Kopiér det markerede link.'; }
       };
       body.querySelector('[data-revoke]').onclick = async () => {
-        try { await momentRequest(`/api/moments/${id}/share`, 'DELETE'); body.innerHTML=''; status.textContent='Alle delelinks til momentet er lukket.'; }
+        try { await momentRequest(`/api/moments/${id}/share`, 'DELETE'); body.innerHTML=''; status.textContent='Alle delelinks til mindet er lukket.'; }
         catch(error) { status.textContent=error.message; }
       };
       status.textContent='';
@@ -213,7 +213,7 @@ async function shareMoment(id) {
 function editMomentShare(id) {
   const item = state.sharedLinks.find(s => s.id === Number(id));
   if (!item) return;
-  const dialog = momentDialog('Rediger momentlink');
+  const dialog = momentDialog('Rediger mindelink');
   const body = dialog.querySelector('[data-body]');
   body.innerHTML = `<label>Navn<input data-name maxlength="240"></label><label>Gyldighed fra nu (dage)<input data-days type="number" min="0" max="3650" value="7"></label><p class="mini-label">0 betyder intet udløb. Ændringen gælder kun delelinket.</p><button class="btn primary" data-save>Gem ændringer</button>`;
   body.querySelector('[data-name]').value = item.share_name;

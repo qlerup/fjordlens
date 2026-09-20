@@ -11,9 +11,9 @@
 | Året der gik | Nostalgiske årsoversigter | `year-1.mp3`, `year-2.mp3` |
 | Vinterlys | Jul og vinter | `winter-1.mp3`, `winter-2.mp3` |
 | Stille stunder | Natur og rolige minder | `quiet-1.mp3`, `quiet-2.mp3` |
-| Minder om dig | Eftertænksomme og personlige momenter | `memory-1.mp3`, `memory-2.mp3` |
+| Minder om dig | Eftertænksomme og personlige minder | `memory-1.mp3`, `memory-2.mp3` |
 
-Fjordlens vælger et startnummer ud fra momentets titel. I **Rediger diasshow**
+Fjordlens vælger et startnummer ud fra mindets titel. I **Rediger diasshow**
 kan du lytte, vælge et andet nummer, ændre lydstyrken eller vælge **Ingen musik**.
 Musikken fortsætter mellem slides og gentages med et seks sekunders krydsfade.
 MP4-eksporten bruger samme overgang og toner musikken ud ved filmens slutning.

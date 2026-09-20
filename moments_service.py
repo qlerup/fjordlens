@@ -304,11 +304,11 @@ _MISSING = object()
 def _get(conn, moment_id, revision=_MISSING):
     row = conn.execute("SELECT * FROM moments WHERE id=? AND status != 'dismissed'", (moment_id,)).fetchone()
     if not row:
-        raise EditError("Momentet findes ikke længere.", 404)
+        raise EditError("Mindet findes ikke længere.", 404)
     if revision is not _MISSING and (type(revision) is not int or revision != row["revision"]):
-        raise EditError("Momentet er ændret. Luk og åbn redigeringen igen.", 409)
+        raise EditError("Mindet er ændret. Luk og åbn redigeringen igen.", 409)
     if row["video_status"] in ("queued", "running", "rendering"):
-        raise EditError("Vent til momentets video er færdig, før du redigerer.", 409)
+        raise EditError("Vent til mindets video er færdig, før du redigerer.", 409)
     return row
 
 
@@ -334,7 +334,7 @@ def _photos(conn, ids, *, strict=True):
         batch = ids[offset:offset+500]
         result.extend(dict(r) for r in conn.execute(f"SELECT * FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
     if strict and len(result) != len(ids):
-        raise EditError("Et eller flere billeder findes ikke længere. Åbn momentet igen.", 409)
+        raise EditError("Et eller flere billeder findes ikke længere. Åbn mindet igen.", 409)
     return sorted(result, key=lambda r: (photo_date(r) or datetime.min, r["id"]))
 
 
@@ -448,7 +448,7 @@ def register_routes(app, g):
     def moment_edit(moment_id):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or "revision" not in data:
-            raise EditError("Åbn momentet igen før redigering.")
+            raise EditError("Åbn mindet igen før redigering.")
         title = str(data.get("title") or "").strip()
         if not title or len(title) > 240:
             raise EditError("Titlen skal være mellem 1 og 240 tegn.")
@@ -462,7 +462,7 @@ def register_routes(app, g):
             if not ids:
                 raise EditError('Ingen af de valgte billeder ligger inden for datoerne.')
             _update(conn, row, title=title, start=start, end=end, ids=ids, now=g["now_iso"](),
-                    info=_manual_evidence(row, ids, "Du har rettet dette moment. Nye scanninger bevarer dine valg."))
+                    info=_manual_evidence(row, ids, "Du har rettet dette minde. Nye scanninger bevarer dine valg."))
             conn.commit()
         return jsonify(ok=True)
 
@@ -471,14 +471,14 @@ def register_routes(app, g):
     def moment_split(moment_id):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or "revision" not in data:
-            raise EditError("Åbn momentet igen før opdeling.")
+            raise EditError("Åbn mindet igen før opdeling.")
         ids = set(_ids(data.get("photo_ids")))
         with closing(g["get_conn"]()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = _get(conn, moment_id, data["revision"])
             original = members(row)
             if not ids < original:
-                raise EditError("Vælg nogle af billederne til det nye moment; resten bliver i det oprindelige.")
+                raise EditError("Vælg nogle af billederne til det nye minde; resten bliver i det oprindelige.")
             now = g["now_iso"]()
             new_id = None
             for index, group in enumerate((sorted(original-ids), sorted(ids))):
@@ -486,7 +486,7 @@ def register_routes(app, g):
                 dates = [photo_date(p).date().isoformat() for p in photos if photo_date(p)]
                 start, end = (min(dates), max(dates)) if dates else (row["start_date"], row["end_date"])
                 title = f"{row['title']} · del {index+1}"
-                info = _manual_evidence(row, group, "Du har opdelt dette moment. Nye scanninger bevarer opdelingen.")
+                info = _manual_evidence(row, group, "Du har opdelt dette minde. Nye scanninger bevarer opdelingen.")
                 if index == 0:
                     _update(conn, row, title=title, start=start, end=end, ids=group, now=now, info=info)
                 else:
@@ -501,18 +501,18 @@ def register_routes(app, g):
     def moment_merge(moment_id):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or type(data.get("other_id")) is not int or "revision" not in data or "other_revision" not in data:
-            raise EditError("Vælg et andet moment.")
+            raise EditError("Vælg et andet minde.")
         if data["other_id"] == moment_id:
-            raise EditError("Vælg to forskellige momenter.")
+            raise EditError("Vælg to forskellige minder.")
         with closing(g["get_conn"]()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = _get(conn, moment_id, data["revision"])
             other = _get(conn, data["other_id"], data["other_revision"])
             if "year_review" in (row["kind"], other["kind"]):
-                raise EditError("Årsoversigter kan ikke samles med andre momenter.")
+                raise EditError("Årsoversigter kan ikke samles med andre minder.")
             ids = sorted(members(row) | members(other))
             _photos(conn, ids)
-            info = _manual_evidence(row, ids, "Du har samlet disse momenter. Nye scanninger bevarer dine valg.")
+            info = _manual_evidence(row, ids, "Du har samlet disse minder. Nye scanninger bevarer dine valg.")
             info["source_photo_ids"] = sorted(set(info["source_photo_ids"]) | set(evidence(other).get("source_photo_ids", [])))
             now = g["now_iso"]()
             _update(conn, row, title=row["title"], start=min(row["start_date"], other["start_date"]),
