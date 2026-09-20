@@ -55,7 +55,8 @@ class MemoryBudget:
             return
         old = getattr(self.local, 'reserved', 0)
         additional = max(0, int(estimate) - old)
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
+        waiting = False
         while True:
             status = self.status()
             with self.lock:
@@ -64,10 +65,23 @@ class MemoryBudget:
                     self.reserved += additional
                     self.local.reserved = old + additional
                     break
-            if time.monotonic() >= deadline:
-                raise RuntimeError('RAM-budget: behandlingen afventer ledig hukommelse; prøv igen senere')
+            if not waiting:
+                print(f'memory_wait service={self.service} required_mib={additional//MIB}', flush=True)
+                waiting = True
+            if deadline is not None and time.monotonic() >= deadline:
+                if not status.get('ok'):
+                    reason = status.get('error') or 'Ingen gyldig budgetmåling'
+                elif status.get('pressure'):
+                    reason = 'Systemets RAM-reserve er under pres'
+                else:
+                    with self.lock:
+                        available = self.available(status)
+                    reason = f'{self.service}: {available//MIB} MiB ledig jobplads, kræver {additional//MIB} MiB'
+                raise RuntimeError(f'RAM-budget: {reason}; ventede {timeout:g} sekunder')
             time.sleep(0.5)
         try:
+            if waiting:
+                print(f'memory_resume service={self.service}', flush=True)
             yield
         finally:
             with self.lock:

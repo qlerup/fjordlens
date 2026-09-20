@@ -84,8 +84,14 @@ def allocate(total, host_used, containers):
     # Docker cannot enforce a zero-byte limit (zero means unlimited).
     if budget < len(containers) * 8*MIB:
         raise RuntimeError('No RAM left for FjordLens after the 2 GiB reserve')
-    bases = {c['id']: max(FLOORS[c['service']], ((c['usage'] + 127*MIB)//(64*MIB))*64*MIB)
-             for c in containers}
+    # Conversion admission needs 512 MiB plus its 64 MiB safety margin.
+    # Allocate that working room before distributing surplus by AI-heavy weights;
+    # otherwise an idle converter can stay permanently below its start threshold.
+    bases = {}
+    for c in containers:
+        headroom = 640*MIB if c['service'] == 'fjordlens-convert' else 64*MIB
+        rounded = ((c['usage'] + headroom + 64*MIB - 1)//(64*MIB))*64*MIB
+        bases[c['id']] = max(FLOORS[c['service']], rounded)
     baseline = sum(bases.values())
     if baseline > budget:
         remaining = budget - len(containers)*8*MIB

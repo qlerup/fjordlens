@@ -25,8 +25,11 @@ sættes lig RAM-grænsen, så stakken ikke fortsætter væksten i swap.
 
 Tunge job venter på plads, og AI frigiver ledige modeller under pres. Det valgte
 antal ansigtspladser er derfor et maksimum: 8 pladser kan køre samtidig, når
-RAM-budgettet tillader det. Efter 45 sekunders ventetid kan jobbet fejle med en
-RAM-budget-fejl og efterfølgende genkøres. Ukendte eller forældede målinger
+RAM-budgettet tillader det. Konverteringsjob venter på plads uden RAM-kontrollens
+tidligere 45-sekunders timeout; `memory_wait` og `memory_resume` logges ved ventetid.
+Fordelingen afsætter plads til et konverteringsjob før den vægtede fordeling af
+overskuddet, hvis budgettet tillader det. Andre job kan efter 45 sekunders ventetid
+fejle med en RAM-budget-fejl og efterfølgende genkøres. Ukendte eller forældede målinger
 blokerer nye tunge job. Eksisterende Docker-grænser bevares ved målefejl.
 
 Grænserne beskytter mod ubegrænset vækst, men en proces kan stadig blive dræbt

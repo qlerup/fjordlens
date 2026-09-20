@@ -37,6 +37,43 @@ class MemoryGuardTests(unittest.TestCase):
             self.assertLessEqual(sum(caps.values()), budget)
             self.assertTrue(all(cap > 0 for cap in caps.values()))
 
+    def test_reported_conversion_stall_gets_enough_room_without_exceeding_hub_budget(self):
+        usage = {'fjordlens': 2673397760, 'fjordlens-ai': 1489231872,
+                 'fjordlens-convert': 1358319616, 'fjordlens-updater': 20570112}
+        containers = [dict(id=name, service=name, usage=value) for name, value in usage.items()]
+        budget = 7727738880
+        _, _, caps = governor.allocate(budget + governor.RESERVE, sum(usage.values()), containers)
+        client = admission.MemoryBudget('fjordlens-convert')
+        client.enabled = True
+        status = dict(ok=True, pressure=False, containers={'fjordlens-convert': {'limit_bytes': 1914699776}})
+        with patch.object(admission, 'current_memory', return_value=1373515776):
+            self.assertLess(client.available(status), 512*governor.MIB, 'old measured limit reproduces the stall')
+            status['containers']['fjordlens-convert']['limit_bytes'] = caps['fjordlens-convert']
+            with patch.object(client, 'status', return_value=status):
+                with client.slot(512*governor.MIB, timeout=0):
+                    self.assertEqual(client.reserved, 512*governor.MIB)
+        self.assertLessEqual(sum(caps.values()), budget)
+
+    def test_conversion_headroom_never_overrides_a_small_budget(self):
+        containers = self.containers()
+        for budget in (256*governor.MIB, GIB, 2*GIB):
+            _, _, caps = governor.allocate(budget+governor.RESERVE, 2*GIB, containers)
+            self.assertLessEqual(sum(caps.values()), budget)
+
+    def test_conversion_waits_past_old_timeout_then_resumes_when_budget_returns(self):
+        client = admission.MemoryBudget('fjordlens-convert')
+        client.enabled = True
+        ready = dict(ok=True, pressure=False, containers={'fjordlens-convert': {'limit_bytes': 2*GIB}})
+        statuses = [{'ok': False, 'error': 'Hub unavailable'}, dict(ready, pressure=True), ready]
+        with patch.object(client, 'status', side_effect=statuses), \
+             patch.object(admission, 'current_memory', return_value=GIB), \
+             patch.object(admission.time, 'monotonic', side_effect=[0, 100, 200, 300]), \
+             patch.object(admission.time, 'sleep') as sleep:
+            with client.slot(512*governor.MIB, timeout=None):
+                self.assertEqual(client.reserved, 512*governor.MIB)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(client.reserved, 0)
+
     def test_wrong_host_scope_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, 'does not include'):
             governor.allocate(10*GIB, GIB, self.containers())

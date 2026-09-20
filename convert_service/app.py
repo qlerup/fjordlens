@@ -93,7 +93,8 @@ class _DynamicConversionLimiter:
                 self._condition.wait()
             self._active += 1
         try:
-            with MEMORY.slot(512*MIB):
+            # RAM pressure delays a queued conversion; it is not a file error.
+            with MEMORY.slot(512*MIB, timeout=None):
                 yield
         finally:
             with self._condition:
