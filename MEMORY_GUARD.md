@@ -4,19 +4,22 @@ Opdater først FjordHub og derefter FjordLens gennem FjordHub. FjordHub tilføje
 `FJORDLENS_MEMORY_GUARD=1` og startgrænser til installationens `.env`.
 Ved selvstændig installation er funktionen som standard slået fra: ingen dynamiske
 Docker-grænser, RAM-adgangskontrol eller automatisk oprydning fra denne funktion.
-Et eksisterende eksplicit `FJORDLENS_MEMORY_GUARD=0` bevares ved opdatering.
+FjordHub reparerer også gamle `Guard=0`/ubegrænsede installationer, selv når
+FjordLens allerede er opdateret. Hub kontrollerer installationen ved opstart og
+hvert minut; aktivering bygger og genskaber FjordLens-containerne én gang.
 
 Budgettet beregnes løbende som:
 
     tildelt RAM - andre processers RAM-forbrug - 2 GiB
 
-Andre processer omfatter FjordHub, andre apps, systemprocesser og cache. Hele
-FjordLens-stakken indgår: web, AI, konvertering og updater. LXC-grænsen bruges,
-hvis den er lavere end maskinens fysiske RAM; swap tæller ikke som ledig RAM.
+Andre processer omfatter FjordHub, andre apps og systemprocesser. Hele
+FjordLens-stakken indgår: web, AI, konvertering og updater. Målingerne kommer fra
+FjordHubs ressourceoversigt (Proxmox LXC-total og Docker-forbrug). Swap tæller ikke
+som ledig RAM. Mangler en gyldig systemmåling i Hub, startes nye tunge job ikke.
 10 GiB i alt og 3 GiB til andre giver således et FjordLens-budget på 5 GiB.
 
-Updateren måler via værtsmaskinens skrivebeskyttede `/proc` og cgroup-mounts samt
-den eksisterende Docker-socket. Den fordeler budgettet mellem containerne og
+Updateren henter budgettet fra FjordHub via en API beskyttet med appens Hub-nøgle.
+Den ændrer aldrig andre apps' grænser. Den fordeler budgettet mellem egne containere og
 kontrollerer, at Docker faktisk har anvendt RAM-grænserne. RAM+swap-grænsen
 sættes lig RAM-grænsen, så stakken ikke fortsætter væksten i swap.
 
@@ -45,7 +48,7 @@ docker exec -it fjordlens-ai python face_monitor.py --slots 8
 docker stats fjordlens fjordlens-ai fjordlens-convert fjordlens-updater
 ```
 
-Automatiske tests dækker budgetberegning, LXC-begrænsning, udløbne målinger,
+Automatiske tests dækker Hub-budgetberegning, automatisk aktivering, udløbne målinger,
 reservationer, Docker-grænser og deaktiveret standalone-installation. Linux/Docker
 OOM-adfærd og den konkrete servers cgroup-visning skal også kontrolleres efter
 udrulning. Ingen billedfiler eller databaser slettes ved ændringen.

@@ -7,12 +7,15 @@ import socket
 import threading
 import time
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 MIB = 1024 ** 2
 RESERVE = 2 * 1024 ** 3
+HUB_MEMORY_PROTOCOL = '2'
 FLOORS = {'fjordlens': 512*MIB, 'fjordlens-ai': 768*MIB,
           'fjordlens-convert': 256*MIB, 'fjordlens-updater': 128*MIB}
 WEIGHTS = {'fjordlens': 1, 'fjordlens-ai': 8, 'fjordlens-convert': 3, 'fjordlens-updater': 0}
+_api_version = None
 
 
 class DockerConnection(http.client.HTTPConnection):
@@ -23,9 +26,20 @@ class DockerConnection(http.client.HTTPConnection):
 
 
 def docker(method, path, body=None):
+    global _api_version
+    if _api_version is None:
+        version_conn = DockerConnection('localhost', timeout=3)
+        try:
+            version_conn.request('GET', '/version')
+            response = version_conn.getresponse()
+            if response.status != 200:
+                raise RuntimeError('Docker API version discovery failed')
+            _api_version = json.loads(response.read())['ApiVersion']
+        finally:
+            version_conn.close()
     conn = DockerConnection('localhost', timeout=3)
     try:
-        conn.request(method, '/v1.41' + path, body=json.dumps(body) if body is not None else None,
+        conn.request(method, '/v' + _api_version + path, body=json.dumps(body) if body is not None else None,
                      headers={'Content-Type': 'application/json'})
         response = conn.getresponse()
         data = response.read()
@@ -102,6 +116,20 @@ class MemoryGovernor:
         return state
 
     def sample(self):
+        hub_url = os.environ.get('FJORDHUB_URL', '').rstrip('/')
+        hub_key = os.environ.get('FJORDHUB_API_KEY', '')
+        if not hub_url or not hub_key:
+            raise RuntimeError('FjordHub RAM connection is not configured')
+        request = Request(hub_url + '/api/hub/fjordlens/memory-budget', headers={'X-Hub-Key': hub_key})
+        with urlopen(request, timeout=15) as response:
+            measurement = json.load(response)
+        if (not measurement.get('ok') or measurement.get('source') != 'fjordhub'
+                or not 0 <= time.time() - float(measurement.get('measured_at', 0)) <= 10
+                or measurement.get('reserve_bytes') != RESERVE):
+            raise RuntimeError('No fresh verified FjordHub RAM budget')
+        budget = int(measurement['budget_bytes'])
+        if budget != max(0, int(measurement['total_bytes']) - int(measurement['other_bytes']) - RESERVE):
+            raise RuntimeError('Invalid FjordHub RAM budget')
         filters = json.dumps({'label': [f'com.docker.compose.project={self.project}',
                                          'io.fjordlens.memory-managed=1']})
         listed = self.api('GET', '/containers/json?' + urlencode({'all': 1, 'filters': filters}))
@@ -122,8 +150,9 @@ class MemoryGovernor:
                                'swap': int(info['HostConfig'].get('MemorySwap') or 0)})
         if not containers:
             raise RuntimeError('Ingen FjordHub-styrede FjordLens-containere fundet')
-        total, used = host_memory(Path('/host/sys/fs/cgroup'), Path('/host/proc'))
-        budget, other, caps = allocate(total, used, containers)
+        total = int(measurement['total_bytes'])
+        # Only distribute Hub's budget; never remeasure or cap other apps here.
+        _, _, caps = allocate(budget + RESERVE, sum(c['usage'] for c in containers), containers)
         # Shrink before growing: reallocating memory must not temporarily double it.
         containers.sort(key=lambda c: caps[c['id']] - (c['limit'] or total))
         for c in containers:
@@ -136,19 +165,21 @@ class MemoryGovernor:
             actual = self.api('GET', f'/containers/{c["id"]}/json')['HostConfig']
             if actual.get('Memory') != cap or actual.get('MemorySwap') != cap:
                 raise RuntimeError('Docker did not apply the RAM/swap limit')
-        return {'ok': True, 'enabled': True, '_sample_at': time.monotonic(),
-                'total_bytes': total, 'used_bytes': used, 'other_bytes': other,
-                'reserve_bytes': RESERVE, 'budget_bytes': budget,
-                'pressure': total-used < RESERVE + 128*MIB,
+        return {**measurement, '_sample_at': time.monotonic(),
                 'containers': {c['service']: {'usage_bytes': c['usage'], 'limit_bytes': caps[c['id']]}
                                for c in containers}}
 
     def run(self):
+        logged_budget = None
         while True:
             try:
                 state = self.sample()
+                budget = state['budget_bytes']
+                if logged_budget is None or abs(budget-logged_budget) >= 64*MIB:
+                    print(f"memory_guard source=fjordhub total={state['total_bytes']} other={state['other_bytes']} reserve={RESERVE} budget={budget}", flush=True)
+                    logged_budget = budget
             except Exception as exc:
-                state = {'ok': False, 'enabled': True, 'error': str(exc)}
+                state = {'ok': False, 'enabled': True, 'error': str(exc), '_sample_at': time.monotonic()}
                 print(f'memory_guard error={exc}', flush=True)
             with self.lock:
                 self.state = state

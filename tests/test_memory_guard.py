@@ -3,6 +3,8 @@ from pathlib import Path
 import tempfile
 import time
 import threading
+import io
+import json
 import unittest
 from unittest.mock import patch, Mock
 
@@ -13,6 +15,17 @@ GIB = 1024**3
 
 
 class MemoryGuardTests(unittest.TestCase):
+    def setUp(self):
+        budget = dict(ok=True, enabled=True, source='fjordhub', measured_at=time.time(),
+                      total_bytes=10*GIB, used_bytes=5*GIB, other_bytes=3*GIB,
+                      budget_bytes=5*GIB, reserve_bytes=2*GIB, pressure=False)
+        self.env_patch = patch.dict(os.environ, {'FJORDHUB_URL': 'http://hub', 'FJORDHUB_API_KEY': 'test'})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        self.fetch_patch = patch.object(governor, 'urlopen', side_effect=lambda *a, **kw: io.StringIO(json.dumps(budget)))
+        self.fetch_patch.start()
+        self.addCleanup(self.fetch_patch.stop)
+
     def containers(self):
         return [dict(id=name, service=name, usage=GIB//2) for name in governor.FLOORS]
 
@@ -131,6 +144,21 @@ class MemoryGuardTests(unittest.TestCase):
         with patch.object(governor, 'host_memory', return_value=(10*GIB, 4*GIB)):
             with self.assertRaisesRegex(RuntimeError, 'did not apply'):
                 governor.MemoryGovernor(api=api).sample()
+
+    def test_missing_hub_never_falls_back_to_host_measurement(self):
+        api = Mock()
+        with patch.object(governor, 'urlopen', side_effect=OSError('Hub offline')):
+            with self.assertRaises(OSError):
+                governor.MemoryGovernor(api=api).sample()
+        api.assert_not_called()
+
+    def test_expired_hub_budget_is_rejected_before_changing_limits(self):
+        api = Mock()
+        response = io.StringIO(json.dumps(dict(ok=True, source='fjordhub', measured_at=time.time()-30, reserve_bytes=2*GIB)))
+        with patch.object(governor, 'urlopen', return_value=response):
+            with self.assertRaisesRegex(RuntimeError, 'fresh'):
+                governor.MemoryGovernor(api=api).sample()
+        api.assert_not_called()
 
 
 if __name__ == '__main__':
