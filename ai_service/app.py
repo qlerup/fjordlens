@@ -1,5 +1,10 @@
 import io
+try:
+    from memory_budget import MEMORY, MIB
+except ModuleNotFoundError:
+    from ai_service.memory_budget import MEMORY, MIB
 import inspect
+from functools import wraps
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import json
@@ -248,6 +253,7 @@ def _face_session_options():
         return None
 
 
+@MEMORY.guard(768*MIB)
 def _build_face_analysis(preferred_providers: list[str], ctx_id: int):
     """Create and prepare FaceAnalysis with best-effort provider support details."""
     providers_kw_supported = True
@@ -317,6 +323,7 @@ def _start_qwen_idle_unloader():
         pass
 
 
+@MEMORY.guard(768*MIB)
 def _create_clip_model(device: str):
     mdl, _, prep = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=MODEL_PRETRAINED, device=device)
     mdl.eval()
@@ -333,6 +340,16 @@ embed_runtime_warning = None
 _embed_cpu_model = None
 _embed_cpu_preprocess = None
 _qwen_lock = threading.RLock()
+
+
+def _qwen_job(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if not MEMORY.enabled:
+            return fn(*args, **kwargs)
+        with _qwen_lock:
+            return fn(*args, **kwargs)
+    return wrapped
 _qwen_model = None
 _qwen_processor = None
 _qwen_runtime_device = DEVICE
@@ -476,7 +493,7 @@ def _face_status_snapshot() -> list[dict[str, Any]]:
 
 @app.get("/faces/status")
 def face_status():
-    return {"instances": _face_status_snapshot()}
+    return {"instances": _face_status_snapshot(), "memory": MEMORY.status()}
 
 
 def _log_face_status(row: dict[str, Any]) -> None:
@@ -499,10 +516,18 @@ def _acquire_face_runtime(filename: str = "unknown"):
     """Lease an exclusive model instance; inference runs outside the pool lock."""
     global _face_runtime_instances, _face_runtime_active, _face_runtime_peak_active
     with _face_runtime_condition:
-        while _face_runtime_releasing or (
-            not _face_runtime_idle and _face_runtime_instances >= FACE_RUNTIME_MAX_WORKERS
-        ):
-            _face_runtime_condition.wait()
+        deadline = time.monotonic() + 45
+        while True:
+            blocked = _face_runtime_releasing or (not _face_runtime_idle and _face_runtime_instances >= FACE_RUNTIME_MAX_WORKERS)
+            needs_model = not _face_runtime_idle and not (_face_runtime_instances == 0 and face_app is not None)
+            if not blocked and needs_model and MEMORY.enabled:
+                with MEMORY.lock:
+                    blocked = MEMORY.available(MEMORY.status()) < 768*MIB
+            if not blocked:
+                break
+            if MEMORY.enabled and time.monotonic() >= deadline:
+                raise RuntimeError("RAM-budget: afventer en ledig ansigtsplads")
+            _face_runtime_condition.wait(timeout=0.5)
         if _face_runtime_idle:
             runtime = _face_runtime_idle.pop()
         elif _face_runtime_instances == 0:
@@ -519,7 +544,9 @@ def _acquire_face_runtime(filename: str = "unknown"):
             _face_runtime_instances += 1
         _face_runtime_active += 1
         _face_runtime_peak_active = max(_face_runtime_peak_active, _face_runtime_active)
-        instance = _face_runtime_ids.setdefault(id(runtime), _face_runtime_instances)
+        if id(runtime) not in _face_runtime_ids:
+            _face_runtime_ids[id(runtime)] = next(i for i in range(1, FACE_RUNTIME_MAX_WORKERS + 1) if i not in _face_runtime_ids.values())
+        instance = _face_runtime_ids[id(runtime)]
         _face_jobs[instance] = {"file": str(filename or "unknown"), "stage": "inference",
                                 "percent": None, "started": time.monotonic()}
         _update_face_job(runtime, "inference")
@@ -652,6 +679,7 @@ def _run_image_embedding(img: Image.Image) -> List[float]:
         return _to_list(image_features)
 
 
+@MEMORY.guard(128*MIB)
 def _encode_text_with_fallback(text: str) -> List[float]:
     with _embed_lock:
         try:
@@ -663,6 +691,7 @@ def _encode_text_with_fallback(text: str) -> List[float]:
             raise
 
 
+@MEMORY.guard(256*MIB)
 def _encode_image_with_fallback(img: Image.Image) -> List[float]:
     with _embed_lock:
         try:
@@ -692,6 +721,12 @@ def _clear_cuda_cache() -> None:
         gc.collect()
     except Exception:
         pass
+    if MEMORY.enabled:
+        try:
+            import ctypes
+            ctypes.CDLL(None).malloc_trim(0)
+        except (AttributeError, OSError):
+            pass
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -713,17 +748,20 @@ def _reserve_gpu_memory_for_qwen() -> None:
                 _set_embed_runtime_cpu_fallback("cuda_reserved_for_qwen")
 
     if _face_runtime_device() == "cuda":
-        try:
-            app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
-            face_app = app_obj
-            face_detection_available = True
-            face_device = "cpu"
-            face_providers_kw_supported = bool(kw_supported)
-            msg = "cuda_reserved_for_qwen"
-            face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
-        except Exception as exc:
-            msg = f"qwen_gpu_reserve_cpu_face_failed: {exc}"
-            face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
+        if MEMORY.enabled:
+            _release_face_runtime()
+        else:
+            try:
+                app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
+                face_app = app_obj
+                face_detection_available = True
+                face_device = "cpu"
+                face_providers_kw_supported = bool(kw_supported)
+                msg = "cuda_reserved_for_qwen"
+                face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
+            except Exception as exc:
+                msg = f"qwen_gpu_reserve_cpu_face_failed: {exc}"
+                face_detection_error = f"{face_detection_error}; {msg}" if face_detection_error else msg
 
     _clear_cuda_cache()
 
@@ -1145,6 +1183,8 @@ def _prepare_qwen_image(img: Image.Image) -> Image.Image:
     return img
 
 
+@MEMORY.guard(lambda: 768*MIB if _qwen_model is not None else 4*1024*MIB)
+@_qwen_job
 def _qwen_describe_image(img: Image.Image) -> Dict[str, Any]:
     _qwen_abort_event.clear()
     model_obj, processor_obj = _ensure_qwen_model_loaded()
@@ -1352,6 +1392,8 @@ class QueryIn(BaseModel):
     language: Optional[str] = None  # e.g. "da" or "en"
 
 
+@MEMORY.guard(lambda: 512*MIB if _qwen_model is not None else 4*1024*MIB)
+@_qwen_job
 def _qwen_expand_query(text: str, language: Optional[str] = None) -> Dict[str, Any]:
     """Use Qwen-VL as a text-only LLM to expand a freeform query into Danish search tags.
 
@@ -1472,6 +1514,8 @@ class MomentNarrateIn(BaseModel):
     entries: List[MomentEntryIn] = []
 
 
+@MEMORY.guard(lambda: 768*MIB if _qwen_model is not None else 4*1024*MIB)
+@_qwen_job
 def _qwen_narrate_moment(payload: "MomentNarrateIn") -> Dict[str, Any]:
     """Text-only Qwen call: reads already-stored per-photo metadata (dates, places, AI
     captions/tags) and writes a short title + a handful of narrative slideshow lines.
@@ -1649,6 +1693,7 @@ def _serialize_face_result(face) -> Dict[str, Any]:
     }
 
 
+@MEMORY.guard(128*MIB)
 def _detect_faces_bytes(data: bytes, filename: str = "unknown") -> List[Dict[str, Any]]:
     try:
         img = Image.open(io.BytesIO(data)).convert("RGB")
@@ -1771,5 +1816,38 @@ def faces_release():
         raise HTTPException(status_code=500, detail=f"face_release_failed: {exc}")
 
 
+def _memory_pressure_loop():
+    global _face_runtime_instances
+    while True:
+        try:
+            status = MEMORY.status()
+            with MEMORY.lock:
+                pressure = MEMORY.available(status) < 512*MIB
+            if pressure:
+                with _face_runtime_condition:
+                    if _face_runtime_active == 0:
+                        _release_face_runtime()
+                    else:
+                        for runtime in list(_face_runtime_idle):
+                            if runtime is face_app:
+                                continue
+                            _face_runtime_idle.remove(runtime)
+                            _face_runtime_ids.pop(id(runtime), None)
+                            _face_runtime_instances -= 1
+                        runtime = None
+                        _face_runtime_condition.notify_all()
+                if _qwen_lock.acquire(blocking=False):
+                    try:
+                        _unload_qwen_model()
+                    finally:
+                        _qwen_lock.release()
+                _clear_cuda_cache()
+        except Exception as exc:
+            print(f"memory_trim error={exc}", flush=True)
+        time.sleep(1)
+
+
 if __name__ == "__main__":
+    if MEMORY.enabled:
+        threading.Thread(target=_memory_pressure_loop, name="memory-trim", daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

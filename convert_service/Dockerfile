@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -U pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY convert_service/app.py ./app.py
+COPY ai_service/memory_budget.py ./memory_budget.py
 COPY moment_cinema.py moment_music.py moments_engine.py moment_titles.py moment_calendar.py place_names.py ./
 COPY resources ./resources
 COPY music ./music

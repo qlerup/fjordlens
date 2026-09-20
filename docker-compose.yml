@@ -2,6 +2,10 @@ services:
   fjordlens:
     build: .
     container_name: fjordlens
+    mem_limit: ${FJORDLENS_WEB_MEMORY_BOOT_LIMIT:-0}
+    memswap_limit: ${FJORDLENS_WEB_MEMORY_BOOT_LIMIT:-0}
+    labels:
+      io.fjordlens.memory-managed: "${FJORDLENS_MEMORY_GUARD:-0}"
     ports:
       - "${APP_PORT:-9080}:8080"
     extra_hosts:
@@ -17,6 +21,8 @@ services:
       --max-requests ${GUNICORN_MAX_REQUESTS:-0} --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-0}
       --access-logfile - --log-level ${GUNICORN_LOG_LEVEL:-info}
     environment:
+      FJORDLENS_MEMORY_GUARD: ${FJORDLENS_MEMORY_GUARD:-0}
+      FJORDLENS_MEMORY_SERVICE: fjordlens
       PHOTO_DIR: /photos
       DATA_DIR: /data
       UPLOAD_DIR: /uploads
@@ -74,7 +80,13 @@ services:
       context: .
       dockerfile: convert_service/Dockerfile
     container_name: fjordlens-convert
+    mem_limit: ${FJORDLENS_CONVERT_MEMORY_BOOT_LIMIT:-0}
+    memswap_limit: ${FJORDLENS_CONVERT_MEMORY_BOOT_LIMIT:-0}
+    labels:
+      io.fjordlens.memory-managed: "${FJORDLENS_MEMORY_GUARD:-0}"
     environment:
+      FJORDLENS_MEMORY_GUARD: ${FJORDLENS_MEMORY_GUARD:-0}
+      FJORDLENS_MEMORY_SERVICE: fjordlens-convert
       DATA_DIR: /data
       UPLOAD_DIR: /uploads
       PHOTO_DIR: /photos
@@ -104,8 +116,14 @@ services:
   fjordlens-ai:
     build: ./ai_service
     container_name: fjordlens-ai
+    mem_limit: ${FJORDLENS_AI_MEMORY_BOOT_LIMIT:-0}
+    memswap_limit: ${FJORDLENS_AI_MEMORY_BOOT_LIMIT:-0}
+    labels:
+      io.fjordlens.memory-managed: "${FJORDLENS_MEMORY_GUARD:-0}"
     environment:
       CLIP_MODEL: ViT-B-32
+      FJORDLENS_MEMORY_GUARD: ${FJORDLENS_MEMORY_GUARD:-0}
+      FJORDLENS_MEMORY_SERVICE: fjordlens-ai
       CLIP_PRETRAINED: openai
       AI_DEVICE: ${AI_DEVICE:-cpu}
       QWEN_VL_MODEL: ${QWEN_VL_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}
@@ -136,8 +154,14 @@ services:
       context: .
       dockerfile: updater_service/Dockerfile
     container_name: fjordlens-updater
+    mem_limit: ${FJORDLENS_UPDATER_MEMORY_BOOT_LIMIT:-0}
+    memswap_limit: ${FJORDLENS_UPDATER_MEMORY_BOOT_LIMIT:-0}
+    labels:
+      io.fjordlens.memory-managed: "${FJORDLENS_MEMORY_GUARD:-0}"
     working_dir: /repo
     environment:
+      FJORDLENS_MEMORY_GUARD: ${FJORDLENS_MEMORY_GUARD:-0}
+      FJORDLENS_MEMORY_SERVICE: fjordlens-updater
       APP_DIR: /repo
       SERVICE_NAME: fjordlens
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-fjordlens}
@@ -151,6 +175,8 @@ services:
       - "${APP_REPO_DIR:-.}:/repo"
       - "${DATA_DIR:-/volume1/docker/fjordlens/data}/updater:/state"
       - /var/run/docker.sock:/var/run/docker.sock
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
+      - /proc:/host/proc:ro
     restart: unless-stopped
 
 volumes:

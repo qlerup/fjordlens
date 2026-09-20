@@ -52,6 +52,7 @@ class FaceFailureTests(unittest.TestCase):
                    _face_runtime_idle=[], _face_runtime_instances=0, _face_runtime_active=0,
                    _face_runtime_peak_active=0, _face_runtime_releasing=False,
                    _face_runtime_ids={}, _face_jobs={}, time=time, json=json,
+                   MEMORY=SimpleNamespace(enabled=False),
                    FACE_RUNTIME_MAX_WORKERS=16, FACE_DEVICE_CONFIGURED='cpu',
                    face_app=factory(), _serialize_face_result=lambda x: x,
                    _ensure_face_runtime_loaded=Mock(), _clear_cuda_cache=Mock(), print=Mock(),

@@ -35,8 +35,10 @@ import requests
 import numpy as np
 import conversion_client
 from processing_failures import FailureTracker
+from ai_service.memory_budget import MemoryBudget, MIB
 
 processing_failures = FailureTracker(lambda: get_conn())
+WEB_MEMORY = MemoryBudget("fjordlens")
 import folder_index
 import reverse_geocoder as rg
 import place_names
@@ -12701,6 +12703,7 @@ def _exif_from_any_source(path: Path) -> Dict[str, Any]:
 
 
 @processing_failures.track("metadata", lambda path, rel_path, **kw: rel_path, clear_success=False, result_error=lambda result, *a, **kw: result.get("thumb_error") or result.get("_processing_error"))
+@WEB_MEMORY.guard(128*MIB)
 def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) -> Dict[str, Any]:
     stat = path.stat()
     metadata: Dict[str, Any] = {
@@ -27535,6 +27538,12 @@ def api_me_2fa():
         return jsonify({"ok": True})
 
     return jsonify({"ok": False, "error": "unknown_action"}), 400
+
+
+@app.get("/api/memory/status")
+@login_required
+def api_memory_status():
+    return jsonify(WEB_MEMORY.status())
 
 
 def _processing_rel_from_disk(path: Path) -> str:

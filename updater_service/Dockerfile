@@ -10,6 +10,7 @@ RUN apk add --no-cache \
 
 WORKDIR /service
 COPY updater_service/app.py /service/app.py
+COPY updater_service/memory_governor.py /service/memory_governor.py
 
 EXPOSE 8090
 CMD ["python", "/service/app.py"]

@@ -10,6 +10,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
+try:
+    from memory_governor import MemoryGovernor
+except ModuleNotFoundError:
+    from updater_service.memory_governor import MemoryGovernor
+
+MEMORY_GOVERNOR = MemoryGovernor()
 
 
 APP_DIR = Path(os.environ.get("APP_DIR", "/repo")).resolve()
@@ -474,6 +480,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/memory":
+            self.send_json(MEMORY_GOVERNOR.snapshot())
+            return
         if path == "/health":
             self.send_json({"ok": True, "service": "fjordlens-updater", "time": now_iso()})
             return
@@ -535,6 +544,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    MEMORY_GOVERNOR.start()
     ensure_state_dir()
     ensure_git_safe_dir()
     state = read_state()

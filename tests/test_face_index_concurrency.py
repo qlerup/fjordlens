@@ -72,6 +72,17 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
             conn.commit()
         return rel
 
+    def test_retry_missing_matches_coverage_and_skips_completed_files(self):
+        missing = self._make_photo('missing')
+        completed = self._make_photo('completed_without_faces')
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute('UPDATE photos SET faces_indexed_at=? WHERE rel_path=?', (fjordlens.now_iso(), completed))
+            conn.commit()
+        self.assertEqual(fjordlens._faces_index_coverage()['missing'], 1)
+        with patch.object(fjordlens, '_run_face_slot_queue', return_value={'errors': 0}) as queue, patch.object(fjordlens, '_ai_face_runtime_warmup'), patch.object(fjordlens, '_ai_face_runtime_release'):
+            fjordlens._index_faces_worker(all_photos=False)
+        self.assertEqual(queue.call_args.args[0], [missing])
+
     def test_concurrent_batch_serializes_db_writes_and_indexes_every_photo(self):
         rels = [self._make_photo(f"concurrent_{i}") for i in range(8)]
         fake_face = {"embedding": [1.0, 0.0, 0.0, 0.0], "bbox": [1, 2, 11, 22], "confidence": 0.9}

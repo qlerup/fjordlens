@@ -15827,11 +15827,28 @@ if (els.aiDescribeModelSelect) {
 }
 
 // Faces indexing controls
+document.getElementById('facesRetryMissing')?.addEventListener('click', () => startFacesIndex('missing'));
+
 async function pollFacesStatus() {
   try {
     const r = await fetch('/api/faces/status');
     const s = await r.json();
     state.facesRunning = !!(s && s.ok && s.running);
+    const missingButton = document.getElementById('facesRetryMissing');
+    if (missingButton) {
+      const missing = Number(s?.coverage?.missing || 0);
+      missingButton.disabled = !s?.ok || state.facesRunning || missing === 0;
+      missingButton.textContent = `Genkør manglende (${missing})`;
+    }
+    fetch('/api/memory/status').then(r => r.json()).then(memory => {
+      const label = document.getElementById('memoryBudgetStatus');
+      if (!label) return;
+      label.hidden = !memory.enabled;
+      const gib = value => (Number(value || 0) / 1073741824).toFixed(1);
+      label.textContent = memory.ok
+        ? `RAM: FjordLens-budget ${gib(memory.budget_bytes)} GiB · andre/system ${gib(memory.other_bytes)} GiB · reserve 2 GiB${memory.pressure ? ' · afventer RAM' : ''}`
+        : `RAM: afventer sikker måling · ${memory.error || ''}`;
+    }).catch(() => {});
     state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
     state.facesRuntime = String((s && s.runtime && (s.runtime.faces || s.runtime.ai)) || 'unknown');
     updateFacesToggleButton();
@@ -15894,7 +15911,7 @@ async function pollFacesStatus() {
 async function startFacesIndex(scope = 'all') {
   try {
     showStatus(tr('faces_starting'), 'ok');
-    const url = (scope === 'new') ? '/api/faces/index?scope=new' : '/api/faces/index?scope=all';
+    const url = `/api/faces/index?scope=${['new', 'missing'].includes(scope) ? scope : 'all'}`;
     const res = await fetch(url, { method: 'POST' });
     const data = await res.json();
     if (!res.ok || !data.ok) {

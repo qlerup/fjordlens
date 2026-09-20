@@ -1,3 +1,7 @@
+try:
+    from memory_budget import MEMORY, MIB
+except ModuleNotFoundError:
+    from ai_service.memory_budget import MEMORY, MIB
 import ctypes
 import json
 import logging
@@ -89,7 +93,8 @@ class _DynamicConversionLimiter:
                 self._condition.wait()
             self._active += 1
         try:
-            yield
+            with MEMORY.slot(512*MIB):
+                yield
         finally:
             with self._condition:
                 self._active = max(0, self._active - 1)
