@@ -43,6 +43,23 @@ class BulkConversionSkipTests(unittest.TestCase):
             self.file(f'uploads/converted/{kind}/source{output}', b'')
             self.assertEqual(fl._bulk_conversion_missing_rows(rows, output), (rows, 0))
 
+    def test_scan_reports_live_counts_before_finishing(self):
+        existing = 'uploads/originals/Album/ready.heic'
+        missing = 'uploads/originals/Album/missing.heic'
+        self.indexed(existing)
+        self.file('uploads/converted/Album/ready.jpg')
+        snapshots = []
+        rows, skipped = fl._bulk_conversion_missing_rows(
+            [{'rel_path': existing}, {'rel_path': missing}], '.jpg', snapshots.append)
+        self.assertTrue(any(p['check_stage'] == 'metadata' for p in snapshots))
+        scans = [p for p in snapshots if p['check_stage'] == 'files']
+        self.assertEqual([p['checked'] for p in scans], [0, 1, 2])
+        self.assertEqual(scans[1]['skipped'], 1)
+        self.assertEqual(scans[-1]['pending'], 1)
+        self.assertEqual(scans[-1]['check_total'], 2)
+        self.assertEqual(skipped, 1)
+        self.assertEqual(rows, [{'rel_path': missing}])
+
     def test_linked_numbered_output_is_skipped_but_missing_linked_file_is_not(self):
         source = 'uploads/originals/Album/IMG_12.HEIC'
         target = 'uploads/converted/Album/IMG_12_2.jpg'

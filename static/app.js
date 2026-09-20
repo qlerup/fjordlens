@@ -18724,7 +18724,16 @@ function closeConversionScopeModal(options = {}) {
 }
 
 function conversionProgressSummary(data) {
-  if (data.running && data.progress?.phase === 'checking') return {text: 'Undersøger eksisterende filer…', percent: null};
+  if (data.running && data.progress?.phase === 'checking') {
+    const pr = data.progress;
+    if (!pr.check_stage) return {text: 'Henter filliste…', percent: null};
+    const checked = Number(pr.checked || 0), total = Number(pr.check_total || 0);
+    const percent = total ? Math.round(100 * checked / total) : 100;
+    const text = pr.check_stage === 'metadata'
+      ? `Undersøger konverteringshistorik: ${checked}/${total} · ${percent}%`
+      : `Undersøger eksisterende filer: ${checked}/${total} · ${percent}% · ${Number(pr.pending || 0)} mangler konvertering · ${Number(pr.skipped || 0)} allerede konverteret`;
+    return {text, percent};
+  }
   const pr = data.running ? (data.progress || {}) : (data.result || {});
   if (!data.running && !data.result) return {text: 'Ikke startet', percent: null};
   if (pr.ok === false) return {text: `Fejl: ${pr.error || 'Konverteringen blev afbrudt'}`, percent: null};

@@ -24473,13 +24473,19 @@ def _attach_conversion_metadata(
     meta["metadata_json"] = mj
 
 
-def _bulk_conversion_missing_rows(rows, suffix: str):
+def _bulk_conversion_missing_rows(rows, suffix: str, progress=None):
     """Skip existing outputs, including renamed outputs linked by conversion metadata."""
     by_source = {}
     owners = {}
     with closing(get_conn()) as conn:
         linked = conn.execute("SELECT rel_path, metadata_json FROM photos WHERE metadata_json IS NOT NULL").fetchall()
-    for row in linked:
+    def report(stage, checked, total, **counts):
+        if progress:
+            progress({"phase": "checking", "check_stage": stage,
+                      "checked": checked, "check_total": total, **counts})
+
+    for index, row in enumerate(linked):
+        report("metadata", index, len(linked))
         try:
             meta = json.loads(row['metadata_json'] or '{}')
             conversion = meta.get('conversion') or {}
@@ -24490,8 +24496,10 @@ def _bulk_conversion_missing_rows(rows, suffix: str):
                 owners.setdefault(target, set()).add(source)
         except (TypeError, ValueError, AttributeError):
             continue
+    report("metadata", len(linked), len(linked))
     missing = []
-    for row in rows:
+    report("files", 0, len(rows), pending=0, skipped=0)
+    for index, row in enumerate(rows):
         rel = row['rel_path']
         candidates = set(by_source.get(rel, ()))
         if rel.startswith('uploads/'):
@@ -24519,6 +24527,8 @@ def _bulk_conversion_missing_rows(rows, suffix: str):
                 pass
         if not found:
             missing.append(row)
+        report("files", index + 1, len(rows), pending=len(missing),
+               skipped=index + 1 - len(missing))
     return missing, len(rows) - len(missing)
 
 
@@ -24532,7 +24542,7 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     # HEIC/HEIF only in this function
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
-    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg')
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg', heic_convert_progress.update)
     log_event('heic_bulk_candidates', pending=len(rows), skipped=skipped)
     # initialize global progress snapshot
     try:
@@ -24719,7 +24729,7 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
     where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
     with closing(get_conn()) as conn:
         rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
-    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg')
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg', raw_convert_progress.update)
     log_event('raw_bulk_candidates', pending=len(rows), skipped=skipped)
     try:
         raw_convert_progress = {"phase": "converting", "total": len(rows), "processed": 0, "errors": 0, "skipped": skipped, "current": None}
@@ -24869,7 +24879,7 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
     errors = 0
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.mov'").fetchall()
-    rows, skipped = _bulk_conversion_missing_rows(rows, '.mp4')
+    rows, skipped = _bulk_conversion_missing_rows(rows, '.mp4', mov_convert_progress.update)
     log_event('mov_bulk_candidates', pending=len(rows), skipped=skipped)
     try:
         mov_convert_progress = {"phase": "converting", "total": len(rows), "processed": 0, "errors": 0, "skipped": skipped, "current": None}
