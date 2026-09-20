@@ -462,7 +462,6 @@ _face_runtime_releasing = False
 FACE_RUNTIME_MAX_WORKERS = 16
 _face_runtime_ids: dict[int, int] = {}
 _face_jobs: dict[int, dict[str, Any]] = {}
-_face_status_thread_started = False
 
 
 def _face_status_snapshot() -> list[dict[str, Any]]:
@@ -475,26 +474,16 @@ def _face_status_snapshot() -> list[dict[str, Any]]:
         ]
 
 
+@app.get("/faces/status")
+def face_status():
+    return {"instances": _face_status_snapshot()}
+
+
 def _log_face_status(row: dict[str, Any]) -> None:
     percent = "unknown" if row["percent"] is None else str(row["percent"])
     # JSON quoting keeps untrusted filenames (including newlines) on one log line.
     print(f'faces_instance instance={row["instance"]} file={json.dumps(row["file"], ensure_ascii=True)} '
           f'stage={row["stage"]} percent={percent} elapsed_sec={row["elapsed_sec"]}', flush=True)
-
-
-def _start_face_status_reporter() -> None:
-    global _face_status_thread_started
-    with _face_runtime_lock:
-        if _face_status_thread_started:
-            return
-        def report():
-            while True:
-                time.sleep(5)
-                with _face_runtime_lock:
-                    for row in _face_status_snapshot():
-                        _log_face_status(row)
-        threading.Thread(target=report, name="face-status", daemon=True).start()
-        _face_status_thread_started = True
 
 
 def _update_face_job(runtime, stage: str, percent: Optional[int] = None) -> None:
@@ -533,7 +522,6 @@ def _acquire_face_runtime(filename: str = "unknown"):
         instance = _face_runtime_ids.setdefault(id(runtime), _face_runtime_instances)
         _face_jobs[instance] = {"file": str(filename or "unknown"), "stage": "inference",
                                 "percent": None, "started": time.monotonic()}
-        _start_face_status_reporter()
         _update_face_job(runtime, "inference")
         print(f"faces_inference_start active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
         return runtime

@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 import threading
 import json
 import time
@@ -52,7 +52,6 @@ class FaceFailureTests(unittest.TestCase):
                    _face_runtime_idle=[], _face_runtime_instances=0, _face_runtime_active=0,
                    _face_runtime_peak_active=0, _face_runtime_releasing=False,
                    _face_runtime_ids={}, _face_jobs={}, time=time, json=json,
-                   _start_face_status_reporter=Mock(),
                    FACE_RUNTIME_MAX_WORKERS=16, FACE_DEVICE_CONFIGURED='cpu',
                    face_app=factory(), _serialize_face_result=lambda x: x,
                    _ensure_face_runtime_loaded=Mock(), _clear_cuda_cache=Mock(), print=Mock(),
@@ -143,24 +142,6 @@ class FaceFailureTests(unittest.TestCase):
         self.assertIn('stage=done percent=100', lines[-1])
         self.assertEqual(env['_face_status_snapshot'](), [])
         env['print'].assert_any_call('faces_instance active=0 stage=idle', flush=True)
-
-    def test_reporter_logs_each_active_instance_every_five_seconds(self):
-        class StopReporter(Exception):
-            pass
-        rows = [{'instance': 1}, {'instance': 2}]
-        fake_thread = Mock()
-        env = dict(_face_runtime_lock=threading.RLock(), _face_status_thread_started=False,
-                   threading=SimpleNamespace(Thread=fake_thread),
-                   time=SimpleNamespace(sleep=Mock(side_effect=[None, None, StopReporter()])),
-                   _face_status_snapshot=Mock(return_value=rows), _log_face_status=Mock())
-        start = load_function('ai_service/app.py', '_start_face_status_reporter', env)
-        start()
-        start()
-        fake_thread.assert_called_once()
-        with self.assertRaises(StopReporter):
-            fake_thread.call_args.kwargs['target']()
-        self.assertEqual(env['_log_face_status'].call_count, 4)
-        self.assertTrue(all(call.args == (5,) for call in env['time'].sleep.call_args_list))
 
     def test_release_waits_for_inference_then_clears_all_models(self):
         entered = threading.Event()
