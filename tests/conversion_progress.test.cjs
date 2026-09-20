@@ -22,6 +22,11 @@ test('progress counts failures as handled and excludes skipped files', () => {
   const history = ctx.conversionProgressSummary({running: true, progress: {phase: 'checking', check_stage: 'metadata', checked: 20, check_total: 100}});
   assert.equal(history.percent, 20);
   assert.match(history.text, /konverteringshistorik/);
+  const disk = ctx.conversionProgressSummary({running: true, progress: {phase: 'checking', check_stage: 'disk', scanned: 200, found: 30, added: 7}});
+  assert.equal(disk.percent, null);
+  assert.match(disk.text, /200 filer/);
+  assert.match(disk.text, /30 originalfiler/);
+  assert.match(disk.text, /7 ikke registreret/);
   assert.equal(ctx.conversionProgressSummary({result: {total: 0, skipped: 90}}).percent, 100);
   assert.equal(ctx.conversionProgressSummary({result: {total: 10, processed: 3, stopped: true}}).percent, 30);
   assert.match(ctx.conversionProgressSummary({result: {ok: false, error: 'database unavailable'}}).text, /database unavailable/);

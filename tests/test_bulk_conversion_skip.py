@@ -60,6 +60,72 @@ class BulkConversionSkipTests(unittest.TestCase):
         self.assertEqual(skipped, 1)
         self.assertEqual(rows, [{'rel_path': missing}])
 
+    def test_disk_discovery_deduplicates_preserves_uploader_and_excludes_generated_files(self):
+        known = 'uploads/originals/nested/known.HEIC'
+        orphan = 'uploads/originals/nested/unindexed.HEIF'
+        legacy = 'uploads/old/legacy.heic'
+        for rel in [known, orphan, legacy, 'uploads/converted/ignore.heic',
+                    'uploads/originals/@eaDir/ignore.heic', 'uploads/originals/.temp.heic',
+                    'uploads/originals/._resource.heic']:
+            self.file(rel)
+        snapshots = []
+        with patch.object(fl, 'library_source_enabled', return_value=False):
+            rows = fl._bulk_conversion_disk_rows(
+                [{'rel_path': known, 'uploaded_by': 'Anna'}], {'.heic', '.heif'}, snapshots.append)
+        self.assertEqual({r['rel_path'] for r in rows}, {known, orphan, legacy})
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]['uploaded_by'], 'Anna')
+        self.assertEqual(snapshots[-1]['added'], 2)
+
+    def test_disk_scan_includes_library_only_when_enabled(self):
+        library = fl.DATA_DIR / 'test_library'
+        library.mkdir()
+        (library / 'source.MOV').write_bytes(b'movie')
+        with patch.object(fl, 'PHOTO_DIR', library):
+            with patch.object(fl, 'library_source_enabled', return_value=False):
+                self.assertEqual(fl._bulk_conversion_disk_rows([], {'.mov'}), [])
+            with patch.object(fl, 'library_source_enabled', return_value=True):
+                rows = fl._bulk_conversion_disk_rows([], {'.mov'})
+                self.assertEqual(rows, [{'rel_path': 'source.MOV', 'uploaded_by': None}])
+
+    def test_disk_only_originals_convert_once_and_never_duplicate_on_rerun(self):
+        for kind, ext, suffix in [('heic', '.HEIC', '.jpg'), ('raw', '.DNG', '.jpg'), ('mov', '.MOV', '.mp4')]:
+            rel = f'uploads/originals/{kind}/unindexed{ext}'
+            source = self.file(rel)
+            destination = fl.UPLOAD_DIR / 'converted' / kind / ('unindexed' + suffix)
+            def convert(src, dst, *args, **kwargs):
+                dst.write_bytes(b'converted data')
+            def extract(path, output_rel, **kwargs):
+                with fl.closing(fl.get_conn()) as conn:
+                    meta = {row['name']: None for row in conn.execute('PRAGMA table_info(photos)')}
+                meta.update(rel_path=output_rel, filename=path.name, ext=path.suffix,
+                            file_size=path.stat().st_size, metadata_json={}, exif_json={}, ai_tags=[])
+                return meta
+            with (patch.object(fl, 'library_source_enabled', return_value=False),
+                  patch.object(fl, kind + '_keep_originals_enabled', return_value=True),
+                  patch.object(fl, '_convert_on_local_storage', side_effect=convert) as converter,
+                  patch.object(fl, 'extract_metadata', side_effect=extract)):
+                first = getattr(fl, '_convert_existing_' + kind)()
+                self.assertEqual(first['processed'], 1)
+                self.assertEqual(first['errors'], 0)
+                self.assertTrue(source.exists())
+                second = getattr(fl, '_convert_existing_' + kind)()
+                self.assertEqual(second['processed'], 0)
+                self.assertEqual(second['skipped'], 1)
+                converter.assert_called_once()
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
+
+    def test_disk_only_original_with_existing_output_never_reaches_converter(self):
+        for kind, ext, suffix in [('heic', '.heic', '.jpg'), ('raw', '.dng', '.jpg'), ('mov', '.mov', '.mp4')]:
+            self.file(f'uploads/originals/{kind}/ready{ext}')
+            destination = self.file(f'uploads/converted/{kind}/ready{suffix}')
+            with (patch.object(fl, 'library_source_enabled', return_value=False),
+                  patch.object(fl, '_convert_on_local_storage') as converter):
+                result = getattr(fl, '_convert_existing_' + kind)()
+            converter.assert_not_called()
+            self.assertEqual(result['skipped'], 1)
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
+
     def test_linked_numbered_output_is_skipped_but_missing_linked_file_is_not(self):
         source = 'uploads/originals/Album/IMG_12.HEIC'
         target = 'uploads/converted/Album/IMG_12_2.jpg'

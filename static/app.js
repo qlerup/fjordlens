@@ -18727,6 +18727,10 @@ function conversionProgressSummary(data) {
   if (data.running && data.progress?.phase === 'checking') {
     const pr = data.progress;
     if (!pr.check_stage) return {text: 'Henter filliste…', percent: null};
+    if (pr.check_stage === 'disk') return {
+      text: `Gennemgår disken: ${Number(pr.scanned || 0)} filer undersøgt · ${Number(pr.found || 0)} originalfiler fundet · ${Number(pr.added || 0)} ikke registreret i databasen`,
+      percent: null,
+    };
     const checked = Number(pr.checked || 0), total = Number(pr.check_total || 0);
     const percent = total ? Math.round(100 * checked / total) : 100;
     const text = pr.check_stage === 'metadata'

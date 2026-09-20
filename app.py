@@ -24473,6 +24473,53 @@ def _attach_conversion_metadata(
     meta["metadata_json"] = mj
 
 
+def _bulk_conversion_disk_rows(rows, extensions, progress=None, stop_event=None):
+    """Add unindexed originals without losing known uploader information."""
+    candidates = {row['rel_path']: dict(row) for row in rows}
+    scanned = found = added = 0
+
+    def report():
+        if progress:
+            progress({"phase": "checking", "check_stage": "disk", "scanned": scanned,
+                      "found": found, "added": added})
+
+    def scan_error(error):
+        # Do not present an unreadable folder as a successful, empty scan.
+        raise error
+
+    roots = [(UPLOAD_DIR, 'uploads')]
+    if library_source_enabled():
+        roots.append((PHOTO_DIR, ''))
+    report()
+    for base, prefix in roots:
+        if not base.exists():
+            continue
+        for directory, dirs, files in os.walk(base, followlinks=False, onerror=scan_error):
+            if stop_event and stop_event.is_set():
+                return list(candidates.values())
+            parent = Path(directory)
+            dirs[:] = [name for name in dirs
+                       if not name.startswith('.') and name not in {'@eaDir', '#recycle'}
+                       and not (parent / name).is_symlink()
+                       and not (prefix == 'uploads' and parent == base and name == 'converted')]
+            for name in files:
+                if stop_event and stop_event.is_set():
+                    return list(candidates.values())
+                scanned += 1
+                path = parent / name
+                if (path.suffix.lower() in extensions and not name.startswith('.')
+                        and not name.upper().startswith(('SYNOPHOTO_THUMB_', 'SYNOPHOTO_CACHE_'))
+                        and not path.is_symlink() and path.is_file()):
+                    found += 1
+                    tail = path.relative_to(base).as_posix()
+                    rel = f'{prefix}/{tail}' if prefix else tail
+                    if rel not in candidates:
+                        candidates[rel] = {'rel_path': rel, 'uploaded_by': None}
+                        added += 1
+                report()
+    return list(candidates.values())
+
+
 def _bulk_conversion_missing_rows(rows, suffix: str, progress=None):
     """Skip existing outputs, including renamed outputs linked by conversion metadata."""
     by_source = {}
@@ -24542,6 +24589,7 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     # HEIC/HEIF only in this function
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.heic' OR LOWER(rel_path) LIKE '%.heif'").fetchall()
+    rows = _bulk_conversion_disk_rows(rows, {'.heic', '.heif'}, heic_convert_progress.update, stop_event)
     rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg', heic_convert_progress.update)
     log_event('heic_bulk_candidates', pending=len(rows), skipped=skipped)
     # initialize global progress snapshot
@@ -24729,6 +24777,7 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
     where = " OR ".join(["LOWER(rel_path) LIKE ?" for _ in patterns])
     with closing(get_conn()) as conn:
         rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
+    rows = _bulk_conversion_disk_rows(rows, RAW_EXTS, raw_convert_progress.update, stop_event)
     rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg', raw_convert_progress.update)
     log_event('raw_bulk_candidates', pending=len(rows), skipped=skipped)
     try:
@@ -24879,6 +24928,7 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
     errors = 0
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.mov'").fetchall()
+    rows = _bulk_conversion_disk_rows(rows, {'.mov'}, mov_convert_progress.update, stop_event)
     rows, skipped = _bulk_conversion_missing_rows(rows, '.mp4', mov_convert_progress.update)
     log_event('mov_bulk_candidates', pending=len(rows), skipped=skipped)
     try:
