@@ -8200,7 +8200,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     search_lang: state.searchLanguage || 'da',
   });
   if (state.view === 'mapper') {
-    qs.set('direct', '1');
+    qs.set('direct', state.q.trim() ? '0' : '1');
     qs.set('offset', String(state.photosPageOffset || 0));
     qs.set('limit', String(estimateMapperPageLimit(append)));
   } else if (pagedView) {

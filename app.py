@@ -16452,7 +16452,7 @@ def query_photos(
 
     # Optional folder filter: include canonical uploads path AND
     # internal originals/converted mirrors under the same user folder.
-    if folder or direct_only:
+    if folder or direct_only or view == "mapper":
         # Browsing/filtering must accept existing on-disk names (e.g. Synology system folders)
         # while still blocking traversal input.
         try:
@@ -16498,13 +16498,14 @@ def query_photos(
                 # storage prefix, not deeper descendants.
                 parts = []
                 for pfx in uniq_prefixes:
-                    parts.append("(rel_path LIKE ? || '/%' AND instr(substr(rel_path, length(?) + 2), '/') = 0)")
-                    params.extend([pfx, pfx])
+                    escaped = pfx.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    parts.append("(rel_path LIKE ? ESCAPE '\\' AND instr(substr(rel_path, length(?) + 2), '/') = 0)")
+                    params.extend([escaped + '/%', pfx])
                 where.append("(" + " OR ".join(parts) + ")")
             else:
                 # Build OR chain: (rel_path LIKE ?||'/%' OR ...)
-                where.append("(" + " OR ".join(["rel_path LIKE ? || '/%'"] * len(uniq_prefixes)) + ")")
-                params.extend(uniq_prefixes)
+                where.append("(" + " OR ".join(["rel_path LIKE ? ESCAPE '\\'"] * len(uniq_prefixes)) + ")")
+                params.extend(pfx.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + '/%' for pfx in uniq_prefixes)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"""
@@ -22313,6 +22314,8 @@ def api_photos():
     folder = request.args.get("folder")
     camera_model = request.args.get("camera") if view == "kameraer" else None
     direct_only = str(request.args.get("direct") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if view == "mapper" and q:
+        direct_only = False
     try:
         offset = int(str(request.args.get("offset") or "0"))
     except Exception:
@@ -22339,18 +22342,13 @@ def api_photos():
         if request.args.get("browse") == "1" and view in {"timeline", "kameraer", "favorites", "mapper"}:
             from gallery_browse import photo_page
             page_limit = max(1, min(2000, limit or 60))
-            expand_tags = []
-            if q and AI_QUERY_EXPAND_ENABLED:
-                try:
-                    expand_tags = _ai_expand_query_tags(q, language=search_language)
-                except Exception:
-                    pass
+            # Interactive search uses indexed names, metadata and stored AI text.
+            # A live Qwen expansion can add eight seconds to every keystroke/page.
             items, has_more, next_offset = photo_page(
                 lambda start, size: query_photos(view, sort, folder=folder, offset=start,
                                                limit=size, direct_only=direct_only, camera_model=camera_model),
                 _filter_public_items_by_current_user_acl,
-                lambda item: not q or matches_search(item, q, search_language=search_language)
-                or bool(expand_tags and _photo_contains_any_tags(item, expand_tags)),
+                lambda item: not q or matches_search(item, q, search_language=search_language),
                 offset=offset, limit=page_limit,
             )
             return jsonify({"items": items, "count": len(items), "query": q,

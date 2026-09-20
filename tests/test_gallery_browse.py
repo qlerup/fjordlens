@@ -93,6 +93,39 @@ class GalleryBrowseTests(unittest.TestCase):
         data = self.page(self._authenticated_client(), 'mapper', folder='Allowed', direct='1')
         self.assertEqual([item['filename'] for item in data['items']], ['direct.jpg'])
 
+    def test_mapper_search_includes_descendants_but_not_parents_or_siblings(self):
+        folder = 'Familie/Billeder af Cæcilia'
+        paths = [f'uploads/{folder}/needle-direct.jpg',
+                 f'uploads/originals/{folder}/Ferie/needle-deep.jpg',
+                 f'uploads/converted/{folder}/Ferie/2026/needle-deeper.jpg',
+                 'uploads/Familie/needle-parent.jpg',
+                 f'uploads/{folder} ekstra/needle-sibling.jpg',
+                 'uploads/Andet/needle-outside.jpg']
+        with fl.closing(fl.get_conn()) as conn:
+            for path in paths:
+                conn.execute('INSERT INTO photos(rel_path,filename) VALUES(?,?)', (path, path.rsplit('/', 1)[1]))
+            conn.commit()
+        with patch.object(fl, 'AI_QUERY_EXPAND_ENABLED', True), patch.object(fl, '_ai_expand_query_tags') as expand:
+            client = self._authenticated_client()
+            first = self.page(client, 'mapper', folder=folder, direct='1', q='needle', limit=2)
+            last = self.page(client, 'mapper', folder=folder, direct='1', q='needle', limit=2, offset=first['next_offset'])
+            expand.assert_not_called()
+        self.assertTrue(first['has_more'])
+        self.assertFalse(last['has_more'])
+        self.assertEqual({p['rel_path'] for p in first['items'] + last['items']}, set(paths[:3]))
+
+    def test_folder_wildcards_are_literal_and_root_search_stays_in_uploads(self):
+        paths = ['uploads/Album_100%/needle.jpg', 'uploads/AlbumX100extra/needle.jpg', 'library/needle.jpg']
+        with fl.closing(fl.get_conn()) as conn:
+            for path in paths:
+                conn.execute('INSERT INTO photos(rel_path,filename) VALUES(?,?)', (path, 'needle.jpg'))
+            conn.commit()
+        client = self._authenticated_client()
+        data = self.page(client, 'mapper', folder='Album_100%', q='needle')
+        self.assertEqual([p['rel_path'] for p in data['items']], paths[:1])
+        root = self.page(client, 'mapper', folder='', q='needle')
+        self.assertEqual({p['rel_path'] for p in root['items']}, set(paths[:2]))
+
     def test_camera_folders_are_deduplicated_without_loading_photo_metadata(self):
         self.seed(240, mirrors=True)
         with fl.closing(fl.get_conn()) as conn:
