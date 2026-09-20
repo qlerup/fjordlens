@@ -1,5 +1,7 @@
 ﻿import ast
 import threading
+import json
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -49,12 +51,15 @@ class FaceFailureTests(unittest.TestCase):
                    _face_runtime_condition=threading.Condition(lock),
                    _face_runtime_idle=[], _face_runtime_instances=0, _face_runtime_active=0,
                    _face_runtime_peak_active=0, _face_runtime_releasing=False,
+                   _face_runtime_ids={}, _face_jobs={}, time=time, json=json,
+                   _start_face_status_reporter=Mock(),
                    FACE_RUNTIME_MAX_WORKERS=16, FACE_DEVICE_CONFIGURED='cpu',
                    face_app=factory(), _serialize_face_result=lambda x: x,
                    _ensure_face_runtime_loaded=Mock(), _clear_cuda_cache=Mock(), print=Mock(),
                    _face_detection_runtime_providers=lambda: ['CPUExecutionProvider'],
                    _build_face_analysis=Mock(side_effect=lambda *a, **kw: (factory(), True, ['CPUExecutionProvider'])))
-        for name in ('_acquire_face_runtime', '_return_face_runtime', '_release_face_runtime'):
+        for name in ('_face_status_snapshot', '_log_face_status', '_update_face_job',
+                     '_acquire_face_runtime', '_return_face_runtime', '_release_face_runtime'):
             load_function('ai_service/app.py', name, env)
         fn = load_function('ai_service/app.py', '_detect_faces_bytes', env)
         return fn, env
@@ -113,6 +118,50 @@ class FaceFailureTests(unittest.TestCase):
         self.assertIs(env['_acquire_face_runtime'](), first)
         env['_return_face_runtime'](first)
 
+    def test_status_tracks_filename_and_reuses_instance_without_stale_job(self):
+        _, env = self.runtime(lambda: SimpleNamespace(get=lambda image: []))
+        runtime = env['_acquire_face_runtime']('first.jpg')
+        first = env['_face_status_snapshot']()[0]
+        self.assertEqual(first['file'], 'first.jpg')
+        self.assertEqual(first['stage'], 'inference')
+        self.assertIsNone(first['percent'])
+        env['_return_face_runtime'](runtime)
+        self.assertEqual(env['_face_status_snapshot'](), [])
+        again = env['_acquire_face_runtime']('second.jpg')
+        second = env['_face_status_snapshot']()[0]
+        self.assertEqual(second['instance'], first['instance'])
+        self.assertEqual(second['file'], 'second.jpg')
+        env['_return_face_runtime'](again)
+
+    def test_logs_escape_filename_and_report_success_only_after_inference(self):
+        fn, env = self.runtime(lambda: SimpleNamespace(get=lambda image: []))
+        fn(b'jpeg', filename='photo\nforged.jpg')
+        lines = [call.args[0] for call in env['print'].call_args_list if call.args[0].startswith('faces_instance instance=')]
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(all('\n' not in line for line in lines))
+        self.assertIn('stage=inference percent=unknown', lines[0])
+        self.assertIn('stage=done percent=100', lines[-1])
+        self.assertEqual(env['_face_status_snapshot'](), [])
+        env['print'].assert_any_call('faces_instance active=0 stage=idle', flush=True)
+
+    def test_reporter_logs_each_active_instance_every_five_seconds(self):
+        class StopReporter(Exception):
+            pass
+        rows = [{'instance': 1}, {'instance': 2}]
+        fake_thread = Mock()
+        env = dict(_face_runtime_lock=threading.RLock(), _face_status_thread_started=False,
+                   threading=SimpleNamespace(Thread=fake_thread),
+                   time=SimpleNamespace(sleep=Mock(side_effect=[None, None, StopReporter()])),
+                   _face_status_snapshot=Mock(return_value=rows), _log_face_status=Mock())
+        start = load_function('ai_service/app.py', '_start_face_status_reporter', env)
+        start()
+        start()
+        fake_thread.assert_called_once()
+        with self.assertRaises(StopReporter):
+            fake_thread.call_args.kwargs['target']()
+        self.assertEqual(env['_log_face_status'].call_count, 4)
+        self.assertTrue(all(call.args == (5,) for call in env['time'].sleep.call_args_list))
+
     def test_release_waits_for_inference_then_clears_all_models(self):
         entered = threading.Event()
         finish = threading.Event()
@@ -154,11 +203,11 @@ class FaceFailureTests(unittest.TestCase):
                    _detect_faces_bytes=Mock(side_effect=RuntimeError('bad allocation')))
         fn = load_function('ai_service/app.py', 'detect_faces', env)
         with self.assertRaises(HTTPException) as caught:
-            fn(SimpleNamespace(file=SimpleNamespace(read=lambda: b'jpeg')))
+            fn(SimpleNamespace(filename='photo.jpg', file=SimpleNamespace(read=lambda: b'jpeg')))
         self.assertEqual(caught.exception.status_code, 503)
         env['_detect_faces_bytes'].side_effect = HTTPException(400, 'invalid image')
         with self.assertRaises(HTTPException) as caught:
-            fn(SimpleNamespace(file=SimpleNamespace(read=lambda: b'bad')))
+            fn(SimpleNamespace(filename='bad.jpg', file=SimpleNamespace(read=lambda: b'bad')))
         self.assertEqual(caught.exception.status_code, 400)
 
 

@@ -460,9 +460,53 @@ _face_runtime_active = 0
 _face_runtime_peak_active = 0
 _face_runtime_releasing = False
 FACE_RUNTIME_MAX_WORKERS = 16
+_face_runtime_ids: dict[int, int] = {}
+_face_jobs: dict[int, dict[str, Any]] = {}
+_face_status_thread_started = False
 
 
-def _acquire_face_runtime():
+def _face_status_snapshot() -> list[dict[str, Any]]:
+    with _face_runtime_lock:
+        now = time.monotonic()
+        return [
+            {"instance": instance, "file": job["file"], "stage": job["stage"],
+             "percent": job["percent"], "elapsed_sec": round(now - job["started"], 1)}
+            for instance, job in sorted(_face_jobs.items())
+        ]
+
+
+def _log_face_status(row: dict[str, Any]) -> None:
+    percent = "unknown" if row["percent"] is None else str(row["percent"])
+    # JSON quoting keeps untrusted filenames (including newlines) on one log line.
+    print(f'faces_instance instance={row["instance"]} file={json.dumps(row["file"], ensure_ascii=True)} '
+          f'stage={row["stage"]} percent={percent} elapsed_sec={row["elapsed_sec"]}', flush=True)
+
+
+def _start_face_status_reporter() -> None:
+    global _face_status_thread_started
+    with _face_runtime_lock:
+        if _face_status_thread_started:
+            return
+        def report():
+            while True:
+                time.sleep(5)
+                with _face_runtime_lock:
+                    for row in _face_status_snapshot():
+                        _log_face_status(row)
+        threading.Thread(target=report, name="face-status", daemon=True).start()
+        _face_status_thread_started = True
+
+
+def _update_face_job(runtime, stage: str, percent: Optional[int] = None) -> None:
+    with _face_runtime_lock:
+        instance = _face_runtime_ids[id(runtime)]
+        job = _face_jobs[instance]
+        job.update(stage=stage, percent=percent)
+        _log_face_status({"instance": instance, "file": job["file"], "stage": stage,
+                          "percent": percent, "elapsed_sec": round(time.monotonic() - job["started"], 1)})
+
+
+def _acquire_face_runtime(filename: str = "unknown"):
     """Lease an exclusive model instance; inference runs outside the pool lock."""
     global _face_runtime_instances, _face_runtime_active, _face_runtime_peak_active
     with _face_runtime_condition:
@@ -486,6 +530,11 @@ def _acquire_face_runtime():
             _face_runtime_instances += 1
         _face_runtime_active += 1
         _face_runtime_peak_active = max(_face_runtime_peak_active, _face_runtime_active)
+        instance = _face_runtime_ids.setdefault(id(runtime), _face_runtime_instances)
+        _face_jobs[instance] = {"file": str(filename or "unknown"), "stage": "inference",
+                                "percent": None, "started": time.monotonic()}
+        _start_face_status_reporter()
+        _update_face_job(runtime, "inference")
         print(f"faces_inference_start active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
         return runtime
 
@@ -493,9 +542,12 @@ def _acquire_face_runtime():
 def _return_face_runtime(runtime) -> None:
     global _face_runtime_active
     with _face_runtime_condition:
+        _face_jobs.pop(_face_runtime_ids[id(runtime)], None)
         _face_runtime_idle.append(runtime)
         _face_runtime_active -= 1
         print(f"faces_inference_done active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
+        if _face_runtime_active == 0:
+            print("faces_instance active=0 stage=idle", flush=True)
         _face_runtime_condition.notify_all()
 
 
@@ -560,6 +612,8 @@ def _release_face_runtime() -> bool:
                 _face_runtime_condition.wait()
             changed = face_app is not None or face_detection_available
             _face_runtime_idle.clear()
+            _face_runtime_ids.clear()
+            _face_jobs.clear()
             _face_runtime_instances = 0
             face_app = None
             face_detection_available = False
@@ -1607,15 +1661,22 @@ def _serialize_face_result(face) -> Dict[str, Any]:
     }
 
 
-def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
+def _detect_faces_bytes(data: bytes, filename: str = "unknown") -> List[Dict[str, Any]]:
     try:
         img = Image.open(io.BytesIO(data)).convert("RGB")
         img_np = np.array(img)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
-    runtime = _acquire_face_runtime()
+    runtime = _acquire_face_runtime(filename)
     try:
-        return [_serialize_face_result(face) for face in runtime.get(img_np)]
+        faces = runtime.get(img_np)
+        _update_face_job(runtime, "serialize")
+        result = [_serialize_face_result(face) for face in faces]
+        _update_face_job(runtime, "done", 100)
+        return result
+    except Exception:
+        _update_face_job(runtime, "error")
+        raise
     finally:
         _return_face_runtime(runtime)
 
@@ -1623,7 +1684,7 @@ def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
 @app.post("/faces/detect")
 def detect_faces(file: UploadFile = File(...)):
     try:
-        out = _detect_faces_bytes(file.file.read())
+        out = _detect_faces_bytes(file.file.read(), filename=file.filename)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1649,7 +1710,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
 
     def run_one(item):
         index, filename, data = item
-        faces = _detect_faces_bytes(data)
+        faces = _detect_faces_bytes(data, filename=filename)
         return index, {
             "filename": filename,
             "ok": True,
@@ -1671,7 +1732,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
     # Keep the existing one-shot retry after all initial batch attempts finish.
     for index, filename, data, first_exc in failed:
         try:
-            faces = _detect_faces_bytes(data)
+            faces = _detect_faces_bytes(data, filename=filename)
             results[index] = {
                 "filename": filename,
                 "ok": True,
