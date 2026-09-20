@@ -7178,24 +7178,12 @@ async function renameOrMergePerson(pid, name, options = {}) {
     }
     if (d.merged) showStatus(`${tr('person_rename_merged')} '${d.name || nv}'`, 'ok');
     else showStatus(tr('person_name_updated'), 'ok');
-    // Retrain this person's centroid, then re-match unknown faces/clusters against
-    // the now-improved centroids, so matching keeps getting better for this person.
+    // The endpoint already updates the centroid. Refresh the visible merge
+    // first; automatic matching must not keep the merge dialog waiting.
     if (state.view === 'personer' && state.personView.mode === 'photos'
         && String(state.personView.personId) === String(pid)) {
       await loadPersonPhotos(d.to_id || pid, d.name || nv);
     }
-    try {
-      const targetId = Number(d.to_id || pid);
-      if (Number.isFinite(targetId)) {
-        await fetch(`/api/people/${targetId}/train`, { method: 'POST' }).catch(()=>{});
-      }
-    } catch {}
-    try {
-      const mr = await fetch('/api/faces/match-unknown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 1000 }) });
-      const md = await mr.json().catch(() => ({}));
-      const promoted = (md && Number(md.matched || 0)) + (md && Number(md.clusters_promoted || 0));
-      if (md && md.ok && promoted > 0) showStatus(tr('person_more_matches_found').replace('{count}', String(promoted)), 'ok');
-    } catch {}
     // Refresh the people list without tearing down cards whose thumbnails already loaded.
     try {
       const url = state.showHiddenPeople ? '/api/people?include_hidden=1' : '/api/people';
@@ -7203,11 +7191,56 @@ async function renameOrMergePerson(pid, name, options = {}) {
       const pd = await pr.json();
       reconcilePeopleGrid(pd.items || []);
     } catch {}
+    schedulePersonRematch();
     return true;
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
     return false;
   }
+}
+
+let personRematchRunning = false;
+let personRematchPending = false;
+
+function schedulePersonRematch() {
+  personRematchPending = true;
+  if (personRematchRunning) return;
+  personRematchRunning = true;
+  void (async () => {
+    try {
+      while (personRematchPending) {
+        personRematchPending = false;
+        try {
+          const response = await fetch('/api/faces/match-unknown', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({limit: 1000}),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || 'match_failed');
+          const promoted = Number(result.matched || 0) + Number(result.clusters_promoted || 0);
+          if (promoted > 0) {
+            showStatus(tr('person_more_matches_found').replace('{count}', String(promoted)), 'ok');
+            // Do not redraw a different view if the user has navigated away.
+            if (state.view === 'personer') {
+              const hidden = state.showHiddenPeople;
+              const peopleResponse = await fetch(hidden ? '/api/people?include_hidden=1' : '/api/people');
+              if (!peopleResponse.ok) throw new Error('people_refresh_failed');
+              const people = await peopleResponse.json();
+              if (state.view === 'personer' && state.showHiddenPeople === hidden) reconcilePeopleGrid(people.items || []);
+            }
+          }
+        } catch {
+          showStatus(state.uiLanguage === 'en'
+            ? 'Saved. Automatic face matching failed; use Match unknown to retry.'
+            : 'Gemt. Automatisk ansigtsmatch fejlede; prøv igen med Match ukendte.', 'err');
+        }
+        // Merges made during this pass are coalesced into one new pass using
+        // the latest centroids, instead of launching concurrent full scans.
+      }
+    } finally {
+      personRematchRunning = false;
+    }
+  })();
 }
 
 async function matchUnknownFaces(limit = 1000) {
