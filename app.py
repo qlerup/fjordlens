@@ -34,6 +34,7 @@ import exifread
 import requests
 import numpy as np
 import conversion_client
+from conversion_jobs import ConversionJob
 from processing_failures import FailureTracker
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -24473,6 +24474,60 @@ def _attach_conversion_metadata(
     meta["metadata_json"] = mj
 
 
+def _bulk_conversion_job(kind):
+    return ConversionJob(DATA_DIR / 'conversion_jobs', kind)
+
+
+def _start_bulk_conversion_job(kind, convert):
+    job = _bulk_conversion_job(kind)
+    lock = job.acquire()
+    if lock is None:
+        return jsonify({"ok": True, "started": False, "running": True})
+    progress_name = kind + '_convert_progress'
+    result_name = 'last_' + kind + '_convert_result'
+    globals()[progress_name] = {"phase": "checking"}
+    globals()[result_name] = None
+    scan_stop_event.clear()
+
+    def publish():
+        job.save({"running": True, "result": None,
+                  "progress": dict(globals().get(progress_name) or {})})
+
+    def run():
+        done = threading.Event()
+        def monitor():
+            while not done.wait(0.5):
+                try:
+                    publish()
+                except Exception as exc:
+                    log_event('error', error=f'{kind}_bulk_status: {exc}')
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        try:
+            monitor_thread.start()
+            try:
+                result = convert(stop_event=scan_stop_event)
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+                log_event('error', error=f'{kind}_bulk: {exc}')
+            finally:
+                done.set()
+                monitor_thread.join()
+            globals()[result_name] = result
+            job.save({"running": False, "result": result, "progress": None})
+        finally:
+            lock.close()
+
+    try:
+        publish()
+        thread = threading.Thread(target=run, daemon=True)
+        globals()[kind + '_convert_thread'] = thread
+        thread.start()
+    except Exception:
+        lock.close()
+        raise
+    return jsonify({"ok": True, "started": True})
+
+
 def _bulk_conversion_disk_rows(rows, extensions, progress=None, stop_event=None):
     """Add unindexed originals without losing known uploader information."""
     candidates = {row['rel_path']: dict(row) for row in rows}
@@ -24726,38 +24781,13 @@ def api_heic_convert_existing():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global heic_convert_thread, last_heic_convert_result, heic_convert_progress
-    if heic_convert_thread and heic_convert_thread.is_alive():
-        return jsonify({"ok": False, "error": "HEIC-konvertering kÃ¸rer allerede"}), 409
-    scan_stop_event.clear()
-    last_heic_convert_result = None
-    try:
-        heic_convert_progress = {"total": 0, "processed": 0, "errors": 0}
-    except Exception:
-        pass
+    return _start_bulk_conversion_job("heic", _convert_existing_heic)
 
-    def run_bulk():
-        global last_heic_convert_result
-        try:
-            last_heic_convert_result = _convert_existing_heic(stop_event=scan_stop_event)
-        except Exception as exc:
-            last_heic_convert_result = {"ok": False, "error": str(exc)}
-            log_event("error", error=f"heic_bulk: {exc}")
-
-    heic_convert_thread = threading.Thread(target=run_bulk, daemon=True)
-    heic_convert_thread.start()
-    return jsonify({"ok": True, "started": True})
 
 
 @app.route("/api/heic/convert-existing/status")
 def api_heic_convert_existing_status():
-    running = bool(heic_convert_thread and heic_convert_thread.is_alive())
-    return jsonify({
-        "ok": True,
-        "running": running,
-        "result": (last_heic_convert_result if not running else None),
-        "progress": (heic_convert_progress if running else None),
-    })
+    return jsonify(_bulk_conversion_job("heic").status())
 
 
 # --- RAW bulk conversion (DNG/RAW) ---
@@ -24885,38 +24915,13 @@ def api_raw_convert_existing():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global raw_convert_thread, last_raw_convert_result, raw_convert_progress
-    if raw_convert_thread and raw_convert_thread.is_alive():
-        return jsonify({"ok": False, "error": "RAW-konvertering kÃ¸rer allerede"}), 409
-    scan_stop_event.clear()
-    last_raw_convert_result = None
-    try:
-        raw_convert_progress = {"total": 0, "processed": 0, "errors": 0}
-    except Exception:
-        pass
+    return _start_bulk_conversion_job("raw", _convert_existing_raw)
 
-    def run_bulk():
-        global last_raw_convert_result
-        try:
-            last_raw_convert_result = _convert_existing_raw(stop_event=scan_stop_event)
-        except Exception as exc:
-            last_raw_convert_result = {"ok": False, "error": str(exc)}
-            log_event("error", error=f"raw_bulk: {exc}")
-
-    raw_convert_thread = threading.Thread(target=run_bulk, daemon=True)
-    raw_convert_thread.start()
-    return jsonify({"ok": True, "started": True})
 
 
 @app.route("/api/raw/convert-existing/status")
 def api_raw_convert_existing_status():
-    running = bool(raw_convert_thread and raw_convert_thread.is_alive())
-    return jsonify({
-        "ok": True,
-        "running": running,
-        "result": (last_raw_convert_result if not running else None),
-        "progress": (raw_convert_progress if running else None),
-    })
+    return jsonify(_bulk_conversion_job("raw").status())
 
 
 def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
@@ -25041,38 +25046,13 @@ def api_mov_convert_existing():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    global mov_convert_thread, last_mov_convert_result, mov_convert_progress
-    if mov_convert_thread and mov_convert_thread.is_alive():
-        return jsonify({"ok": False, "error": "MOV-konvertering kører allerede"}), 409
-    scan_stop_event.clear()
-    last_mov_convert_result = None
-    try:
-        mov_convert_progress = {"total": 0, "processed": 0, "errors": 0}
-    except Exception:
-        pass
+    return _start_bulk_conversion_job("mov", _convert_existing_mov)
 
-    def run_bulk():
-        global last_mov_convert_result
-        try:
-            last_mov_convert_result = _convert_existing_mov(stop_event=scan_stop_event)
-        except Exception as exc:
-            last_mov_convert_result = {"ok": False, "error": str(exc)}
-            log_event("error", error=f"mov_bulk: {exc}")
-
-    mov_convert_thread = threading.Thread(target=run_bulk, daemon=True)
-    mov_convert_thread.start()
-    return jsonify({"ok": True, "started": True})
 
 
 @app.route("/api/mov/convert-existing/status")
 def api_mov_convert_existing_status():
-    running = bool(mov_convert_thread and mov_convert_thread.is_alive())
-    return jsonify({
-        "ok": True,
-        "running": running,
-        "result": (last_mov_convert_result if not running else None),
-        "progress": (mov_convert_progress if running else None),
-    })
+    return jsonify(_bulk_conversion_job("mov").status())
 
 
 @app.route("/api/settings/ai-performance", methods=["GET", "POST"])

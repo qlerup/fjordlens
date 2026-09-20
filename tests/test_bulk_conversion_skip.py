@@ -1,5 +1,6 @@
 import json
 import unittest
+import threading
 from unittest.mock import patch
 import app as fl
 from test_upload_conversion_uploader import UploadConversionUploaderTests
@@ -8,6 +9,30 @@ from test_upload_conversion_uploader import UploadConversionUploaderTests
 class BulkConversionSkipTests(unittest.TestCase):
     setUp = UploadConversionUploaderTests.setUp
     tearDown = UploadConversionUploaderTests.tearDown
+
+    def test_job_start_and_status_share_lock_and_final_result(self):
+        for kind in ('heic', 'raw', 'mov'):
+            entered, release = threading.Event(), threading.Event()
+            def convert(stop_event=None):
+                entered.set()
+                release.wait(5)
+                return {'ok': True, 'total': 3, 'processed': 3}
+            with fl.app.app_context():
+                try:
+                    first = fl._start_bulk_conversion_job(kind, convert).get_json()
+                    self.assertTrue(first['started'])
+                    self.assertTrue(entered.wait(2))
+                    status = getattr(fl, 'api_' + kind + '_convert_existing_status')().get_json()
+                    self.assertTrue(status['running'])
+                    second = fl._start_bulk_conversion_job(kind, convert).get_json()
+                    self.assertFalse(second['started'])
+                    self.assertTrue(second['running'])
+                finally:
+                    release.set()
+                    getattr(fl, kind + '_convert_thread').join(5)
+                status = getattr(fl, 'api_' + kind + '_convert_existing_status')().get_json()
+                self.assertFalse(status['running'])
+                self.assertEqual(status['result']['processed'], 3)
 
     def file(self, rel, content=b'existing output'):
         path = fl._disk_path_from_rel_path(rel)
