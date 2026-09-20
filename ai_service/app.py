@@ -453,6 +453,50 @@ def _face_runtime_device() -> str:
 
 
 _face_runtime_lock = threading.RLock()
+_face_runtime_condition = threading.Condition(_face_runtime_lock)
+_face_runtime_idle: list[Any] = []
+_face_runtime_instances = 0
+_face_runtime_active = 0
+_face_runtime_peak_active = 0
+_face_runtime_releasing = False
+FACE_RUNTIME_MAX_WORKERS = 16
+
+
+def _acquire_face_runtime():
+    """Lease an exclusive model instance; inference runs outside the pool lock."""
+    global _face_runtime_instances, _face_runtime_active, _face_runtime_peak_active
+    with _face_runtime_condition:
+        while _face_runtime_releasing or (
+            not _face_runtime_idle and _face_runtime_instances >= FACE_RUNTIME_MAX_WORKERS
+        ):
+            _face_runtime_condition.wait()
+        if _face_runtime_idle:
+            runtime = _face_runtime_idle.pop()
+        elif _face_runtime_instances == 0:
+            _ensure_face_runtime_loaded()
+            runtime = face_app
+            _face_runtime_instances += 1
+        else:
+            providers = _face_detection_runtime_providers()
+            runtime, _, actual_providers = _build_face_analysis(
+                providers, ctx_id=0 if "CUDAExecutionProvider" in providers else -1
+            )
+            if "CUDAExecutionProvider" in providers and "CUDAExecutionProvider" not in actual_providers:
+                raise RuntimeError("Concurrent face model failed to initialize CUDA")
+            _face_runtime_instances += 1
+        _face_runtime_active += 1
+        _face_runtime_peak_active = max(_face_runtime_peak_active, _face_runtime_active)
+        print(f"faces_inference_start active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
+        return runtime
+
+
+def _return_face_runtime(runtime) -> None:
+    global _face_runtime_active
+    with _face_runtime_condition:
+        _face_runtime_idle.append(runtime)
+        _face_runtime_active -= 1
+        print(f"faces_inference_done active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
+        _face_runtime_condition.notify_all()
 
 
 def _ensure_face_runtime_loaded() -> bool:
@@ -506,19 +550,26 @@ def _ensure_face_runtime_loaded() -> bool:
 def _release_face_runtime() -> bool:
     """Drop ONNX/InsightFace sessions so their CUDA allocations are returned."""
     global face_app, face_detection_available, face_detection_error, face_device, face_providers_kw_supported
-    with _face_runtime_lock:
-        changed = face_app is not None or face_detection_available
-        old_app = face_app
-        face_app = None
-        face_detection_available = False
-        face_device = FACE_DEVICE_CONFIGURED
-        face_providers_kw_supported = None
-        face_detection_error = "released_after_workflow"
+    global _face_runtime_instances, _face_runtime_releasing
+    with _face_runtime_condition:
+        while _face_runtime_releasing:
+            _face_runtime_condition.wait()
+        _face_runtime_releasing = True
         try:
-            del old_app
-        except Exception:
-            pass
-    _clear_cuda_cache()
+            while _face_runtime_active:
+                _face_runtime_condition.wait()
+            changed = face_app is not None or face_detection_available
+            _face_runtime_idle.clear()
+            _face_runtime_instances = 0
+            face_app = None
+            face_detection_available = False
+            face_device = FACE_DEVICE_CONFIGURED
+            face_providers_kw_supported = None
+            face_detection_error = "released_after_workflow"
+            _clear_cuda_cache()
+        finally:
+            _face_runtime_releasing = False
+            _face_runtime_condition.notify_all()
     return bool(changed)
 
 
@@ -1190,7 +1241,10 @@ def health():
         "face_onnx_threads": FACE_ONNX_THREADS,
         # Compatibility/status field: concurrency follows the request batch size.
         # The endpoint itself accepts at most 16 files; the UI currently offers up to 8.
-        "face_batch_max_workers": 16,
+        "face_batch_max_workers": FACE_RUNTIME_MAX_WORKERS,
+        "face_inference_active": _face_runtime_active,
+        "face_inference_peak_active": _face_runtime_peak_active,
+        "face_model_instances": _face_runtime_instances,
         "face_batch_endpoint": True,
         "face_runtime_providers": runtime_providers,
         "face_detection_runtime_providers": detection_runtime_providers,
@@ -1559,14 +1613,11 @@ def _detect_faces_bytes(data: bytes) -> List[Dict[str, Any]]:
         img_np = np.array(img)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
-    # Share the lifecycle lock with load/release. A single FaceAnalysis instance
-    # must not be used concurrently or released during inference.
-    with _face_runtime_lock:
-        if not face_detection_available or face_app is None:
-            _ensure_face_runtime_loaded()
-        if not face_detection_available or face_app is None:
-            raise RuntimeError("Face detection model unavailable")
-        return [_serialize_face_result(face) for face in face_app.get(img_np)]
+    runtime = _acquire_face_runtime()
+    try:
+        return [_serialize_face_result(face) for face in runtime.get(img_np)]
+    finally:
+        _return_face_runtime(runtime)
 
 
 @app.post("/faces/detect")
@@ -1592,7 +1643,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
     for index, upload in enumerate(uploads):
         payloads.append((index, str(upload.filename or f"image-{index}.jpg"), upload.file.read()))
 
-    # Decode batch inputs concurrently; shared model inference is serialized.
+    # Each active request leases its own model, including during inference.
     workers = len(payloads)
     results: List[Optional[Dict[str, Any]]] = [None] * len(payloads)
 

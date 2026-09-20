@@ -1,7 +1,7 @@
 ﻿import ast
 import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -41,18 +41,110 @@ class FaceFailureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No video frames'):
             fn(Path('test.mp4'), 'test.mp4')
 
-    def test_model_inference_holds_lifecycle_lock(self):
+    def runtime(self, factory):
         lock = threading.RLock()
-        def get(image):
-            self.assertTrue(lock._is_owned())
-            return []
         env = dict(Image=SimpleNamespace(open=lambda x: SimpleNamespace(convert=lambda x: 'image')),
                    io=SimpleNamespace(BytesIO=lambda x: x), np=SimpleNamespace(array=lambda x: x),
                    _face_runtime_lock=lock, face_detection_available=True,
-                   face_app=SimpleNamespace(get=get), _serialize_face_result=lambda x: x)
+                   _face_runtime_condition=threading.Condition(lock),
+                   _face_runtime_idle=[], _face_runtime_instances=0, _face_runtime_active=0,
+                   _face_runtime_peak_active=0, _face_runtime_releasing=False,
+                   FACE_RUNTIME_MAX_WORKERS=16, FACE_DEVICE_CONFIGURED='cpu',
+                   face_app=factory(), _serialize_face_result=lambda x: x,
+                   _ensure_face_runtime_loaded=Mock(), _clear_cuda_cache=Mock(), print=Mock(),
+                   _face_detection_runtime_providers=lambda: ['CPUExecutionProvider'],
+                   _build_face_analysis=Mock(side_effect=lambda *a, **kw: (factory(), True, ['CPUExecutionProvider'])))
+        for name in ('_acquire_face_runtime', '_return_face_runtime', '_release_face_runtime'):
+            load_function('ai_service/app.py', name, env)
         fn = load_function('ai_service/app.py', '_detect_faces_bytes', env)
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            self.assertEqual(list(pool.map(fn, [b'jpeg'] * 16)), [[]] * 16)
+        return fn, env
+
+    def test_selected_number_of_models_really_infer_concurrently(self):
+        for workers in (1, 2, 4, 6, 8):
+            with self.subTest(workers=workers):
+                barrier = threading.Barrier(workers)
+                def factory():
+                    exclusive = threading.Lock()
+                    def get(image):
+                        self.assertTrue(exclusive.acquire(blocking=False), 'Model shared by concurrent jobs')
+                        try:
+                            barrier.wait(timeout=5)
+                            return []
+                        finally:
+                            exclusive.release()
+                    return SimpleNamespace(get=get)
+                fn, env = self.runtime(factory)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    self.assertEqual(list(pool.map(fn, [b'jpeg'] * workers * 2)), [[]] * workers * 2)
+                self.assertEqual(env['_face_runtime_peak_active'], workers)
+                self.assertEqual(env['_face_runtime_instances'], workers)
+                self.assertEqual(env['_face_runtime_active'], 0)
+
+    def test_inference_failure_returns_model_slot(self):
+        fn, env = self.runtime(lambda: SimpleNamespace(get=Mock(side_effect=RuntimeError('inference failed'))))
+        with self.assertRaisesRegex(RuntimeError, 'inference failed'):
+            fn(b'jpeg')
+        self.assertEqual(env['_face_runtime_active'], 0)
+        self.assertEqual(len(env['_face_runtime_idle']), 1)
+
+    def test_batch_endpoint_runs_eight_model_calls_concurrently(self):
+        barrier = threading.Barrier(8)
+        def get(image):
+            barrier.wait(timeout=5)
+            return []
+        _, env = self.runtime(lambda: SimpleNamespace(get=get))
+        env.update(File=lambda *a: None, ThreadPoolExecutor=ThreadPoolExecutor, as_completed=as_completed)
+        batch = load_function('ai_service/app.py', 'detect_faces_batch', env)
+        uploads = [SimpleNamespace(filename=f'{i}.jpg', file=SimpleNamespace(read=lambda: b'jpeg')) for i in range(8)]
+        result = batch(uploads)
+        self.assertEqual(result['batch_size'], 8)
+        self.assertTrue(all(item['ok'] for item in result['items']))
+        self.assertEqual(env['_face_runtime_peak_active'], 8)
+
+    def test_failed_extra_model_does_not_leak_pool_capacity(self):
+        _, env = self.runtime(lambda: SimpleNamespace(get=lambda image: []))
+        first = env['_acquire_face_runtime']()
+        env['_build_face_analysis'].side_effect = RuntimeError('GPU out of memory')
+        with self.assertRaisesRegex(RuntimeError, 'GPU out of memory'):
+            env['_acquire_face_runtime']()
+        self.assertEqual(env['_face_runtime_instances'], 1)
+        self.assertEqual(env['_face_runtime_active'], 1)
+        env['_return_face_runtime'](first)
+        self.assertIs(env['_acquire_face_runtime'](), first)
+        env['_return_face_runtime'](first)
+
+    def test_release_waits_for_inference_then_clears_all_models(self):
+        entered = threading.Event()
+        finish = threading.Event()
+        def get(image):
+            entered.set()
+            self.assertTrue(finish.wait(timeout=5))
+            return []
+        fn, env = self.runtime(lambda: SimpleNamespace(get=get))
+        def clear():
+            self.assertEqual(env['_face_runtime_active'], 0)
+            self.assertEqual(env['_face_runtime_idle'], [])
+        env['_clear_cuda_cache'].side_effect = clear
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            detection = pool.submit(fn, b'jpeg')
+            self.assertTrue(entered.wait(timeout=5))
+            release = pool.submit(env['_release_face_runtime'])
+            try:
+                self.assertFalse(release.done())
+                self.assertIsNotNone(env['face_app'])
+            finally:
+                finish.set()
+            self.assertEqual(detection.result(timeout=5), [])
+            self.assertTrue(release.result(timeout=5))
+        self.assertEqual(env['_face_runtime_instances'], 0)
+        self.assertIsNone(env['face_app'])
+        # The next workflow can lazily load a fresh primary instance.
+        def reload():
+            env['face_app'] = SimpleNamespace(get=lambda image: [])
+            env['face_detection_available'] = True
+        env['_ensure_face_runtime_loaded'].side_effect = reload
+        self.assertEqual(fn(b'jpeg'), [])
+        self.assertEqual(env['_face_runtime_instances'], 1)
 
     def test_inference_error_is_service_failure(self):
         class HTTPException(Exception):
