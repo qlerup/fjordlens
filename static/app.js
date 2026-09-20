@@ -18723,51 +18723,78 @@ function closeConversionScopeModal(options = {}) {
   }
 }
 
+function conversionProgressSummary(data) {
+  if (data.running && data.progress?.phase === 'checking') return {text: 'Undersøger eksisterende filer…', percent: null};
+  const pr = data.running ? (data.progress || {}) : (data.result || {});
+  if (!data.running && !data.result) return {text: 'Ikke startet', percent: null};
+  if (pr.ok === false) return {text: `Fejl: ${pr.error || 'Konverteringen blev afbrudt'}`, percent: null};
+  const total = Number(pr.total || 0), converted = Number(pr.processed || 0), errors = Number(pr.errors || 0);
+  const done = Math.min(total, converted + errors);
+  const percent = total ? Math.round(100 * done / total) : (data.running ? null : 100);
+  const phase = data.running ? 'Konverterer' : (pr.stopped ? 'Stoppet' : 'Færdig');
+  const counts = `${phase}: ${done}/${total} behandlet${percent === null ? '' : ` · ${percent}%`} · ${converted} konverteret · ${errors} fejl · ${Number(pr.skipped || 0)} allerede konverteret`;
+  return {text: counts + (data.running && pr.current ? ` · Aktuel fil: ${pr.current}` : ''), percent};
+}
+
+const conversionPolls = new Map();
+function watchExistingConversion(type) {
+  const previous = conversionPolls.get(type);
+  if (previous) clearTimeout(previous.timer);
+  const token = {timer: null, sawRunning: false};
+  conversionPolls.set(type, token);
+  const cfg = conversionTypeConfig(type);
+  const button = document.getElementById(`${type}BulkConvertBtn`);
+  const label = document.getElementById(`${type}BulkProgressStatus`);
+  const bar = document.getElementById(`${type}BulkProgressBar`);
+  const poll = async () => {
+    if (conversionPolls.get(type) !== token) return;
+    try {
+      const response = await fetch(cfg.statusUrl);
+      const data = await response.json();
+      if (conversionPolls.get(type) !== token) return;
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Kunne ikke hente status');
+      const summary = conversionProgressSummary(data);
+      if (label) label.textContent = summary.text;
+      if (bar) {
+        bar.hidden = !data.running && !data.result;
+        if (summary.percent === null) bar.removeAttribute('value'); else bar.value = summary.percent;
+      }
+      if (button) {
+        button.disabled = !!data.running;
+        button.classList.toggle('loading', !!data.running);
+        button.textContent = data.running ? 'Konverterer…' : cfg.buttonText;
+      }
+      if (!data.running) {
+        if (token.sawRunning) {
+          await loadPhotos();
+          if (state.view === 'mapper') loadMapperTools();
+        }
+        return;
+      }
+      token.sawRunning = true;
+    } catch (error) {
+      if (conversionPolls.get(type) !== token) return;
+      if (label) label.textContent = `Status utilgængelig · prøver igen: ${error.message}`;
+    }
+    token.timer = setTimeout(poll, 1200);
+  };
+  void poll();
+}
+
 async function startExistingConversion(type, btn = null) {
   const cfg = conversionTypeConfig(type);
-  const originalText = btn ? btn.textContent : '';
+  const label = document.getElementById(`${type}BulkProgressStatus`);
   try {
-    if (btn) { btn.disabled = true; btn.classList.add('loading'); btn.textContent = 'Konverterer…'; }
-    const r = await fetch(cfg.bulkUrl, { method:'POST' });
-    if (!r.ok) {
-      const d = await r.json().catch(()=>({}));
-      showStatus(d && d.error ? d.error : cfg.failText, 'err');
-      if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
-      return;
-    }
-    showStatus(`Starter konvertering af eksisterende ${cfg.label}…`, 'ok');
-    showTopStatusMessage(cfg.startText, 0);
-    const poll = async () => {
-      try {
-        const s = await fetch(cfg.statusUrl);
-        const d = await s.json();
-        if (s.ok && d && d.ok) {
-          if (!d.running) {
-            if (d.result) {
-              const p = Number(d.result.processed || 0);
-              const e = Number(d.result.errors || 0);
-              showStatus(`${cfg.doneText}: ${p} filer${e ? `, fejl: ${e}` : ''}.`, e ? 'err' : 'ok');
-            }
-            await loadPhotos();
-            if (state.view === 'mapper') loadMapperTools();
-            hideTopStatusMessage();
-            if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
-            return;
-          }
-          const pr = d.progress || {};
-          const total = Number(pr.total || 0);
-          const done = Number(pr.processed || 0);
-          const pct = total > 0 ? Math.round((done / total) * 100) : null;
-          const lbl = total > 0 ? `${cfg.doneText.replace(' færdig', '')} · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : cfg.runningText;
-          showTopStatusMessage(lbl, pct);
-        }
-      } catch {}
-      setTimeout(poll, 1200);
-    };
-    setTimeout(poll, 800);
-  } catch {
-    showStatus(cfg.failText, 'err');
-    if (btn) { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = originalText || cfg.buttonText; }
+    if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+    if (label) label.textContent = 'Starter…';
+    const response = await fetch(cfg.bulkUrl, {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || cfg.failText);
+    watchExistingConversion(type);
+  } catch (error) {
+    if (label) label.textContent = error.message;
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+    showStatus(error.message, 'err');
   }
 }
 
@@ -18830,30 +18857,10 @@ setView(state.view, { syncUrl: false, personId: _initialRoute.personId, cameraMo
   try {
     loadConversionSettings().catch(()=>{});
   } catch {}
-  // If a bulk HEIC conversion is already running, start a passive poll to show top status
-  try {
-    const s = await fetch('/api/heic/convert-existing/status');
-    const d = await s.json();
-    if (s.ok && d && d.ok && d.running) {
-      const poll = async () => {
-        try {
-          const s2 = await fetch('/api/heic/convert-existing/status');
-          const d2 = await s2.json();
-          if (s2.ok && d2 && d2.ok) {
-            if (!d2.running) { hideTopStatusMessage(); return; }
-            const pr = d2.progress || {};
-            const total = Number(pr.total || 0);
-            const done = Number(pr.processed || 0);
-            const pct = total > 0 ? Math.round((done / total) * 100) : null;
-            const lbl = total > 0 ? `RAW/HEIC-konvertering · ${done}/${total}${pct!==null?` · ${pct}%`:''}` : 'RAW/HEIC-konvertering kører…';
-            showTopStatusMessage(lbl, pct);
-          }
-        } catch {}
-        setTimeout(poll, 1200);
-      };
-      poll();
-    }
-  } catch {}
+  // Restore each conversion status independently after reopening the page.
+  if (state.currentUser?.role === 'admin') {
+    for (const type of ['heic', 'raw', 'mov']) watchExistingConversion(type);
+  }
   _announceUploadResumeDraftIfNeeded();
   try {
     if (els.uploadMonitor) els.uploadMonitor.classList.add('hidden');

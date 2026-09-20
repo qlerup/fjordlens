@@ -71,3 +71,22 @@ class BulkConversionSkipTests(unittest.TestCase):
             convert.assert_called_once()
             self.assertEqual(result['errors'], 1)
             self.assertEqual(result['skipped'], 0)
+
+    def test_live_progress_identifies_current_file_and_counts_missing_sources(self):
+        for kind, ext in [('heic', '.heic'), ('raw', '.dng'), ('mov', '.mov')]:
+            rel = f'uploads/originals/{kind}/source{ext}'
+            missing = f'uploads/originals/{kind}/missing{ext}'
+            self.file(rel)
+            self.indexed(rel)
+            self.indexed(missing)
+            snapshots = []
+            def convert(*args, **kwargs):
+                snapshots.append(dict(getattr(fl, kind + '_convert_progress')))
+                raise RuntimeError('conversion failed')
+            with patch.object(fl, '_convert_on_local_storage', side_effect=convert):
+                result = getattr(fl, '_convert_existing_' + kind)()
+            self.assertEqual(snapshots[0]['current'], rel)
+            self.assertEqual(snapshots[0]['total'], 2)
+            self.assertEqual(result['total'], 2)
+            self.assertEqual(result['errors'], 2)
+            self.assertIsNone(getattr(fl, kind + '_convert_progress')['current'])

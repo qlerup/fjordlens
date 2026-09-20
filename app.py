@@ -24523,6 +24523,8 @@ def _bulk_conversion_missing_rows(rows, suffix: str):
 
 
 def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
+    global heic_convert_progress
+    heic_convert_progress = {"phase": "checking", "total": 0, "processed": 0, "errors": 0, "skipped": 0}
     init_db()
     log_event("heic_bulk_start")
     processed = 0
@@ -24534,8 +24536,7 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
     log_event('heic_bulk_candidates', pending=len(rows), skipped=skipped)
     # initialize global progress snapshot
     try:
-        global heic_convert_progress
-        heic_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+        heic_convert_progress = {"phase": "converting", "total": len(rows), "processed": 0, "errors": 0, "skipped": skipped, "current": None}
     except Exception:
         pass
     for r in rows:
@@ -24543,9 +24544,10 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
             break
         try:
             orig_rel = r["rel_path"]
+            heic_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": orig_rel}
             src = _disk_path_from_rel_path(orig_rel)
             if not src.exists():
-                continue
+                raise FileNotFoundError("Kildefilen findes ikke")
 
             new_rel = str(Path(orig_rel).with_suffix(".jpg")).replace("\\", "/")
             dst: Path
@@ -24648,14 +24650,14 @@ def _convert_existing_heic(stop_event=None) -> Dict[str, Any]:
             log_event("error", rel_path=str(r["rel_path"]), error=f"heic_bulk: {e}")
         # Update progress after each item
         try:
-            heic_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+            heic_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
+    res = {"ok": True, "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "stopped": bool(stop_event and stop_event.is_set())}
     log_event("heic_bulk_done", **res)
     # final snapshot stays available in status until next run
     try:
-        heic_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        heic_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
     except Exception:
         pass
     return res
@@ -24678,7 +24680,11 @@ def api_heic_convert_existing():
 
     def run_bulk():
         global last_heic_convert_result
-        last_heic_convert_result = _convert_existing_heic(stop_event=scan_stop_event)
+        try:
+            last_heic_convert_result = _convert_existing_heic(stop_event=scan_stop_event)
+        except Exception as exc:
+            last_heic_convert_result = {"ok": False, "error": str(exc)}
+            log_event("error", error=f"heic_bulk: {exc}")
 
     heic_convert_thread = threading.Thread(target=run_bulk, daemon=True)
     heic_convert_thread.start()
@@ -24703,6 +24709,8 @@ raw_convert_progress: Optional[Dict[str, Any]] = None
 
 
 def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
+    global raw_convert_progress
+    raw_convert_progress = {"phase": "checking", "total": 0, "processed": 0, "errors": 0, "skipped": 0}
     init_db()
     log_event("raw_bulk_start")
     processed = 0
@@ -24713,9 +24721,8 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
         rows = conn.execute(f"SELECT rel_path, uploaded_by FROM photos WHERE {where}", tuple(patterns)).fetchall()
     rows, skipped = _bulk_conversion_missing_rows(rows, '.jpg')
     log_event('raw_bulk_candidates', pending=len(rows), skipped=skipped)
-    global raw_convert_progress
     try:
-        raw_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+        raw_convert_progress = {"phase": "converting", "total": len(rows), "processed": 0, "errors": 0, "skipped": skipped, "current": None}
     except Exception:
         pass
     for r in rows:
@@ -24723,9 +24730,10 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
             break
         try:
             orig_rel = r["rel_path"]
+            raw_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": orig_rel}
             src = _disk_path_from_rel_path(orig_rel)
             if not src.exists():
-                continue
+                raise FileNotFoundError("Kildefilen findes ikke")
             # Determine destination under uploads/converted/ mirroring path
             if orig_rel.startswith("uploads/"):
                 try:
@@ -24801,13 +24809,13 @@ def _convert_existing_raw(stop_event=None) -> Dict[str, Any]:
             errors += 1
             log_event("error", rel_path=str(r["rel_path"]), error=f"raw_bulk: {e}")
         try:
-            raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+            raw_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
+    res = {"ok": True, "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "stopped": bool(stop_event and stop_event.is_set())}
     log_event("raw_bulk_done", **res)
     try:
-        raw_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        raw_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
     except Exception:
         pass
     return res
@@ -24830,7 +24838,11 @@ def api_raw_convert_existing():
 
     def run_bulk():
         global last_raw_convert_result
-        last_raw_convert_result = _convert_existing_raw(stop_event=scan_stop_event)
+        try:
+            last_raw_convert_result = _convert_existing_raw(stop_event=scan_stop_event)
+        except Exception as exc:
+            last_raw_convert_result = {"ok": False, "error": str(exc)}
+            log_event("error", error=f"raw_bulk: {exc}")
 
     raw_convert_thread = threading.Thread(target=run_bulk, daemon=True)
     raw_convert_thread.start()
@@ -24849,6 +24861,8 @@ def api_raw_convert_existing_status():
 
 
 def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
+    global mov_convert_progress
+    mov_convert_progress = {"phase": "checking", "total": 0, "processed": 0, "errors": 0, "skipped": 0}
     init_db()
     log_event("mov_bulk_start")
     processed = 0
@@ -24857,9 +24871,8 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
         rows = conn.execute("SELECT rel_path, uploaded_by FROM photos WHERE LOWER(rel_path) LIKE '%.mov'").fetchall()
     rows, skipped = _bulk_conversion_missing_rows(rows, '.mp4')
     log_event('mov_bulk_candidates', pending=len(rows), skipped=skipped)
-    global mov_convert_progress
     try:
-        mov_convert_progress = {"total": len(rows), "processed": 0, "errors": 0}
+        mov_convert_progress = {"phase": "converting", "total": len(rows), "processed": 0, "errors": 0, "skipped": skipped, "current": None}
     except Exception:
         pass
     for r in rows:
@@ -24867,9 +24880,10 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
             break
         try:
             orig_rel = r["rel_path"]
+            mov_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": orig_rel}
             src = _disk_path_from_rel_path(orig_rel)
             if not src.exists():
-                continue
+                raise FileNotFoundError("Kildefilen findes ikke")
 
             if orig_rel.startswith("uploads/"):
                 try:
@@ -24950,13 +24964,13 @@ def _convert_existing_mov(stop_event=None) -> Dict[str, Any]:
             errors += 1
             log_event("error", rel_path=str(r["rel_path"]), error=f"mov_bulk: {e}")
         try:
-            mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+            mov_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
         except Exception:
             pass
-    res = {"ok": True, "processed": processed, "errors": errors, "skipped": skipped}
+    res = {"ok": True, "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "stopped": bool(stop_event and stop_event.is_set())}
     log_event("mov_bulk_done", **res)
     try:
-        mov_convert_progress = {"total": len(rows), "processed": processed, "errors": errors}
+        mov_convert_progress = {"phase": "converting", "total": len(rows), "processed": processed, "errors": errors, "skipped": skipped, "current": None}
     except Exception:
         pass
     return res
@@ -24979,7 +24993,11 @@ def api_mov_convert_existing():
 
     def run_bulk():
         global last_mov_convert_result
-        last_mov_convert_result = _convert_existing_mov(stop_event=scan_stop_event)
+        try:
+            last_mov_convert_result = _convert_existing_mov(stop_event=scan_stop_event)
+        except Exception as exc:
+            last_mov_convert_result = {"ok": False, "error": str(exc)}
+            log_event("error", error=f"mov_bulk: {exc}")
 
     mov_convert_thread = threading.Thread(target=run_bulk, daemon=True)
     mov_convert_thread.start()
