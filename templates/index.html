@@ -587,6 +587,19 @@
                 <div id="facesStatus" class="mini-label">Ansigter: —</div>
               </div>
 
+              {% if current_user.is_admin %}
+              <section id="processingFailures" style="border:1px solid var(--border);border-radius:10px;padding:10px;">
+                <div class="mini-label" style="font-weight:700;">Fejlede filer</div>
+                <p class="hint">Fejl gemmes pr. fil og trin, indtil trinnet lykkes. Genkørsel tager ét trin på én fil ad gangen.</p>
+                <div class="actions">
+                  <button type="button" class="btn" data-refresh>Vis / opdater fejl</button>
+                  <button type="button" class="btn" data-retry disabled>Genkør fejlede trin</button>
+                </div>
+                <p class="mini-label" data-status role="status" aria-live="polite"></p>
+                <div data-list style="max-height:320px;overflow:auto;"></div>
+              </section>
+              {% endif %}
+
               <div style="border:1px solid var(--border); border-radius:10px; padding:10px;">
                 <div class="mini-label" style="font-weight:700; margin-bottom:6px;">Ydelse (baggrundsjob)</div>
                 <p class="hint" style="margin:0 0 8px 0;">Juster hvor hårdt AI/ansigtskørsel belaster systemet. Højere tal = mere pause mellem filer = mere responsivt UI.</p>
@@ -1356,6 +1369,7 @@
   <script src="{{ url_for('static', filename='folder_previews.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='viewer_zoom.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moments.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='processing_failures.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_music.js', v=app_build) }}"></script>

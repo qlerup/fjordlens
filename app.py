@@ -34,6 +34,9 @@ import exifread
 import requests
 import numpy as np
 import conversion_client
+from processing_failures import FailureTracker
+
+processing_failures = FailureTracker(lambda: get_conn())
 import folder_index
 import reverse_geocoder as rg
 import place_names
@@ -749,6 +752,7 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
         except Exception:
             pass
 
+@processing_failures.track("conversion", lambda src, dst, converter, **kw: _processing_rel_from_disk(src))
 def _convert_on_local_storage(
     src: Path,
     dst: Path,
@@ -2451,17 +2455,20 @@ def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[flo
     return out
 
 
+@processing_failures.track("faces", lambda rel_path: rel_path, clear_success=False)
 def _detect_faces_for_photo(rel_path: str) -> list[Dict[str, Any]]:
     """Detection-only stage. No SQLite/person writes happen here."""
     disk_path = _disk_path_from_rel_path(rel_path)
     if not disk_path.exists():
-        return []
+        raise FileNotFoundError("Kildefilen findes ikke")
     is_video = disk_path.suffix.lower() in VIDEO_EXTS
     if is_video:
         faces = _ai_detect_faces_video_path(disk_path, rel_path) or []
         log_event("faces_detect", rel_path=rel_path, media="video", count=len(faces), source="queue")
     else:
-        faces = _ai_detect_faces_path(disk_path) or []
+        faces = _ai_detect_faces_path(disk_path)
+        if faces is None:
+            raise RuntimeError("Ansigtsanalysen fejlede eller AI-tjenesten svarede ikke")
         log_event("faces_detect", rel_path=rel_path, media="image", count=len(faces), source="queue")
     return list(faces)
 
@@ -2606,6 +2613,7 @@ def _store_face_results_batch(
     return results, cache
 
 
+@processing_failures.track("faces", lambda rel_path, faces, **kw: rel_path)
 def _store_faces_for_photo(
     rel_path: str,
     faces: list[Dict[str, Any]],
@@ -2653,7 +2661,7 @@ def index_faces_for_photo(
     try:
         disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
-            return 0
+            raise FileNotFoundError("Kildefilen findes ikke")
         log_event("faces_index_start", rel_path=rel_path)
         is_video = disk_path.suffix.lower() in VIDEO_EXTS
         if detected_faces is not None and not is_video:
@@ -2663,6 +2671,7 @@ def index_faces_for_photo(
             faces = _detect_faces_for_photo(rel_path)
         return _store_faces_for_photo(rel_path, faces, source="single")
     except Exception as exc:
+        processing_failures.fail(rel_path, "faces", exc)
         log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {exc}")
         return 0
 
@@ -3493,6 +3502,8 @@ def _queued_upload_conversion(
         or ((extl in RAW_EXTS) and raw_convert_on_upload_enabled())
         or needs_mov_conversion
     )
+    if needs_conversion and not disk_path.exists():
+        processing_failures.fail(orig_rel_for_convert, "conversion", "Kildefilen findes ikke")
     if not needs_conversion or not disk_path.exists():
         return {"attempted": False, "success": False}
 
@@ -3621,6 +3632,7 @@ def _queued_upload_conversion(
             "source_metadata": source_metadata_before_conversion,
         }
     except Exception as exc:
+        processing_failures.fail(orig_rel_for_convert, "conversion", exc)
         try:
             log_event("error", rel_path=orig_rel_for_convert, error=f"convert: {exc}")
         except Exception:
@@ -3974,6 +3986,7 @@ def _postprocess_uploaded_rels(
                     except Exception:
                         pass
                 except Exception as e:
+                    processing_failures.fail(str(rel), "conversion", e)
                     try:
                         log_event("error", rel_path=str(rel), error=f"convert: {e}")
                     except Exception:
@@ -3982,6 +3995,7 @@ def _postprocess_uploaded_rels(
             pass
         if not disk_path.exists():
             index_errors += 1
+            processing_failures.fail(rel, "metadata", "Kildefilen findes ikke før efterbehandling")
             try:
                 log_event("error", rel_path=rel, error="Upload file missing before post-process")
             except Exception:
@@ -12337,6 +12351,7 @@ def make_thumb(img: Image.Image, rel_path: str, file_mtime: float, file_size: in
     return thumb_name
 
 
+@processing_failures.track("thumbnails", lambda path, rel_path, *a, **kw: rel_path, result_error=lambda result, *a, **kw: None if result else "Kunne ikke danne miniature")
 def _make_image_thumb(
     path: Path,
     rel_path: str,
@@ -12378,6 +12393,7 @@ def _make_image_thumb(
         return make_thumb(image, rel_path, file_mtime, file_size, force=force)
 
 
+@processing_failures.track("thumbnails", lambda path, rel_path, *a, **kw: rel_path, result_error=lambda result, *a, **kw: None if result else "Kunne ikke danne miniature")
 def _make_video_thumb(path: Path, rel_path: str, file_mtime: float, file_size: int) -> Optional[str]:
     """Extract a representative frame and save as JPEG thumbnail."""
     if CONVERT_URL_EXPLICIT:
@@ -12684,6 +12700,7 @@ def _exif_from_any_source(path: Path) -> Dict[str, Any]:
         return {}
 
 
+@processing_failures.track("metadata", lambda path, rel_path, **kw: rel_path, clear_success=False, result_error=lambda result, *a, **kw: result.get("thumb_error") or result.get("_processing_error"))
 def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) -> Dict[str, Any]:
     stat = path.stat()
     metadata: Dict[str, Any] = {
@@ -12716,7 +12733,8 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
         # MP4 boxes), not JPEG-style EXIF — Pillow/piexif can't read it, so ask exiftool.
         try:
             video_meta = extract_video_metadata_via_exiftool(path)
-        except Exception:
+        except Exception as exc:
+            metadata["_processing_error"] = f"video_metadata: {exc}"
             video_meta = {}
         if video_meta.get("captured_at"):
             metadata["captured_at"] = video_meta["captured_at"]
@@ -12830,6 +12848,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                 if k in ("gps_lat", "gps_lon"):
                     log_event("exif_fallback", rel_path=rel_path, field=k, value=str(extra[k]))
     except Exception as e:
+        metadata["_processing_error"] = f"exif_fallback: {e}"
         log_event("error", rel_path=rel_path, error=f"exif_fallback: {e}")
 
     # Reverse geocoding (country, city) if GPS present
@@ -12853,6 +12872,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                 if not metadata.get("gps_name"):
                     metadata["gps_name"] = ", ".join([x for x in [city, country] if x])
     except Exception as e:
+        metadata["_processing_error"] = f"geocode_outer: {e}"
         log_event("error", rel_path=rel_path, error=f"geocode_outer: {e}")
 
     # Recover metadata from the un-converted original, if this file is a converted copy
@@ -12888,6 +12908,7 @@ def extract_metadata(path: Path, rel_path: str, *, generate_thumb: bool = True) 
                     log_event("enrich_from_original", rel_path=rel_path, from_path=str(cand), fields=",".join(filled))
                     break
     except Exception as e:
+        metadata["_processing_error"] = f"enrich_from_original: {e}"
         log_event("error", rel_path=rel_path, error=f"enrich_from_original: {e}")
 
     # If critical EXIF is still missing (e.g. a library-scanned file outside the
@@ -13731,6 +13752,7 @@ def rescan_metadata(stop_event=None) -> Dict[str, Any]:
                 log_event("no_new", rel_path=rel_path)
         except Exception as e:
             errors += 1
+            processing_failures.fail(rel_path, "metadata", e)
             log_event("error", rel_path=rel_path, error=str(e))
             if len(samples) < 5:
                 samples.append(f"{rel_path}: {e}")
@@ -13795,6 +13817,10 @@ def _run_face_slot_queue(
             stats["faces_found"] += 1
         if error is not None:
             stats["errors"] += 1
+            if str(error) != "stopped":
+                processing_failures.fail(rel, "faces", error)
+        else:
+            processing_failures.clear(rel, "faces")
         if on_complete is not None:
             try:
                 on_complete(rel, count, error)
@@ -14046,6 +14072,7 @@ def api_faces_status():
     return jsonify(resp)
 
 
+@processing_failures.track("metadata", lambda meta: meta["rel_path"], result_error=lambda result, meta: meta.get("thumb_error") or meta.get("_processing_error"))
 def upsert_photo(meta: Dict[str, Any]) -> None:
     with closing(get_conn()) as conn:
         conn.execute(
@@ -14111,6 +14138,9 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
             },
         )
         conn.commit()
+    conversion = (meta.get("metadata_json") or {}).get("conversion") or {}
+    if conversion.get("from_rel_path") and conversion.get("to_rel_path"):
+        processing_failures.relocate(conversion["from_rel_path"], conversion["to_rel_path"])
 
 
 def iter_photo_files(root: Path, prefix: str = "") -> Iterable[Tuple[Path, str]]:
@@ -14220,6 +14250,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
             log_event("indexed", rel_path=rel_path)
         except Exception as e:
             errors += 1
+            processing_failures.fail(rel_path, "metadata", e)
             log_event("error", rel_path=rel_path, error=str(e))
             if len(error_samples) < 5:
                 error_samples.append(f"{rel_path}: {e}")
@@ -20894,6 +20925,7 @@ def _ai_embedding_coverage_for_source_folder(conn: sqlite3.Connection, source_re
     return counts
 
 
+@processing_failures.track("embeddings", lambda photo_id, rel_path: rel_path, false_failure=True, enabled=lambda rel: _is_ai_embedding_supported_rel(rel))
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
     if not _is_ai_embedding_supported_rel(rel_path):
         log_event("ai_embed_skip_unsupported", rel_path=rel_path)
@@ -21043,6 +21075,7 @@ def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
         return False
 
 
+@processing_failures.track("descriptions", lambda photo_id, rel_path: rel_path, false_failure=True)
 def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
     model = ai_desc_model_enabled()
     if model == "qwen":
@@ -21634,6 +21667,7 @@ def api_ai_describe_external_result():
         if error and not (caption or tags):
             _mark_ai_desc_external_error(conn, photo_id, error)
             conn.commit()
+            processing_failures.fail(row["rel_path"], "descriptions", error)
             log_event("ai_desc_external_fail", rel_path=row["rel_path"], error=error[:240], worker=worker)
             counts = _ai_desc_external_counts(conn, _ai_desc_external_folders())
             return jsonify({"ok": True, "stored": False, "error_recorded": True, **counts})
@@ -21644,6 +21678,7 @@ def api_ai_describe_external_result():
         _store_photo_ai_description(conn, photo_id, tags or [], caption or _build_desc_caption(tags))
         _mark_ai_desc_external_stored(conn, photo_id, worker=worker)
         conn.commit()
+        processing_failures.clear(row["rel_path"], "descriptions")
         log_event("ai_desc_external_ok", rel_path=row["rel_path"], worker=worker)
         counts = _ai_desc_external_counts(conn, _ai_desc_external_folders())
     return jsonify({"ok": True, "stored": True, "photo_id": photo_id, **counts})
@@ -27500,6 +27535,62 @@ def api_me_2fa():
         return jsonify({"ok": True})
 
     return jsonify({"ok": False, "error": "unknown_action"}), 400
+
+
+def _processing_rel_from_disk(path: Path) -> str:
+    resolved = Path(path).resolve()
+    for root, prefix in ((CONVERSION_WORK_DIR / "pending", "uploads/"),
+                         (UPLOAD_DIR, "uploads/"), (PHOTO_DIR, "")):
+        try:
+            return prefix + resolved.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            continue
+    return ""
+
+
+def _retry_processing_failure(rel: str, stage: str) -> None:
+    path = _disk_path_from_rel_path(rel)
+    if not path.is_file():
+        raise FileNotFoundError("Kildefilen findes ikke længere")
+    if stage == "conversion":
+        # The existing pipeline also indexes the converted destination and preserves
+        # source dates/uploader. A single input uses only one face slot.
+        _run_postprocess_serialized(_uploaded_by_for_rel(rel, "admin"), [rel], workflow_mode="gentle")
+    elif stage == "metadata":
+        meta = extract_metadata(path, rel, generate_thumb=False)
+        with closing(get_conn()) as conn:
+            previous = conn.execute("SELECT thumb_name FROM photos WHERE rel_path=?", (rel,)).fetchone()
+        if previous and not meta.get("thumb_name"):
+            meta["thumb_name"] = previous["thumb_name"]
+        upsert_photo(meta)
+    elif stage == "thumbnails":
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
+        if not row:
+            raise RuntimeError("Metadata skal genkøres før miniature")
+        _rebuild_thumbnail_for_row(row)
+        processing_failures.clear(rel, stage)
+    elif stage == "faces":
+        try:
+            index_faces_for_photo(rel)
+        finally:
+            _ai_face_runtime_release()
+    elif stage in {"embeddings", "descriptions"}:
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel,)).fetchone()
+        if not row:
+            raise RuntimeError("Metadata skal genkøres før AI-behandlingen")
+        fn = _embed_one_photo if stage == "embeddings" else _describe_one_photo
+        fn(int(row["id"]), rel)
+    else:
+        raise ValueError("Ukendt behandlingstrin")
+
+
+processing_failures.register(
+    app, _retry_processing_failure,
+    busy=lambda: (_faces_running.is_set() or ai_running or ai_desc_running
+                  or POSTPROCESS_PIPELINE_LOCK.locked() or bool(PHOTO_REPROCESS_QUEUED)),
+)
 
 
 if __name__ == "__main__":
