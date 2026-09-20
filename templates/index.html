@@ -336,6 +336,15 @@
             </div>
             <div id="maintenanceStatus" class="status hidden" style="margin-top:10px;" aria-live="polite"></div>
           </div>
+          {% if current_user.is_admin %}
+          <section id="pendingUploadRecovery" class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">Ventende uploads</div>
+            <p class="hint">Find lokale filer, som venter på efterbehandling, også efter et crash. Eksisterende konverteringer genbruges. Efterbehandlingen følger dine uploadindstillinger.</p>
+            <button type="button" class="btn" data-scan>Søg efter ventende filer</button>
+            <p class="mini-label" data-status role="status" aria-live="polite" style="overflow-wrap:anywhere;"></p>
+            <progress data-progress max="100" value="0" hidden style="width:100%;"></progress>
+          </section>
+          {% endif %}
         </div>
 
         {% if user_role == "admin" %}
@@ -1378,6 +1387,7 @@
   <script src="{{ url_for('static', filename='viewer_zoom.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moments.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='processing_failures.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='pending_uploads.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_music.js', v=app_build) }}"></script>

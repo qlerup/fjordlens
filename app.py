@@ -35,6 +35,7 @@ import requests
 import numpy as np
 import conversion_client
 from conversion_jobs import ConversionJob
+from pending_uploads import PendingUploads
 from processing_failures import FailureTracker
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -3492,10 +3493,19 @@ def _queued_upload_conversion(
     orig_rel_for_convert: str,
     mode: str,
     stop_event: Optional[threading.Event] = None,
+    existing_rel: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Convert one upload item. Designed for the refillable conversion slot queue."""
     if stop_event is not None and stop_event.is_set():
         return {"attempted": False, "success": False, "stopped": True}
+
+    if existing_rel:
+        _publish_recovered_original(orig_rel_for_convert)
+        return {"attempted": True, "success": True, "rel": existing_rel,
+                "disk_path": str(_disk_path_from_rel_path(existing_rel)),
+                "from_rel": orig_rel_for_convert, "to_rel": existing_rel,
+                "from_ext": Path(orig_rel_for_convert).suffix.lower(),
+                "to_ext": Path(existing_rel).suffix.lower()}
 
     disk_path = _disk_path_from_rel_path(orig_rel_for_convert)
     extl = disk_path.suffix.lower()
@@ -3658,6 +3668,7 @@ def _postprocess_uploaded_rels(
     item_pause_sec: float = 0.0,
     stop_event: Optional[threading.Event] = None,
     force_reprocess: bool = False,
+    reuse_existing_conversions: bool = False,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -3725,6 +3736,14 @@ def _postprocess_uploaded_rels(
             pass
 
     if conversion_candidates and not _should_stop():
+        existing_outputs = {}
+        for suffix in ('.jpg', '.mp4'):
+            candidates = [{'rel_path': rel} for rel in conversion_candidates
+                          if (Path(rel).suffix.lower() == '.mov') == (suffix == '.mp4')
+                          and (reuse_existing_conversions or
+                               (rel.startswith('uploads/') and not _staged_upload_path(rel).exists()))]
+            if candidates:
+                _bulk_conversion_missing_rows(candidates, suffix, existing_outputs=existing_outputs)
         conversion_workers = max(1, min(conversion_concurrency_enabled(), len(conversion_candidates)))
         _sync_conversion_worker_concurrency(conversion_workers)
         try:
@@ -3738,7 +3757,8 @@ def _postprocess_uploaded_rels(
             pass
         with ThreadPoolExecutor(max_workers=conversion_workers, thread_name_prefix="fjordlens-convert-slot") as pool:
             futures = {
-                pool.submit(_queued_upload_conversion, candidate_rel, mode, stop_event): candidate_rel
+                pool.submit(_queued_upload_conversion, candidate_rel, mode, stop_event,
+                            existing_outputs.get(candidate_rel)): candidate_rel
                 for candidate_rel in conversion_candidates
             }
             completed_conversions = 0
@@ -4568,7 +4588,12 @@ def _postprocess_uploaded_rels(
 def _run_postprocess_serialized(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     """Run every upload/manual post-process through one shared pipeline slot."""
     with POSTPROCESS_PIPELINE_LOCK:
-        return _postprocess_uploaded_rels(*args, **kwargs)
+        lock = _bulk_conversion_job('postprocess').acquire()
+        while lock is None:
+            time.sleep(0.5)
+            lock = _bulk_conversion_job('postprocess').acquire()
+        with lock:
+            return _postprocess_uploaded_rels(*args, **kwargs)
 
 
 def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
@@ -24478,6 +24503,129 @@ def _bulk_conversion_job(kind):
     return ConversionJob(DATA_DIR / 'conversion_jobs', kind)
 
 
+def _publish_recovered_original(rel):
+    source = _disk_path_from_rel_path(rel)
+    staged = _staged_upload_path(rel)
+    if source != staged or not staged.is_file():
+        return
+    ext = staged.suffix.lower()
+    keep = (heic_keep_originals_enabled() if ext in {'.heic', '.heif'} else
+            raw_keep_originals_enabled() if ext in RAW_EXTS else
+            mov_keep_originals_enabled() if ext == '.mov' else True)
+    if keep or not _upload_extension_needs_conversion(ext):
+        destination = UPLOAD_DIR / rel[len('uploads/'):]
+        if destination.exists():
+            def digest(path):
+                h = hashlib.sha256()
+                with path.open('rb') as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b''):
+                        h.update(block)
+                return h.digest()
+            if not destination.is_file() or digest(source) != digest(destination):
+                raise RuntimeError('Originalen findes allerede med andet indhold; begge filer er bevaret')
+        else:
+            _publish_local_file(source, destination)
+    staged.unlink()
+
+
+def _recover_pending_uploads(selected, stop_event=None):
+    journal = PendingUploads(DATA_DIR)
+    remaining = list(dict.fromkeys(journal.read() + selected))
+    journal.save(remaining)
+    held = []
+    try:
+        for kind in ('heic', 'raw', 'mov'):
+            lock = _bulk_conversion_job(kind).acquire()
+            if lock is None:
+                raise RuntimeError('En konvertering kører allerede. Vent til den er færdig og prøv igen.')
+            held.append(lock)
+        total, processed, errors = len(selected), 0, 0
+        batch_size = max(1, min(64, max(face_batch_size_enabled(), conversion_concurrency_enabled())))
+        for offset in range(0, total, batch_size):
+            if stop_event and stop_event.is_set():
+                break
+            batch = selected[offset:offset + batch_size]
+            def progress(detail):
+                globals()['upload-recovery_convert_progress'] = {
+                    'total': total, 'processed': processed, 'errors': errors,
+                    'remaining': len(remaining), **detail}
+            progress({'phase': 'waiting', 'current_rel': None})
+            try:
+                # Acquire the same cross-process pipeline slot as normal uploads before
+                # resolving outputs; another upload may just have finished these files.
+                with POSTPROCESS_PIPELINE_LOCK:
+                    pipeline_lock = _bulk_conversion_job('postprocess').acquire()
+                    while pipeline_lock is None:
+                        time.sleep(0.5)
+                        pipeline_lock = _bulk_conversion_job('postprocess').acquire()
+                    with pipeline_lock:
+                        existing = {}
+                        for suffix in ('.jpg', '.mp4'):
+                            rows = [{'rel_path': rel} for rel in batch
+                                    if Path(rel).suffix.lower() in ({'.mov'} if suffix == '.mp4' else {'.heic', '.heif'} | RAW_EXTS)]
+                            if rows:
+                                _bulk_conversion_missing_rows(rows, suffix, existing_outputs=existing)
+                        inputs = []
+                        for rel in batch:
+                            path = _disk_path_from_rel_path(rel)
+                            if not path.is_file():
+                                if rel not in existing:
+                                    raise FileNotFoundError(f'Original og konverteret fil mangler: {rel}')
+                                inputs.append(existing[rel])
+                            else:
+                                if not _upload_extension_needs_conversion(path.suffix):
+                                    _publish_recovered_original(rel)
+                                inputs.append(rel)
+                        result = _postprocess_uploaded_rels('', inputs, progress_cb=progress,
+                            workflow_mode=upload_workflow_mode(), stop_event=stop_event,
+                            reuse_existing_conversions=True)
+                failed = sum(int(result.get(key) or 0) for key in
+                             ('index_errors', 'thumb_errors', 'faces_errors', 'ai_errors', 'ai_desc_errors'))
+                still_staged = any(_staged_upload_path(rel).is_file() for rel in batch)
+                if failed or still_staged or result.get('stopped') or result.get('indexed', 0) != len(inputs):
+                    errors += max(1, failed)
+                else:
+                    remaining = [rel for rel in remaining if rel not in batch]
+                    journal.save(remaining)
+            except Exception as exc:
+                errors += 1
+                progress({'phase': 'error', 'error': str(exc)})
+                log_event('error', error=f'pending_upload_recovery: {exc}')
+            processed += len(batch)
+        return {'ok': True, 'total': total, 'processed': processed, 'errors': errors,
+                'remaining': len(remaining), 'stopped': bool(stop_event and stop_event.is_set())}
+    finally:
+        for lock in reversed(held):
+            lock.close()
+
+
+@app.route('/api/uploads/pending-recovery', methods=['GET', 'POST'])
+@login_required
+def api_pending_upload_recovery():
+    if not current_user.is_admin:
+        return jsonify(ok=False, error='Kun administratorer kan genoptage efterbehandling.'), 403
+    job = _bulk_conversion_job('upload-recovery')
+    if request.method == 'GET':
+        return jsonify(job.status())
+    body = request.get_json(silent=True) or {}
+    if body.get('action') == 'scan':
+        items = PendingUploads(DATA_DIR).discover(CONVERSION_WORK_DIR / 'pending', SUPPORTED_EXTS)
+        token = secrets.token_hex(16)
+        preview = DATA_DIR / 'pending_upload_previews'
+        preview.mkdir(parents=True, exist_ok=True)
+        (preview / (token + '.json')).write_text(json.dumps(items), encoding='utf-8')
+        return jsonify(ok=True, count=len(items), token=token)
+    token = str(body.get('token') or '')
+    if body.get('action') != 'start' or not re.fullmatch(r'[0-9a-f]{32}', token):
+        return jsonify(ok=False, error='Søg efter ventende filer først.'), 400
+    path = DATA_DIR / 'pending_upload_previews' / (token + '.json')
+    if not path.is_file():
+        return jsonify(ok=False, error='Søgningen findes ikke længere. Søg igen.'), 400
+    selected = json.loads(path.read_text(encoding='utf-8'))
+    return _start_bulk_conversion_job('upload-recovery',
+        lambda stop_event=None: _recover_pending_uploads(selected, stop_event))
+
+
 def _start_bulk_conversion_job(kind, convert):
     job = _bulk_conversion_job(kind)
     lock = job.acquire()
@@ -24505,7 +24653,15 @@ def _start_bulk_conversion_job(kind, convert):
         try:
             monitor_thread.start()
             try:
-                result = convert(stop_event=scan_stop_event)
+                if kind in {'heic', 'raw', 'mov'}:
+                    pipeline_lock = _bulk_conversion_job('postprocess').acquire()
+                    while pipeline_lock is None:
+                        time.sleep(0.5)
+                        pipeline_lock = _bulk_conversion_job('postprocess').acquire()
+                    with pipeline_lock:
+                        result = convert(stop_event=scan_stop_event)
+                else:
+                    result = convert(stop_event=scan_stop_event)
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
                 log_event('error', error=f'{kind}_bulk: {exc}')
@@ -24575,7 +24731,7 @@ def _bulk_conversion_disk_rows(rows, extensions, progress=None, stop_event=None)
     return list(candidates.values())
 
 
-def _bulk_conversion_missing_rows(rows, suffix: str, progress=None):
+def _bulk_conversion_missing_rows(rows, suffix: str, progress=None, existing_outputs=None):
     """Skip existing outputs, including renamed outputs linked by conversion metadata."""
     by_source = {}
     owners = {}
@@ -24624,6 +24780,8 @@ def _bulk_conversion_missing_rows(rows, suffix: str, progress=None):
             try:
                 if path.is_file() and path.stat().st_size > 0:
                     found = True
+                    if existing_outputs is not None:
+                        existing_outputs[rel] = candidate
                     break
             except OSError:
                 pass

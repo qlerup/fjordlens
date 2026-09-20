@@ -8,7 +8,7 @@ from pathlib import Path
 
 class ConversionJob:
     def __init__(self, directory, kind):
-        if kind not in {'heic', 'raw', 'mov'}:
+        if kind not in {'heic', 'raw', 'mov', 'upload-recovery', 'postprocess'}:
             raise ValueError('Unknown conversion type')
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
