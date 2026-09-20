@@ -11,12 +11,40 @@ from urllib.request import urlopen
 MIB = 1024**2
 
 
+def _clean_inactive_cache(text, *, legacy=False):
+    stats = {key: int(value) for key, value in (line.split() for line in text.splitlines())}
+    if any(value < 0 for value in stats.values()):
+        raise ValueError('Negative memory statistic')
+    prefix = 'total_' if legacy and 'total_inactive_file' in stats else ''
+    inactive = stats[prefix + 'inactive_file']
+    file_bytes = stats[prefix + ('cache' if legacy else 'file')]
+    # Shared memory, dirty pages and pages being written back are not spare job RAM.
+    protected = sum(stats.get(prefix + key, 0) for key in
+                    (('shmem', 'dirty', 'writeback') if legacy else ('shmem', 'file_dirty', 'file_writeback')))
+    return max(0, min(inactive, file_bytes) - protected)
+
+
 def current_memory():
-    for name in ('/sys/fs/cgroup/memory.current', '/sys/fs/cgroup/memory/memory.usage_in_bytes'):
+    """Admission working set: raw cgroup usage less clean, inactive file cache.
+
+    Docker's hard cap still includes every page. Only the job-admission estimate
+    discounts cache that Linux can reclaim; missing stats fall back to raw usage.
+    """
+    for name, legacy in (('/sys/fs/cgroup/memory.current', False),
+                         ('/sys/fs/cgroup/memory/memory.usage_in_bytes', True)):
         try:
-            return int(Path(name).read_text().strip())
+            usage = int(Path(name).read_text().strip())
         except (OSError, ValueError):
             continue
+        try:
+            cache = _clean_inactive_cache(Path(name).with_name('memory.stat').read_text(), legacy=legacy)
+            # Separate kernel reads can straddle reclaim. Inconsistent samples
+            # must not create artificial headroom.
+            if 0 <= cache <= usage:
+                return usage - cache
+        except (OSError, ValueError, KeyError):
+            pass
+        return usage
     raise RuntimeError('Kan ikke læse containerens RAM-forbrug')
 
 
