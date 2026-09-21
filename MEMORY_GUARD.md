@@ -55,3 +55,9 @@ Automatiske tests dækker Hub-budgetberegning, automatisk aktivering, udløbne m
 reservationer, Docker-grænser og deaktiveret standalone-installation. Linux/Docker
 OOM-adfærd og den konkrete servers cgroup-visning skal også kontrolleres efter
 udrulning. Ingen billedfiler eller databaser slettes ved ændringen.
+
+## Rettelse efter OOM 21. september 2026
+
+RAM-styringen udskyder nu en reduktion, hvis den nye grænse ligger for tæt på det målte forbrug (1 GiB margin for AI, 512 MiB for andre tjenester). I så fald bevares de eksisterende hårde grænser, og admission sættes på pause. Summen af de eksisterende grænser kan midlertidigt overstige det nye budget; igangværende arbejde får mulighed for at afslutte. Dette beskytter ikke mod enhver pludselig allokering eller værts-OOM.
+
+Web og AI har nu 2 GiB som fordelingsminimum, når budgettet tillader det. Billedforberedelse serialiseres i webappen og får RAM-adgangskontrol. AI pakker først billedet ud efter tildeling af en model. Matchcache læser JSON-rækker løbende. Midlertidige forbindelsesfejl og HTTP 502/503/504 holder samme køelement til genforsøg, med fem sekunders pause og én genoptagelsesprøve ad gangen. Stop-knappen afslutter ventetiden; en allerede aktiv HTTP-forespørgsel afsluttes efter sin timeout. Statusmonitoren venter ikke længere på modellås eller budgetserver.

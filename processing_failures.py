@@ -5,6 +5,10 @@ from functools import wraps
 import threading
 
 
+class ServiceUnavailable(RuntimeError):
+    """Transient service failure: keep the item pending, not a corrupt-file error."""
+
+
 class FailureTracker:
     def __init__(self, connect):
         self.connect = connect
@@ -64,6 +68,8 @@ class FailureTracker:
                     return fn(*args, **kwargs)
                 try:
                     result = fn(*args, **kwargs)
+                except ServiceUnavailable:
+                    raise
                 except Exception as exc:
                     self.fail(rel, stage, exc)
                     raise

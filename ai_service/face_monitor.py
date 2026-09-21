@@ -41,8 +41,11 @@ def main():
         while True:
             try:
                 with urlopen('http://127.0.0.1:8000/faces/status', timeout=2) as response:
-                    rows = json.load(response)['instances']
+                    status = json.load(response)
+                    rows = status['instances']
                 screen = render(rows, args.slots, shutil.get_terminal_size().columns)
+                if status.get('waiting'):
+                    screen += '\n' + clean(status['waiting'])
             except (OSError, ValueError, KeyError) as exc:
                 screen = 'Afventer AI-tjenesten: ' + clean(exc)[:100]
             print('\x1b[H' + screen + '\x1b[J', end='', flush=True)

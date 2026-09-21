@@ -15887,7 +15887,7 @@ async function pollFacesStatus() {
     updateFacesToggleButton();
     updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
     if (els.facesStatus) {
-      const run = s && s.running ? tr('status_running') : tr('status_stopped');
+      const run = s && s.running ? (s.waiting || tr('status_running')) : tr('status_stopped');
       const source = (!s.running && s.last) ? s.last : s;
       const processed = Number(source && source.processed) || 0;
       const total = Number(source && source.total) || 0;

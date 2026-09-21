@@ -493,7 +493,15 @@ def _face_status_snapshot() -> list[dict[str, Any]]:
 
 @app.get("/faces/status")
 def face_status():
-    return {"instances": _face_status_snapshot(), "memory": MEMORY.status()}
+    # Loading a model may wait on admission while holding the pool lock. The
+    # monitor must still respond, and must not perform another network request.
+    if not _face_runtime_lock.acquire(blocking=False):
+        return {'instances': [], 'waiting': 'Klargør ansigtsmodel eller afventer RAM',
+                'memory': dict(MEMORY.last)}
+    try:
+        return {'instances': _face_status_snapshot(), 'waiting': '', 'memory': dict(MEMORY.last)}
+    finally:
+        _face_runtime_lock.release()
 
 
 def _log_face_status(row: dict[str, Any]) -> None:
@@ -1695,13 +1703,13 @@ def _serialize_face_result(face) -> Dict[str, Any]:
 
 @MEMORY.guard(128*MIB)
 def _detect_faces_bytes(data: bytes, filename: str = "unknown") -> List[Dict[str, Any]]:
-    try:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        img_np = np.array(img)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
     runtime = _acquire_face_runtime(filename)
     try:
+        try:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            img_np = np.array(img)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
         faces = runtime.get(img_np)
         _update_face_job(runtime, "serialize")
         result = [_serialize_face_result(face) for face in faces]

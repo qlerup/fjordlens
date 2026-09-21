@@ -36,7 +36,8 @@ import numpy as np
 import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
-from processing_failures import FailureTracker
+from processing_failures import FailureTracker, ServiceUnavailable
+from face_retry import FaceRetryGate
 from ai_service.memory_budget import MemoryBudget, MIB
 
 processing_failures = FailureTracker(lambda: get_conn())
@@ -1762,7 +1763,23 @@ def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
         return {"ok": False, "error": str(exc)[:240]}
 
 
+FACE_PREPARE_LOCK = threading.Lock()
+
+
 def _prepare_face_detection_upload(path: Path) -> tuple[str, bytes]:
+    # Full-resolution decode creates several large buffers. Only prepare one
+    # upload at a time; network requests and GPU inference remain concurrent.
+    with FACE_PREPARE_LOCK:
+        try:
+            with WEB_MEMORY.slot(512*MIB):
+                return _prepare_face_detection_upload_unlocked(path)
+        except RuntimeError as exc:
+            if 'RAM-budget:' in str(exc):
+                raise ServiceUnavailable(str(exc)) from exc
+            raise
+
+
+def _prepare_face_detection_upload_unlocked(path: Path) -> tuple[str, bytes]:
     rel_guess = None
     try:
         rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
@@ -1823,12 +1840,18 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
         files = {"file": (filename, data, "application/octet-stream")}
         with FACE_DETECT_SEMAPHORE:
             r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        if r.status_code in (502, 503, 504):
+            raise ServiceUnavailable('Afventer AI-tjenesten eller ledigt RAM-budget')
         if r.ok:
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):
                 return js.get("faces")
         else:
             log_event("ai_http_error", rel_path=str(path), error=f"faces_status:{r.status_code}")
+    except ServiceUnavailable:
+        raise
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise ServiceUnavailable('Afventer forbindelse til AI-tjenesten') from exc
     except Exception as e:
         log_event("error", rel_path=str(path), error=f"ai_faces: {e}")
     return None
@@ -1902,12 +1925,18 @@ def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional
         files = {"file": (filename, data, "application/octet-stream")}
         with FACE_DETECT_SEMAPHORE:
             r = requests.post(f"{AI_URL}/faces/detect", files=files, timeout=90)
+        if r.status_code in (502, 503, 504):
+            raise ServiceUnavailable('Afventer AI-tjenesten eller ledigt RAM-budget')
         if r.ok:
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):
                 return js.get("faces")
         else:
             log_event("ai_http_error", file=filename, error=f"status:{r.status_code}", detail=r.text[:500])
+    except ServiceUnavailable:
+        raise
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise ServiceUnavailable('Afventer forbindelse til AI-tjenesten') from exc
     except Exception as e:
         log_event("error", file=filename, error=f"ai_faces_bytes: {e}")
     return None
@@ -2204,7 +2233,7 @@ class _FaceMatchCache:
               AND f.person_id IS NOT NULL
               AND COALESCE(p.hidden,0)=0
             """
-        ).fetchall()
+        )
         for row in rows:
             try:
                 raw = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -13826,12 +13855,18 @@ def _run_face_slot_queue(
     def allowed() -> bool:
         return True if should_continue is None else bool(should_continue())
 
+    def waiting(reason):
+        faces_counts['waiting'] = reason
+        log_event('faces_queue_wait' if reason else 'faces_queue_resume', reason=reason)
+
+    retry_gate = FaceRetryGate(waiting)
+
     def detect_one(rel: str):
         if not allowed():
             return rel, [], None
         try:
             log_event("faces_index_start", rel_path=rel, queue_workers=workers)
-            return rel, _detect_faces_for_photo(rel), None
+            return rel, retry_gate.run(lambda: _detect_faces_for_photo(rel), allowed), None
         except Exception as exc:
             return rel, [], exc
 
@@ -13970,6 +14005,7 @@ def _run_face_slot_queue(
         persistence_queue.join()
         persistence_done.wait(timeout=300)
         writer.join(timeout=5)
+        faces_counts.pop('waiting', None)
 
     return stats
 

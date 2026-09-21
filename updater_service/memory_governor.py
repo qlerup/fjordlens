@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 MIB = 1024 ** 2
 RESERVE = 2 * 1024 ** 3
 HUB_MEMORY_PROTOCOL = '2'
-FLOORS = {'fjordlens': 512*MIB, 'fjordlens-ai': 768*MIB,
+FLOORS = {'fjordlens': 2048*MIB, 'fjordlens-ai': 2048*MIB,
           'fjordlens-convert': 256*MIB, 'fjordlens-updater': 128*MIB}
 WEIGHTS = {'fjordlens': 1, 'fjordlens-ai': 8, 'fjordlens-convert': 3, 'fjordlens-updater': 0}
 _api_version = None
@@ -89,7 +89,8 @@ def allocate(total, host_used, containers):
     # otherwise an idle converter can stay permanently below its start threshold.
     bases = {}
     for c in containers:
-        headroom = 640*MIB if c['service'] == 'fjordlens-convert' else 64*MIB
+        headroom = {'fjordlens-convert': 640*MIB, 'fjordlens-ai': 1024*MIB,
+                    'fjordlens': 512*MIB}.get(c['service'], 64*MIB)
         rounded = ((c['usage'] + headroom + 64*MIB - 1)//(64*MIB))*64*MIB
         bases[c['id']] = max(FLOORS[c['service']], rounded)
     baseline = sum(bases.values())
@@ -159,6 +160,16 @@ class MemoryGovernor:
         total = int(measurement['total_bytes'])
         # Only distribute Hub's budget; never remeasure or cap other apps here.
         _, _, caps = allocate(budget + RESERVE, sum(c['usage'] for c in containers), containers)
+        # Never force reclaim of live work to chase a changing budget. A low
+        # budget pauses admission; it must not kill the jobs already in flight.
+        unsafe = any(caps[c['id']] < c['limit'] and
+                     caps[c['id']] < c['usage'] + (1024 if c['service'] == 'fjordlens-ai' else 512)*MIB
+                     for c in containers)
+        if unsafe:
+            return {**measurement, 'pressure': True, 'deferred_resize': True,
+                    '_sample_at': time.monotonic(),
+                    'containers': {c['service']: {'usage_bytes': c['usage'], 'limit_bytes': c['limit']}
+                                   for c in containers}}
         # Shrink before growing: reallocating memory must not temporarily double it.
         containers.sort(key=lambda c: caps[c['id']] - (c['limit'] or total))
         for c in containers:

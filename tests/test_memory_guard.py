@@ -15,6 +15,29 @@ GIB = 1024**3
 
 
 class MemoryGuardTests(unittest.TestCase):
+    def test_live_shrink_that_would_kill_work_is_deferred(self):
+        updates = []
+        def api(method, path, body=None):
+            if path.startswith('/containers/json?'):
+                return [dict(Id='ai', Labels={'com.docker.compose.service': 'fjordlens-ai'})]
+            if path.endswith('/json'):
+                return dict(State={'Running': True}, HostConfig={'Memory': 6*GIB, 'MemorySwap': 6*GIB})
+            if '/stats?' in path:
+                return dict(memory_stats={'usage': 5*GIB})
+            updates.append(body)
+            return {}
+        state = governor.MemoryGovernor(api=api).sample()
+        self.assertEqual(updates, [])
+        self.assertTrue(state['pressure'])
+        self.assertTrue(state['deferred_resize'])
+        self.assertEqual(state['containers']['fjordlens-ai']['limit_bytes'], 6*GIB)
+
+    def test_admission_respects_newer_actual_hard_limit(self):
+        client = admission.MemoryBudget('fjordlens-ai')
+        status = dict(ok=True, containers={'fjordlens-ai': {'limit_bytes': 4*GIB}})
+        with patch.object(Path, 'read_text', return_value=str(GIB)), patch.object(admission, 'current_memory', return_value=GIB//2):
+            self.assertEqual(client.available(status), GIB//2 - 64*admission.MIB)
+
     def memory_files(self, usage, stats, legacy=False):
         root = '/sys/fs/cgroup/memory/' if legacy else '/sys/fs/cgroup/'
         files = {root + ('memory.usage_in_bytes' if legacy else 'memory.current'): str(usage),

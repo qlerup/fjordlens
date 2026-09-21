@@ -74,6 +74,13 @@ class MemoryBudget:
         if not status.get('ok') or status.get('pressure'):
             return 0
         cap = status.get('containers', {}).get(self.service, {}).get('limit_bytes', 0)
+        # A previously fetched budget must never override a newer hard cap.
+        try:
+            hard = Path('/sys/fs/cgroup/memory.max').read_text().strip()
+            if hard != 'max':
+                cap = min(int(cap), int(hard))
+        except (OSError, ValueError):
+            pass
         return max(0, int(cap) - current_memory() - self.reserved - 64*MIB)
 
     @contextmanager
