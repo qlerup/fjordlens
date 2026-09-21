@@ -1767,38 +1767,30 @@ FACE_PREPARE_LOCK = threading.Lock()
 
 
 def _prepare_face_detection_upload(path: Path) -> tuple[str, bytes]:
-    # Full-resolution decode creates several large buffers. Only prepare one
-    # upload at a time; network requests and GPU inference remain concurrent.
-    with FACE_PREPARE_LOCK:
+    # Transfer compressed originals. Orientation/decode belongs to the AI
+    # pipeline; do not allocate a full RGB image or re-encode it in the web app.
+    if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}:
         try:
-            with WEB_MEMORY.slot(512*MIB):
-                return _prepare_face_detection_upload_unlocked(path)
+            with WEB_MEMORY.slot(max(16*MIB, path.stat().st_size*3)):
+                return path.name, path.read_bytes()
         except RuntimeError as exc:
             if 'RAM-budget:' in str(exc):
                 raise ServiceUnavailable(str(exc)) from exc
             raise
-
-
-def _prepare_face_detection_upload_unlocked(path: Path) -> tuple[str, bytes]:
-    rel_guess = None
-    try:
-        rel_guess = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
-    except Exception:
-        rel_guess = path.name
-    ai_src = ensure_viewable_copy(path, rel_guess)
-    data: Optional[bytes] = None
-    try:
-        with Image.open(ai_src) as im:
-            im = ImageOps.exif_transpose(im)
-            buf = io.BytesIO()
-            im.convert("RGB").save(buf, format="JPEG", quality=95)
-        data = buf.getvalue()
-    except Exception:
-        data = None
-    if data is None:
-        with ai_src.open("rb") as handle:
-            data = handle.read()
-    return ai_src.name, data
+    # RAW/other formats may still require the existing viewable conversion.
+    with FACE_PREPARE_LOCK:
+        try:
+            with WEB_MEMORY.slot(512*MIB):
+                try:
+                    rel = str(path.relative_to(PHOTO_DIR)).replace("\\", "/")
+                except ValueError:
+                    rel = path.name
+                source = ensure_viewable_copy(path, rel)
+                return source.name, source.read_bytes()
+        except RuntimeError as exc:
+            if 'RAM-budget:' in str(exc):
+                raise ServiceUnavailable(str(exc)) from exc
+            raise
 
 
 def _ai_face_runtime_warmup() -> bool:
@@ -1834,7 +1826,7 @@ def _ai_face_runtime_release() -> bool:
 
 
 def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
-    """Send one orientation-corrected image to the AI service."""
+    """Send compressed image data; the AI service applies orientation."""
     try:
         filename, data = _prepare_face_detection_upload(path)
         files = {"file": (filename, data, "application/octet-stream")}

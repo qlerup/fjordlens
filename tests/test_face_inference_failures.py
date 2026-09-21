@@ -46,9 +46,15 @@ class FaceFailureTests(unittest.TestCase):
 
     def runtime(self, factory):
         lock = threading.RLock()
+        class Pipeline:
+            def __init__(self, runtime, *args, **kwargs):
+                self.runtime = runtime
+            def detect(self, data, progress):
+                return self.runtime.get(data)
         env = dict(Image=SimpleNamespace(open=lambda x: SimpleNamespace(convert=lambda x: 'image')),
                    io=SimpleNamespace(BytesIO=lambda x: x), np=SimpleNamespace(array=lambda x: x),
                    _face_runtime_lock=lock, face_detection_available=True,
+                   _face_pipeline=None, FacePipeline=Pipeline, SimpleNamespace=SimpleNamespace, InvalidFaceImage=ValueError,
                    _face_runtime_condition=threading.Condition(lock),
                    _face_runtime_idle=[], _face_runtime_instances=0, _face_runtime_active=0,
                    _face_runtime_peak_active=0, _face_runtime_releasing=False,
@@ -65,25 +71,20 @@ class FaceFailureTests(unittest.TestCase):
         fn = load_function('ai_service/app.py', '_detect_faces_bytes', env)
         return fn, env
 
-    def test_selected_number_of_models_really_infer_concurrently(self):
+    def test_selected_number_of_jobs_share_one_model(self):
         for workers in (1, 2, 4, 6, 8):
             with self.subTest(workers=workers):
                 barrier = threading.Barrier(workers)
                 def factory():
-                    exclusive = threading.Lock()
                     def get(image):
-                        self.assertTrue(exclusive.acquire(blocking=False), 'Model shared by concurrent jobs')
-                        try:
-                            barrier.wait(timeout=5)
-                            return []
-                        finally:
-                            exclusive.release()
+                        barrier.wait(timeout=5)
+                        return []
                     return SimpleNamespace(get=get)
                 fn, env = self.runtime(factory)
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     self.assertEqual(list(pool.map(fn, [b'jpeg'] * workers * 2)), [[]] * workers * 2)
                 self.assertEqual(env['_face_runtime_peak_active'], workers)
-                self.assertEqual(env['_face_runtime_instances'], workers)
+                self.assertEqual(env['_face_runtime_instances'], 1)
                 self.assertEqual(env['_face_runtime_active'], 0)
 
     def test_inference_failure_returns_model_slot(self):
@@ -91,7 +92,7 @@ class FaceFailureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'inference failed'):
             fn(b'jpeg')
         self.assertEqual(env['_face_runtime_active'], 0)
-        self.assertEqual(len(env['_face_runtime_idle']), 1)
+        self.assertEqual(len(env['_face_runtime_idle']), 0)
 
     def test_batch_endpoint_runs_eight_model_calls_concurrently(self):
         barrier = threading.Barrier(8)
@@ -107,24 +108,24 @@ class FaceFailureTests(unittest.TestCase):
         self.assertTrue(all(item['ok'] for item in result['items']))
         self.assertEqual(env['_face_runtime_peak_active'], 8)
 
-    def test_failed_extra_model_does_not_leak_pool_capacity(self):
+    def test_more_jobs_share_model_without_building_extra_instances(self):
         _, env = self.runtime(lambda: SimpleNamespace(get=lambda image: []))
         first = env['_acquire_face_runtime']()
-        env['_build_face_analysis'].side_effect = RuntimeError('GPU out of memory')
-        with self.assertRaisesRegex(RuntimeError, 'GPU out of memory'):
-            env['_acquire_face_runtime']()
+        second = env['_acquire_face_runtime']()
+        self.assertIs(first.pipeline, second.pipeline)
+        env['_build_face_analysis'].assert_not_called()
         self.assertEqual(env['_face_runtime_instances'], 1)
-        self.assertEqual(env['_face_runtime_active'], 1)
+        self.assertEqual(env['_face_runtime_active'], 2)
         env['_return_face_runtime'](first)
-        self.assertIs(env['_acquire_face_runtime'](), first)
-        env['_return_face_runtime'](first)
+        env['_return_face_runtime'](second)
+        self.assertEqual(env['_face_runtime_active'], 0)
 
     def test_status_tracks_filename_and_reuses_instance_without_stale_job(self):
         _, env = self.runtime(lambda: SimpleNamespace(get=lambda image: []))
         runtime = env['_acquire_face_runtime']('first.jpg')
         first = env['_face_status_snapshot']()[0]
         self.assertEqual(first['file'], 'first.jpg')
-        self.assertEqual(first['stage'], 'inference')
+        self.assertEqual(first['stage'], 'queued')
         self.assertIsNone(first['percent'])
         env['_return_face_runtime'](runtime)
         self.assertEqual(env['_face_status_snapshot'](), [])
@@ -140,7 +141,7 @@ class FaceFailureTests(unittest.TestCase):
         lines = [call.args[0] for call in env['print'].call_args_list if call.args[0].startswith('faces_instance instance=')]
         self.assertEqual(len(lines), 3)
         self.assertTrue(all('\n' not in line for line in lines))
-        self.assertIn('stage=inference percent=unknown', lines[0])
+        self.assertIn('stage=queued percent=unknown', lines[0])
         self.assertIn('stage=done percent=100', lines[-1])
         self.assertEqual(env['_face_status_snapshot'](), [])
         env['print'].assert_any_call('faces_instance active=0 stage=idle', flush=True)

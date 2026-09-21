@@ -74,7 +74,7 @@ RUN set -eux; \
 
 RUN python -c "import torch, onnxruntime as ort; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('onnxruntime', ort.__version__, ort.get_available_providers())"
 
-COPY app.py face_monitor.py memory_budget.py ./
+COPY app.py face_monitor.py memory_budget.py face_pipeline.py ./
 
 EXPOSE 8000
 CMD ["python", "app.py"]

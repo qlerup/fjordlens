@@ -72,6 +72,30 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
             conn.commit()
         return rel
 
+    def test_face_upload_keeps_compressed_original_and_exif(self):
+        import io
+        from PIL import Image
+        image = Image.new('RGB', (25, 40), 'red')
+        exif = image.getexif()
+        exif[274] = 6
+        output = io.BytesIO()
+        image.save(output, format='JPEG', exif=exif)
+        path = self.uploads / 'originals' / 'original.jpg'
+        path.write_bytes(output.getvalue())
+        with patch.object(fjordlens, 'ensure_viewable_copy') as convert:
+            filename, data = fjordlens._prepare_face_detection_upload(path)
+        convert.assert_not_called()
+        self.assertEqual(filename, 'original.jpg')
+        self.assertEqual(data, output.getvalue())
+
+    def test_upload_ram_wait_is_retryable(self):
+        from processing_failures import ServiceUnavailable
+        path = self.uploads / 'originals' / 'original.jpg'
+        path.write_bytes(b'compressed')
+        with patch.object(fjordlens.WEB_MEMORY, 'slot', side_effect=RuntimeError('RAM-budget: wait')):
+            with self.assertRaises(ServiceUnavailable):
+                fjordlens._prepare_face_detection_upload(path)
+
     def test_disabled_videos_are_excluded_from_coverage_and_preserve_results(self):
         image = self._make_photo('image')
         video_old = self._make_photo('video')

@@ -21,7 +21,10 @@ def render(rows, slots, width):
         if row is None:
             line = f'{instance:2} | Ledig'
         else:
-            stage = {'inference': 'Analyserer', 'serialize': 'Klargør resultat',
+            stage = {'queued': 'I kø', 'waiting_gpu': 'Afventer GPU-RAM',
+                     'decode_gpu': 'Udpakker på GPU', 'decode_cpu': 'Udpakker på CPU',
+                     'prepare_gpu': 'Klargør på GPU',
+                     'inference': 'Analyserer', 'serialize': 'Klargør resultat',
                      'done': 'Færdig', 'error': 'Fejl'}.get(row['stage'], row['stage'])
             percent = '--' if row['percent'] is None else f"{row['percent']}%"
             line = f"{instance:2} | {stage:<16} | {percent:>4} | {row['elapsed_sec']:6.1f}s | {clean(row['file'])}"

@@ -3,6 +3,11 @@ try:
     from memory_budget import MEMORY, MIB
 except ModuleNotFoundError:
     from ai_service.memory_budget import MEMORY, MIB
+try:
+    from face_pipeline import FacePipeline, InvalidFaceImage
+except ModuleNotFoundError:
+    from ai_service.face_pipeline import FacePipeline, InvalidFaceImage
+from types import SimpleNamespace
 import inspect
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -473,6 +478,7 @@ _face_runtime_lock = threading.RLock()
 _face_runtime_condition = threading.Condition(_face_runtime_lock)
 _face_runtime_idle: list[Any] = []
 _face_runtime_instances = 0
+_face_pipeline = None
 _face_runtime_active = 0
 _face_runtime_peak_active = 0
 _face_runtime_releasing = False
@@ -521,43 +527,27 @@ def _update_face_job(runtime, stage: str, percent: Optional[int] = None) -> None
 
 
 def _acquire_face_runtime(filename: str = "unknown"):
-    """Lease an exclusive model instance; inference runs outside the pool lock."""
-    global _face_runtime_instances, _face_runtime_active, _face_runtime_peak_active
+    """Lease a job slot backed by the single shared model/pipeline."""
+    global _face_pipeline, _face_runtime_instances, _face_runtime_active, _face_runtime_peak_active
     with _face_runtime_condition:
         deadline = time.monotonic() + 45
-        while True:
-            blocked = _face_runtime_releasing or (not _face_runtime_idle and _face_runtime_instances >= FACE_RUNTIME_MAX_WORKERS)
-            needs_model = not _face_runtime_idle and not (_face_runtime_instances == 0 and face_app is not None)
-            if not blocked and needs_model and MEMORY.enabled:
-                with MEMORY.lock:
-                    blocked = MEMORY.available(MEMORY.status()) < 768*MIB
-            if not blocked:
-                break
-            if MEMORY.enabled and time.monotonic() >= deadline:
-                raise RuntimeError("RAM-budget: afventer en ledig ansigtsplads")
+        while _face_runtime_releasing or _face_runtime_active >= FACE_RUNTIME_MAX_WORKERS:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Afventer en ledig ansigtsplads")
             _face_runtime_condition.wait(timeout=0.5)
-        if _face_runtime_idle:
-            runtime = _face_runtime_idle.pop()
-        elif _face_runtime_instances == 0:
-            _ensure_face_runtime_loaded()
-            runtime = face_app
-            _face_runtime_instances += 1
-        else:
-            providers = _face_detection_runtime_providers()
-            runtime, _, actual_providers = _build_face_analysis(
-                providers, ctx_id=0 if "CUDAExecutionProvider" in providers else -1
-            )
-            if "CUDAExecutionProvider" in providers and "CUDAExecutionProvider" not in actual_providers:
-                raise RuntimeError("Concurrent face model failed to initialize CUDA")
-            _face_runtime_instances += 1
+        _ensure_face_runtime_loaded()
+        if _face_pipeline is None or _face_pipeline.runtime is not face_app:
+            _face_pipeline = FacePipeline(face_app, MEMORY,
+                                         use_cuda="CUDAExecutionProvider" in _face_detection_runtime_providers())
+        runtime = SimpleNamespace(pipeline=_face_pipeline)
+        _face_runtime_instances = 1
         _face_runtime_active += 1
         _face_runtime_peak_active = max(_face_runtime_peak_active, _face_runtime_active)
-        if id(runtime) not in _face_runtime_ids:
-            _face_runtime_ids[id(runtime)] = next(i for i in range(1, FACE_RUNTIME_MAX_WORKERS + 1) if i not in _face_runtime_ids.values())
-        instance = _face_runtime_ids[id(runtime)]
-        _face_jobs[instance] = {"file": str(filename or "unknown"), "stage": "inference",
+        instance = next(i for i in range(1, FACE_RUNTIME_MAX_WORKERS + 1) if i not in _face_runtime_ids.values())
+        _face_runtime_ids[id(runtime)] = instance
+        _face_jobs[instance] = {"file": str(filename or "unknown"), "stage": "queued",
                                 "percent": None, "started": time.monotonic()}
-        _update_face_job(runtime, "inference")
+        _update_face_job(runtime, "queued")
         print(f"faces_inference_start active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
         return runtime
 
@@ -565,8 +555,7 @@ def _acquire_face_runtime(filename: str = "unknown"):
 def _return_face_runtime(runtime) -> None:
     global _face_runtime_active
     with _face_runtime_condition:
-        _face_jobs.pop(_face_runtime_ids[id(runtime)], None)
-        _face_runtime_idle.append(runtime)
+        _face_jobs.pop(_face_runtime_ids.pop(id(runtime)), None)
         _face_runtime_active -= 1
         print(f"faces_inference_done active={_face_runtime_active} instances={_face_runtime_instances}", flush=True)
         if _face_runtime_active == 0:
@@ -625,7 +614,7 @@ def _ensure_face_runtime_loaded() -> bool:
 def _release_face_runtime() -> bool:
     """Drop ONNX/InsightFace sessions so their CUDA allocations are returned."""
     global face_app, face_detection_available, face_detection_error, face_device, face_providers_kw_supported
-    global _face_runtime_instances, _face_runtime_releasing
+    global _face_pipeline, _face_runtime_instances, _face_runtime_releasing
     with _face_runtime_condition:
         while _face_runtime_releasing:
             _face_runtime_condition.wait()
@@ -638,6 +627,7 @@ def _release_face_runtime() -> bool:
             _face_runtime_ids.clear()
             _face_jobs.clear()
             _face_runtime_instances = 0
+            _face_pipeline = None
             face_app = None
             face_detection_available = False
             face_device = FACE_DEVICE_CONFIGURED
@@ -760,6 +750,7 @@ def _reserve_gpu_memory_for_qwen() -> None:
             _release_face_runtime()
         else:
             try:
+                _release_face_runtime()
                 app_obj, kw_supported, _ = _build_face_analysis(["CPUExecutionProvider"], ctx_id=-1)
                 face_app = app_obj
                 face_detection_available = True
@@ -1300,6 +1291,7 @@ class EmbedOut(BaseModel):
 
 @app.get("/health")
 def health():
+    pipeline = _face_pipeline
     runtime_providers = _face_runtime_providers()
     detection_runtime_providers = _face_detection_runtime_providers()
     runtime_face_device = _face_runtime_device()
@@ -1335,6 +1327,9 @@ def health():
         "face_inference_active": _face_runtime_active,
         "face_inference_peak_active": _face_runtime_peak_active,
         "face_model_instances": _face_runtime_instances,
+        "face_pipeline": "shared_model",
+        "face_preprocessing": pipeline.last_backend if pipeline else "idle",
+        "face_preprocessing_fallback": pipeline.fallback_reason if pipeline else None,
         "face_batch_endpoint": True,
         "face_runtime_providers": runtime_providers,
         "face_detection_runtime_providers": detection_runtime_providers,
@@ -1701,16 +1696,13 @@ def _serialize_face_result(face) -> Dict[str, Any]:
     }
 
 
-@MEMORY.guard(128*MIB)
 def _detect_faces_bytes(data: bytes, filename: str = "unknown") -> List[Dict[str, Any]]:
     runtime = _acquire_face_runtime(filename)
     try:
         try:
-            img = Image.open(io.BytesIO(data)).convert("RGB")
-            img_np = np.array(img)
-        except Exception as exc:
+            faces = runtime.pipeline.detect(data, lambda stage: _update_face_job(runtime, stage))
+        except InvalidFaceImage as exc:
             raise HTTPException(status_code=400, detail=f"invalid_image: {exc}") from exc
-        faces = runtime.get(img_np)
         _update_face_job(runtime, "serialize")
         result = [_serialize_face_result(face) for face in faces]
         _update_face_job(runtime, "done", 100)
@@ -1745,7 +1737,7 @@ def detect_faces_batch(files: List[UploadFile] = File(...)):
     for index, upload in enumerate(uploads):
         payloads.append((index, str(upload.filename or f"image-{index}.jpg"), upload.file.read()))
 
-    # Each active request leases its own model, including during inference.
+    # Requests share model weights; only per-image buffers occupy a job slot.
     workers = len(payloads)
     results: List[Optional[Dict[str, Any]]] = [None] * len(payloads)
 
@@ -1825,7 +1817,6 @@ def faces_release():
 
 
 def _memory_pressure_loop():
-    global _face_runtime_instances
     while True:
         try:
             status = MEMORY.status()
@@ -1835,15 +1826,6 @@ def _memory_pressure_loop():
                 with _face_runtime_condition:
                     if _face_runtime_active == 0:
                         _release_face_runtime()
-                    else:
-                        for runtime in list(_face_runtime_idle):
-                            if runtime is face_app:
-                                continue
-                            _face_runtime_idle.remove(runtime)
-                            _face_runtime_ids.pop(id(runtime), None)
-                            _face_runtime_instances -= 1
-                        runtime = None
-                        _face_runtime_condition.notify_all()
                 if _qwen_lock.acquire(blocking=False):
                     try:
                         _unload_qwen_model()
