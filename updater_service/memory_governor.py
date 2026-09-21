@@ -11,12 +11,10 @@ from urllib.request import Request, urlopen
 
 MIB = 1024 ** 2
 RESERVE = 2 * 1024 ** 3
-HUB_MEMORY_PROTOCOL = '2'
-FLOORS = {'fjordlens': 2048*MIB, 'fjordlens-ai': 2048*MIB,
-          'fjordlens-convert': 256*MIB, 'fjordlens-updater': 128*MIB}
-WEIGHTS = {'fjordlens': 1, 'fjordlens-ai': 8, 'fjordlens-convert': 3, 'fjordlens-updater': 0}
-HEADROOM = {'fjordlens': 512*MIB, 'fjordlens-ai': 1024*MIB,
-            'fjordlens-convert': 640*MIB, 'fjordlens-updater': 64*MIB}
+HUB_MEMORY_PROTOCOL = '3'
+LEASE_SECONDS = 120
+MAX_SAMPLE_AGE = 10
+SERVICES = {'fjordlens', 'fjordlens-ai', 'fjordlens-convert', 'fjordlens-updater'}
 _api_version = None
 
 
@@ -52,76 +50,87 @@ def docker(method, path, body=None):
         conn.close()
 
 
-def host_memory(cgroup, proc):
-    """Use the LXC/VM limit, never a container's own limit or free swap."""
-    values = {}
-    for line in (proc / 'meminfo').read_text().splitlines():
-        key, _, value = line.partition(':')
-        values[key] = int(value.strip().split()[0]) * 1024
-    limits = [values['MemTotal']]
-    raw_usage = None
-    for limit_name, usage_name in [('memory.max', 'memory.current'),
-                                    ('memory/memory.limit_in_bytes', 'memory/memory.usage_in_bytes')]:
-        limit_path = cgroup / limit_name
-        if limit_path.exists():
-            raw = limit_path.read_text().strip()
-            if raw != 'max' and 0 < int(raw) < 2**60:
-                limits.append(int(raw))
-                raw_usage = int((cgroup / usage_name).read_text().strip())
-                break
-    total = min(limits)
-    # For bare metal / VM root cgroups, meminfo includes all processes and caches.
-    used = raw_usage if raw_usage is not None else total - values['MemFree']
-    if not 0 <= used <= total or total <= 0:
-        raise RuntimeError('Invalid host memory accounting')
-    return total, used
-
-
-def allocate(total, host_used, containers):
-    own = sum(c['usage'] for c in containers)
-    if own > host_used + 64*MIB:
-        raise RuntimeError('Host cgroup does not include all FjordLens containers')
-    other = max(0, host_used - own)
-    budget = max(0, total - other - RESERVE)
-    # Docker cannot enforce a zero-byte limit (zero means unlimited).
-    if budget < len(containers) * 8*MIB:
-        raise RuntimeError('No RAM left for FjordLens after the 2 GiB reserve')
-    # Conversion admission needs 512 MiB plus its 64 MiB safety margin.
-    # Allocate that working room before distributing surplus by AI-heavy weights;
-    # otherwise an idle converter can stay permanently below its start threshold.
-    bases = {}
-    for c in containers:
-        headroom = HEADROOM[c['service']]
-        rounded = ((c['usage'] + headroom + 64*MIB - 1)//(64*MIB))*64*MIB
-        bases[c['id']] = max(FLOORS[c['service']], rounded)
-    baseline = sum(bases.values())
-    if baseline > budget:
-        remaining = budget - len(containers)*8*MIB
-        caps = {c['id']: 8*MIB + int(remaining*bases[c['id']]/baseline) for c in containers}
-    else:
-        weights = sum(WEIGHTS[c['service']] for c in containers) or 1
-        caps = {c['id']: bases[c['id']] + int((budget-baseline)*WEIGHTS[c['service']]/weights)
-                for c in containers}
-    # Round down, keeping the sum of hard limits within the aggregate budget.
-    caps = {key: max(8*MIB, value//MIB*MIB) for key, value in caps.items()}
-    return budget, other, caps
-
-
 class MemoryGovernor:
-    def __init__(self, api=docker):
+    def __init__(self, api=docker, lease_path=None):
         self.enabled = os.environ.get('FJORDLENS_MEMORY_GUARD') == '1'
         self.project = os.environ.get('COMPOSE_PROJECT_NAME', 'fjordlens')
         self.api = api
-        self.lock = threading.Lock()
-        self.state = {'ok': False, 'enabled': self.enabled, 'error': 'Afventer RAM-måling'}
+        self.lock = threading.RLock()
+        self.state = {'ok': False, 'enabled': self.enabled, 'error': 'Afventer samlet RAM-måling'}
+        self.lease_path = Path(lease_path) if lease_path else None
+        self.leases = {}
+        if self.enabled and self.lease_path and self.lease_path.exists():
+            self.leases = json.loads(self.lease_path.read_text())
+            if not isinstance(self.leases, dict):
+                raise RuntimeError('Invalid memory reservations')
+
+    def _persist(self):
+        if self.lease_path:
+            self.lease_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.lease_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(self.leases))
+            temporary.replace(self.lease_path)
 
     def snapshot(self):
         with self.lock:
+            now = time.time()
             state = dict(self.state)
-        age = time.monotonic() - state.pop('_sample_at', 0)
-        if self.enabled and age > 5:
-            state.update(ok=False, error='RAM-målingen er for gammel')
-        return state
+            self.leases = {k: v for k, v in self.leases.items() if v['expires'] > now
+                           and not (v.get('released_at') and
+                                    state.get('measured_at', 0) >= v['released_at'])}
+            if self.enabled and not 0 <= now - state.get('measured_at', 0) <= MAX_SAMPLE_AGE:
+                state.update(ok=False, error='Den samlede RAM-måling er for gammel')
+            reserved = sum(v['bytes'] for v in self.leases.values())
+            free = max(0, state.get('total_bytes', 0) - state.get('used_bytes', 0) - RESERVE)
+            state.update(mode='host_global', reserved_bytes=reserved,
+                         available_bytes=max(0, free-reserved) if state.get('ok') else 0)
+            return state
+
+    def reservation(self, action, body):
+        token = body.get('token')
+        service = body.get('service')
+        if (not isinstance(token, str) or len(token) != 32
+                or any(c not in '0123456789abcdef' for c in token) or service not in SERVICES):
+            raise ValueError('Invalid reservation identity')
+        with self.lock:
+            state = self.snapshot()
+            existing = self.leases.get(token)
+            if existing and existing['service'] != service:
+                raise ValueError('Reservation owner mismatch')
+            if action == 'release':
+                # Do not reuse admission from an old host sample: the completed
+                # job may have left a resident model or buffers in memory.
+                if existing:
+                    existing['released_at'] = time.time()
+                self._persist()
+                return {'ok': True}
+            if action == 'renew':
+                if not existing:
+                    return {'ok': False, 'error': 'Reservation expired'}
+                existing['expires'] = time.time() + LEASE_SECONDS
+                self._persist()
+                return {'ok': True}
+            if action != 'reserve':
+                raise ValueError('Unknown reservation operation')
+            amount = body.get('bytes')
+            if type(amount) is not int or not 0 < amount <= 128*1024**3:
+                raise ValueError('Invalid reservation size')
+            if existing:
+                if existing['bytes'] != amount:
+                    raise ValueError('Reservation size mismatch')
+                return {'ok': True, 'granted': True, 'token': token}
+            if not self.enabled or not state.get('ok') or state['available_bytes'] < amount:
+                return {'ok': state.get('ok', False), 'granted': False,
+                        'available_bytes': state['available_bytes'], 'error': state.get('error', '')}
+            if len(self.leases) >= 4096:
+                return {'ok': False, 'granted': False, 'error': 'Too many reservations'}
+            self.leases[token] = {'service': service, 'bytes': amount, 'expires': time.time()+LEASE_SECONDS}
+            try:
+                self._persist()
+            except Exception:
+                self.leases.pop(token, None)
+                raise
+            return {'ok': True, 'granted': True, 'token': token}
 
     def sample(self):
         hub_url = os.environ.get('FJORDHUB_URL', '').rstrip('/')
@@ -129,80 +138,50 @@ class MemoryGovernor:
         if not hub_url or not hub_key:
             raise RuntimeError('FjordHub RAM connection is not configured')
         request = Request(hub_url + '/api/hub/fjordlens/memory-budget', headers={'X-Hub-Key': hub_key})
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=8) as response:
             measurement = json.load(response)
         if (not measurement.get('ok') or measurement.get('source') != 'fjordhub'
-                or not 0 <= time.time() - float(measurement.get('measured_at', 0)) <= 10
-                or measurement.get('reserve_bytes') != RESERVE):
-            raise RuntimeError('No fresh verified FjordHub RAM budget')
-        budget = int(measurement['budget_bytes'])
-        if budget != max(0, int(measurement['total_bytes']) - int(measurement['other_bytes']) - RESERVE):
-            raise RuntimeError('Invalid FjordHub RAM budget')
+                or not 0 <= time.time()-float(measurement.get('measured_at', 0)) <= MAX_SAMPLE_AGE):
+            raise RuntimeError('No fresh verified FjordHub host measurement')
+        total, used = int(measurement['total_bytes']), int(measurement['used_bytes'])
+        if not 0 <= used <= total or total <= RESERVE:
+            raise RuntimeError('Invalid total host memory measurement')
+        # Remove the old per-service partitions. The LXC remains the aggregate
+        # hard boundary; all heavy jobs now reserve from its shared free RAM.
         filters = json.dumps({'label': [f'com.docker.compose.project={self.project}',
                                          'io.fjordlens.memory-managed=1']})
         listed = self.api('GET', '/containers/json?' + urlencode({'all': 1, 'filters': filters}))
-        containers = []
+        seen = set()
         for entry in listed:
             service = entry.get('Labels', {}).get('com.docker.compose.service')
-            if service not in FLOORS:
+            if service not in SERVICES:
                 continue
+            seen.add(service)
             ident = entry['Id']
-            info = self.api('GET', f'/containers/{ident}/json')
-            running = info['State']['Running']
-            raw = self.api('GET', f'/containers/{ident}/stats?stream=false&one-shot=true') if running else {}
-            usage = raw.get('memory_stats', {}).get('usage', 0)
-            if running and not usage:
-                raise RuntimeError(f'Missing memory stats for {service}')
-            containers.append({'id': ident, 'service': service, 'usage': int(usage),
-                               'limit': int(info['HostConfig'].get('Memory') or 0),
-                               'swap': int(info['HostConfig'].get('MemorySwap') or 0)})
-        if not containers:
-            raise RuntimeError('Ingen FjordHub-styrede FjordLens-containere fundet')
-        total = int(measurement['total_bytes'])
-        # Only distribute Hub's budget; never remeasure or cap other apps here.
-        _, _, caps = allocate(budget + RESERVE, sum(c['usage'] for c in containers), containers)
-        # Never force reclaim of live work to chase a changing budget. A low
-        # budget pauses admission; it must not kill the jobs already in flight.
-        unsafe = any(caps[c['id']] < c['limit'] and
-                     caps[c['id']] < c['usage'] + HEADROOM[c['service']]
-                     for c in containers)
-        if unsafe:
-            # Keep live hard limits, but advertise the smaller admission budget
-            # per service. Their sum stays within Hub's budget. An unsafe resize
-            # is not itself host pressure and must not freeze unrelated jobs.
-            return {**measurement, 'deferred_resize': True,
-                    '_sample_at': time.monotonic(),
-                    'containers': {c['service']: {'usage_bytes': c['usage'],
-                                   'limit_bytes': min(c['limit'], caps[c['id']]) if c['limit'] else caps[c['id']],
-                                   'hard_limit_bytes': c['limit']}
-                                   for c in containers}}
-        # Shrink before growing: reallocating memory must not temporarily double it.
-        containers.sort(key=lambda c: caps[c['id']] - (c['limit'] or total))
-        for c in containers:
-            cap = caps[c['id']]
-            if c['limit'] != cap or c['swap'] != cap:
-                result = self.api('POST', f'/containers/{c["id"]}/update', {'Memory': cap, 'MemorySwap': cap})
+            config = self.api('GET', f'/containers/{ident}/json')['HostConfig']
+            if config.get('Memory') != total or config.get('MemorySwap') != total:
+                # Never lower an existing hard limit during live work.
+                if int(config.get('Memory') or 0) > total:
+                    raise RuntimeError('Host RAM limit changed; restart services to apply it')
+                result = self.api('POST', f'/containers/{ident}/update', {'Memory': total, 'MemorySwap': total})
                 if result.get('Warnings'):
                     raise RuntimeError('; '.join(result['Warnings']))
-            # Read back the actual limits; never advertise an unenforced budget.
-            actual = self.api('GET', f'/containers/{c["id"]}/json')['HostConfig']
-            if actual.get('Memory') != cap or actual.get('MemorySwap') != cap:
-                raise RuntimeError('Docker did not apply the RAM/swap limit')
-        return {**measurement, '_sample_at': time.monotonic(),
-                'containers': {c['service']: {'usage_bytes': c['usage'], 'limit_bytes': caps[c['id']]}
-                               for c in containers}}
+            actual = self.api('GET', f'/containers/{ident}/json')['HostConfig']
+            if actual.get('Memory') != total or actual.get('MemorySwap') != total:
+                raise RuntimeError('Docker did not apply the shared host ceiling')
+        if seen != SERVICES:
+            raise RuntimeError('Missing managed FjordLens services')
+        return dict(ok=True, enabled=True, mode='host_global', source='fjordhub',
+                    measured_at=measurement['measured_at'], total_bytes=total, used_bytes=used,
+                    reserve_bytes=RESERVE, budget_bytes=max(0, total-used-RESERVE),
+                    pressure=total-used <= RESERVE)
 
     def run(self):
-        logged_budget = None
         while True:
             try:
                 state = self.sample()
-                budget = state['budget_bytes']
-                if logged_budget is None or abs(budget-logged_budget) >= 64*MIB:
-                    print(f"memory_guard source=fjordhub total={state['total_bytes']} other={state['other_bytes']} reserve={RESERVE} budget={budget}", flush=True)
-                    logged_budget = budget
             except Exception as exc:
-                state = {'ok': False, 'enabled': True, 'error': str(exc), '_sample_at': time.monotonic()}
+                state = {'ok': False, 'enabled': True, 'error': str(exc)}
                 print(f'memory_guard error={exc}', flush=True)
             with self.lock:
                 self.state = state

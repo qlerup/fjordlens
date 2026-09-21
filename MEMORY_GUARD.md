@@ -1,48 +1,67 @@
-# RAM-styring via FjordHub
+# F?lles RAM-styring for hele FjordHub
 
-Opdater først FjordHub og derefter FjordLens gennem FjordHub. FjordHub tilføjer
-`FJORDLENS_MEMORY_GUARD=1` og startgrænser til installationens `.env`.
-Ved selvstændig installation er funktionen som standard slået fra: ingen dynamiske
-Docker-grænser, RAM-adgangskontrol eller automatisk oprydning fra denne funktion.
-FjordHub reparerer også gamle `Guard=0`/ubegrænsede installationer, selv når
-FjordLens allerede er opdateret. Hub kontrollerer installationen ved opstart og
-hvert minut; aktivering bygger og genskaber FjordLens-containerne én gang.
+FjordLens bruger FjordHubs samlede RAM-m?ling for v?rten/LXC-containeren ?
+samme samlede forbrug som ressourceoversigten. Forbruget inkluderer FjordHub,
+FjordLens og alle andre processer. Det er ikke kun AI-containerens forbrug,
+og tallet ?andre/system? bruges ikke l?ngere til at fordele RAM.
 
-Budgettet beregnes løbende som:
+    ledig jobplads = samlet RAM - samlet aktuelt forbrug - 2 GiB reserve - jobreservationer
 
-    tildelt RAM - andre processers RAM-forbrug - 2 GiB
+Eksempel: 10 GiB samlet, 4,88 GiB brugt og ingen reservationer giver 3,12 GiB
+til nye tunge job. Swap t?ller ikke som ledig RAM. Status viser samlet
+forbrug/total, reserve, reservationer og ledig jobplads.
 
-Andre processer omfatter FjordHub, andre apps og systemprocesser. Hele
-FjordLens-stakken indgår: web, AI, konvertering og updater. Målingerne kommer fra
-FjordHubs ressourceoversigt (Proxmox LXC-total og Docker-forbrug). Swap tæller ikke
-som ledig RAM. Mangler en gyldig systemmåling i Hub, startes nye tunge job ikke.
-10 GiB i alt og 3 GiB til andre giver således et FjordLens-budget på 5 GiB.
+## ?n f?lles reservationstjeneste
 
-Updateren henter budgettet fra FjordHub via en API beskyttet med appens Hub-nøgle.
-Den ændrer aldrig andre apps' grænser. Den fordeler budgettet mellem egne containere og
-kontrollerer, at Docker faktisk har anvendt RAM-grænserne. RAM+swap-grænsen
-sættes lig RAM-grænsen, så stakken ikke fortsætter væksten i swap.
+Updateren henter de eksisterende `total_bytes` og `used_bytes` fra FjordHubs
+n?glebeskyttede RAM-endpoint. Web, AI og konvertering reserverer deres estimerede
+behov atomisk hos updateren f?r tungt arbejde. Samtidige job kan derfor ikke
+alle tage den samme ledige plads. Reservationen er en forsigtig ekstra margen;
+allerede allokeret hukommelse kan samtidig indg? i v?rtsm?lingen.
 
-Tunge job venter på plads, og AI frigiver ledige modeller under pres. Det valgte
-antal ansigtspladser er derfor et maksimum: 8 pladser kan køre samtidig, når
-RAM-budgettet tillader det. Konverteringsjob venter på plads uden RAM-kontrollens
-tidligere 45-sekunders timeout; `memory_wait` og `memory_resume` logges ved ventetid.
-Fordelingen afsætter plads til et konverteringsjob før den vægtede fordeling af
-overskuddet, hvis budgettet tillader det. Andre job kan efter 45 sekunders ventetid
-fejle med en RAM-budget-fejl og efterfølgende genkøres. Ukendte eller forældede målinger
-blokerer nye tunge job. Eksisterende Docker-grænser bevares ved målefejl.
+Reservationer fornyes hvert 20. sekund og udl?ber efter 120 sekunder uden
+fornyelse. De gemmes i updaterens `/state/memory-leases.json` og overlever dens
+genstart. N?r et job afsluttes, beholdes reservationen indtil n?ste friske
+v?rtsm?ling, s? en gammel m?ling ikke genbruges f?r nye modeller/buffere t?lles med.
+Ved crash frigives reservationen efter udl?b. Indlejrede operationer reserverer
+kun deres ekstra behov. Fejlede eller over 10 sekunder gamle v?rtsm?linger
+blokerer nye job; allerede igangv?rende arbejde afbrydes ikke.
 
-Grænserne beskytter mod ubegrænset vækst, men en proces kan stadig blive dræbt
-af containerens OOM-grænse, hvis en enkelt allokering er for stor, eller andre
-apps pludselig tvinger budgettet ned. De 2 GiB er en reserve i beregningen, ikke
-en garanti mod andre apps, der selv opbruger hele maskinens RAM. Startgrænserne
-gælder inden første gyldige måling; den dynamiske reserve er først aktiv derefter.
+Jobestimaterne er ikke pr?cise m?linger af deres maksimale forbrug. Store enkeltfiler,
+andre apps og bortfald af reservationernes fornyelse kan stadig medf?re RAM-pres.
+Den samlede LXC-gr?nse er den sidste beskyttelse, og der er ingen garanti mod OOM.
 
-Indstillinger viser aktuelt FjordLens-budget, andre processers forbrug og reserve.
-`Genkør manglende` vælger understøttede filer uden `faces_indexed_at`, svarende til
-statuslinjens manglende-tal. En færdig fil med nul fundne ansigter genkøres ikke.
+## Opgradering og Docker-gr?nser
 
-Diagnostik:
+Opdater hele FjordLens-stakken, inklusive updater, AI og konvertering, gennem
+FjordHub. Der kr?ves ikke en ny FjordHub-version for det eksisterende RAM-endpoint.
+`FJORDLENS_MEMORY_GUARD=1` aktiverer funktionen; selvst?ndige installationer er
+som f?r deaktiveret som standard.
+
+Updateren h?ver de gamle individuelle Docker-gr?nser til v?rtens samlede
+RAM-loft og kontrollerer dem ved readback. Den fordeler ikke l?ngere en fast
+andel til hver tjeneste og s?nker ikke gr?nser under igangv?rende arbejde.
+Hver tjeneste kan bruge den f?lles plads, men hele LXC-containerens faktiske
+forbrug er stadig begr?nset af Proxmox. Summen af de individuelle loftstal er
+ikke en RAM-reservation. Andre apps' gr?nser ?ndres ikke.
+
+Eksisterende boot-gr?nser g?lder indtil updateren har verificeret m?lingen og
+h?vet gr?nserne. Gamle klienter f?r ikke nye jobbudgetter af den nye updater;
+alle billeder skal opdateres samlet. Nye klienter beholder den gamle kontrol,
+hvis updateren endnu ikke er opdateret. Tilbagef?r hele stakken ved rollback;
+bland ikke gamle og nye tjenester permanent.
+
+## Ansigtsk? og monitor
+
+Webappen forbereder ?t billede ad gangen. AI pakker f?rst billedet ud efter
+at have f?et en model. Matchcache l?ser JSON-r?kker l?bende. Midlertidige
+forbindelsesfejl og HTTP 502/503/504 holder samme k?element til genfors?g
+med fem sekunders pause og ?n genoptagelsespr?ve ad gangen.
+
+Konvertering venter p? RAM uden timeout. Andre tunge operationer kan efter
+45 sekunder melde ventetid; ansigtsk?en beholder elementet til genfors?g.
+Stop afslutter k?ens ventetid, men et aktivt HTTP-kald m? f?rst afsluttes eller
+time ud. Statusmonitoren blokeres ikke af modelindl?sning eller budgetserveren.
 
 ```sh
 docker logs -f --tail 100 fjordlens-updater
@@ -51,17 +70,12 @@ docker exec -it fjordlens-ai python face_monitor.py --slots 8
 docker stats fjordlens fjordlens-ai fjordlens-convert fjordlens-updater
 ```
 
-Automatiske tests dækker Hub-budgetberegning, automatisk aktivering, udløbne målinger,
-reservationer, Docker-grænser og deaktiveret standalone-installation. Linux/Docker
-OOM-adfærd og den konkrete servers cgroup-visning skal også kontrolleres efter
-udrulning. Ingen billedfiler eller databaser slettes ved ændringen.
+## Ansigtsgenkendelse p? videoer
 
-## Rettelse efter OOM 21. september 2026
-
-RAM-styringen udskyder nu en reduktion, hvis den nye grænse ligger for tæt på det målte forbrug (1 GiB margin for AI, 512 MiB for web, 640 MiB for konvertering og 64 MiB for updater). I så fald bevares de eksisterende hårde grænser, mens nye job vurderes mod den mindste af tjenestens aktuelle grænse og dens nye budgetandel. En udsat grænseændring pauser ikke hele stakken; kun reelt RAM-pres på værten gør det. Summen af de annoncerede jobbudgetter overstiger ikke Hub-budgettet. Summen af de eksisterende grænser kan midlertidigt overstige det nye budget; igangværende arbejde får mulighed for at afslutte. Dette beskytter ikke mod enhver pludselig allokering eller værts-OOM.
-
-Web og AI har nu 2 GiB som fordelingsminimum, når budgettet tillader det. Billedforberedelse serialiseres i webappen og får RAM-adgangskontrol. AI pakker først billedet ud efter tildeling af en model. Matchcache læser JSON-rækker løbende. Midlertidige forbindelsesfejl og HTTP 502/503/504 holder samme køelement til genforsøg, med fem sekunders pause og én genoptagelsesprøve ad gangen. Stop-knappen afslutter ventetiden; en allerede aktiv HTTP-forespørgsel afsluttes efter sin timeout. Statusmonitoren venter ikke længere på modellås eller budgetserver.
-
-## Ansigtsgenkendelse på videoer
-
-Under Ansigtsindeksering gemmer togglen valget for videoanalyse (standard: til). Når den slås fra, springer både uploadkøen og manuel ansigtsindeksering videoer over, og videoer udelades fra manglende-tallet. En igangværende video stopper før næste frame; et aktivt AI-kald kan afsluttes først. Eksisterende ansigter og indeksmarkeringer bevares. Oversprungne videoer registreres ikke som fejl eller som færdiganalyserede. Slås funktionen til igen, kan manglende videoer genkøres. Indstillingen kan ændres af administratorer.
+Under Ansigtsindeksering gemmer togglen valget for videoanalyse (standard: til).
+N?r den sl?s fra, springer uploadk? og manuel indeksering videoer over, og de
+udelades fra manglende-tallet. En igangv?rende video stopper f?r n?ste frame;
+et aktivt AI-kald kan afsluttes f?rst. Eksisterende ansigter og indeksmarkeringer
+bevares. Oversprungne videoer registreres ikke som fejl eller f?rdiganalyserede.
+Sl?s funktionen til igen, kan manglende videoer genk?res. Kun administratorer
+kan ?ndre indstillingen.

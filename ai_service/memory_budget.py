@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import threading
 import time
-from urllib.request import urlopen
+import uuid
+from urllib.request import Request, urlopen
 
 MIB = 1024**2
 
@@ -73,6 +74,8 @@ class MemoryBudget:
     def available(self, status):
         if not status.get('ok') or status.get('pressure'):
             return 0
+        if status.get('mode') == 'host_global':
+            return max(0, int(status.get('available_bytes', 0)))
         cap = status.get('containers', {}).get(self.service, {}).get('limit_bytes', 0)
         # A previously fetched budget must never override a newer hard cap.
         try:
@@ -83,6 +86,22 @@ class MemoryBudget:
             pass
         return max(0, int(cap) - current_memory() - self.reserved - 64*MIB)
 
+    def reservation(self, action, token, amount=0):
+        request = Request(self.url.rstrip('/') + '/' + action,
+                          data=json.dumps({'token': token, 'service': self.service, 'bytes': amount}).encode(),
+                          headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+        except (OSError, ValueError) as exc:
+            return {'ok': False, 'granted': False, 'error': str(exc)}
+
+    def _heartbeat(self, token, stopped):
+        while not stopped.wait(20):
+            result = self.reservation('renew', token)
+            if not result.get('ok'):
+                print(f'memory_lease_renew_failed service={self.service}', flush=True)
+
     @contextmanager
     def slot(self, estimate, timeout=45):
         if not self.enabled:
@@ -92,11 +111,23 @@ class MemoryBudget:
         additional = max(0, int(estimate) - old)
         deadline = None if timeout is None else time.monotonic() + timeout
         waiting = False
+        token = uuid.uuid4().hex
+        shared = False
         while True:
             status = self.status()
             with self.lock:
                 self.last = status
-                if additional == 0 or self.available(status) >= additional:
+                shared = status.get('mode') == 'host_global'
+                if additional == 0:
+                    granted = True
+                elif shared:
+                    result = self.reservation('reserve', token, additional)
+                    granted = bool(result.get('ok') and result.get('granted'))
+                else:
+                    # During a rolling upgrade an older governor still applies
+                    # its old caps. Retain that protection until it is upgraded.
+                    granted = self.available(status) >= additional
+                if granted:
                     self.reserved += additional
                     self.local.reserved = old + additional
                     break
@@ -111,14 +142,25 @@ class MemoryBudget:
                 else:
                     with self.lock:
                         available = self.available(status)
-                    reason = f'{self.service}: {available//MIB} MiB ledig jobplads, kræver {additional//MIB} MiB'
+                    scope = 'hele FjordHub' if shared else self.service
+                    reason = f'{scope}: {available//MIB} MiB ledig jobplads, kræver {additional//MIB} MiB'
                 raise RuntimeError(f'RAM-budget: {reason}; ventede {timeout:g} sekunder')
             time.sleep(0.5)
+        heartbeat_stop = threading.Event()
+        heartbeat = None
+        if shared and additional:
+            heartbeat = threading.Thread(target=self._heartbeat, args=(token, heartbeat_stop), daemon=True)
+            heartbeat.start()
         try:
             if waiting:
                 print(f'memory_resume service={self.service}', flush=True)
             yield
         finally:
+            if heartbeat:
+                heartbeat_stop.set()
+                heartbeat.join(timeout=3)
+                if not self.reservation('release', token).get('ok'):
+                    print(f'memory_lease_release_failed service={self.service}', flush=True)
             with self.lock:
                 self.reserved -= additional
                 self.local.reserved = old

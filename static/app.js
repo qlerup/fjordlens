@@ -15888,9 +15888,11 @@ async function pollFacesStatus() {
       if (!label) return;
       label.hidden = !memory.enabled;
       const gib = value => (Number(value || 0) / 1073741824).toFixed(1);
-      label.textContent = memory.ok
-        ? `RAM: FjordLens-budget ${gib(memory.budget_bytes)} GiB · andre/system ${gib(memory.other_bytes)} GiB · reserve 2 GiB${memory.pressure ? ' · afventer RAM' : ''}`
-        : `RAM: afventer sikker måling · ${memory.error || ''}`;
+      label.textContent = !memory.ok
+        ? `RAM: afventer sikker måling · ${memory.error || ''}`
+        : memory.mode === 'host_global'
+          ? `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · reserveret til job ${gib(memory.reserved_bytes)} GiB · ledig jobplads ${gib(memory.available_bytes)} GiB${memory.pressure ? ' · afventer RAM' : ''}`
+          : `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · afventer opdateret RAM-styring`;
     }).catch(() => {});
     state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
     if (s?.ok && !state.facesVideoSaving && videoRevision === (state.facesVideoRevision || 0) && els.facesVideoToggle) {

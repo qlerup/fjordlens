@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from updater_service.memory_governor import MemoryGovernor
 
-MEMORY_GOVERNOR = MemoryGovernor()
+MEMORY_GOVERNOR = MemoryGovernor(lease_path=Path(os.environ.get('FJORDLENS_UPDATER_STATE_DIR', '/state')) / 'memory-leases.json')
 
 
 APP_DIR = Path(os.environ.get("APP_DIR", "/repo")).resolve()
@@ -512,6 +512,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith('/memory/'):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 4096:
+                    raise ValueError('Invalid request size')
+                self.connection.settimeout(5)
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError('Expected an object')
+                self.send_json(MEMORY_GOVERNOR.reservation(path.rsplit('/', 1)[-1], body))
+            except (ValueError, TypeError):
+                self.send_json({'ok': False, 'error': 'Invalid memory request'}, 400)
+            except OSError:
+                self.send_json({'ok': False, 'error': 'Could not persist memory reservation'}, 503)
+            return
         body = parse_json_body(self)
         if path == "/check":
             state = run_check(fetch=True, source="manual")

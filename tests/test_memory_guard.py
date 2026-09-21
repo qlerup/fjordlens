@@ -15,43 +15,7 @@ GIB = 1024**3
 
 
 class MemoryGuardTests(unittest.TestCase):
-    def test_tiny_updater_resize_does_not_pause_the_face_queue(self):
-        # Actual stall: 16 MiB updater shrinks 129 -> 128 MiB. It must not
-        # inherit the web worker's 512 MiB safety margin and freeze all jobs.
-        config = dict(Memory=129*governor.MIB, MemorySwap=129*governor.MIB)
-        def api(method, path, body=None):
-            if path.startswith('/containers/json?'):
-                return [dict(Id='updater', Labels={'com.docker.compose.service': 'fjordlens-updater'})]
-            if path.endswith('/json'):
-                return dict(State={'Running': True}, HostConfig=config)
-            if '/stats?' in path:
-                return dict(memory_stats={'usage': 16*governor.MIB})
-            if path.endswith('/update'):
-                config.update(body)
-                return {}
-            self.fail(path)
-        state = governor.MemoryGovernor(api=api).sample()
-        self.assertFalse(state['pressure'])
-        self.assertFalse(state.get('deferred_resize', False))
-        self.assertEqual(config['Memory'], 128*governor.MIB)
 
-    def test_live_shrink_that_would_kill_work_is_deferred(self):
-        updates = []
-        def api(method, path, body=None):
-            if path.startswith('/containers/json?'):
-                return [dict(Id='ai', Labels={'com.docker.compose.service': 'fjordlens-ai'})]
-            if path.endswith('/json'):
-                return dict(State={'Running': True}, HostConfig={'Memory': 6*GIB, 'MemorySwap': 6*GIB})
-            if '/stats?' in path:
-                return dict(memory_stats={'usage': 5*GIB})
-            updates.append(body)
-            return {}
-        state = governor.MemoryGovernor(api=api).sample()
-        self.assertEqual(updates, [])
-        self.assertFalse(state['pressure'])
-        self.assertTrue(state['deferred_resize'])
-        self.assertEqual(state['containers']['fjordlens-ai']['hard_limit_bytes'], 6*GIB)
-        self.assertLessEqual(state['containers']['fjordlens-ai']['limit_bytes'], state['budget_bytes'])
 
     def test_admission_respects_newer_actual_hard_limit(self):
         client = admission.MemoryBudget('fjordlens-ai')
@@ -119,39 +83,6 @@ class MemoryGuardTests(unittest.TestCase):
         self.fetch_patch.start()
         self.addCleanup(self.fetch_patch.stop)
 
-    def containers(self):
-        return [dict(id=name, service=name, usage=GIB//2) for name in governor.FLOORS]
-
-    def test_budget_tracks_other_apps_and_caps_sum(self):
-        for other in (3, 4, 6):
-            budget, measured, caps = governor.allocate(10*GIB, (other+2)*GIB, self.containers())
-            self.assertEqual(budget, (8-other)*GIB)
-            self.assertEqual(measured, other*GIB)
-            self.assertLessEqual(sum(caps.values()), budget)
-            self.assertTrue(all(cap > 0 for cap in caps.values()))
-
-    def test_reported_conversion_stall_gets_enough_room_without_exceeding_hub_budget(self):
-        usage = {'fjordlens': 2673397760, 'fjordlens-ai': 1489231872,
-                 'fjordlens-convert': 1358319616, 'fjordlens-updater': 20570112}
-        containers = [dict(id=name, service=name, usage=value) for name, value in usage.items()]
-        budget = 7727738880
-        _, _, caps = governor.allocate(budget + governor.RESERVE, sum(usage.values()), containers)
-        client = admission.MemoryBudget('fjordlens-convert')
-        client.enabled = True
-        status = dict(ok=True, pressure=False, containers={'fjordlens-convert': {'limit_bytes': 1914699776}})
-        with patch.object(admission, 'current_memory', return_value=1373515776):
-            self.assertLess(client.available(status), 512*governor.MIB, 'old measured limit reproduces the stall')
-            status['containers']['fjordlens-convert']['limit_bytes'] = caps['fjordlens-convert']
-            with patch.object(client, 'status', return_value=status):
-                with client.slot(512*governor.MIB, timeout=0):
-                    self.assertEqual(client.reserved, 512*governor.MIB)
-        self.assertLessEqual(sum(caps.values()), budget)
-
-    def test_conversion_headroom_never_overrides_a_small_budget(self):
-        containers = self.containers()
-        for budget in (256*governor.MIB, GIB, 2*GIB):
-            _, _, caps = governor.allocate(budget+governor.RESERVE, 2*GIB, containers)
-            self.assertLessEqual(sum(caps.values()), budget)
 
     def test_conversion_waits_past_old_timeout_then_resumes_when_budget_returns(self):
         client = admission.MemoryBudget('fjordlens-convert')
@@ -167,17 +98,6 @@ class MemoryGuardTests(unittest.TestCase):
         self.assertEqual(sleep.call_count, 2)
         self.assertEqual(client.reserved, 0)
 
-    def test_wrong_host_scope_fails_closed(self):
-        with self.assertRaisesRegex(RuntimeError, 'does not include'):
-            governor.allocate(10*GIB, GIB, self.containers())
-
-    def test_lxc_limit_overrides_physical_ram(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root/'meminfo').write_text('MemTotal: 67108864 kB\nMemFree: 33554432 kB\n')
-            (root/'memory.max').write_text(str(10*GIB))
-            (root/'memory.current').write_text(str(5*GIB))
-            self.assertEqual(governor.host_memory(root, root), (10*GIB, 5*GIB))
 
     def test_standalone_never_starts_governor_or_queries_memory(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(governor.threading, 'Thread') as thread:
@@ -195,7 +115,7 @@ class MemoryGuardTests(unittest.TestCase):
     def test_stale_measurement_blocks_admission(self):
         with patch.dict(os.environ, {'FJORDLENS_MEMORY_GUARD': '1'}):
             guard = governor.MemoryGovernor()
-            guard.state = dict(ok=True, enabled=True, _sample_at=time.monotonic()-6)
+            guard.state = dict(ok=True, enabled=True, measured_at=time.time()-11)
             client = admission.MemoryBudget()
             with patch.object(client, 'status', side_effect=guard.snapshot):
                 with self.assertRaisesRegex(RuntimeError, 'RAM-budget'):
@@ -217,27 +137,6 @@ class MemoryGuardTests(unittest.TestCase):
                     raise ValueError('job failed')
             self.assertEqual(client.reserved, 0)
 
-    def test_docker_limits_are_verified_before_advertising_budget(self):
-        configs = {name: dict(Memory=GIB, MemorySwap=GIB) for name in governor.FLOORS}
-        def api(method, path, body=None):
-            if path.startswith('/containers/json?'):
-                return [dict(Id=name, Labels={'com.docker.compose.service': name}) for name in configs]
-            name = path.split('/')[2]
-            if path.endswith('/json'):
-                return dict(State={'Running': True}, HostConfig=configs[name])
-            if '/stats?' in path:
-                return dict(memory_stats={'usage': GIB//2})
-            if path.endswith('/update'):
-                configs[name].update(body)
-                return {}
-            self.fail(path)
-        guard = governor.MemoryGovernor(api=api)
-        with patch.object(governor, 'host_memory', return_value=(10*GIB, 5*GIB)):
-            result = guard.sample()
-        self.assertTrue(result['ok'])
-        self.assertEqual(result['budget_bytes'], 5*GIB)
-        self.assertLessEqual(sum(v['Memory'] for v in configs.values()), 5*GIB)
-        self.assertTrue(all(v['Memory'] == v['MemorySwap'] for v in configs.values()))
 
     def test_concurrent_jobs_cannot_reserve_the_same_memory(self):
         with patch.dict(os.environ, {'FJORDLENS_MEMORY_GUARD': '1'}):
@@ -271,9 +170,8 @@ class MemoryGuardTests(unittest.TestCase):
             if '/stats?' in path:
                 return dict(memory_stats={'usage': GIB})
             return {}
-        with patch.object(governor, 'host_memory', return_value=(10*GIB, 4*GIB)):
-            with self.assertRaisesRegex(RuntimeError, 'did not apply'):
-                governor.MemoryGovernor(api=api).sample()
+        with self.assertRaisesRegex(RuntimeError, 'did not apply'):
+            governor.MemoryGovernor(api=api).sample()
 
     def test_missing_hub_never_falls_back_to_host_measurement(self):
         api = Mock()
