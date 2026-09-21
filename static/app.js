@@ -15871,6 +15871,29 @@ if (els.aiDescribeModelSelect) {
 // Faces indexing controls
 document.getElementById('facesRetryMissing')?.addEventListener('click', () => startFacesIndex('missing'));
 
+let memoryStatusPending = false;
+async function pollMemoryStatus() {
+  const label = document.getElementById('memoryBudgetStatus');
+  if (!label || memoryStatusPending) return;
+  memoryStatusPending = true;
+  try {
+    const response = await fetch('/api/memory/status', {cache: 'no-store', signal: AbortSignal.timeout(6000)});
+    if (!response.ok) throw new Error('RAM-status unavailable');
+    const memory = await response.json();
+    label.hidden = !memory.enabled;
+    const gib = value => (Number(value || 0) / 1073741824).toFixed(2);
+    label.textContent = !memory.ok
+      ? `RAM: afventer sikker m?ling ? ${memory.error || ''}`
+      : memory.mode === 'host_global'
+        ? `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB ? reserve ${gib(memory.reserve_bytes)} GiB ? reserveret til job ${gib(memory.reserved_bytes)} GiB ? ledig jobplads ${gib(memory.available_bytes)} GiB${memory.pressure ? ' ? afventer RAM' : ''}`
+        : `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB ? reserve ${gib(memory.reserve_bytes)} GiB ? afventer opdateret RAM-styring`;
+  } catch {
+    label.textContent = 'RAM: kunne ikke hente en aktuel m?ling';
+  } finally {
+    memoryStatusPending = false;
+  }
+}
+
 async function pollFacesStatus() {
   const videoRevision = state.facesVideoRevision || 0;
   try {
@@ -15883,17 +15906,6 @@ async function pollFacesStatus() {
       missingButton.disabled = !s?.ok || state.facesRunning || missing === 0;
       missingButton.textContent = `Genkør manglende (${missing})`;
     }
-    fetch('/api/memory/status').then(r => r.json()).then(memory => {
-      const label = document.getElementById('memoryBudgetStatus');
-      if (!label) return;
-      label.hidden = !memory.enabled;
-      const gib = value => (Number(value || 0) / 1073741824).toFixed(1);
-      label.textContent = !memory.ok
-        ? `RAM: afventer sikker måling · ${memory.error || ''}`
-        : memory.mode === 'host_global'
-          ? `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · reserveret til job ${gib(memory.reserved_bytes)} GiB · ledig jobplads ${gib(memory.available_bytes)} GiB${memory.pressure ? ' · afventer RAM' : ''}`
-          : `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · afventer opdateret RAM-styring`;
-    }).catch(() => {});
     state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
     if (s?.ok && !state.facesVideoSaving && videoRevision === (state.facesVideoRevision || 0) && els.facesVideoToggle) {
       state.facesVideoEnabled = s.video_index !== false;
@@ -16136,6 +16148,8 @@ async function pollAiDescribeStatus() {
 pollAiStatus();
 pollAiDescribeStatus();
 pollFacesStatus();
+pollMemoryStatus();
+setInterval(pollMemoryStatus, 5000);
 updateScanButton();
 els.toggleRawBtn.addEventListener("click", () => {
   const hidden = els.rawMeta.classList.toggle("hidden");
