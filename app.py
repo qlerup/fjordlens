@@ -16456,48 +16456,20 @@ def _query_term_groups(q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -
     return groups
 
 
+def _filename_search_key(filename: str) -> str:
+    return _fold_danish(Path(str(filename or "")).stem)
+
+
+def _filename_search_term(query: str) -> str:
+    term = _fold_danish(query or "").strip()
+    suffix = Path(term).suffix
+    return term[:-len(suffix)] if suffix in SUPPORTED_EXTS else term
+
+
 def matches_search(photo: Dict[str, Any], q: str, search_language: str = DEFAULT_SEARCH_LANGUAGE) -> bool:
-    # Match file names literally before natural-language stemming removes
-    # underscores/hyphens. The media extension is not part of the name search.
-    filename = Path(str(photo.get("filename") or "")).stem
-    name_query = _fold_danish(q or "").strip()
-    suffix = Path(name_query).suffix
-    if suffix in SUPPORTED_EXTS:
-        name_query = name_query[:-len(suffix)]
-    if name_query and name_query in _fold_danish(filename):
-        return True
-    term_groups = _query_term_groups(q, search_language)
-    if not term_groups:
-        return True
-
-    fields = [
-        filename.lower(),
-        str(Path(str(photo.get("rel_path") or "")).with_suffix("")).lower() if photo.get("rel_path") else "",
-        str(photo.get("camera_make") or "").lower(),
-        str(photo.get("camera_model") or "").lower(),
-        str(photo.get("lens_model") or "").lower(),
-        str(photo.get("gps_name") or "").lower(),
-        " ".join((photo.get("ai_tags") or [])).lower(),
-        " ".join((photo.get("ai_desc_tags") or [])).lower(),
-        str(photo.get("ai_desc_caption") or "").lower(),
-        str(photo.get("people_names") or "").lower(),
-        str(photo.get("captured_at") or "").lower(),
-        str(photo.get("metadata_json") or "").lower(),
-    ]
-    blob = " ".join(fields)
-    blob_folded = _fold_danish(blob)
-
-    matched = 0
-    for group in term_groups:
-        if any(term and term in blob_folded for term in group):
-            matched += 1
-
-    if matched == len(term_groups):
-        return True
-    if len(term_groups) >= 3:
-        minimum = max(2, (len(term_groups) * 2 + 2) // 3)
-        return matched >= minimum
-    return False
+    """Literal filename-only search; metadata/AI expansion is intentionally off."""
+    term = _filename_search_term(q)
+    return not term or term in _filename_search_key(photo.get("filename", ""))
 
 
 def _photo_contains_any_tags(photo: Dict[str, Any], tags: list[str]) -> bool:
@@ -16528,6 +16500,7 @@ def query_photos(
     limit: int | None = None,
     direct_only: bool = False,
     camera_model: Optional[str] = None,
+    filename_query: str = "",
 ) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
@@ -16541,6 +16514,12 @@ def query_photos(
 
     where = []
     params: list[Any] = []
+    filename_term = _filename_search_term(filename_query)
+    if filename_term:
+        # Literal substring: underscores, percent signs and quotes are not SQL
+        # patterns. Filter before loading metadata, joining faces or paging.
+        where.append("instr(filename_search_key(filename), ?) > 0")
+        params.append(filename_term)
     # Always exclude Synology auto-thumbs and @eaDir content from results
     where.append("(UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%' AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%')")
     where.append("(rel_path NOT LIKE '%/@eaDir/%')")
@@ -16644,6 +16623,8 @@ def query_photos(
             sql += f" OFFSET {int(offset)}"
 
     with closing(get_conn()) as conn:
+        if filename_term:
+            conn.create_function("filename_search_key", 1, _filename_search_key, deterministic=True)
         rows = conn.execute(sql, params).fetchall()
         rows = _dedupe_upload_storage_rows(rows)
         if dedupe_paged_uploads:
@@ -22451,13 +22432,12 @@ def api_photos():
         if request.args.get("browse") == "1" and view in {"timeline", "kameraer", "favorites", "mapper"}:
             from gallery_browse import photo_page
             page_limit = max(1, min(2000, limit or 60))
-            # Interactive search uses indexed names, metadata and stored AI text.
-            # A live Qwen expansion can add eight seconds to every keystroke/page.
+            # Filter filenames in SQL before converting rows or filling a page.
             items, has_more, next_offset = photo_page(
                 lambda start, size: query_photos(view, sort, folder=folder, offset=start,
-                                               limit=size, direct_only=direct_only, camera_model=camera_model),
+                                               limit=size, direct_only=direct_only, camera_model=camera_model, filename_query=q),
                 _filter_public_items_by_current_user_acl,
-                lambda item: not q or matches_search(item, q, search_language=search_language),
+                lambda item: True,
                 offset=offset, limit=page_limit,
             )
             return jsonify({"items": items, "count": len(items), "query": q,
@@ -22480,22 +22460,7 @@ def api_photos():
             except Exception as sync_err:
                 disk_sync = {"ok": False, "error": str(sync_err)}
         items = query_photos(view, sort, folder=folder, offset=offset, limit=limit,
-                             direct_only=direct_only, camera_model=camera_model)
-        if q:
-            # Try AI-assisted expansion to widen matches when helpful
-            expand_tags: list[str] = []
-            if AI_QUERY_EXPAND_ENABLED:
-                try:
-                    expand_tags = _ai_expand_query_tags(q, language=search_language)
-                except Exception:
-                    expand_tags = []
-            if expand_tags:
-                items = [
-                    p for p in items
-                    if matches_search(p, q, search_language=search_language) or _photo_contains_any_tags(p, expand_tags)
-                ]
-            else:
-                items = [p for p in items if matches_search(p, q, search_language=search_language)]
+                             direct_only=direct_only, camera_model=camera_model, filename_query=q)
         items = _filter_public_items_by_current_user_acl(items)
         total = count_mapper_photos(folder) if view == "mapper" and not q else None
         # Provide pagination hints. When limited, we cannot know total cheaply without extra COUNT.
