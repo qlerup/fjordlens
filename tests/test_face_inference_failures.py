@@ -23,6 +23,7 @@ def load_function(file, name, env):
 class FaceFailureTests(unittest.TestCase):
     def video(self, responses, frames=b'jpeg'):
         env = dict(_video_face_sample_timestamps=lambda *a: (3, [0, 1]),
+                   faces_video_index_enabled=lambda: True,
                    _extract_video_frame_bytes=Mock(return_value=frames),
                    _ai_detect_faces_bytes=Mock(side_effect=responses),
                    _dedupe_faces_by_embedding=lambda x: x, log_event=Mock())

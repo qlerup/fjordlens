@@ -72,6 +72,42 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
             conn.commit()
         return rel
 
+    def test_disabled_videos_are_excluded_from_coverage_and_preserve_results(self):
+        image = self._make_photo('image')
+        video_old = self._make_photo('video')
+        video = video_old.replace('.jpg', '.mp4')
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("UPDATE photos SET rel_path=?, people_count=3 WHERE rel_path=?", (video, video_old))
+            conn.commit()
+        fjordlens._set_setting('faces_video_index', '0')
+        self.assertEqual(fjordlens._faces_index_coverage()['missing'], 1)
+        with patch.object(fjordlens, '_ai_detect_faces_path', return_value=[]), \
+             patch.object(fjordlens, '_ai_detect_faces_video_path') as detect_video:
+            stats = fjordlens._run_face_slot_queue([image, video], 2)
+        detect_video.assert_not_called()
+        self.assertEqual(stats['skipped'], 1)
+        self.assertEqual(stats['errors'], 0)
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            row = conn.execute('SELECT people_count, faces_indexed_at FROM photos WHERE rel_path=?', (video,)).fetchone()
+            self.assertEqual(row['people_count'], 3)
+            self.assertFalse(row['faces_indexed_at'])
+            self.assertEqual(conn.execute('SELECT count(*) FROM processing_failures WHERE rel_path=?', (video,)).fetchone()[0], 0)
+        fjordlens._set_setting('faces_video_index', '1')
+        self.assertEqual(fjordlens._faces_index_coverage()['missing'], 1)
+        self.assertTrue(fjordlens._is_faces_index_supported_rel(video))
+
+    def test_switching_video_off_stops_at_next_frame(self):
+        fjordlens._set_setting('faces_video_index', '1')
+        def first_frame(*args, **kwargs):
+            fjordlens._set_setting('faces_video_index', '0')
+            return []
+        with patch.object(fjordlens, '_video_face_sample_timestamps', return_value=(5, [0, 1, 2])), \
+             patch.object(fjordlens, '_extract_video_frame_bytes', return_value=b'jpeg') as extract, \
+             patch.object(fjordlens, '_ai_detect_faces_bytes', side_effect=first_frame):
+            with self.assertRaises(fjordlens.FaceIndexSkipped):
+                fjordlens._ai_detect_faces_video_path(Path('movie.mp4'), 'movie.mp4')
+        self.assertEqual(extract.call_count, 1)
+
     def test_retry_missing_matches_coverage_and_skips_completed_files(self):
         missing = self._make_photo('missing')
         completed = self._make_photo('completed_without_faces')

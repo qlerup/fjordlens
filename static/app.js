@@ -76,6 +76,8 @@ const els = {
   aiStatus: document.getElementById("aiStatus"),
   facesToggle: document.getElementById("facesToggle"),
   facesToggleText: document.getElementById("facesToggleText"),
+  facesVideoToggle: document.getElementById('facesVideoToggle'),
+  facesVideoToggleText: document.getElementById('facesVideoToggleText'),
   facesStatus: document.getElementById("facesStatus"),
   aiIngestThrottleInput: document.getElementById("aiIngestThrottleInput"),
   facesThrottleInput: document.getElementById("facesThrottleInput"),
@@ -1295,6 +1297,8 @@ const I18N = {
     btn_stop_ai_desc: 'Stop beskrivelser',
     btn_force_stop_qwen: 'Afbryd Qwen',
     btn_start_faces: 'Start ansigter',
+    faces_video_toggle: 'Ansigtsgenkendelse på videoer',
+    faces_video_save_error: 'Kunne ikke gemme indstillingen for videoer.',
     btn_stop_faces: 'Stop ansigter',
     btn_index_faces: 'Indekser ansigter',
     status_faces_prefix: 'Ansigter',
@@ -2163,6 +2167,8 @@ const I18N = {
     btn_stop_ai_desc: 'Stop descriptions',
     btn_force_stop_qwen: 'Abort Qwen',
     btn_start_faces: 'Start faces',
+    faces_video_toggle: 'Face recognition in videos',
+    faces_video_save_error: 'Could not save the video setting.',
     btn_stop_faces: 'Stop faces',
     btn_index_faces: 'Index faces',
     status_faces_prefix: 'Faces',
@@ -2863,6 +2869,8 @@ let state = {
   aiDescExternalTotal: 0,
   facesRunning: false,
   facesAutoEnabled: false,
+  facesVideoEnabled: true,
+  facesVideoSaving: false,
   facesRuntime: 'unknown',
   aiScopePendingFeature: null,
   conversionScopePendingType: null,
@@ -13954,6 +13962,7 @@ function applyUiLanguage() {
   updateAiDescribeModelSelect();
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
+  if (els.facesVideoToggleText) els.facesVideoToggleText.textContent = tr('faces_video_toggle');
   if (els.uploadWorkflowTitle) els.uploadWorkflowTitle.textContent = tr('upload_workflow_title');
   if (els.uploadWorkflowDesc) els.uploadWorkflowDesc.textContent = tr('upload_workflow_desc');
   if (els.uploadWorkflowGentleTitle) els.uploadWorkflowGentleTitle.textContent = tr('upload_workflow_gentle_title');
@@ -15863,6 +15872,7 @@ if (els.aiDescribeModelSelect) {
 document.getElementById('facesRetryMissing')?.addEventListener('click', () => startFacesIndex('missing'));
 
 async function pollFacesStatus() {
+  const videoRevision = state.facesVideoRevision || 0;
   try {
     const r = await fetch('/api/faces/status');
     const s = await r.json();
@@ -15883,6 +15893,11 @@ async function pollFacesStatus() {
         : `RAM: afventer sikker måling · ${memory.error || ''}`;
     }).catch(() => {});
     state.facesAutoEnabled = !!(s && s.ok && s.auto_index);
+    if (s?.ok && !state.facesVideoSaving && videoRevision === (state.facesVideoRevision || 0) && els.facesVideoToggle) {
+      state.facesVideoEnabled = s.video_index !== false;
+      els.facesVideoToggle.checked = state.facesVideoEnabled;
+      els.facesVideoToggle.disabled = false;
+    }
     state.facesRuntime = String((s && s.runtime && (s.runtime.faces || s.runtime.ai)) || 'unknown');
     updateFacesToggleButton();
     updateRuntimeIndicator(els.aiFacesRuntime, state.facesRuntime);
@@ -15982,6 +15997,29 @@ async function stopFacesIndex() {
     showStatus(tr('faces_stop_error'), 'err');
   }
 }
+
+els.facesVideoToggle?.addEventListener('change', async () => {
+  state.facesVideoRevision = (state.facesVideoRevision || 0) + 1;
+  const enabled = els.facesVideoToggle.checked;
+  state.facesVideoSaving = true;
+  els.facesVideoToggle.disabled = true;
+  try {
+    const response = await fetch('/api/settings/faces-video', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled})
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error('Save failed');
+    state.facesVideoEnabled = result.enabled;
+  } catch {
+    showStatus(tr('faces_video_save_error'), 'err');
+  } finally {
+    els.facesVideoToggle.checked = state.facesVideoEnabled;
+    state.facesVideoSaving = false;
+    els.facesVideoToggle.disabled = false;
+  }
+  pollFacesStatus();
+});
 
 if (els.facesToggle) {
   els.facesToggle.addEventListener('change', async () => {

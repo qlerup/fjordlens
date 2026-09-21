@@ -43,6 +43,20 @@ class ConversionSettingsTests(unittest.TestCase):
             session["_fresh"] = True
         return client
 
+    def test_video_face_toggle_persists_and_validates_boolean(self):
+        client = self._authenticated_client()
+        self.assertTrue(client.get('/api/settings/faces-video').get_json()['enabled'])
+        for enabled in (False, True):
+            result = client.post('/api/settings/faces-video', json={'enabled': enabled})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(self._authenticated_client().get('/api/settings/faces-video').get_json()['enabled'], enabled)
+        for body in ({'enabled': 'false'}, {}, [], {'enabled': 0}):
+            self.assertEqual(client.post('/api/settings/faces-video', json=body).status_code, 400)
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("UPDATE users SET role='user', is_admin=0 WHERE id=1")
+            conn.commit()
+        self.assertEqual(self._authenticated_client().post('/api/settings/faces-video', json={'enabled': False}).status_code, 403)
+
     def test_conversion_settings_survive_reload_for_all_types(self):
         for conversion_type in ("heic", "raw", "mov"):
             with self.subTest(conversion_type=conversion_type, value=False):

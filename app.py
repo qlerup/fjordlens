@@ -36,7 +36,7 @@ import numpy as np
 import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
-from processing_failures import FailureTracker, ServiceUnavailable
+from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
 from face_retry import FaceRetryGate
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -2091,6 +2091,8 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
     all_faces: list[Dict[str, Any]] = []
     frames_ok = 0
     for sec in timestamps:
+        if not faces_video_index_enabled():
+            raise FaceIndexSkipped('Ansigtsgenkendelse på videoer er slået fra')
         frame_bytes = _extract_video_frame_bytes(path, rel_path, sec)
         if not frame_bytes:
             continue
@@ -2491,6 +2493,8 @@ def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[flo
 @processing_failures.track("faces", lambda rel_path: rel_path, clear_success=False)
 def _detect_faces_for_photo(rel_path: str) -> list[Dict[str, Any]]:
     """Detection-only stage. No SQLite/person writes happen here."""
+    if Path(rel_path).suffix.lower() in VIDEO_EXTS and not faces_video_index_enabled():
+        raise FaceIndexSkipped('Ansigtsgenkendelse på videoer er slået fra')
     disk_path = _disk_path_from_rel_path(rel_path)
     if not disk_path.exists():
         raise FileNotFoundError("Kildefilen findes ikke")
@@ -2703,6 +2707,8 @@ def index_faces_for_photo(
         else:
             faces = _detect_faces_for_photo(rel_path)
         return _store_faces_for_photo(rel_path, faces, source="single")
+    except FaceIndexSkipped:
+        return 0
     except Exception as exc:
         processing_failures.fail(rel_path, "faces", exc)
         log_event("error", rel_path=rel_path, error=f"index_faces_for_photo: {exc}")
@@ -6944,6 +6950,10 @@ def ai_desc_model_enabled() -> str:
 
 def faces_auto_index_enabled() -> bool:
     return _get_setting_bool("faces_auto_index", FACES_ENV_AUTO_INDEX_DEFAULT)
+
+
+def faces_video_index_enabled() -> bool:
+    return _get_setting_bool('faces_video_index', True)
 
 
 def ai_ingest_throttle_enabled_sec() -> float:
@@ -13833,9 +13843,10 @@ faces_counts: Dict[str, int] = {"processed": 0, "total": 0}
 last_faces_result: Optional[Dict[str, Any]] = None
 
 
-def _is_faces_index_supported_rel(rel_path: str) -> bool:
+def _is_faces_index_supported_rel(rel_path: str, video_enabled: Optional[bool] = None) -> bool:
     ext = Path(str(rel_path or "")).suffix.lower()
-    return ext in SUPPORTED_EXTS
+    return ext in SUPPORTED_EXTS and (ext not in VIDEO_EXTS or
+        (faces_video_index_enabled() if video_enabled is None else video_enabled))
 
 
 def _run_face_slot_queue(
@@ -13848,7 +13859,7 @@ def _run_face_slot_queue(
     """Independent GPU producer + batched SQLite consumer."""
     items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
     workers = max(1, min(8, int(concurrency or 1), len(items) or 1))
-    stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers}
+    stats = {"processed": 0, "errors": 0, "faces_found": 0, "workers": workers, "skipped": 0}
     if not items:
         return stats
 
@@ -13879,7 +13890,11 @@ def _run_face_slot_queue(
         stats["processed"] += 1
         if count > 0:
             stats["faces_found"] += 1
-        if error is not None:
+        if isinstance(error, FaceIndexSkipped):
+            stats['skipped'] += 1
+            log_event('faces_index_skipped', rel_path=rel, reason=str(error))
+            error = None
+        elif error is not None:
             stats["errors"] += 1
             if str(error) != "stopped":
                 processing_failures.fail(rel, "faces", error)
@@ -14018,8 +14033,9 @@ def _faces_index_coverage() -> Dict[str, int]:
     except Exception:
         return counts
 
+    video_enabled = faces_video_index_enabled()
     for row in rows:
-        if not _is_faces_index_supported_rel(row["rel_path"]):
+        if not _is_faces_index_supported_rel(row["rel_path"], video_enabled):
             counts["unsupported"] += 1
             continue
         counts["total"] += 1
@@ -14049,7 +14065,8 @@ def _index_faces_worker(all_photos: bool = False):
                     WHERE faces_indexed_at IS NULL OR TRIM(faces_indexed_at) = ''
                     """
                 ).fetchall()
-        rels = [str(row["rel_path"] or "") for row in rows if _is_faces_index_supported_rel(row["rel_path"])]
+        video_enabled = faces_video_index_enabled()
+        rels = [str(row["rel_path"] or "") for row in rows if _is_faces_index_supported_rel(row["rel_path"], video_enabled)]
         total = len(rels)
         faces_counts = {"processed": 0, "total": total}
         batch_size = max(1, int(face_batch_size_enabled()))
@@ -14081,6 +14098,7 @@ def _index_faces_worker(all_photos: bool = False):
             "batch_size": batch_size,
             "queue_mode": "slot_queue",
             "errors": stats["errors"],
+            "skipped": stats.get('skipped', 0),
         }
     finally:
         _ai_face_runtime_release()
@@ -14113,6 +14131,19 @@ def api_faces_stop():
     return jsonify({"ok": True, "running": False, "auto_index": False})
 
 
+@app.route('/api/settings/faces-video', methods=['GET', 'POST'])
+def api_settings_faces_video():
+    forbidden = _forbid_user_role_for_maintenance()
+    if forbidden:
+        return jsonify(forbidden[0]), forbidden[1]
+    if request.method == 'POST':
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or type(body.get('enabled')) is not bool:
+            return jsonify(ok=False, error='enabled skal være true eller false'), 400
+        _set_setting('faces_video_index', '1' if body['enabled'] else '0')
+    return jsonify(ok=True, enabled=faces_video_index_enabled())
+
+
 @app.route("/api/faces/status")
 def api_faces_status():
     rt = _ai_runtime_info()
@@ -14120,6 +14151,7 @@ def api_faces_status():
         "ok": True,
         "running": _faces_running.is_set(),
         "auto_index": faces_auto_index_enabled(),
+        "video_index": faces_video_index_enabled(),
         "batch_size": face_batch_size_enabled(),
         "batch_mode": "slot_queue",
         **faces_counts,

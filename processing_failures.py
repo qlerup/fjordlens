@@ -9,6 +9,10 @@ class ServiceUnavailable(RuntimeError):
     """Transient service failure: keep the item pending, not a corrupt-file error."""
 
 
+class FaceIndexSkipped(RuntimeError):
+    """Video analysis disabled; preserve existing results and pending status."""
+
+
 class FailureTracker:
     def __init__(self, connect):
         self.connect = connect
@@ -68,7 +72,7 @@ class FailureTracker:
                     return fn(*args, **kwargs)
                 try:
                     result = fn(*args, **kwargs)
-                except ServiceUnavailable:
+                except (ServiceUnavailable, FaceIndexSkipped):
                     raise
                 except Exception as exc:
                     self.fail(rel, stage, exc)
