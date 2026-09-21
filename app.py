@@ -37,7 +37,7 @@ import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
-from face_retry import FaceRetryGate
+from face_retry import FaceRetryGate, retry_video_frame
 from ai_service.memory_budget import MemoryBudget, MIB
 
 processing_failures = FailureTracker(lambda: get_conn())
@@ -1764,6 +1764,7 @@ def _ai_stop_description_runtime(force: bool = False) -> Dict[str, Any]:
 
 
 FACE_PREPARE_LOCK = threading.Lock()
+FACE_JOB_CONTEXT = threading.local()
 
 
 def _prepare_face_detection_upload(path: Path) -> tuple[str, bytes]:
@@ -1911,7 +1912,7 @@ def _ai_detect_faces_batch_paths(rel_paths: list[str]) -> Dict[str, Optional[lis
         for rel in ordered_rels:
             results.setdefault(rel, None)
     return results
-def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional[list[Dict[str, Any]]]:
+def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg", *, report_failure: bool = True) -> Optional[list[Dict[str, Any]]]:
     """Send image bytes to AI service for face detection/embeddings."""
     try:
         files = {"file": (filename, data, "application/octet-stream")}
@@ -1923,14 +1924,15 @@ def _ai_detect_faces_bytes(data: bytes, filename: str = "frame.jpg") -> Optional
             js = r.json() or {}
             if js.get("ok") and isinstance(js.get("faces"), list):
                 return js.get("faces")
-        else:
+        elif report_failure:
             log_event("ai_http_error", file=filename, error=f"status:{r.status_code}", detail=r.text[:500])
     except ServiceUnavailable:
         raise
     except (requests.ConnectionError, requests.Timeout) as exc:
         raise ServiceUnavailable('Afventer forbindelse til AI-tjenesten') from exc
     except Exception as e:
-        log_event("error", file=filename, error=f"ai_faces_bytes: {e}")
+        if report_failure:
+            log_event("error", file=filename, error=f"ai_faces_bytes: {e}")
     return None
 
 
@@ -1980,7 +1982,7 @@ def _video_face_sample_timestamps(path: Path, rel_path: str) -> tuple[Optional[f
     return duration, ts
 
 
-def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Optional[bytes]:
+def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float, *, report_failure: bool = True) -> Optional[bytes]:
     """Extract one JPEG frame from video at a timestamp."""
     target_sec = max(0.0, float(at_sec or 0.0))
     last_error: Optional[str] = None
@@ -1998,6 +2000,7 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
                     out_path,
                     seek_seconds=target_sec,
                     max_edge=0,
+                    retry_managed=not report_failure,
                 )
                 if out_path.exists() and out_path.stat().st_size > 0:
                     return out_path.read_bytes()
@@ -2005,14 +2008,12 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
         except Exception as exc:
             last_error = str(exc)
             if not CONVERT_SERVICE_FALLBACK_LOCAL:
-                log_event(
-                    "faces_video_frame_fail",
-                    rel_path=rel_path,
-                    at_sec=round(target_sec, 2),
-                    error=last_error,
-                )
+                if report_failure:
+                    log_event("faces_video_frame_fail", rel_path=rel_path,
+                              at_sec=round(target_sec, 2), error=last_error)
                 return None
-            logger.warning("Video frame worker failed; using local fallback: %s", exc)
+            if report_failure:
+                logger.warning("Video frame worker failed; using local fallback: %s", exc)
     try:
         with tempfile.TemporaryDirectory() as td:
             out_path = Path(td) / "face_frame.jpg"
@@ -2038,7 +2039,7 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
                 try:
                     if out_path.exists():
                         out_path.unlink(missing_ok=True)
-                    subprocess.run(cmd, check=True, timeout=25)
+                    subprocess.run(cmd, check=True, timeout=25, capture_output=not report_failure)
                     if out_path.exists() and out_path.stat().st_size > 0:
                         return out_path.read_bytes()
                 except Exception as e:
@@ -2047,7 +2048,7 @@ def _extract_video_frame_bytes(path: Path, rel_path: str, at_sec: float) -> Opti
     except Exception as e:
         last_error = str(e)
 
-    if last_error:
+    if last_error and report_failure:
         log_event("faces_video_frame_fail", rel_path=rel_path, at_sec=round(target_sec, 2), error=last_error)
     return None
 
@@ -2082,16 +2083,29 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
     _, timestamps = _video_face_sample_timestamps(path, rel_path)
     all_faces: list[Dict[str, Any]] = []
     frames_ok = 0
-    for sec in timestamps:
+    def allowed():
         if not faces_video_index_enabled():
             raise FaceIndexSkipped('Ansigtsgenkendelse på videoer er slået fra')
-        frame_bytes = _extract_video_frame_bytes(path, rel_path, sec)
-        if not frame_bytes:
-            continue
+        if not getattr(FACE_JOB_CONTEXT, 'allowed', lambda: True)():
+            raise FaceIndexSkipped('Ansigtsanalyse stoppet')
+        return True
+
+    for sec in timestamps:
+        try:
+            faces = retry_video_frame(
+                lambda: _extract_video_frame_bytes(path, rel_path, sec, report_failure=False),
+                lambda data: _ai_detect_faces_bytes(data, filename=f"{path.stem}_t{sec:.2f}.jpg", report_failure=False),
+                allowed,
+                lambda attempt, error: log_event('faces_video_frame_retry', rel_path=rel_path,
+                                                 at_sec=round(sec, 2), attempt=attempt, reason=error,
+                                                 message=f"Forsøger frame ved {sec:.2f} sek. igen efter en fejl"),
+            )
+        except FaceIndexSkipped:
+            raise
+        except RuntimeError as exc:
+            log_event('faces_video_frame_fail', rel_path=rel_path, at_sec=round(sec, 2), error=str(exc))
+            raise RuntimeError(f"Face detection failed for video frame at {sec:.2f}s: {exc}") from exc
         frames_ok += 1
-        faces = _ai_detect_faces_bytes(frame_bytes, filename=f"{path.stem}_t{sec:.2f}.jpg")
-        if faces is None:
-            raise RuntimeError(f"Face detection failed for video frame at {sec:.2f}s")
         log_event("faces_video_frame_detect", rel_path=rel_path, at_sec=round(sec, 2), count=len(faces))
         for fc in faces:
             if isinstance(fc, dict):
@@ -13867,11 +13881,18 @@ def _run_face_slot_queue(
     def detect_one(rel: str):
         if not allowed():
             return rel, [], None
+        previous_allowed = getattr(FACE_JOB_CONTEXT, 'allowed', None)
+        FACE_JOB_CONTEXT.allowed = allowed
         try:
             log_event("faces_index_start", rel_path=rel, queue_workers=workers)
             return rel, retry_gate.run(lambda: _detect_faces_for_photo(rel), allowed), None
         except Exception as exc:
             return rel, [], exc
+        finally:
+            if previous_allowed is None:
+                del FACE_JOB_CONTEXT.allowed
+            else:
+                FACE_JOB_CONTEXT.allowed = previous_allowed
 
     persistence_queue: queue.Queue = queue.Queue(maxsize=max(32, workers * 8))
     persistence_done = threading.Event()

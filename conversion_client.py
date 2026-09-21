@@ -56,6 +56,7 @@ def video_thumb(
     *,
     seek_seconds: float = 0.5,
     max_edge: int = 600,
+    retry_managed: bool = False,
 ) -> dict[str, Any]:
     return _post(
         "/video-thumb",
@@ -64,6 +65,7 @@ def video_thumb(
             "dst": str(dst),
             "seek_seconds": float(seek_seconds),
             "max_edge": int(max_edge),
+            "retry_managed": bool(retry_managed),
         },
         timeout=120,
     )

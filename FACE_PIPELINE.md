@@ -23,6 +23,13 @@ gangen for at begrænse RAM-forbruget.
   kræve den eksisterende konvertering til en visningsfil.
 - Videoframes bruger samme ansigtspipeline og eksisterende videotoggle.
   Denne ændring flytter ikke selve frame-udtrækningen fra konverteringstjenesten.
+  Ved fejl genforsøges samme frame én gang efter to sekunder. Første fejl giver
+  en besked om genforsøget; først anden fejl bliver en fejlregistrering. Hvis
+  kun AI-kaldet fejler, genbruges den allerede udpakkede frame. Nul ansigter er
+  et gyldigt resultat og udløser ikke genforsøg. Ved vedvarende fejl markeres
+  videoen ikke som færdig, og tidligere gemte ansigter bevares. Stop af køen
+  eller videotoggle afbryder genforsøget ved næste kontrol; et allerede sendt
+  HTTP-kald kan dog først afsluttes eller nå sin timeout.
 
 ## Hukommelse og status
 

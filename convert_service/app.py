@@ -850,7 +850,10 @@ def video_thumb():
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
-        logger.exception("Video thumbnail failed")
+        if body.get('retry_managed') is True:
+            logger.info("Video frame attempt unsuccessful; caller handles retry: %s", exc)
+        else:
+            logger.exception("Video thumbnail failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 

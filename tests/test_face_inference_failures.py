@@ -3,6 +3,9 @@ import threading
 import json
 import time
 import unittest
+from functools import partial
+from face_retry import retry_video_frame
+from processing_failures import FaceIndexSkipped, ServiceUnavailable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,16 +27,24 @@ class FaceFailureTests(unittest.TestCase):
     def video(self, responses, frames=b'jpeg'):
         env = dict(_video_face_sample_timestamps=lambda *a: (3, [0, 1]),
                    faces_video_index_enabled=lambda: True,
+                   FACE_JOB_CONTEXT=threading.local(), FaceIndexSkipped=FaceIndexSkipped,
+                   retry_video_frame=partial(retry_video_frame, delay=0),
                    _extract_video_frame_bytes=Mock(return_value=frames),
                    _ai_detect_faces_bytes=Mock(side_effect=responses),
                    _dedupe_faces_by_embedding=lambda x: x, log_event=Mock())
         return load_function('app.py', '_ai_detect_faces_video_path', env), env
 
     def test_failed_frame_is_not_empty_success(self):
-        fn, env = self.video([[], None])
+        fn, env = self.video([[], None, None])
         with self.assertRaisesRegex(RuntimeError, 'frame at 1.00s'):
             fn(Path('test.mp4'), 'test.mp4')
         self.assertNotIn('faces_video_detect_done', [c.args[0] for c in env['log_event'].call_args_list])
+        self.assertEqual(env['_ai_detect_faces_bytes'].call_count, 3)
+        retries = [c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_frame_retry']
+        failures = [c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_frame_fail']
+        self.assertEqual(len(retries), 1)
+        self.assertEqual(len(failures), 1)
+        self.assertNotIn('error', retries[0].kwargs)
 
     def test_valid_empty_results_succeed(self):
         fn, _ = self.video([[], []])
@@ -41,8 +52,41 @@ class FaceFailureTests(unittest.TestCase):
 
     def test_undecodable_video_is_not_empty_success(self):
         fn, _ = self.video([], frames=None)
-        with self.assertRaisesRegex(RuntimeError, 'No video frames'):
+        with self.assertRaisesRegex(RuntimeError, 'frame at 0.00s'):
             fn(Path('test.mp4'), 'test.mp4')
+
+    def test_failed_extract_retries_same_timestamp_before_next_frame(self):
+        fn, env = self.video([[], []])
+        env['_extract_video_frame_bytes'].side_effect = [None, b'jpeg', b'jpeg']
+        self.assertEqual(fn(Path('test.mp4'), 'test.mp4'), [])
+        self.assertEqual([c.args[2] for c in env['_extract_video_frame_bytes'].call_args_list], [0, 0, 1])
+        done = next(c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_detect_done')
+        self.assertEqual(done.kwargs['sampled_frames'], done.kwargs['decoded_frames'])
+        self.assertFalse(any(c.args[0] == 'faces_video_frame_fail' for c in env['log_event'].call_args_list))
+
+    def test_ai_timeout_reuses_decoded_frame(self):
+        fn, env = self.video([ServiceUnavailable('timeout'), [], []])
+        self.assertEqual(fn(Path('test.mp4'), 'test.mp4'), [])
+        self.assertEqual(env['_extract_video_frame_bytes'].call_count, 2)
+        names = [c.kwargs['filename'] for c in env['_ai_detect_faces_bytes'].call_args_list]
+        self.assertEqual(names, ['test_t0.00.jpg', 'test_t0.00.jpg', 'test_t1.00.jpg'])
+
+    def test_zero_faces_is_success_without_retry(self):
+        fn, env = self.video([[], []])
+        self.assertEqual(fn(Path('test.mp4'), 'test.mp4'), [])
+        self.assertEqual(env['_ai_detect_faces_bytes'].call_count, 2)
+        self.assertFalse(any(c.args[0] == 'faces_video_frame_retry' for c in env['log_event'].call_args_list))
+
+    def test_stop_during_retry_does_not_advance_or_complete_video(self):
+        fn, env = self.video([], frames=None)
+        running = threading.Event()
+        running.set()
+        env['FACE_JOB_CONTEXT'].allowed = running.is_set
+        env['log_event'].side_effect = lambda *a, **kw: running.clear()
+        with self.assertRaises(FaceIndexSkipped):
+            fn(Path('test.mp4'), 'test.mp4')
+        self.assertEqual(env['_extract_video_frame_bytes'].call_count, 1)
+        self.assertFalse(any(c.args[0] == 'faces_video_detect_done' for c in env['log_event'].call_args_list))
 
     def runtime(self, factory):
         lock = threading.RLock()

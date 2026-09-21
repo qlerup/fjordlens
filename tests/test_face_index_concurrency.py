@@ -96,6 +96,18 @@ class FaceIndexConcurrencyTests(unittest.TestCase):
             with self.assertRaises(ServiceUnavailable):
                 fjordlens._prepare_face_detection_upload(path)
 
+    def test_frame_retry_owner_suppresses_initial_extraction_error_log(self):
+        with patch.object(fjordlens, 'CONVERT_URL_EXPLICIT', True), \
+             patch.object(fjordlens, 'CONVERT_SERVICE_FALLBACK_LOCAL', False), \
+             patch.object(fjordlens, 'CONVERSION_WORK_DIR', self.uploads), \
+             patch.object(fjordlens.conversion_client, 'video_thumb', side_effect=RuntimeError('offline')) as convert, \
+             patch.object(fjordlens, 'log_event') as log:
+            self.assertIsNone(fjordlens._extract_video_frame_bytes(Path('movie.mp4'), 'movie.mp4', 1.5, report_failure=False))
+            log.assert_not_called()
+            self.assertTrue(convert.call_args.kwargs['retry_managed'])
+            self.assertIsNone(fjordlens._extract_video_frame_bytes(Path('movie.mp4'), 'movie.mp4', 1.5))
+            self.assertEqual(log.call_args.args[0], 'faces_video_frame_fail')
+
     def test_disabled_videos_are_excluded_from_coverage_and_preserve_results(self):
         image = self._make_photo('image')
         video_old = self._make_photo('video')
