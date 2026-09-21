@@ -167,9 +167,14 @@ class MemoryGovernor:
                      caps[c['id']] < c['usage'] + HEADROOM[c['service']]
                      for c in containers)
         if unsafe:
-            return {**measurement, 'pressure': True, 'deferred_resize': True,
+            # Keep live hard limits, but advertise the smaller admission budget
+            # per service. Their sum stays within Hub's budget. An unsafe resize
+            # is not itself host pressure and must not freeze unrelated jobs.
+            return {**measurement, 'deferred_resize': True,
                     '_sample_at': time.monotonic(),
-                    'containers': {c['service']: {'usage_bytes': c['usage'], 'limit_bytes': c['limit']}
+                    'containers': {c['service']: {'usage_bytes': c['usage'],
+                                   'limit_bytes': min(c['limit'], caps[c['id']]) if c['limit'] else caps[c['id']],
+                                   'hard_limit_bytes': c['limit']}
                                    for c in containers}}
         # Shrink before growing: reallocating memory must not temporarily double it.
         containers.sort(key=lambda c: caps[c['id']] - (c['limit'] or total))

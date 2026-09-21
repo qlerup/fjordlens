@@ -48,9 +48,10 @@ class MemoryGuardTests(unittest.TestCase):
             return {}
         state = governor.MemoryGovernor(api=api).sample()
         self.assertEqual(updates, [])
-        self.assertTrue(state['pressure'])
+        self.assertFalse(state['pressure'])
         self.assertTrue(state['deferred_resize'])
-        self.assertEqual(state['containers']['fjordlens-ai']['limit_bytes'], 6*GIB)
+        self.assertEqual(state['containers']['fjordlens-ai']['hard_limit_bytes'], 6*GIB)
+        self.assertLessEqual(state['containers']['fjordlens-ai']['limit_bytes'], state['budget_bytes'])
 
     def test_admission_respects_newer_actual_hard_limit(self):
         client = admission.MemoryBudget('fjordlens-ai')
