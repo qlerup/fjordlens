@@ -15883,12 +15883,12 @@ async function pollMemoryStatus() {
     label.hidden = !memory.enabled;
     const gib = value => (Number(value || 0) / 1073741824).toFixed(2);
     label.textContent = !memory.ok
-      ? `RAM: afventer sikker m?ling ? ${memory.error || ''}`
+      ? `RAM: afventer sikker måling · ${memory.error || ''}`
       : memory.mode === 'host_global'
-        ? `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB ? reserve ${gib(memory.reserve_bytes)} GiB ? reserveret til job ${gib(memory.reserved_bytes)} GiB ? ledig jobplads ${gib(memory.available_bytes)} GiB${memory.pressure ? ' ? afventer RAM' : ''}`
-        : `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB ? reserve ${gib(memory.reserve_bytes)} GiB ? afventer opdateret RAM-styring`;
+        ? `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · reserveret til job ${gib(memory.reserved_bytes)} GiB · ledig jobplads ${gib(memory.available_bytes)} GiB${memory.pressure ? ' · afventer RAM' : ''}`
+        : `RAM: Hele FjordHub ${gib(memory.used_bytes)} / ${gib(memory.total_bytes)} GiB · reserve ${gib(memory.reserve_bytes)} GiB · afventer opdateret RAM-styring`;
   } catch {
-    label.textContent = 'RAM: kunne ikke hente en aktuel m?ling';
+    label.textContent = 'RAM: kunne ikke hente en aktuel måling';
   } finally {
     memoryStatusPending = false;
   }

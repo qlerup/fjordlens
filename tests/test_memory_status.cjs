@@ -27,8 +27,11 @@ test('RAM keeps updating independently of a stopped face queue and clears stale 
   used = 2.38;
   await tick();
   assert.match(label.textContent, /2\.38 \/ 10\.00/);
+  assert.equal((label.textContent.match(/·/g) || []).length, 3);
+  assert.ok(!label.textContent.includes('?'));
   failed = true;
   await tick();
   assert.match(label.textContent, /kunne ikke hente/);
+  assert.match(label.textContent, /måling/);
   assert.doesNotMatch(label.textContent, /2\.38/);
 });
