@@ -77,6 +77,8 @@ const els = {
   facesToggle: document.getElementById("facesToggle"),
   facesToggleText: document.getElementById("facesToggleText"),
   facesVideoToggle: document.getElementById('facesVideoToggle'),
+  facesVideoInterval: document.getElementById('facesVideoInterval'),
+  facesVideoIntervalSave: document.getElementById('facesVideoIntervalSave'),
   facesVideoToggleText: document.getElementById('facesVideoToggleText'),
   facesStatus: document.getElementById("facesStatus"),
   aiIngestThrottleInput: document.getElementById("aiIngestThrottleInput"),
@@ -1298,6 +1300,10 @@ const I18N = {
     btn_force_stop_qwen: 'Afbryd Qwen',
     btn_start_faces: 'Start ansigter',
     faces_video_toggle: 'Ansigtsgenkendelse på videoer',
+    faces_video_interval: 'Sekunder mellem videoscanninger',
+    faces_video_interval_save: 'Gem interval',
+    faces_video_interval_saved: 'Interval gemt',
+    faces_video_interval_hint: 'Højst {count} billeder pr. video. Gælder fra næste video; allerede scannede videoer ændres ikke.',
     faces_video_save_error: 'Kunne ikke gemme indstillingen for videoer.',
     btn_stop_faces: 'Stop ansigter',
     btn_index_faces: 'Indekser ansigter',
@@ -2168,6 +2174,10 @@ const I18N = {
     btn_force_stop_qwen: 'Abort Qwen',
     btn_start_faces: 'Start faces',
     faces_video_toggle: 'Face recognition in videos',
+    faces_video_interval: 'Seconds between video scans',
+    faces_video_interval_save: 'Save interval',
+    faces_video_interval_saved: 'Interval saved',
+    faces_video_interval_hint: 'At most {count} frames per video. Applies from the next video; previously scanned videos are unchanged.',
     faces_video_save_error: 'Could not save the video setting.',
     btn_stop_faces: 'Stop faces',
     btn_index_faces: 'Index faces',
@@ -13965,6 +13975,8 @@ function applyUiLanguage() {
   if (els.aiFacesTitle) els.aiFacesTitle.textContent = tr('ai_faces_title');
   if (els.aiFacesDesc) els.aiFacesDesc.textContent = tr('ai_faces_desc');
   if (els.facesVideoToggleText) els.facesVideoToggleText.textContent = tr('faces_video_toggle');
+  document.getElementById('facesVideoIntervalLabel')?.replaceChildren(tr('faces_video_interval'));
+  els.facesVideoIntervalSave?.replaceChildren(tr('faces_video_interval_save'));
   if (els.uploadWorkflowTitle) els.uploadWorkflowTitle.textContent = tr('upload_workflow_title');
   if (els.uploadWorkflowDesc) els.uploadWorkflowDesc.textContent = tr('upload_workflow_desc');
   if (els.uploadWorkflowGentleTitle) els.uploadWorkflowGentleTitle.textContent = tr('upload_workflow_gentle_title');
@@ -15899,6 +15911,7 @@ async function pollMemoryStatus() {
 
 async function pollFacesStatus() {
   const videoRevision = state.facesVideoRevision || 0;
+  const intervalRevision = state.facesVideoIntervalRevision || 0;
   try {
     const r = await fetch('/api/faces/status');
     const s = await r.json();
@@ -15914,6 +15927,14 @@ async function pollFacesStatus() {
       state.facesVideoEnabled = s.video_index !== false;
       els.facesVideoToggle.checked = state.facesVideoEnabled;
       els.facesVideoToggle.disabled = false;
+    }
+    if (s?.ok && Number.isFinite(s.video_interval_seconds) && els.facesVideoInterval && intervalRevision === (state.facesVideoIntervalRevision || 0)) {
+      if (!state.facesVideoIntervalDirty && !state.facesVideoIntervalSaving) {
+        els.facesVideoInterval.value = s.video_interval_seconds;
+      }
+      els.facesVideoInterval.disabled = !!state.facesVideoIntervalSaving;
+      els.facesVideoIntervalSave.disabled = !!state.facesVideoIntervalSaving;
+      document.getElementById('facesVideoIntervalHint').textContent = tr('faces_video_interval_hint').replace('{count}', s.video_max_frames);
     }
     state.facesRuntime = String((s && s.runtime && (s.runtime.faces || s.runtime.ai)) || 'unknown');
     updateFacesToggleButton();
@@ -16014,6 +16035,38 @@ async function stopFacesIndex() {
     showStatus(tr('faces_stop_error'), 'err');
   }
 }
+
+els.facesVideoInterval?.addEventListener('input', () => {
+  state.facesVideoIntervalDirty = true;
+  document.getElementById('facesVideoIntervalFeedback').textContent = '';
+});
+els.facesVideoIntervalSave?.addEventListener('click', async () => {
+  const field = els.facesVideoInterval;
+  field.required = true;
+  if (!field.reportValidity()) return;
+  state.facesVideoIntervalRevision = (state.facesVideoIntervalRevision || 0) + 1;
+  state.facesVideoIntervalSaving = true;
+  field.disabled = true;
+  els.facesVideoIntervalSave.disabled = true;
+  const feedback = document.getElementById('facesVideoIntervalFeedback');
+  try {
+    const response = await fetch('/api/settings/faces-video', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({interval_seconds: Number(field.value)})
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error('Save failed');
+    field.value = result.interval_seconds;
+    state.facesVideoIntervalDirty = false;
+    feedback.textContent = tr('faces_video_interval_saved');
+  } catch {
+    feedback.textContent = tr('faces_video_save_error');
+  } finally {
+    state.facesVideoIntervalSaving = false;
+    field.disabled = false;
+    els.facesVideoIntervalSave.disabled = false;
+  }
+});
 
 els.facesVideoToggle?.addEventListener('change', async () => {
   state.facesVideoRevision = (state.facesVideoRevision || 0) + 1;

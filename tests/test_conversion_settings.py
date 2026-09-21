@@ -57,6 +57,27 @@ class ConversionSettingsTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self._authenticated_client().post('/api/settings/faces-video', json={'enabled': False}).status_code, 403)
 
+    def test_video_interval_persists_validates_and_changes_sampling(self):
+        client = self._authenticated_client()
+        with patch.object(fjordlens, 'VIDEO_FACE_SAMPLE_INTERVAL_SEC', 3.0):
+            self.assertEqual(client.get('/api/settings/faces-video').get_json()['interval_seconds'], 3)
+        self.assertEqual(client.post('/api/settings/faces-video', json={'interval_seconds': 10}).status_code, 200)
+        self.assertEqual(self._authenticated_client().get('/api/settings/faces-video').get_json()['interval_seconds'], 10)
+        with patch.object(fjordlens, '_video_duration_seconds', return_value=31), \
+             patch.object(fjordlens, 'VIDEO_FACE_SAMPLE_START_SEC', 0.5), \
+             patch.object(fjordlens, 'VIDEO_FACE_SAMPLE_MAX_FRAMES', 24), \
+             patch.object(fjordlens, 'log_event'):
+            self.assertEqual(fjordlens._video_face_sample_timestamps(Path('test.mp4'), 'test.mp4')[1],
+                             [0.5, 10.5, 20.5, 30.5])
+        for value in (True, None, '10', 0, -1, 3601, float('nan'), float('inf')):
+            self.assertEqual(client.post('/api/settings/faces-video', json={'interval_seconds': value, 'enabled': False}).status_code, 400)
+        self.assertTrue(client.get('/api/settings/faces-video').get_json()['enabled'])
+        self.assertEqual(fjordlens.faces_video_sample_interval(), 10)
+        with patch.object(fjordlens, '_video_duration_seconds', return_value=10000), \
+             patch.object(fjordlens, 'VIDEO_FACE_SAMPLE_MAX_FRAMES', 24), \
+             patch.object(fjordlens, 'log_event'):
+            self.assertEqual(len(fjordlens._video_face_sample_timestamps(Path('test.mp4'), 'test.mp4')[1]), 24)
+
     def test_conversion_settings_survive_reload_for_all_types(self):
         for conversion_type in ("heic", "raw", "mov"):
             with self.subTest(conversion_type=conversion_type, value=False):

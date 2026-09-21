@@ -604,6 +604,13 @@
                     <span id="facesVideoToggleText" class="mini-label">Ansigtsgenkendelse på videoer</span>
                   </label>
                 </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0;">
+                  <label for="facesVideoInterval" id="facesVideoIntervalLabel" class="mini-label">Sekunder mellem videoscanninger</label>
+                  <input id="facesVideoInterval" class="input-number small" type="number" min="0.5" max="3600" step="any" style="width:90px;" aria-describedby="facesVideoIntervalHint" disabled />
+                  <button id="facesVideoIntervalSave" type="button" class="btn small" disabled>Gem interval</button>
+                  <span id="facesVideoIntervalFeedback" class="mini-label" role="status"></span>
+                </div>
+                <div id="facesVideoIntervalHint" class="mini-label" style="margin-bottom:8px;"></div>
                 <div id="aiFacesRuntime" class="mini-label">Runtime: —</div>
                 <div id="facesStatus" class="mini-label">Ansigter: —</div>
                 <button id="facesRetryMissing" type="button" class="btn small" disabled>Genkør manglende</button>

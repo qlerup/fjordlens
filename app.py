@@ -1956,7 +1956,7 @@ def _video_face_sample_timestamps(path: Path, rel_path: str) -> tuple[Optional[f
     """Build sampling timestamps for video face detection."""
     duration = _video_duration_seconds(path)
     start = max(0.0, VIDEO_FACE_SAMPLE_START_SEC)
-    interval = max(0.5, VIDEO_FACE_SAMPLE_INTERVAL_SEC)
+    interval = faces_video_sample_interval()
     max_frames = max(1, VIDEO_FACE_SAMPLE_MAX_FRAMES)
 
     if not duration:
@@ -6962,6 +6962,19 @@ def faces_auto_index_enabled() -> bool:
 
 def faces_video_index_enabled() -> bool:
     return _get_setting_bool('faces_video_index', True)
+
+
+def faces_video_sample_interval() -> float:
+    default = VIDEO_FACE_SAMPLE_INTERVAL_SEC
+    if not math.isfinite(default):
+        default = 3.0
+    try:
+        value = float(_get_setting('faces_video_sample_interval', str(default)))
+        if not math.isfinite(value):
+            value = default
+    except (TypeError, ValueError):
+        value = default
+    return min(3600.0, max(0.5, value))
 
 
 def ai_ingest_throttle_enabled_sec() -> float:
@@ -14153,10 +14166,19 @@ def api_settings_faces_video():
         return jsonify(forbidden[0]), forbidden[1]
     if request.method == 'POST':
         body = request.get_json(silent=True)
-        if not isinstance(body, dict) or type(body.get('enabled')) is not bool:
+        if not isinstance(body, dict) or not ({'enabled', 'interval_seconds'} & body.keys()):
+            return jsonify(ok=False, error='Ingen videoindstilling angivet'), 400
+        if 'enabled' in body and type(body['enabled']) is not bool:
             return jsonify(ok=False, error='enabled skal være true eller false'), 400
-        _set_setting('faces_video_index', '1' if body['enabled'] else '0')
-    return jsonify(ok=True, enabled=faces_video_index_enabled())
+        if 'interval_seconds' in body:
+            value = body['interval_seconds']
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0.5 <= value <= 3600:
+                return jsonify(ok=False, error='Interval skal være mellem 0,5 og 3600 sekunder'), 400
+            _set_setting('faces_video_sample_interval', str(value))
+        if 'enabled' in body:
+            _set_setting('faces_video_index', '1' if body['enabled'] else '0')
+    return jsonify(ok=True, enabled=faces_video_index_enabled(), interval_seconds=faces_video_sample_interval(),
+                   max_frames=max(1, VIDEO_FACE_SAMPLE_MAX_FRAMES))
 
 
 @app.route("/api/faces/status")
@@ -14167,6 +14189,8 @@ def api_faces_status():
         "running": _faces_running.is_set(),
         "auto_index": faces_auto_index_enabled(),
         "video_index": faces_video_index_enabled(),
+        "video_interval_seconds": faces_video_sample_interval(),
+        "video_max_frames": max(1, VIDEO_FACE_SAMPLE_MAX_FRAMES),
         "batch_size": face_batch_size_enabled(),
         "batch_mode": "slot_queue",
         **faces_counts,
