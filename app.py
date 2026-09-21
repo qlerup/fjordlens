@@ -15263,6 +15263,38 @@ def _row_to_share_public(row: sqlite3.Row, token: str, *, can_download: bool = F
     return d
 
 
+@app.get('/api/people/suggest')
+@login_required
+def api_people_suggest():
+    prefix = _fold_danish(request.args.get('q', '').strip())[:200]
+    with closing(get_conn()) as conn:
+        conn.create_function('person_name_key', 1, lambda name: _fold_danish(str(name or '').strip()), deterministic=True)
+        conn.create_function('person_is_named', 1, lambda name: bool(str(name or '').strip()) and not bool(
+            re.fullmatch(r'(?:Ukendt|Unknown)(?:-\d+)?', str(name).strip(), re.I)), deterministic=True)
+        acl = _current_user_acl_prefixes(conn)
+        params = [len(prefix), prefix]
+        visibility = ''
+        if acl is not None:
+            conn.create_function('search_acl_path', 1, _normalize_rel_path_for_acl, deterministic=True)
+            owned = conn.execute('SELECT folder_path FROM folder_owners WHERE user_id=?',
+                                 (int(current_user.id),)).fetchall()
+            acl = list(dict.fromkeys([*acl, *[_normalize_rel_path_for_acl(row['folder_path']) for row in owned]]))
+            clauses = []
+            for folder in acl:
+                clauses.append('(search_acl_path(ph.rel_path)=? OR substr(search_acl_path(ph.rel_path),1,length(?)+1)=?||\'/\')')
+                params.extend([folder, folder, folder])
+            visibility = ' AND (' + (' OR '.join(clauses) or '0=1') + ')'
+        rows = conn.execute(f"""
+            SELECT p.id, p.name FROM people p
+            WHERE COALESCE(p.hidden,0)=0 AND person_is_named(p.name)
+              AND substr(person_name_key(p.name),1,?) = ?
+              AND EXISTS (SELECT 1 FROM faces f JOIN photos ph ON ph.id=f.photo_id
+                          WHERE f.person_id=p.id {visibility})
+            ORDER BY person_name_key(p.name), p.id LIMIT 51
+        """, params).fetchall()
+        return jsonify(items=[dict(row) for row in rows[:50]], has_more=len(rows)>50)
+
+
 @app.route("/api/people")
 def api_people_list():
     """List people with face counts and a sample thumbnail."""
@@ -16501,6 +16533,7 @@ def query_photos(
     direct_only: bool = False,
     camera_model: Optional[str] = None,
     filename_query: str = "",
+    person_ids: Optional[list[int]] = None,
 ) -> list[Dict[str, Any]]:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
@@ -16514,6 +16547,10 @@ def query_photos(
 
     where = []
     params: list[Any] = []
+    for person_id in dict.fromkeys(person_ids or []):
+        where.append('EXISTS (SELECT 1 FROM faces sf JOIN people sp ON sp.id=sf.person_id '
+                     'WHERE sf.photo_id=photos.id AND sf.person_id=? AND COALESCE(sp.hidden,0)=0)')
+        params.append(person_id)
     filename_term = _filename_search_term(filename_query)
     if filename_term:
         # Literal substring: underscores, percent signs and quotes are not SQL
@@ -22399,12 +22436,21 @@ def api_cameras():
 @app.route("/api/photos")
 def api_photos():
     q = request.args.get("q", "").strip()
+    try:
+        raw_people = request.args.getlist('person')
+        if len(raw_people) > 20:
+            raise ValueError()
+        person_ids = list(dict.fromkeys(int(value) for value in raw_people))
+        if any(value <= 0 for value in person_ids):
+            raise ValueError()
+    except ValueError:
+        return jsonify(ok=False, error='Invalid person filter'), 400
     view = request.args.get("view", "library")
     sort = request.args.get("sort", "date_desc")
     folder = request.args.get("folder")
     camera_model = request.args.get("camera") if view == "kameraer" else None
     direct_only = str(request.args.get("direct") or "").strip().lower() in {"1", "true", "yes", "on"}
-    if view == "mapper" and q:
+    if view == "mapper" and (q or person_ids):
         direct_only = False
     try:
         offset = int(str(request.args.get("offset") or "0"))
@@ -22435,7 +22481,8 @@ def api_photos():
             # Filter filenames in SQL before converting rows or filling a page.
             items, has_more, next_offset = photo_page(
                 lambda start, size: query_photos(view, sort, folder=folder, offset=start,
-                                               limit=size, direct_only=direct_only, camera_model=camera_model, filename_query=q),
+                                               limit=size, direct_only=direct_only, camera_model=camera_model,
+                                               filename_query=q, person_ids=person_ids),
                 _filter_public_items_by_current_user_acl,
                 lambda item: True,
                 offset=offset, limit=page_limit,
@@ -22460,9 +22507,9 @@ def api_photos():
             except Exception as sync_err:
                 disk_sync = {"ok": False, "error": str(sync_err)}
         items = query_photos(view, sort, folder=folder, offset=offset, limit=limit,
-                             direct_only=direct_only, camera_model=camera_model, filename_query=q)
+                             direct_only=direct_only, camera_model=camera_model, filename_query=q, person_ids=person_ids)
         items = _filter_public_items_by_current_user_acl(items)
-        total = count_mapper_photos(folder) if view == "mapper" and not q else None
+        total = count_mapper_photos(folder) if view == "mapper" and not q and not person_ids else None
         # Provide pagination hints. When limited, we cannot know total cheaply without extra COUNT.
         has_more = bool(limit) and (len(items) >= int(limit or 0))
         next_offset = (offset or 0) + len(items)

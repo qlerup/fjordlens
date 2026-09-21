@@ -881,7 +881,7 @@ const I18N = {
     nav_settings: '⚙️ Indstillinger',
     profile_link: 'Profil',
     logout_link: 'Log ud',
-    search_placeholder: 'Søg efter filnavn...',
+    search_placeholder: 'Filnavn eller @person · Enter for at søge',
     tab_maint: 'Vedligeholdelse',
     tab_update: 'Opdatering',
     tab_ai: 'AI',
@@ -1751,7 +1751,7 @@ const I18N = {
     nav_settings: '⚙️ Settings',
     profile_link: 'Profile',
     logout_link: 'Log out',
-    search_placeholder: 'Search by filename...',
+    search_placeholder: 'Filename or @person · Enter to search',
     tab_maint: 'Maintenance',
     tab_update: 'Update',
     tab_ai: 'AI',
@@ -6082,6 +6082,7 @@ async function refreshMapperViewInBackground() {
   const qs = new URLSearchParams({view:'mapper',folder:state.mapperPath || '',direct:'1',q:state.q || '',
     sort:_normalizeMapperSort(state.mapperSort),search_lang:state.searchLanguage || 'da',offset:'0',
     limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false)))), browse:'1'});
+  appendPersonSearchParams(qs);
   try {
     const [photos, folders] = await Promise.all([
       fetch(`/api/photos?${qs}`).then(async response => {
@@ -8251,6 +8252,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   if (pagedView) qs.set('browse', '1');
   if (state.view === 'kameraer' && state.cameraModel) qs.set('camera', state.cameraModel);
   const cameraOverview = state.view === 'kameraer' && !state.cameraModel;
+  appendPersonSearchParams(qs);
   const photoUrl = `${cameraOverview ? '/api/cameras' : '/api/photos'}?${qs.toString()}`;
 
   state.photosLoading = true;
@@ -14928,17 +14930,26 @@ async function saveMapperThumbnailPickerSelection() {
 
 function _syncSearchInputs(value, source = null) {
   const v = String(value || '');
-  if (els.search && source !== 'top') els.search.value = v;
-  if (els.mapperSearchInput && source !== 'mapper') els.mapperSearchInput.value = v;
+  if (els.search && source !== 'top' && els.search.value !== v) els.search.value = v;
+  if (els.mapperSearchInput && source !== 'mapper' && els.mapperSearchInput.value !== v) els.mapperSearchInput.value = v;
 }
 
-let searchLoadTimer = null;
-function scheduleSearchLoad(delay = 320) {
-  if (searchLoadTimer) clearTimeout(searchLoadTimer);
-  searchLoadTimer = setTimeout(() => {
-    searchLoadTimer = null;
+const personSearch = PersonSearch.create({
+  inputs: [els.search, els.mapperSearchInput].filter(Boolean),
+  onDraft: value => _syncSearchInputs(value),
+  onSubmit: value => {
+    state.q = value.trim();
+    _syncSearchInputs(value);
     loadPhotos();
-  }, delay);
+  },
+  texts: () => state.uiLanguage === 'en'
+    ? {people: 'People', loading: 'Loading people...', empty: 'No people found', error: 'Could not load people', more: 'Type more letters to narrow the list'}
+    : {people: 'Personer', loading: 'Henter personer...', empty: 'Ingen personer fundet', error: 'Kunne ikke hente personer', more: 'Skriv flere bogstaver for at afgrænse listen'}
+});
+function appendPersonSearchParams(params) {
+  const parsed = personSearch.parse(state.q || '');
+  params.set('q', parsed.query);
+  for (const id of parsed.people) params.append('person', String(id));
 }
 
 function expandSearchField(focusInput = true) {
@@ -15051,11 +15062,7 @@ if (els.mapperSearchInput) {
       try { els.mapperSearchInput.blur(); } catch {}
     }
   });
-  els.mapperSearchInput.addEventListener('input', () => {
-    state.q = els.mapperSearchInput.value.trim();
-    _syncSearchInputs(els.mapperSearchInput.value, 'mapper');
-    scheduleSearchLoad();
-  });
+
 }
 if (els.mapperEditBtn) {
   let _menuOpenedByTouchAt = 0;
@@ -15324,11 +15331,7 @@ if (els.detailReprocessBtn) {
 if (els.search) {
   _syncSearchInputs(els.search.value || '', 'top');
 }
-els.search.addEventListener("input", () => {
-  state.q = els.search.value.trim();
-  _syncSearchInputs(els.search.value, 'top');
-  scheduleSearchLoad();
-});
+
 els.sort.addEventListener("change", () => {
   state.sort = els.sort.value;
   loadPhotos();
