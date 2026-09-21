@@ -15,6 +15,26 @@ GIB = 1024**3
 
 
 class MemoryGuardTests(unittest.TestCase):
+    def test_tiny_updater_resize_does_not_pause_the_face_queue(self):
+        # Actual stall: 16 MiB updater shrinks 129 -> 128 MiB. It must not
+        # inherit the web worker's 512 MiB safety margin and freeze all jobs.
+        config = dict(Memory=129*governor.MIB, MemorySwap=129*governor.MIB)
+        def api(method, path, body=None):
+            if path.startswith('/containers/json?'):
+                return [dict(Id='updater', Labels={'com.docker.compose.service': 'fjordlens-updater'})]
+            if path.endswith('/json'):
+                return dict(State={'Running': True}, HostConfig=config)
+            if '/stats?' in path:
+                return dict(memory_stats={'usage': 16*governor.MIB})
+            if path.endswith('/update'):
+                config.update(body)
+                return {}
+            self.fail(path)
+        state = governor.MemoryGovernor(api=api).sample()
+        self.assertFalse(state['pressure'])
+        self.assertFalse(state.get('deferred_resize', False))
+        self.assertEqual(config['Memory'], 128*governor.MIB)
+
     def test_live_shrink_that_would_kill_work_is_deferred(self):
         updates = []
         def api(method, path, body=None):

@@ -15,6 +15,8 @@ HUB_MEMORY_PROTOCOL = '2'
 FLOORS = {'fjordlens': 2048*MIB, 'fjordlens-ai': 2048*MIB,
           'fjordlens-convert': 256*MIB, 'fjordlens-updater': 128*MIB}
 WEIGHTS = {'fjordlens': 1, 'fjordlens-ai': 8, 'fjordlens-convert': 3, 'fjordlens-updater': 0}
+HEADROOM = {'fjordlens': 512*MIB, 'fjordlens-ai': 1024*MIB,
+            'fjordlens-convert': 640*MIB, 'fjordlens-updater': 64*MIB}
 _api_version = None
 
 
@@ -89,8 +91,7 @@ def allocate(total, host_used, containers):
     # otherwise an idle converter can stay permanently below its start threshold.
     bases = {}
     for c in containers:
-        headroom = {'fjordlens-convert': 640*MIB, 'fjordlens-ai': 1024*MIB,
-                    'fjordlens': 512*MIB}.get(c['service'], 64*MIB)
+        headroom = HEADROOM[c['service']]
         rounded = ((c['usage'] + headroom + 64*MIB - 1)//(64*MIB))*64*MIB
         bases[c['id']] = max(FLOORS[c['service']], rounded)
     baseline = sum(bases.values())
@@ -163,7 +164,7 @@ class MemoryGovernor:
         # Never force reclaim of live work to chase a changing budget. A low
         # budget pauses admission; it must not kill the jobs already in flight.
         unsafe = any(caps[c['id']] < c['limit'] and
-                     caps[c['id']] < c['usage'] + (1024 if c['service'] == 'fjordlens-ai' else 512)*MIB
+                     caps[c['id']] < c['usage'] + HEADROOM[c['service']]
                      for c in containers)
         if unsafe:
             return {**measurement, 'pressure': True, 'deferred_resize': True,
