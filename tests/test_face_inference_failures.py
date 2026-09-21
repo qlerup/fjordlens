@@ -34,11 +34,12 @@ class FaceFailureTests(unittest.TestCase):
                    _dedupe_faces_by_embedding=lambda x: x, log_event=Mock())
         return load_function('app.py', '_ai_detect_faces_video_path', env), env
 
-    def test_failed_frame_is_not_empty_success(self):
+    def test_failed_frame_is_skipped_after_retry_when_another_frame_succeeded(self):
         fn, env = self.video([[], None, None])
-        with self.assertRaisesRegex(RuntimeError, 'frame at 1.00s'):
-            fn(Path('test.mp4'), 'test.mp4')
-        self.assertNotIn('faces_video_detect_done', [c.args[0] for c in env['log_event'].call_args_list])
+        self.assertEqual(fn(Path('test.mp4'), 'test.mp4'), [])
+        done = next(c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_detect_done')
+        self.assertEqual(done.kwargs['decoded_frames'], 1)
+        self.assertEqual(done.kwargs['skipped_frames'], 1)
         self.assertEqual(env['_ai_detect_faces_bytes'].call_count, 3)
         retries = [c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_frame_retry']
         failures = [c for c in env['log_event'].call_args_list if c.args[0] == 'faces_video_frame_fail']
@@ -52,8 +53,22 @@ class FaceFailureTests(unittest.TestCase):
 
     def test_undecodable_video_is_not_empty_success(self):
         fn, _ = self.video([], frames=None)
-        with self.assertRaisesRegex(RuntimeError, 'frame at 0.00s'):
+        with self.assertRaisesRegex(RuntimeError, 'No video frames'):
             fn(Path('test.mp4'), 'test.mp4')
+
+    def test_failed_first_frame_does_not_prevent_later_frame_results(self):
+        fn, env = self.video([[{'embedding': [1.0]}]])
+        env['_extract_video_frame_bytes'].side_effect = [None, None, b'jpeg']
+        faces = fn(Path('test.mp4'), 'test.mp4')
+        self.assertEqual(faces, [{'embedding': [1.0], 'frame_sec': 1}])
+        self.assertEqual([c.args[2] for c in env['_extract_video_frame_bytes'].call_args_list], [0, 0, 1])
+
+    def test_all_ai_frames_failing_does_not_complete_video(self):
+        fn, env = self.video([None, None, None, None])
+        with self.assertRaisesRegex(RuntimeError, 'No video frames'):
+            fn(Path('test.mp4'), 'test.mp4')
+        self.assertEqual(env['_ai_detect_faces_bytes'].call_count, 4)
+        self.assertFalse(any(c.args[0] == 'faces_video_detect_done' for c in env['log_event'].call_args_list))
 
     def test_failed_extract_retries_same_timestamp_before_next_frame(self):
         fn, env = self.video([[], []])

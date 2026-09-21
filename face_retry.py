@@ -7,8 +7,8 @@ from processing_failures import ServiceUnavailable
 def retry_video_frame(extract, detect, allowed, notify, attempts=2, delay=2):
     """Retry the same timestamp, retaining decoded bytes if only AI failed.
 
-    Empty face lists are successful. Missing bytes/results are failures; never
-    let a partially analysed video become a completed index entry.
+    Empty face lists are successful. Missing bytes/results are failures;
+    the caller logs exhausted frames and decides whether the video can finish.
     """
     frame = None
     for attempt in range(1, attempts + 1):

@@ -2103,8 +2103,9 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
         except FaceIndexSkipped:
             raise
         except RuntimeError as exc:
+            allowed()
             log_event('faces_video_frame_fail', rel_path=rel_path, at_sec=round(sec, 2), error=str(exc))
-            raise RuntimeError(f"Face detection failed for video frame at {sec:.2f}s: {exc}") from exc
+            continue
         frames_ok += 1
         log_event("faces_video_frame_detect", rel_path=rel_path, at_sec=round(sec, 2), count=len(faces))
         for fc in faces:
@@ -2112,13 +2113,14 @@ def _ai_detect_faces_video_path(path: Path, rel_path: str) -> list[Dict[str, Any
                 fc["frame_sec"] = sec
                 all_faces.append(fc)
     if not frames_ok:
-        raise RuntimeError("No video frames could be decoded for face detection")
+        raise RuntimeError("No video frames could be analysed for face detection")
     unique_faces = _dedupe_faces_by_embedding(all_faces)
     log_event(
         "faces_video_detect_done",
         rel_path=rel_path,
         sampled_frames=len(timestamps),
         decoded_frames=frames_ok,
+        skipped_frames=len(timestamps) - frames_ok,
         faces_total=len(all_faces),
         faces_unique=len(unique_faces),
     )
