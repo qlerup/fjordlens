@@ -8411,14 +8411,10 @@ const uploadUiState = {
   workflowMode: 'gentle',
   processStatus: null,
   collapsed: false,
-  transferStartedAt: 0,
-  transferStartBytes: 0,
-  transferLastSampleAt: 0,
   transferLastSampleBytes: 0,
+  transferLastProgressAt: 0,
   transferRateBps: 0,
   transferSamples: [],
-  transferEtaSeconds: 0,
-  transferLastEtaAt: 0,
 };
 
 let uploadOverlayHideTimer = null;
@@ -8836,14 +8832,10 @@ function resetUploadUiState() {
   uploadUiState.currentTotal = 0;
   uploadUiState.workflowMode = 'gentle';
   uploadUiState.processStatus = null;
-  uploadUiState.transferStartedAt = 0;
-  uploadUiState.transferStartBytes = 0;
-  uploadUiState.transferLastSampleAt = 0;
   uploadUiState.transferLastSampleBytes = 0;
+  uploadUiState.transferLastProgressAt = 0;
   uploadUiState.transferRateBps = 0;
   uploadUiState.transferSamples = [];
-  uploadUiState.transferEtaSeconds = 0;
-  uploadUiState.transferLastEtaAt = 0;
   uploadMonitorItemsByKey.clear();
 }
 
@@ -8856,94 +8848,57 @@ function formatUploadEta(seconds) {
 }
 
 function updateUploadTransferEstimate(uploadedBytes) {
-  const now = Date.now();
+  const now = performance.now();
   const uploaded = Math.max(0, Number(uploadedBytes || 0));
-  if (!uploadUiState.transferStartedAt) {
-    uploadUiState.transferStartedAt = now;
-    uploadUiState.transferStartBytes = uploaded;
-    uploadUiState.transferLastSampleAt = now;
+  const samples = uploadUiState.transferSamples;
+  if (!samples.length || uploaded < uploadUiState.transferLastSampleBytes) {
+    uploadUiState.transferSamples = [{ at: now, bytes: uploaded }];
+    uploadUiState.transferLastProgressAt = now;
     uploadUiState.transferLastSampleBytes = uploaded;
     uploadUiState.transferRateBps = 0;
-    uploadUiState.transferSamples = [{ at: now, bytes: uploaded }];
-    uploadUiState.transferEtaSeconds = 0;
-    uploadUiState.transferLastEtaAt = 0;
     return;
   }
-  const lastAt = Number(uploadUiState.transferLastSampleAt || 0);
-  const lastBytes = Number(uploadUiState.transferLastSampleBytes || 0);
-  if (uploaded < lastBytes) {
-    uploadUiState.transferStartedAt = now;
-    uploadUiState.transferStartBytes = uploaded;
-    uploadUiState.transferLastSampleAt = now;
-    uploadUiState.transferLastSampleBytes = uploaded;
-    uploadUiState.transferRateBps = 0;
-    uploadUiState.transferSamples = [{ at: now, bytes: uploaded }];
-    uploadUiState.transferEtaSeconds = 0;
-    uploadUiState.transferLastEtaAt = 0;
-    return;
+  if (uploaded > uploadUiState.transferLastSampleBytes) {
+    uploadUiState.transferLastProgressAt = now;
   }
-  const elapsedMs = Math.max(0, now - lastAt);
-  const deltaBytes = uploaded - lastBytes;
-  if (elapsedMs < 900 || deltaBytes <= 0) return;
-  const instantRate = deltaBytes / (elapsedMs / 1000);
-  const samples = Array.isArray(uploadUiState.transferSamples) ? uploadUiState.transferSamples : [];
-  samples.push({ at: now, bytes: uploaded });
-  const sampleWindowMs = 18000;
-  while (samples.length > 2 && (now - Number(samples[0].at || 0)) > sampleWindowMs) {
-    samples.shift();
-  }
-  uploadUiState.transferSamples = samples;
-  const firstWindowSample = samples[0] || { at: now, bytes: uploaded };
-  const windowElapsedMs = Math.max(0, now - Number(firstWindowSample.at || now));
-  const windowBytes = Math.max(0, uploaded - Number(firstWindowSample.bytes || 0));
-  const windowRate = windowElapsedMs >= 2500 && windowBytes > 0
-    ? windowBytes / (windowElapsedMs / 1000)
-    : 0;
-  const sessionElapsedMs = Math.max(0, now - Number(uploadUiState.transferStartedAt || now));
-  const sessionBytes = Math.max(0, uploaded - Number(uploadUiState.transferStartBytes || 0));
-  const sessionRate = sessionElapsedMs >= 2500 && sessionBytes > 0
-    ? sessionBytes / (sessionElapsedMs / 1000)
-    : 0;
-  let measuredRate = instantRate;
-  if (windowRate > 0 && sessionRate > 0) {
-    measuredRate = (windowRate * 0.58) + (sessionRate * 0.42);
-  } else if (windowRate > 0) {
-    measuredRate = windowRate;
-  } else if (sessionRate > 0) {
-    measuredRate = sessionRate;
-  }
-  const currentRate = Number(uploadUiState.transferRateBps || 0);
-  uploadUiState.transferRateBps = currentRate > 0
-    ? ((currentRate * 0.84) + (measuredRate * 0.16))
-    : measuredRate;
-  uploadUiState.transferLastSampleAt = now;
   uploadUiState.transferLastSampleBytes = uploaded;
+  // Sample elapsed time even without progress; UI event frequency must not
+  // influence the estimate. Keep an anchor just before the rolling window.
+  if (now - samples[samples.length - 1].at < 1000) return;
+  samples.push({ at: now, bytes: uploaded });
+  const cutoff = now - 15000;
+  while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
+  const first = samples[0];
+  const second = samples[1];
+  const startAt = Math.max(first.at, cutoff);
+  const startBytes = first.at < cutoff
+    ? first.bytes + (second.bytes - first.bytes) * (cutoff - first.at) / (second.at - first.at)
+    : first.bytes;
+  const elapsed = (now - startAt) / 1000;
+  uploadUiState.transferRateBps = elapsed >= 5 ? (uploaded - startBytes) / elapsed : 0;
 }
 
 function uploadEtaLabel(uploadedBytes) {
   if (!isUploadRunning() || uploadStopRequested) return '';
-  const now = Date.now();
-  const total = Math.max(0, Number(uploadUiState.totalBytes || 0));
-  const uploaded = Math.max(0, Number(uploadedBytes || 0));
-  const remaining = Math.max(0, total - uploaded);
-  if (!total || !remaining) return '';
-  const rate = Math.max(0, Number(uploadUiState.transferRateBps || 0));
-  const sampleCount = Array.isArray(uploadUiState.transferSamples) ? uploadUiState.transferSamples.length : 0;
-  const estimateAgeMs = Math.max(0, now - Number(uploadUiState.transferStartedAt || now));
-  if (rate < 1024 || sampleCount < 2 || estimateAgeMs < 2500) return 'tid tilbage:\u00A0beregner...';
-  let etaSeconds = remaining / rate;
-  const previousEta = Math.max(0, Number(uploadUiState.transferEtaSeconds || 0));
-  const previousAt = Number(uploadUiState.transferLastEtaAt || 0);
-  if (previousEta > 0 && previousAt > 0) {
-    const elapsedSeconds = Math.max(0, (now - previousAt) / 1000);
-    const expectedEta = Math.max(0, previousEta - elapsedSeconds);
-    const etaDelta = etaSeconds - expectedEta;
-    const etaWeight = etaDelta > 0 ? 0.18 : 0.28;
-    etaSeconds = expectedEta + (etaDelta * etaWeight);
+  const remaining = Math.max(0, Number(uploadUiState.totalBytes || 0) - Number(uploadedBytes || 0));
+  if (!remaining) return '';
+  if (performance.now() - uploadUiState.transferLastProgressAt >= 10000) {
+    return 'Tid tilbage: afventer fremgang\u2026';
   }
-  uploadUiState.transferEtaSeconds = etaSeconds;
-  uploadUiState.transferLastEtaAt = now;
-  return `tid tilbage:\u00A0${formatUploadEta(etaSeconds)}`;
+  const rate = uploadUiState.transferRateBps;
+  if (!(rate > 0)) return 'Tid tilbage: beregner\u2026';
+  return `Tid tilbage: ca. ${formatUploadEta(remaining / rate)}`;
+}
+
+let uploadEstimateTimer = null;
+function syncUploadEstimateTimer() {
+  const active = isUploadRunning() && !isUploadPostprocessPhase() && !uploadStopRequested;
+  if (active && uploadEstimateTimer === null) {
+    uploadEstimateTimer = window.setInterval(() => renderUploadMonitor(), 1000);
+  } else if (!active && uploadEstimateTimer !== null) {
+    window.clearInterval(uploadEstimateTimer);
+    uploadEstimateTimer = null;
+  }
 }
 
 function setUploadStopButtonState() {
@@ -8994,6 +8949,7 @@ function requestStopUpload() {
 }
 
 function renderUploadMonitor() {
+  syncUploadEstimateTimer();
   ensureUploadTopStatusRefs();
   ensureUploadMonitorRefs();
   const transferLoaded = uploadTransferActive ? uploadUiState.currentLoaded : 0;
@@ -9114,7 +9070,7 @@ function renderUploadMonitor() {
     const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : '';
     els.uploadMonitorSummary.textContent = isPostprocess
       ? `${postprocessLabel}${failedTxt}`
-      : `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${etaTxt ? ` · ${etaTxt}` : ''}${failedTxt}`;
+      : `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${fmtBytes(processedVisualBytes)}/${fmtBytes(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}${etaTxt ? `\n${etaTxt.replaceAll(' ', '\u00A0')}` : ''}`;
   }
   if (els.uploadMonitorCurrent) {
     if (isPostprocess) {
@@ -9672,6 +9628,8 @@ async function uploadFiles(fileList, options = {}) {
                 // so the flow is strictly: upload -> metadata -> thumbnails -> faces/AI.
                 // Refreshes now happen from the postprocess progress callback below.
               } else {
+                // Failed bytes are removed from the queue, not transferred.
+                uploadUiState.transferSamples = [];
                 batchFailed += 1;
                 uploadUiState.failedFiles += 1;
                 updateUploadMonitorItem(itemKey, false, result.errorMsg || 'Fejl', 0);

@@ -4960,6 +4960,7 @@ body.view-mapper .content-header .mapper-header-actions {
   display: none !important;
 }
 .upload-monitor-summary {
+  white-space: pre-line;
   margin-top: 8px;
   font-weight: 600;
   font-size: 0.9rem;
