@@ -21,13 +21,40 @@ test('constant speed predicts remaining transfer time after warmup', () => {
   assert.equal(f.state.transferRateBps, 10000);
   assert.match(f.ctx.uploadEtaLabel(200000), /00:01:20/);
 });
-test('old speed is forgotten within the rolling window in both directions', () => {
+test('sustained speed changes converge without keeping the session average', () => {
   const f = fixture();
+  f.state.totalBytes = 100000000;
   for (let t = 0; t <= 20; t++) f.sample(t, t * 10000);
-  for (let t = 21; t <= 35; t++) f.sample(t, 200000 + (t - 20) * 1000);
-  assert.equal(f.state.transferRateBps, 1000);
-  for (let t = 36; t <= 50; t++) f.sample(t, 215000 + (t - 35) * 20000);
-  assert.equal(f.state.transferRateBps, 20000);
+  for (let t = 21; t <= 80; t++) f.sample(t, 200000 + (t - 20) * 1000);
+  assert.ok(Math.abs(f.state.transferRateBps - 1000) < 50);
+  for (let t = 81; t <= 170; t++) f.sample(t, 260000 + (t - 80) * 20000);
+  assert.ok(Math.abs(f.state.transferRateBps - 20000) < 500);
+});
+
+test('bursty chunk progress stays stable while retaining realistic throughput', () => {
+  const f = fixture();
+  const chunk = 2 * 1024 * 1024;
+  f.state.totalBytes = 6 * 1024 ** 3;
+  const rates = [];
+  for (let t = 0; t <= 180; t++) {
+    f.sample(t, Math.floor(t / 8) * chunk);
+    if (t >= 90) rates.push(f.state.transferRateBps);
+  }
+  const actualRate = chunk / 8;
+  assert.ok((Math.max(...rates) - Math.min(...rates)) / actualRate < 0.12);
+  assert.ok(rates.every(rate => Math.abs(rate - actualRate) / actualRate < 0.12));
+});
+
+test('subsecond progress callbacks do not change smoothing and warmup lasts ten seconds', () => {
+  const sparse = fixture(), frequent = fixture();
+  for (let tick = 0; tick <= 600; tick++) {
+    const t = tick / 10;
+    const bytes = Math.floor(t / 4) * 10000;
+    frequent.sample(t, bytes);
+    if (tick % 10 === 0) sparse.sample(t, bytes);
+    if (tick === 90) assert.match(frequent.ctx.uploadEtaLabel(bytes), /beregner/);
+  }
+  assert.equal(sparse.state.transferRateBps, frequent.state.transferRateBps);
 });
 test('pauses lower throughput, report stalled progress and recover', () => {
   const f = fixture();

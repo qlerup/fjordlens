@@ -8840,7 +8840,10 @@ function resetUploadUiState() {
 }
 
 function formatUploadEta(seconds) {
-  const total = Math.max(0, Math.ceil(Number(seconds || 0)));
+  // Avoid implying second-level accuracy for a variable network transfer.
+  const raw = Math.max(0, Number(seconds || 0));
+  const step = raw >= 60 ? 10 : 5;
+  const total = Math.ceil(raw / step) * step;
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -8864,9 +8867,10 @@ function updateUploadTransferEstimate(uploadedBytes) {
   uploadUiState.transferLastSampleBytes = uploaded;
   // Sample elapsed time even without progress; UI event frequency must not
   // influence the estimate. Keep an anchor just before the rolling window.
-  if (now - samples[samples.length - 1].at < 1000) return;
+  const sampleElapsedMs = now - samples[samples.length - 1].at;
+  if (sampleElapsedMs < 1000) return;
   samples.push({ at: now, bytes: uploaded });
-  const cutoff = now - 15000;
+  const cutoff = now - 30000;
   while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
   const first = samples[0];
   const second = samples[1];
@@ -8875,7 +8879,17 @@ function updateUploadTransferEstimate(uploadedBytes) {
     ? first.bytes + (second.bytes - first.bytes) * (cutoff - first.at) / (second.at - first.at)
     : first.bytes;
   const elapsed = (now - startAt) / 1000;
-  uploadUiState.transferRateBps = elapsed >= 5 ? (uploaded - startBytes) / elapsed : 0;
+  if (elapsed < 10) return;
+  const measuredRate = (uploaded - startBytes) / elapsed;
+  const previousRate = uploadUiState.transferRateBps;
+  // Smooth once, based on elapsed time rather than the number of UI events.
+  // Accept slowdowns sooner; require sustained improvement before promising
+  // a much earlier finish. The rolling window includes inter-file pauses.
+  const timeConstantMs = measuredRate < previousRate ? 5000 : 15000;
+  const weight = 1 - Math.exp(-sampleElapsedMs / timeConstantMs);
+  uploadUiState.transferRateBps = previousRate > 0
+    ? previousRate + weight * (measuredRate - previousRate)
+    : measuredRate;
 }
 
 function uploadEtaLabel(uploadedBytes) {
