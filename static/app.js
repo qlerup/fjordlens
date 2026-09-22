@@ -941,6 +941,7 @@ const I18N = {
     upload_proc_faces: 'Ansigter',
     upload_proc_embeddings: 'Embeddings',
     upload_proc_descriptions: 'Beskrivelser',
+    background_status_reconnecting: 'forbindelse afbrudt – henter status igen',
     upload_proc_off: 'Slået fra',
     upload_proc_queue: 'i kø: {count}',
     upload_proc_running: 'kører: {count}',
@@ -1815,6 +1816,7 @@ const I18N = {
     upload_proc_faces: 'Faces',
     upload_proc_embeddings: 'Embeddings',
     upload_proc_descriptions: 'Descriptions',
+    background_status_reconnecting: 'connection lost – reconnecting',
     upload_proc_off: 'Disabled',
     upload_proc_queue: 'queued: {count}',
     upload_proc_running: 'running: {count}',
@@ -9316,6 +9318,62 @@ async function runUploadPostprocess(onProgress = null) {
   }
 
   throw new Error('Efterbehandling timeout');
+}
+
+// Read-only background monitoring is independent of the browser upload queue.
+// A completed transfer, navigation or a failed request must not stop discovery.
+let backgroundWorkTimer = null;
+let backgroundWorkPolling = false;
+const backgroundWorkSnapshots = new Map();
+async function pollBackgroundWorkStatus() {
+  if (backgroundWorkPolling) return;
+  backgroundWorkPolling = true;
+  const sources = [
+    ['upload', '/api/upload/postprocess/status', 'tab_upload_workflow'],
+    ['direct', '/api/upload/direct-postprocess/status', 'tab_upload_workflow'],
+    ['faces', '/api/faces/status', 'upload_proc_faces'],
+    ['ai', '/api/ai/status', 'upload_proc_embeddings'],
+    ['descriptions', '/api/ai/describe/status', 'upload_proc_descriptions'],
+  ];
+  try {
+    await Promise.all(sources.map(async ([key, url, label]) => {
+      try {
+        const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+        const data = await response.json();
+        if (!response.ok || !data?.ok) throw new Error('status_unavailable');
+        backgroundWorkSnapshots.set(key, { data, label, stale: false });
+      } catch {
+        const previous = backgroundWorkSnapshots.get(key);
+        if (previous) previous.stale = true;
+      }
+    }));
+    renderBackgroundWorkStatus();
+  } finally {
+    backgroundWorkPolling = false;
+  }
+}
+
+function renderBackgroundWorkStatus() {
+  const panel = document.getElementById('backgroundWorkStatus');
+  if (!panel) return;
+  const lines = [];
+  for (const { data, label, stale } of backgroundWorkSnapshots.values()) {
+    if (!data.running) continue;
+    const name = data.phase ? postprocessPhaseLabel(data.phase) : tr(label);
+    const total = Number(data.stage_total ?? data.total ?? 0);
+    const done = Number(data.stage_processed ?? data.processed ?? 0);
+    const progress = total > 0 ? ` ${done}/${total}` : '';
+    const detail = stale ? tr('background_status_reconnecting') : (data.waiting || tr('status_running'));
+    lines.push(`${name}${progress} · ${detail}`);
+  }
+  panel.textContent = lines.join('\n');
+  panel.classList.toggle('hidden', lines.length === 0);
+}
+
+function startBackgroundWorkStatus() {
+  if (backgroundWorkTimer !== null) return;
+  pollBackgroundWorkStatus();
+  backgroundWorkTimer = window.setInterval(pollBackgroundWorkStatus, 5000);
 }
 
 let uploadPostprocessResumeActive = false;
@@ -18961,6 +19019,7 @@ setView(state.view, { syncUrl: false, personId: _initialRoute.personId, cameraMo
     if (els.uploadMonitor) els.uploadMonitor.classList.add('hidden');
   } catch {}
   startMapperDiskSyncWatcher();
+  startBackgroundWorkStatus();
   // Safety: remove any stray backdrops/overlays that might block UI after reload
   try { document.querySelectorAll('.modal-backdrop[data-ephemeral="1"]').forEach(el=>{ if(el.parentElement) el.parentElement.removeChild(el); }); } catch{}
   try { document.querySelectorAll('.upload-overlay').forEach(el=> el.classList.remove('active')); } catch{}

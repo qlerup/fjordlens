@@ -855,6 +855,15 @@ body.view-kameraer .timeline-header-actions {
 .upload-top-status.hidden {
   display: none !important;
 }
+.background-work-status {
+  white-space: pre-line;
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 12px auto;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
 .upload-top-status.multi {
   min-width: 360px;
 }
