@@ -1332,7 +1332,7 @@ const I18N = {
     btn_start: 'Start',
     btn_clear: 'Ryd',
     mapper_current_folder: 'Aktuel mappe',
-    mapper_root_folder: 'uploads (rodmappe)',
+    mapper_root_folder: 'Rodmappe',
     mapper_drop_here: 'Slip filer eller mapper her for at uploade til',
     mapper_up: 'Tilbage',
     mapper_done: 'Færdig',
@@ -2207,7 +2207,7 @@ const I18N = {
     btn_start: 'Start',
     btn_clear: 'Clear',
     mapper_current_folder: 'Current folder',
-    mapper_root_folder: 'uploads (root)',
+    mapper_root_folder: 'Root',
     mapper_drop_here: 'Drop files or folders here to upload to',
     mapper_up: 'Back',
     mapper_done: 'Done',
@@ -9847,7 +9847,7 @@ function renderMapperContext(path = '') {
   const selPhotos = state.mapperSelectedPhotoIds ? state.mapperSelectedPhotoIds.size : 0;
   const selectedCount = selFolders + selPhotos;
   if (els.mapperCurrentPath) {
-    els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p ? `uploads/${p}` : tr('mapper_root_folder')}`;
+    els.mapperCurrentPath.textContent = `${tr('mapper_current_folder')}: ${p || tr('mapper_root_folder')}`;
     // On mobile, hide the current-path label while in selection mode to make room for buttons
     try {
       const isMobile = window.matchMedia('(max-width: 760px)').matches;
