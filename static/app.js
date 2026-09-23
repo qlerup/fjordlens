@@ -2625,11 +2625,12 @@ const I18N = {
 };
 
 const APP_VIEW_KEYS = new Set(['timeline', 'favorites', 'steder', 'kameraer', 'mapper', 'momenter', 'photoframe', 'personer', 'settings']);
-const SETTINGS_TAB_KEYS = new Set(['maint', 'update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'tokens', 'profile', 'other']);
+const SETTINGS_TAB_KEYS = new Set(['update', 'ai', 'upload_workflow', 'file_types', 'hardware', 'dns', 'heic', 'video', 'shared', 'logs', 'users', 'tokens', 'profile', 'other']);
 
 function _normalizeSettingsTab(tab) {
   const raw = String(tab || '').trim().toLowerCase();
   if (!raw) return '';
+  if (raw === 'maint') return 'other';
   return SETTINGS_TAB_KEYS.has(raw) ? raw : '';
 }
 
@@ -13778,7 +13779,7 @@ async function setView(view, opts = {}) {
     // show logs panel, do not load photos
     renderGrid();
     const activeTab = _activeSettingsTabFromUi();
-    const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'maint';
+    const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'other';
     if (desiredTab && desiredTab !== activeTab) {
       activateSettingsTab(desiredTab);
     }
@@ -13939,7 +13940,7 @@ function applyUiLanguage() {
   if (settingsHeaderTitle) settingsHeaderTitle.textContent = tr('settings_title');
   if (settingsHeaderSub) settingsHeaderSub.textContent = tr('settings_sub');
 
-  const maintTitle = document.querySelector('#settingsPanel .tab-panel[data-tabpanel="maint"] .sidebar-card-title');
+  const maintTitle = document.getElementById('maintenanceTitle');
   if (maintTitle) maintTitle.textContent = tr('maint_title');
   if (els.videoSettingsTitle) els.videoSettingsTitle.textContent = tr('video_settings_title');
   if (els.videoSettingsDesc) els.videoSettingsDesc.textContent = tr('video_settings_desc');
@@ -16927,7 +16928,7 @@ if (els.aiExternalLinksList) {
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
-    state.settingsTab = _normalizeSettingsTab(tab) || 'maint';
+    state.settingsTab = _normalizeSettingsTab(tab) || 'other';
     // activate button
     document.querySelectorAll('#settingsPanel .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');

@@ -276,7 +276,6 @@
           <p>Vedligeholdelse og logs</p>
         </div>
         <nav class="tabs">
-          <button class="tab-btn active" data-tab="maint">Vedligeholdelse</button>
           {% if user_role == "admin" %}
           <button class="tab-btn" data-tab="update">Opdatering</button>
           {% endif %}
@@ -293,12 +292,11 @@
           {% if user_role == "admin" %}
           <button class="tab-btn" data-tab="tokens">Tokens</button>
           {% endif %}
-          <button class="tab-btn" data-tab="other">Andet</button>
+          <button class="tab-btn active" data-tab="other">Andet</button>
         </nav>
         <!-- Mobile-friendly tab selector -->
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg faneblad">
-            <option value="maint" selected>Vedligeholdelse</option>
             {% if user_role == "admin" %}
             <option value="update">Opdatering</option>
             {% endif %}
@@ -315,37 +313,8 @@
             {% if user_role == "admin" %}
             <option value="tokens">Tokens</option>
             {% endif %}
-            <option value="other">Andet</option>
+            <option value="other" selected>Andet</option>
           </select>
-        </div>
-
-        <!-- Vedligeholdelse -->
-        <div class="tab-panel" data-tabpanel="maint">
-          <div class="sidebar-card" style="margin-bottom:12px;">
-            <div class="sidebar-card-title">Vedligeholdelse</div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              {# Kun fuld biblioteks-scan er bag feature-flagget #}
-              {% if scan_enabled %}
-              <button id="scanBtn" class="btn primary">Scan bibliotek</button>
-              {% endif %}
-              <button id="rescanBtn" class="btn">Rescan metadata</button>
-              <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
-              <button id="fixThumbsBtn" class="btn">Ret manglende thumbnails</button>
-              <button id="stopAllProcessesBtn" class="btn danger">Stop alle processer</button>
-              <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
-              <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
-            </div>
-            <div id="maintenanceStatus" class="status hidden" style="margin-top:10px;" aria-live="polite"></div>
-          </div>
-          {% if current_user.is_admin %}
-          <section id="pendingUploadRecovery" class="sidebar-card" style="margin-bottom:12px;">
-            <div class="sidebar-card-title">Ventende uploads</div>
-            <p class="hint">Find lokale filer, som venter på efterbehandling, også efter et crash. Eksisterende konverteringer genbruges. Efterbehandlingen følger dine uploadindstillinger.</p>
-            <button type="button" class="btn" data-scan>Søg efter ventende filer</button>
-            <p class="mini-label" data-status role="status" aria-live="polite" style="overflow-wrap:anywhere;"></p>
-            <progress data-progress max="100" value="0" hidden style="width:100%;"></progress>
-          </section>
-          {% endif %}
         </div>
 
         {% if user_role == "admin" %}
@@ -769,8 +738,33 @@
           </div>
         </div>
 
-        <!-- Andet (dupletter) -->
-        <div class="tab-panel hidden" data-tabpanel="other">
+        <!-- Andet -->
+        <div class="tab-panel" data-tabpanel="other">
+          <div class="sidebar-card" style="margin-bottom:12px;">
+            <div id="maintenanceTitle" class="sidebar-card-title">Vedligeholdelse</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              {# Kun fuld biblioteks-scan er bag feature-flagget #}
+              {% if scan_enabled %}
+              <button id="scanBtn" class="btn primary">Scan bibliotek</button>
+              {% endif %}
+              <button id="rescanBtn" class="btn">Rescan metadata</button>
+              <button id="rethumbBtn" class="btn">Genbyg thumbnails</button>
+              <button id="fixThumbsBtn" class="btn">Ret manglende thumbnails</button>
+              <button id="stopAllProcessesBtn" class="btn danger">Stop alle processer</button>
+              <button id="clearIndexBtn" class="btn danger">Nulstil indeks</button>
+              <button id="factoryResetBtn" class="btn danger">Fabriksnulstil</button>
+            </div>
+            <div id="maintenanceStatus" class="status hidden" style="margin-top:10px;" aria-live="polite"></div>
+          </div>
+          {% if current_user.is_admin %}
+          <section id="pendingUploadRecovery" class="sidebar-card" style="margin-bottom:12px;">
+            <div class="sidebar-card-title">Ventende uploads</div>
+            <p class="hint">Find lokale filer, som venter på efterbehandling, også efter et crash. Eksisterende konverteringer genbruges. Efterbehandlingen følger dine uploadindstillinger.</p>
+            <button type="button" class="btn" data-scan>Søg efter ventende filer</button>
+            <p class="mini-label" data-status role="status" aria-live="polite" style="overflow-wrap:anywhere;"></p>
+            <progress data-progress max="100" value="0" hidden style="width:100%;"></progress>
+          </section>
+          {% endif %}
           {% if user_role == "admin" %}
           <div class="sidebar-card" id="uiDesignCard" style="margin-bottom:12px;">
             <div class="sidebar-card-title">Udseende</div>
@@ -1452,7 +1446,6 @@
       if(ROLE !== 'admin'){
         hideTab('users');
         hideTab('other');
-        hideTab('maint');
         hideTab('logs');
         hideTab('dns');
         hideTab('shared');
