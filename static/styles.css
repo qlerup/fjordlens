@@ -865,7 +865,8 @@ body.view-kameraer .timeline-header-actions {
   overflow-wrap: anywhere;
 }
 .upload-top-status.multi {
-  min-width: 360px;
+  min-width: 0;
+  width: fit-content;
 }
 .upload-top-status.multi .upload-top-status-label,
 .upload-top-status.multi .upload-top-status-progress {
