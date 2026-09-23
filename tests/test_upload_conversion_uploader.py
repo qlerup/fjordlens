@@ -11,6 +11,30 @@ import app as fjordlens
 
 
 class UploadConversionUploaderTests(unittest.TestCase):
+    def test_failed_conversion_does_not_enter_metadata_thumbnail_or_face_stages(self):
+        source = fjordlens.UPLOAD_DIR / 'originals' / 'broken.heic'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b'invalid heic')
+        rel = 'uploads/originals/broken.heic'
+        with (
+            patch.object(fjordlens, 'heic_convert_on_upload_enabled', return_value=True),
+            patch.object(fjordlens, 'faces_auto_index_enabled', return_value=True),
+            patch.object(fjordlens, 'ai_auto_ingest_enabled', return_value=False),
+            patch.object(fjordlens, 'ai_desc_auto_ingest_enabled', return_value=False),
+            patch.object(fjordlens, '_queued_upload_conversion', return_value={'attempted': True, 'success': False, 'error': 'invalid HEIC'}),
+            patch.object(fjordlens, '_sync_conversion_worker_concurrency'),
+            patch.object(fjordlens, 'extract_metadata') as metadata,
+            patch.object(fjordlens, '_make_image_thumb') as thumbnail,
+            patch.object(fjordlens, '_run_face_slot_queue', return_value={}) as faces,
+        ):
+            result = fjordlens._postprocess_uploaded_rels('admin', [rel], workflow_mode='gentle')
+        metadata.assert_not_called()
+        thumbnail.assert_not_called()
+        self.assertEqual(result['indexed'], 0)
+        self.assertEqual(result['index_errors'], 1)
+        for call in faces.call_args_list:
+            self.assertEqual(call.args[0], [])
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         root = Path(self.tempdir.name)

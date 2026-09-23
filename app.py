@@ -37,7 +37,7 @@ import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
-from log_retries import LogRetries, missing_stages, resolved_log_ids, unresolved_error_logs, StageRetryError
+from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, StageRetryError
 from face_retry import FaceRetryGate, retry_video_frame
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -3912,6 +3912,12 @@ def _postprocess_uploaded_rels(
                 conversion_to_rel = str(queued_conversion.get("to_rel") or rel)
                 conversion_to_ext = str(queued_conversion.get("to_ext") or disk_path.suffix.lower())
                 heic_converted_count += 1
+            else:
+                # Downstream decoders cannot operate on an unconverted source.
+                index_errors += 1
+                processing_failures.fail(orig_rel_for_convert, "conversion", queued_conversion.get("error") or "Konvertering fejlede")
+                _pause_between_items()
+                continue
         if (not conversion_prehandled) and needs_conversion and extl in VIDEO_EXTS and disk_path.exists():
             try:
                 source_metadata_before_conversion = extract_video_metadata_via_exiftool(disk_path)
@@ -4077,6 +4083,9 @@ def _postprocess_uploaded_rels(
                         log_event("error", rel_path=str(rel), error=f"convert: {e}")
                     except Exception:
                         pass
+                    index_errors += 1
+                    _pause_between_items()
+                    continue
         except Exception:
             pass
         if not disk_path.exists():
@@ -23675,7 +23684,7 @@ def api_logs():
         after = 0
     with LOG_LOCK:
         snapshot = list(LOG_BUFFER)
-    resolved = set(resolved_log_ids(snapshot))
+    resolved = set(hidden_error_log_ids(snapshot))
     pending_items = [itm for itm in snapshot if int(itm.get("id", 0)) > after][:200]
     items = [log_retries.describe(item) for item in pending_items
              if item["id"] not in resolved and item.get("event") not in {"processing_stage_done", "log_checkpoint"}]
@@ -27992,10 +28001,21 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
     path = _disk_path_from_rel_path(rel)
     if not path.is_file():
         raise FileNotFoundError("Kildefilen findes ikke længere")
-    if stage == "conversion":
+    if stage == "conversion" or _upload_extension_needs_conversion(path.suffix):
         # The existing pipeline also indexes the converted destination and preserves
         # source dates/uploader. A single input uses only one face slot.
-        _run_postprocess_serialized(_uploaded_by_for_rel(rel, "admin"), [rel], workflow_mode="gentle")
+        result = _run_postprocess_serialized(_uploaded_by_for_rel(rel, "admin"), [rel],
+                                            workflow_mode="gentle", reuse_existing_conversions=True)
+        indexed = list(result.get("indexed_rels") or [])
+        failures = [item for item in processing_failures.items()
+                    if item["rel_path"] in {rel, *indexed}]
+        if not indexed:
+            reason = next((item["error"] for item in failures if item["stage"] == "conversion"),
+                          "Filen kunne ikke konverteres eller indekseres")
+            raise StageRetryError(f"Konvertering skal lykkes før ansigter og thumbnails: {reason}", ["conversion"])
+        if failures:
+            raise StageRetryError("; ".join(f"{item['stage']}: {item['error']}" for item in failures),
+                                  list({item['stage'] for item in failures}))
     elif stage == "metadata":
         meta = extract_metadata(path, rel, generate_thumb=False)
         with closing(get_conn()) as conn:
@@ -28033,6 +28053,11 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
 
 
 def _retry_logged_failure(rel: str, stage: str) -> None:
+    if stage == "conversion" or _upload_extension_needs_conversion(Path(rel).suffix):
+        # The shared upload pipeline owns prerequisites and follows the resulting
+        # converted path. Never send a failed conversion to image/AI decoders.
+        _retry_processing_failure(rel, "conversion")
+        return
     errors = []
     failed_stages = []
 
@@ -28051,13 +28076,15 @@ def _retry_logged_failure(rel: str, stage: str) -> None:
                         "descriptions": "postprocess_ai_desc", "weather": "weather_index"}
             log_event("error", rel_path=rel, error=f"{prefixes[current_stage]}: {exc}")
 
-    run_stage(stage)
-    # Metadata is the prerequisite. Independent later stages can continue even
-    # when one of their peers fails again.
-    if stage == "metadata" and errors:
-        raise StageRetryError("; ".join(errors), failed_stages)
+    requested = {stage} | {item["stage"] for item in processing_failures.items() if item["rel_path"] == rel}
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
+    if "metadata" in requested or not row:
+        run_stage("metadata")
+        if errors:
+            raise StageRetryError("; ".join(errors), failed_stages)
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
     if row:
         row = dict(row)
         pending = missing_stages(
@@ -28067,9 +28094,10 @@ def _retry_logged_failure(rel: str, stage: str) -> None:
             embeddings=ai_auto_ingest_enabled() and _is_ai_embedding_supported_rel(rel),
             descriptions=ai_desc_auto_ingest_enabled(),
         )
-        for pending_stage in pending:
-            if pending_stage != stage:
-                run_stage(pending_stage)
+        requested.update(pending)
+    for pending_stage in ("thumbnails", "faces", "embeddings", "descriptions", "weather"):
+        if pending_stage in requested:
+            run_stage(pending_stage)
     if errors:
         raise StageRetryError("; ".join(errors), failed_stages)
 

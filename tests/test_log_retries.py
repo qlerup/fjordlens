@@ -108,6 +108,7 @@ class LogRetryTests(unittest.TestCase):
         # A metadata row exists, but none of its later stages has finished.
         conn.execute.return_value.fetchone.return_value = {'id': 1}
         env = dict(_retry_processing_failure=handler, processing_failures=self.tracker,
+                   _upload_extension_needs_conversion=lambda ext: ext.lower() == '.heic',
                    StageRetryError=StageRetryError,
                    log_event=self.log, closing=closing, get_conn=lambda: conn,
                    missing_stages=missing_stages, THUMB_DIR=Path('.'), Path=Path,
@@ -125,6 +126,12 @@ class LogRetryTests(unittest.TestCase):
                          [('uploads/a.jpg', stage) for stage in
                           ['metadata', 'thumbnails', 'faces', 'embeddings', 'descriptions']])
 
+    def test_heic_retry_runs_conversion_prerequisite_without_followup_decoders(self):
+        handler = Mock(side_effect=StageRetryError('Invalid HEIC', ['conversion']))
+        with self.assertRaisesRegex(StageRetryError, 'Invalid HEIC'):
+            self.resume_function(handler)('uploads/a.HEIC', 'faces')
+        handler.assert_called_once_with('uploads/a.HEIC', 'conversion')
+
     def test_failure_in_faces_does_not_stop_other_missing_steps(self):
         def work(rel, stage):
             if stage == 'faces':
@@ -133,7 +140,17 @@ class LogRetryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'locked'):
             self.resume_function(handler)('uploads/a.jpg', 'faces')
         self.assertEqual([c.args[1] for c in handler.call_args_list],
-                         ['faces', 'thumbnails', 'embeddings', 'descriptions'])
+                         ['thumbnails', 'faces', 'embeddings', 'descriptions'])
+
+    def test_face_retry_repairs_existing_metadata_failure_first(self):
+        failures = [dict(rel_path='uploads/a.jpg', stage='metadata', error='failed')]
+        self.tracker.items.side_effect = lambda: list(failures)
+        def work(rel, stage):
+            failures[:] = [item for item in failures if item['stage'] != stage]
+        handler = Mock(side_effect=work)
+        self.resume_function(handler)('uploads/a.jpg', 'faces')
+        self.assertEqual([call.args[1] for call in handler.call_args_list],
+                         ['metadata', 'thumbnails', 'faces', 'embeddings', 'descriptions'])
 
     def test_failed_metadata_retry_does_not_run_dependent_steps(self):
         handler = Mock(side_effect=RuntimeError('metadata unavailable'))

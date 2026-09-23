@@ -8,7 +8,7 @@ import unittest
 from flask import Flask, jsonify, request
 from types import SimpleNamespace
 
-from log_retries import resolved_log_ids, unresolved_error_logs
+from log_retries import resolved_log_ids, hidden_error_log_ids, unresolved_error_logs
 
 
 def error(identifier, rel='a.jpg', stage='faces'):
@@ -95,6 +95,7 @@ class LogResolutionTests(unittest.TestCase):
         logs = [error(1)] + [success(i) for i in range(2, 201)] + [error(201, rel='b.jpg')]
         env = dict(_forbid_user_role_for_maintenance=lambda: None, request=request, jsonify=jsonify,
                    LOG_LOCK=threading.RLock(), LOG_BUFFER=logs, resolved_log_ids=resolved_log_ids,
+                   hidden_error_log_ids=hidden_error_log_ids,
                    log_retries=SimpleNamespace(describe=lambda item: item))
         exec(compile(ast.unparse(node), str(source), 'exec'), env)
         app = Flask(__name__)
@@ -107,6 +108,24 @@ class LogResolutionTests(unittest.TestCase):
             result = env['api_logs']().get_json()
         self.assertEqual([item['id'] for item in result['items']], [201])
         self.assertEqual(result['resolved_ids'], [1])
+
+    def test_repeated_errors_and_retry_summary_do_not_inflate_open_issue_count(self):
+        logs = [error(1), error(2), error(3, stage='thumbnails'),
+                dict(id=4, event='log_retry_fail', rel_path='a.jpg', failed_stages=['faces', 'thumbnails'])]
+        self.assertEqual([item['id'] for item in unresolved_error_logs(logs)], [2, 3])
+
+    def test_absolute_pending_path_and_logical_upload_are_same_face_issue(self):
+        logs = [error(1, rel='uploads/originals/a.HEIC'),
+                dict(id=2, event='ai_http_error', rel_path='/data/conversion_work/pending/originals/a.HEIC', error='faces_status:400')]
+        self.assertEqual(hidden_error_log_ids(logs), [1])
+        logs.append(success(3, rel='uploads/originals/a.HEIC'))
+        self.assertEqual(resolved_log_ids(logs), [1, 2])
+
+    def test_converted_file_success_resolves_original_file_failure(self):
+        logs = [error(1, rel='uploads/originals/a.HEIC'),
+                dict(id=2, event='heic_converted', from_rel='uploads/originals/a.HEIC', rel_path='uploads/converted/a.jpg'),
+                success(3, rel='uploads/converted/a.jpg')]
+        self.assertEqual(resolved_log_ids(logs), [1])
 
 
 if __name__ == '__main__':

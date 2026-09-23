@@ -3,6 +3,10 @@ import threading
 
 
 PREFIX_STAGES = {
+    'convert': 'conversion',
+    'index_faces_for_photo': 'faces',
+    'ai_faces': 'faces',
+    'heif_exif': 'metadata',
     'postprocess_index': 'metadata',
     'postprocess_thumb': 'thumbnails',
     'rethumb_single': 'thumbnails',
@@ -31,8 +35,8 @@ def is_error_log(item):
 
 
 def unresolved_error_logs(items):
-    resolved = set(resolved_log_ids(items))
-    return [item for item in items if is_error_log(item) and item['id'] not in resolved]
+    hidden = set(hidden_error_log_ids(items))
+    return [item for item in items if is_error_log(item) and item['id'] not in hidden]
 
 
 class StageRetryError(RuntimeError):
@@ -45,6 +49,7 @@ def failure_targets(item):
     rel = item.get('rel_path')
     if not rel:
         return []
+    rel = canonical_log_rel(rel)
     event = item.get('event')
     if event == 'log_retry_fail':
         stages = item.get('failed_stages')
@@ -60,25 +65,70 @@ def failure_targets(item):
         if not stage:
             stage = {'heic_bulk': 'conversion', 'raw_bulk': 'conversion',
                      'mov_bulk': 'conversion', 'rethumb_missing': 'thumbnails'}.get(prefix)
+    elif event == 'ai_http_error' and str(item.get('error', '')).startswith('faces_status:'):
+        stage = 'faces'
     else:
         stage = FAILURE_EVENTS.get(event)
     return [(rel, stage)] if stage in STAGES else []
 
 
+def canonical_log_rel(rel):
+    rel = str(rel).replace('\\', '/')
+    if '/conversion_work/pending/' in rel:
+        return 'uploads/' + rel.split('/conversion_work/pending/', 1)[1]
+    if rel.startswith('/data/uploads/'):
+        return 'uploads/' + rel[len('/data/uploads/'):]
+    return rel
+
+
 def resolved_log_ids(items):
     """A later committed success resolves only older errors for that file/stage."""
     successes = {}
+    converted = {canonical_log_rel(item['from_rel']): canonical_log_rel(item['rel_path'])
+                 for item in items if item.get('event') in {'heic_converted', 'raw_converted', 'mov_converted'}
+                 and item.get('from_rel') and item.get('rel_path')}
+    def target_key(target):
+        rel, stage = target
+        return (converted.get(rel, rel), stage) if stage != 'conversion' else target
     for item in items:
         stage = item.get('stage') if item.get('event') == 'processing_stage_done' else SUCCESS_EVENTS.get(item.get('event'))
         if stage and item.get('rel_path'):
-            successes[(item['rel_path'], stage)] = max(int(item['id']), successes.get((item['rel_path'], stage), 0))
+            target = target_key((canonical_log_rel(item['rel_path']), stage))
+            successes[target] = max(int(item['id']), successes.get(target, 0))
     return [item['id'] for item in items if (targets := failure_targets(item))
-            and all(successes.get(target, 0) > int(item['id']) for target in targets)]
+            and all(successes.get(target_key(target), 0) > int(item['id']) for target in targets)]
+
+
+def hidden_error_log_ids(items):
+    """Hide resolved history and repeated reports of the same outstanding issue."""
+    hidden = set(resolved_log_ids(items))
+    latest = {}
+    summaries = []
+    for item in items:
+        targets = failure_targets(item)
+        if item['id'] in hidden or not targets:
+            continue
+        if item.get('event') == 'log_retry_fail':
+            summaries.append((item, targets))
+            continue
+        key = tuple(targets)
+        if key in latest:
+            hidden.add(latest[key])
+        latest[key] = item['id']
+    for item, targets in summaries:
+        if all((target,) in latest for target in targets):
+            hidden.add(item['id'])
+        else:
+            key = tuple(targets)
+            if key in latest:
+                hidden.add(latest[key])
+            latest[key] = item['id']
+    return sorted(hidden)
 
 
 def retry_target(item):
     targets = failure_targets(item or {})
-    return targets[0] if targets and targets[0][1] != 'conversion' and not str(targets[0][0]).startswith('weather:') else None
+    return targets[0] if targets and not str(targets[0][0]).startswith('weather:') else None
 
 
 def missing_stages(row, *, thumbnail_exists, faces, embeddings, descriptions):
