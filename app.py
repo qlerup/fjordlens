@@ -13601,13 +13601,31 @@ def _enrich_metadata_weather(metadata: Dict[str, Any]) -> None:
         return
     captured_raw = metadata.get("captured_at") or metadata.get("modified_fs") or metadata.get("created_fs")
     try:
-        payload, source = get_or_fetch_weather_payload(
-            captured_raw,
-            metadata.get("gps_lat"),
-            metadata.get("gps_lon"),
-            mj,
-            force=False,
-        )
+        for attempt in range(2):
+            try:
+                payload, source = get_or_fetch_weather_payload(
+                    captured_raw,
+                    metadata.get("gps_lat"),
+                    metadata.get("gps_lon"),
+                    mj,
+                    force=False,
+                )
+                break
+            except ValueError:
+                raise
+            except Exception as exc:
+                if attempt == 1:
+                    raise
+                try:
+                    log_event(
+                        "weather_index_retry",
+                        rel_path=str(metadata.get("rel_path") or "weather"),
+                        message=f"Vejrdata kunne ikke hentes. Forsøger igen med filen om 30 sekunder. Årsag: {exc}",
+                        retry_after_seconds=30,
+                    )
+                except Exception:
+                    pass
+                time.sleep(30)
         mj.pop("weather_fetch_failed", None)
         mj["weather"] = payload
         metadata["metadata_json"] = mj
@@ -13624,7 +13642,7 @@ def _enrich_metadata_weather(metadata: Dict[str, Any]) -> None:
         pass
     except Exception as e:
         try:
-            log_event("error", rel_path=str(metadata.get("rel_path") or "weather"), error=f"weather_index: {e}")
+            log_event("error", rel_path=str(metadata.get("rel_path") or "weather"), error=f"weather_index: Genforsøg fejlede; springer vejrdata over for filen: {e}")
         except Exception:
             pass
 

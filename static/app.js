@@ -20870,6 +20870,7 @@ async function pollLogs() {
         if (typeof it.saved !== "undefined") extra += ` saved=${it.saved}`;
         if (it.transfer) extra += ` transfer=${it.transfer}`;
         if (it.workflow_mode) extra += ` workflow=${it.workflow_mode}`;
+        if (it.message) extra += ` :: ${it.message}`;
         if (it.error) extra += ` :: ${it.error}`;
         const lvl = (it.error || Number(it.errors) > 0) ? 'err' : classifySeverity(it.event);
         appendLogItem(it, extra, lvl);
