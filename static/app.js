@@ -20707,6 +20707,21 @@ function categoriesForLog(item) {
 }
 
 const logRetryMonitors = new Set();
+let logViewRevision = 0;
+
+function applyLogResolutions(data) {
+  const resolved = new Set(data.resolved_ids || []);
+  if (resolved.size) state.logItems = state.logItems.filter(item => !resolved.has(item.id));
+}
+
+async function refreshResolvedLogs() {
+  try {
+    const response = await fetch(`/api/logs?after=${state.logsAfter || 0}`);
+    if (!response.ok) return;
+    applyLogResolutions(await response.json());
+    renderLogList();
+  } catch {}
+}
 
 async function monitorLogRetry(item) {
   if (logRetryMonitors.has(item.id)) return;
@@ -20719,6 +20734,7 @@ async function monitorLogRetry(item) {
       if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke hente status');
       item.retry = result;
       renderLogList();
+      if (result.status !== 'running') await refreshResolvedLogs();
     }
   } catch (error) {
     item.retry = { status: 'unknown', error: error.message };
@@ -20737,6 +20753,7 @@ async function retryLogItem(item) {
     const result = await response.json();
     if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke starte genforsøg');
     item.retry = result;
+    if (result.status !== 'running') await refreshResolvedLogs();
   } catch (error) {
     item.retry = { status: 'failed', error: error.message };
   }
@@ -20882,6 +20899,7 @@ function fmtLogTime(ts) {
 
 async function pollLogs() {
   if (!state.logsRunning) return;
+  const revision = logViewRevision;
   try {
     const res = await fetch(`/api/logs?after=${state.logsAfter}`);
     // If user lacks permission (401/403), stop polling to avoid spam
@@ -20893,8 +20911,12 @@ async function pollLogs() {
       throw new Error('logs fetch failed');
     }
     const data = await res.json();
-    if (data && data.items) {
+    if (data && data.items && revision === logViewRevision) {
+      applyLogResolutions(data);
+      const knownIds = new Set(state.logItems.map(item => item.id));
       for (const it of data.items) {
+        state.logsAfter = Math.max(Number(state.logsAfter || 0), Number(it.id));
+        if (knownIds.has(it.id)) continue;
         let extra = "";
         if (it.rel_path) extra += ` :: ${it.rel_path}`;
         if (it.actor) extra += ` · af ${it.actor}`;
@@ -20937,6 +20959,7 @@ async function pollLogs() {
         appendLogItem(it, extra, lvl);
         state.logsAfter = it.id;
       }
+      state.logsAfter = Math.max(Number(state.logsAfter || 0), Number(data.next || 0));
       renderLogList();
     }
   } catch {}
@@ -20955,12 +20978,25 @@ function stopLogs() {
 }
 
 async function clearLogs() {
-  try { await fetch('/api/logs/clear', { method: 'POST' }); } catch {}
-  state.logsAfter = 0;
-  if (els.logsBox) els.logsBox.innerHTML = "";
-  state.logItems = [];
-  state.logPage = 1;
-  renderLogList();
+  ++logViewRevision;
+  try {
+    const response = await fetch('/api/logs/clear', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Kunne ikke rydde logs');
+    ++logViewRevision;
+    const previous = new Map(state.logItems.map(item => [item.id, item]));
+    state.logItems = [];
+    for (const item of data.items || []) {
+      const existing = previous.get(item.id);
+      if (existing) state.logItems.push({...existing, ...item});
+      else appendLogItem(item, [item.rel_path, item.message, item.error].filter(Boolean).join(' :: '), 'err');
+    }
+    if (els.logsBox) els.logsBox.innerHTML = '';
+    state.logPage = 1;
+    renderLogList();
+  } catch (error) {
+    showStatus(error.message, 'err');
+  }
 }
 
 els.logsStart && els.logsStart.addEventListener('click', () => {

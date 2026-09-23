@@ -37,11 +37,14 @@ import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
-from log_retries import LogRetries, missing_stages
+from log_retries import LogRetries, missing_stages, resolved_log_ids, unresolved_error_logs, StageRetryError
 from face_retry import FaceRetryGate, retry_video_frame
 from ai_service.memory_budget import MemoryBudget, MIB
 
-processing_failures = FailureTracker(lambda: get_conn())
+processing_failures = FailureTracker(
+    lambda: get_conn(),
+    on_success=lambda rel, stage: log_event("processing_stage_done", rel_path=rel, stage=stage),
+)
 WEB_MEMORY = MemoryBudget("fjordlens")
 import folder_index
 import reverse_geocoder as rg
@@ -1280,9 +1283,25 @@ def _load_persistent_logs() -> None:
             print(f"Could not load persistent event log: {exc}")
 
 
-def _clear_persistent_logs() -> None:
+def _clear_persistent_logs(*, preserve_errors: bool = False) -> list:
     global LOG_SEQ
     with LOG_LOCK:
+        if preserve_errors:
+            kept = unresolved_error_logs(list(LOG_BUFFER))
+            # Keep IDs monotonic across reloads so a new log cannot inherit an
+            # old retry state, even when the highest visible entry was removed.
+            records = list(kept)
+            if LOG_SEQ > max((item["id"] for item in kept), default=0):
+                records.append({"id": LOG_SEQ, "event": "log_checkpoint"})
+            path = _event_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text("".join(json.dumps(item, ensure_ascii=False, default=str) + "\n"
+                                         for item in records), encoding="utf-8")
+            temporary.replace(path)
+            LOG_BUFFER.clear()
+            LOG_BUFFER.extend(records)
+            return kept
         LOG_BUFFER.clear()
         LOG_SEQ = 0
         path = _event_log_path()
@@ -13664,6 +13683,8 @@ def get_or_fetch_photo_weather(row: sqlite3.Row, force: bool = False) -> Tuple[D
         force=force,
     )
     _write_photo_weather_metadata(photo_id, payload)
+    log_event("weather_saved", rel_path=str(row["rel_path"]), photo_id=photo_id)
+    log_event("weather_saved", rel_path=f"weather:{photo_id}", photo_id=photo_id)
     return (payload, source)
 
 
@@ -14376,7 +14397,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
                 log_event("indexed", rel_path=rel_path)
             except Exception as e:
                 errors += 1
-                log_event("error", rel_path=rel_path, error=str(e))
+                log_event("error", rel_path=rel_path, stage="metadata", error=str(e))
                 if len(error_samples) < 5:
                     error_samples.append(f"{rel_path}: {e}")
 
@@ -14406,7 +14427,7 @@ def scan_library(stop_event=None) -> Dict[str, Any]:
         except Exception as e:
             errors += 1
             processing_failures.fail(rel_path, "metadata", e)
-            log_event("error", rel_path=rel_path, error=str(e))
+            log_event("error", rel_path=rel_path, stage="metadata", error=str(e))
             if len(error_samples) < 5:
                 error_samples.append(f"{rel_path}: {e}")
 
@@ -20736,7 +20757,7 @@ def rethumb_all(stop_event=None) -> Dict[str, Any]:
             log_event("rethumb_ok", rel_path=rel_path)
         except Exception as e:
             errors += 1
-            log_event("error", rel_path=rel_path, error=str(e))
+            log_event("error", rel_path=rel_path, stage="thumbnails", error=str(e))
     res = {"ok": True, "processed": total, "errors": errors}
     log_event("rethumb_done", processed=total, errors=errors)
     return res
@@ -23653,10 +23674,13 @@ def api_logs():
     except ValueError:
         after = 0
     with LOG_LOCK:
-        pending_items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
-    items = [log_retries.describe(item) for item in pending_items[:200]]
-    next_id = items[-1]["id"] if items else after
-    return jsonify({"items": items, "next": next_id})
+        snapshot = list(LOG_BUFFER)
+    resolved = set(resolved_log_ids(snapshot))
+    pending_items = [itm for itm in snapshot if int(itm.get("id", 0)) > after][:200]
+    items = [log_retries.describe(item) for item in pending_items
+             if item["id"] not in resolved and item.get("event") not in {"processing_stage_done", "log_checkpoint"}]
+    next_id = pending_items[-1]["id"] if pending_items else after
+    return jsonify({"items": items, "next": next_id, "resolved_ids": sorted(resolved)})
 
 
 @app.route("/api/settings/upload-destination", methods=["GET", "POST"])
@@ -25999,8 +26023,8 @@ def api_logs_clear():
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    _clear_persistent_logs()
-    return jsonify({"ok": True})
+    kept = _clear_persistent_logs(preserve_errors=True)
+    return jsonify({"ok": True, "items": [log_retries.describe(item) for item in kept]})
 
 
 # --- Authentication routes ---
@@ -28010,6 +28034,7 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
 
 def _retry_logged_failure(rel: str, stage: str) -> None:
     errors = []
+    failed_stages = []
 
     def run_stage(current_stage):
         try:
@@ -28020,6 +28045,7 @@ def _retry_logged_failure(rel: str, stage: str) -> None:
                 raise RuntimeError(remaining["error"])
         except Exception as exc:
             errors.append(f"{current_stage}: {exc}")
+            failed_stages.append(current_stage)
             prefixes = {"metadata": "postprocess_index", "thumbnails": "postprocess_thumb",
                         "faces": "postprocess_faces_queue", "embeddings": "postprocess_ai",
                         "descriptions": "postprocess_ai_desc", "weather": "weather_index"}
@@ -28029,7 +28055,7 @@ def _retry_logged_failure(rel: str, stage: str) -> None:
     # Metadata is the prerequisite. Independent later stages can continue even
     # when one of their peers fails again.
     if stage == "metadata" and errors:
-        raise RuntimeError("; ".join(errors))
+        raise StageRetryError("; ".join(errors), failed_stages)
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
     if row:
@@ -28045,7 +28071,7 @@ def _retry_logged_failure(rel: str, stage: str) -> None:
             if pending_stage != stage:
                 run_stage(pending_stage)
     if errors:
-        raise RuntimeError("; ".join(errors))
+        raise StageRetryError("; ".join(errors), failed_stages)
 
 
 def _processing_retry_busy():
@@ -28055,7 +28081,11 @@ def _processing_retry_busy():
 
 def _retry_log_lookup(log_id):
     with LOG_LOCK:
-        return next((dict(item) for item in LOG_BUFFER if item.get("id") == log_id), None)
+        snapshot = list(LOG_BUFFER)
+    item = next((dict(item) for item in snapshot if item.get("id") == log_id), None)
+    if item:
+        item["resolved"] = log_id in resolved_log_ids(snapshot)
+    return item
 
 
 processing_failures.register(app, _retry_processing_failure, busy=_processing_retry_busy)

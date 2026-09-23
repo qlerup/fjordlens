@@ -33,6 +33,18 @@ class ProcessingFailureTests(unittest.TestCase):
         self.assertEqual({(r['rel_path'], r['stage']) for r in self.tracker.items()},
                          {('a.jpg', 'embeddings'), ('b.jpg', 'faces')})
 
+    def test_success_notifies_log_resolution_only_after_committed_clear(self):
+        def resolved(rel, stage):
+            self.assertEqual((rel, stage), ('a.jpg', 'faces'))
+            self.assertEqual(self.tracker.items(), [])
+        callback = Mock(side_effect=resolved)
+        self.tracker.on_success = callback
+        self.tracker.fail('a.jpg', 'faces', 'locked')
+        callback.assert_not_called()
+        work = self.tracker.track('faces', lambda rel: rel)(lambda rel: 0)
+        work('a.jpg')
+        callback.assert_called_once_with('a.jpg', 'faces')
+
     def test_all_stages_capture_exceptions_and_keep_latest_reason(self):
         for stage in ('metadata', 'conversion', 'faces', 'embeddings', 'descriptions', 'thumbnails'):
             fn = self.tracker.track(stage, lambda rel: rel)(Mock(side_effect=RuntimeError('timeout')))

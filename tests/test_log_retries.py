@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 from flask_login import LoginManager, UserMixin
-from log_retries import LogRetries, retry_target, missing_stages
+from log_retries import LogRetries, retry_target, missing_stages, StageRetryError, resolved_log_ids
 
 
 class User(UserMixin):
@@ -108,6 +108,7 @@ class LogRetryTests(unittest.TestCase):
         # A metadata row exists, but none of its later stages has finished.
         conn.execute.return_value.fetchone.return_value = {'id': 1}
         env = dict(_retry_processing_failure=handler, processing_failures=self.tracker,
+                   StageRetryError=StageRetryError,
                    log_event=self.log, closing=closing, get_conn=lambda: conn,
                    missing_stages=missing_stages, THUMB_DIR=Path('.'), Path=Path,
                    faces_auto_index_enabled=lambda: True, VIDEO_EXTS={'.mp4'},

@@ -14,8 +14,9 @@ class FaceIndexSkipped(RuntimeError):
 
 
 class FailureTracker:
-    def __init__(self, connect):
+    def __init__(self, connect, on_success=None):
         self.connect = connect
+        self.on_success = on_success
         self.lock = threading.RLock()
         self.retrying = False
         self.progress = {}
@@ -46,6 +47,8 @@ class FailureTracker:
         with self.lock, closing(self.connection()) as conn:
             conn.execute('DELETE FROM processing_failures WHERE rel_path=? AND stage=?', (str(rel), stage))
             conn.commit()
+        if self.on_success:
+            self.on_success(str(rel), stage)
 
     def items(self):
         with self.lock, closing(self.connection()) as conn:

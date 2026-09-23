@@ -12,12 +12,73 @@ PREFIX_STAGES = {
     'weather_index': 'weather',
 }
 
+FAILURE_EVENTS = {'ai_embed_fail': 'embeddings', 'ai_desc_fail': 'descriptions',
+                  'ai_desc_runtime_error_stop': 'descriptions', 'ai_desc_external_fail': 'descriptions'}
+SUCCESS_EVENTS = {'weather_indexed': 'weather', 'weather_saved': 'weather',
+                  'thumb_saved': 'thumbnails', 'rethumb_single_ok': 'thumbnails',
+                  'faces_index_done': 'faces'}
+STAGES = {'metadata', 'conversion', 'thumbnails', 'faces', 'embeddings', 'descriptions', 'weather'}
+
+
+def is_error_log(item):
+    event = str(item.get('event') or '').lower()
+    try:
+        has_errors = float(item.get('errors') or 0) > 0
+    except (TypeError, ValueError):
+        has_errors = bool(item.get('errors'))
+    return bool(item.get('error') or has_errors or event == 'error'
+                or event.endswith(('_error', '_fail', '_failed')))
+
+
+def unresolved_error_logs(items):
+    resolved = set(resolved_log_ids(items))
+    return [item for item in items if is_error_log(item) and item['id'] not in resolved]
+
+
+class StageRetryError(RuntimeError):
+    def __init__(self, message, stages):
+        super().__init__(message)
+        self.stages = stages
+
+
+def failure_targets(item):
+    rel = item.get('rel_path')
+    if not rel:
+        return []
+    event = item.get('event')
+    if event == 'log_retry_fail':
+        stages = item.get('failed_stages')
+        if not stages:
+            stages = [part.split(':', 1)[0] for part in str(item.get('error', '')).split('; ')
+                      if part.split(':', 1)[0] in STAGES]
+        return [(rel, stage) for stage in (stages or [item.get('stage')]) if stage in STAGES]
+    if event == 'error':
+        prefix = str(item.get('error', '')).split(':', 1)[0]
+        stage = item.get('stage') or PREFIX_STAGES.get(prefix)
+        if not stage and str(rel).startswith('weather:'):
+            stage = 'weather'
+        if not stage:
+            stage = {'heic_bulk': 'conversion', 'raw_bulk': 'conversion',
+                     'mov_bulk': 'conversion', 'rethumb_missing': 'thumbnails'}.get(prefix)
+    else:
+        stage = FAILURE_EVENTS.get(event)
+    return [(rel, stage)] if stage in STAGES else []
+
+
+def resolved_log_ids(items):
+    """A later committed success resolves only older errors for that file/stage."""
+    successes = {}
+    for item in items:
+        stage = item.get('stage') if item.get('event') == 'processing_stage_done' else SUCCESS_EVENTS.get(item.get('event'))
+        if stage and item.get('rel_path'):
+            successes[(item['rel_path'], stage)] = max(int(item['id']), successes.get((item['rel_path'], stage), 0))
+    return [item['id'] for item in items if (targets := failure_targets(item))
+            and all(successes.get(target, 0) > int(item['id']) for target in targets)]
+
 
 def retry_target(item):
-    if not item or item.get('event') != 'error' or not item.get('rel_path'):
-        return None
-    stage = PREFIX_STAGES.get(str(item.get('error', '')).split(':', 1)[0])
-    return (item['rel_path'], stage) if stage else None
+    targets = failure_targets(item or {})
+    return targets[0] if targets and targets[0][1] != 'conversion' and not str(targets[0][0]).startswith('weather:') else None
 
 
 def missing_stages(row, *, thumbnail_exists, faces, embeddings, descriptions):
@@ -60,7 +121,7 @@ class LogRetries:
         except Exception as exc:
             result = {'status': 'failed', 'error': str(exc)}
             self.log('log_retry_fail', rel_path=rel, stage=stage,
-                     original_log_id=log_id, error=str(exc))
+                     original_log_id=log_id, error=str(exc), failed_stages=getattr(exc, 'stages', [stage]))
         finally:
             with self.tracker.lock:
                 self.states[log_id] = result
@@ -79,6 +140,8 @@ class LogRetries:
             target = retry_target(item)
             if not target:
                 return jsonify(ok=False, error='Denne log kan ikke genkøres.'), 404
+            if item.get('resolved'):
+                return jsonify(ok=True, status='succeeded')
             with self.tracker.lock:
                 previous = self.states.get(log_id, {})
                 if request.method == 'POST' and previous.get('status') not in {'running', 'succeeded'}:

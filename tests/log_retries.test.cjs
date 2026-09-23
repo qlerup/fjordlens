@@ -25,6 +25,7 @@ function fixture() {
     window: {setTimeout(fn) { timers.push(fn); }},
     fetch: async (url, options) => {
       calls.push({url, options});
+      if (url.startsWith('/api/logs?')) return {ok: true, json: async () => ({resolved_ids: [2]})};
       return {ok: true, json: async () => ({ok: true, status: options?.method === 'POST' ? 'running' : 'succeeded'})};
     },
   });
@@ -45,8 +46,8 @@ test('each failure has its own button and retry targets only the selected log', 
   assert.equal(f.box.children[0].children[2].children[0].textContent, 'Prøver igen…');
   f.timers.shift()();
   await new Promise(setImmediate);
-  assert.equal(f.box.children[0].children[2].children[0].textContent, 'Lykkedes');
-  assert.equal(f.box.children[0].children[2].children[0].disabled, true);
+  assert.equal(f.box.children.length, 1);
+  assert.equal(f.ctx.state.logItems[0].id, 1);
 });
 
 test('busy or failed request keeps the row retryable and shows the reason', async () => {
@@ -64,4 +65,36 @@ test('unsupported log entries have no misleading retry action', () => {
   delete f.items[0].retry_stage;
   f.ctx.renderLogList();
   assert.equal(f.box.children[1].children.length, 2);
+});
+
+test('resolution from another retry button removes only the specified log IDs', () => {
+  const f = fixture();
+  f.ctx.applyLogResolutions({resolved_ids: [1]});
+  f.ctx.renderLogList();
+  assert.equal(f.ctx.state.logItems.length, 1);
+  assert.equal(f.ctx.state.logItems[0].id, 2);
+});
+
+test('clear preserves server-confirmed unresolved rows even with log polling stopped', async () => {
+  const f = fixture();
+  f.ctx.showStatus = () => assert.fail('unexpected error');
+  f.ctx.fetch = async () => ({ok: true, json: async () => ({ok: true, items: [f.items[0]]})});
+  vm.runInContext(source.slice(source.indexOf('async function clearLogs()'),
+    source.indexOf('els.logsStart && els.logsStart.addEventListener')), f.ctx);
+  await f.ctx.clearLogs();
+  assert.equal(f.ctx.state.logItems.length, 1);
+  assert.equal(f.ctx.state.logItems[0].id, 1);
+  assert.equal(f.box.children.length, 1);
+});
+
+test('failed clear keeps visible logs intact', async () => {
+  const f = fixture();
+  let message;
+  f.ctx.showStatus = error => {message = error;};
+  f.ctx.fetch = async () => ({ok: false, json: async () => ({error: 'Disk full'})});
+  vm.runInContext(source.slice(source.indexOf('async function clearLogs()'),
+    source.indexOf('els.logsStart && els.logsStart.addEventListener')), f.ctx);
+  await f.ctx.clearLogs();
+  assert.equal(f.ctx.state.logItems.length, 2);
+  assert.equal(message, 'Disk full');
 });
