@@ -20706,6 +20706,43 @@ function categoriesForLog(item) {
   return categories;
 }
 
+const logRetryMonitors = new Set();
+
+async function monitorLogRetry(item) {
+  if (logRetryMonitors.has(item.id)) return;
+  logRetryMonitors.add(item.id);
+  try {
+    while (item.retry?.status === 'running') {
+      await new Promise(resolve => window.setTimeout(resolve, 1000));
+      const response = await fetch(`/api/logs/${item.id}/retry`);
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke hente status');
+      item.retry = result;
+      renderLogList();
+    }
+  } catch (error) {
+    item.retry = { status: 'unknown', error: error.message };
+    renderLogList();
+  } finally {
+    logRetryMonitors.delete(item.id);
+  }
+}
+
+async function retryLogItem(item) {
+  if (['running', 'succeeded'].includes(item.retry?.status)) return;
+  item.retry = { status: 'running' };
+  renderLogList();
+  try {
+    const response = await fetch(`/api/logs/${item.id}/retry`, { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke starte genforsøg');
+    item.retry = result;
+  } catch (error) {
+    item.retry = { status: 'failed', error: error.message };
+  }
+  renderLogList();
+}
+
 function renderLogList() {
   if (!els.mainLogsBox) return;
   const labels = logCategoryLabels();
@@ -20763,6 +20800,30 @@ function renderLogList() {
       detail.className = 'log-list-detail';
       detail.textContent = item._extra || '-';
       row.append(head, detail);
+      if (item.retry_stage) {
+        row.classList.add('has-retry');
+        const actions = document.createElement('div');
+        actions.className = 'log-retry-actions';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn log-retry-button';
+        const status = item.retry?.status;
+        button.disabled = status === 'running' || status === 'succeeded';
+        button.textContent = status === 'running' ? (isEnglish ? 'Retrying…' : 'Prøver igen…')
+          : status === 'succeeded' ? (isEnglish ? 'Succeeded' : 'Lykkedes')
+          : (isEnglish ? 'Try again' : 'Prøv igen');
+        button.addEventListener('click', () => retryLogItem(item));
+        actions.appendChild(button);
+        if (item.retry?.error) {
+          const message = document.createElement('span');
+          message.className = 'log-retry-error';
+          message.setAttribute('role', 'status');
+          message.textContent = item.retry.error;
+          actions.appendChild(message);
+        }
+        row.appendChild(actions);
+        if (status === 'running') monitorLogRetry(item);
+      }
       els.mainLogsBox.appendChild(row);
     }
   }

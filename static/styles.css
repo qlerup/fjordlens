@@ -3525,6 +3525,10 @@ body.detail-open .detail-panel {
 .log-list-row.log-ok { border-left-color: #34d399; }
 .log-list-row.log-warn { border-left-color: #fbbf24; }
 .log-list-row.log-err { border-left-color: #f87171; }
+.log-list-row.has-retry { grid-template-columns: minmax(180px, .8fr) minmax(0, 2.2fr) minmax(110px, auto); }
+.log-retry-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 240px; }
+.log-retry-button { white-space: nowrap; }
+.log-retry-error { color: #f87171; font-size: .78rem; overflow-wrap: anywhere; }
 .log-list-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .log-list-head time { color: var(--muted); font-size: .76rem; white-space: nowrap; }
 .log-event-badge {
@@ -3556,7 +3560,7 @@ body.detail-open .detail-panel {
 .log-pagination.hidden { display: none; }
 
 @media (max-width: 760px) {
-  .log-list-row { grid-template-columns: 1fr; gap: 7px; }
+  .log-list-row, .log-list-row.has-retry { grid-template-columns: 1fr; gap: 7px; }
   .log-list-head { flex-wrap: wrap; }
 }
 

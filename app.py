@@ -37,6 +37,7 @@ import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
+from log_retries import LogRetries, missing_stages
 from face_retry import FaceRetryGate, retry_video_frame
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -23653,7 +23654,7 @@ def api_logs():
         after = 0
     with LOG_LOCK:
         pending_items = [itm for itm in list(LOG_BUFFER) if int(itm.get("id", 0)) > after]
-    items = pending_items[:200]
+    items = [log_retries.describe(item) for item in pending_items[:200]]
     next_id = items[-1]["id"] if items else after
     return jsonify({"items": items, "next": next_id})
 
@@ -27985,6 +27986,12 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
             raise RuntimeError("Metadata skal genkøres før miniature")
         _rebuild_thumbnail_for_row(row)
         processing_failures.clear(rel, stage)
+    elif stage == "weather":
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
+        if not row:
+            raise RuntimeError("Metadata skal genkøres før vejrdata")
+        get_or_fetch_photo_weather(row, force=True)
     elif stage == "faces":
         try:
             index_faces_for_photo(rel)
@@ -28001,11 +28008,60 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
         raise ValueError("Ukendt behandlingstrin")
 
 
-processing_failures.register(
-    app, _retry_processing_failure,
-    busy=lambda: (_faces_running.is_set() or ai_running or ai_desc_running
-                  or POSTPROCESS_PIPELINE_LOCK.locked() or bool(PHOTO_REPROCESS_QUEUED)),
-)
+def _retry_logged_failure(rel: str, stage: str) -> None:
+    errors = []
+
+    def run_stage(current_stage):
+        try:
+            _retry_processing_failure(rel, current_stage)
+            remaining = next((item for item in processing_failures.items()
+                              if item["rel_path"] == rel and item["stage"] == current_stage), None)
+            if remaining:
+                raise RuntimeError(remaining["error"])
+        except Exception as exc:
+            errors.append(f"{current_stage}: {exc}")
+            prefixes = {"metadata": "postprocess_index", "thumbnails": "postprocess_thumb",
+                        "faces": "postprocess_faces_queue", "embeddings": "postprocess_ai",
+                        "descriptions": "postprocess_ai_desc", "weather": "weather_index"}
+            log_event("error", rel_path=rel, error=f"{prefixes[current_stage]}: {exc}")
+
+    run_stage(stage)
+    # Metadata is the prerequisite. Independent later stages can continue even
+    # when one of their peers fails again.
+    if stage == "metadata" and errors:
+        raise RuntimeError("; ".join(errors))
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
+    if row:
+        row = dict(row)
+        pending = missing_stages(
+            row,
+            thumbnail_exists=bool(row.get("thumb_name") and (THUMB_DIR / row["thumb_name"]).is_file()),
+            faces=faces_auto_index_enabled() and (Path(rel).suffix.lower() not in VIDEO_EXTS or faces_video_index_enabled()),
+            embeddings=ai_auto_ingest_enabled() and _is_ai_embedding_supported_rel(rel),
+            descriptions=ai_desc_auto_ingest_enabled(),
+        )
+        for pending_stage in pending:
+            if pending_stage != stage:
+                run_stage(pending_stage)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+
+
+def _processing_retry_busy():
+    return (_faces_running.is_set() or ai_running or ai_desc_running
+            or POSTPROCESS_PIPELINE_LOCK.locked() or bool(PHOTO_REPROCESS_QUEUED))
+
+
+def _retry_log_lookup(log_id):
+    with LOG_LOCK:
+        return next((dict(item) for item in LOG_BUFFER if item.get("id") == log_id), None)
+
+
+processing_failures.register(app, _retry_processing_failure, busy=_processing_retry_busy)
+log_retries = LogRetries(processing_failures, _retry_log_lookup,
+                         _retry_logged_failure, log_event, _processing_retry_busy)
+log_retries.register(app)
 
 
 if __name__ == "__main__":
