@@ -183,9 +183,11 @@ def members(row):
     return set(json.loads(row["photo_ids_json"] or "[]"))
 
 
-def can_view(g, row):
+def can_view(g, row, *, include_hidden=False):
     if not row or row["status"] == "dismissed":
         return False
+    if row["status"] == "hidden":
+        return include_hidden and bool(getattr(current_user, "can_manage_media", False))
     if getattr(current_user, "can_manage_media", False):
         return True
     ids = sorted(members(row))

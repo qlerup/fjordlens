@@ -1382,16 +1382,21 @@ const I18N = {
     momenter_find_zero_debug: 'Ingen nye minder. Scannede {scanned} billeder ({dated} med dato) i {segments} grupper. Sprunget over: {tooFew} med for få billeder, {tooShort} med for kort periode, {homeOnly} fra hverdagsmønstre, {alreadyCovered} allerede dækket. Tidligere valg og afvisninger bevares.',
     momenter_suggested_heading: 'Forslag',
     momenter_saved_heading: 'Gemte minder',
+    momenter_hidden: 'Skjulte minder',
+    momenter_back: 'Tilbage til minder',
+    momenter_restore: 'Vis igen',
+    momenter_restore_failed: 'Kunne ikke vise mindet igen',
+    momenter_hidden_empty: 'Ingen skjulte minder.',
     momenter_empty: 'Ingen minder endnu. En administrator kan bruge «Find nye minder» til at finde ture, dagsoplevelser og årsoverblik.',
     momenter_empty_suggested: 'Ingen nye forslag lige nu.',
     momenter_accept: 'Gem',
-    momenter_dismiss: 'Afvis',
+    momenter_dismiss: 'Skjul',
     momenter_play: 'Afspil',
     momenter_opening: 'Åbner...',
     momenter_delete: 'Slet',
     momenter_rename_prompt: 'Titel på mindet',
     momenter_accept_failed: 'Kunne ikke gemme mindet',
-    momenter_dismiss_failed: 'Kunne ikke afvise mindet',
+    momenter_dismiss_failed: 'Kunne ikke skjule mindet',
     momenter_delete_confirm: 'Slet dette minde?',
     momenter_delete_failed: 'Kunne ikke slette mindet',
     momenter_load_failed: 'Kunne ikke hente minder',
@@ -2257,16 +2262,21 @@ const I18N = {
     momenter_find_zero_debug: 'No new memories. Scanned {scanned} photos ({dated} dated) into {segments} groups. Skipped: {tooFew} too few photos, {tooShort} too short a span, {homeOnly} routine activity, {alreadyCovered} already covered. Previous edits and dismissals are preserved.',
     momenter_suggested_heading: 'Suggestions',
     momenter_saved_heading: 'Saved memories',
+    momenter_hidden: 'Hidden memories',
+    momenter_back: 'Back to memories',
+    momenter_restore: 'Show again',
+    momenter_restore_failed: 'Could not restore the memory',
+    momenter_hidden_empty: 'No hidden memories.',
     momenter_empty: 'No memories yet. Press "Find new memories" to look for trips and year reviews.',
     momenter_empty_suggested: 'No new suggestions right now.',
     momenter_accept: 'Save',
-    momenter_dismiss: 'Dismiss',
+    momenter_dismiss: 'Hide',
     momenter_play: 'Play',
     momenter_opening: 'Opening...',
     momenter_delete: 'Delete',
     momenter_rename_prompt: 'Title for this memory',
     momenter_accept_failed: 'Could not save the memory',
-    momenter_dismiss_failed: 'Could not dismiss the memory',
+    momenter_dismiss_failed: 'Could not hide the memory',
     momenter_delete_confirm: 'Delete this memory?',
     momenter_delete_failed: 'Could not delete the memory',
     momenter_load_failed: 'Could not load memories',
@@ -2898,6 +2908,8 @@ let state = {
   photoframePreviewHiddenById: {},
   momentsSuggested: [],
   momentsSaved: [],
+  momentsHidden: [],
+  momentsShowHidden: false,
   momentsLoading: false,
   momentsDetecting: false,
   momentPlayer: null,
@@ -3824,7 +3836,9 @@ function _momentCardHtml(m, mode) {
   const dateLabel = _momentDateRangeLabel(m);
   const count = Number(m.photo_count || 0);
   const countLabel = `${count} ${count === 1 ? 'element' : 'elementer'}`;
-  const actionsHtml = !canEdit ? `<button class="btn small" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>` : mode === 'suggested'
+  const actionsHtml = !canEdit ? `<button class="btn small" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>` : mode === 'hidden'
+    ? `<button class="btn small" type="button" data-moment-action="restore">${escapeHtml(tr('momenter_restore'))}</button>`
+    : mode === 'suggested'
     ? `<button class="btn small" type="button" data-moment-action="accept">${escapeHtml(tr('momenter_accept'))}</button>
        <button class="btn small ghost" type="button" data-moment-action="dismiss">${escapeHtml(tr('momenter_dismiss'))}</button>`
     : `<button class="btn small primary" type="button" data-moment-action="play">${escapeHtml(tr('momenter_play'))}</button>
@@ -3842,15 +3856,18 @@ function _momentCardHtml(m, mode) {
           <span>${escapeHtml(countLabel)}</span>
         </div>
         ${momentEvidenceHtml(m)}
-        <div class="moment-card-actions">${actionsHtml}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="share">Del link</button>' : ''}${canEdit ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se minde</button>' : ''}</div>
+        <div class="moment-card-actions">${actionsHtml}${canEdit && mode !== 'hidden' ? '<button class="btn small ghost" type="button" data-moment-action="share">Del link</button>' : ''}${canEdit && mode !== 'hidden' ? '<button class="btn small ghost" type="button" data-moment-action="edit">Rediger</button>' : ''}${canEdit && mode === 'suggested' ? '<button class="btn small ghost" type="button" data-moment-action="play">Se minde</button>' : ''}</div>
       </div>
     </article>`;
 }
 
 function renderMomentsPanel() {
   if (!els.grid) return;
-  const suggested = Array.isArray(state.momentsSuggested) ? state.momentsSuggested : [];
-  const saved = Array.isArray(state.momentsSaved) ? state.momentsSaved : [];
+  const canManage = ['admin', 'manager'].includes(state.currentUser?.role);
+  const showHidden = canManage && !!state.momentsShowHidden;
+  const hidden = canManage && Array.isArray(state.momentsHidden) ? state.momentsHidden : [];
+  const suggested = !showHidden && Array.isArray(state.momentsSuggested) ? state.momentsSuggested : [];
+  const saved = !showHidden && Array.isArray(state.momentsSaved) ? state.momentsSaved : [];
 
   const suggestedHtml = suggested.map((m) => _momentCardHtml(m, 'suggested')).join('');
   const savedHtml = saved.map((m) => _momentCardHtml(m, 'saved')).join('');
@@ -3860,9 +3877,11 @@ function renderMomentsPanel() {
       <div class="moments-panel-header">
         ${state.currentUser?.role === 'admin' ? `<button id="momentsFindNewBtn" class="btn" type="button">${escapeHtml(tr('momenter_find_new'))}</button>
         <button id="momentsHomeBtn" class="btn ghost" type="button">Hjemområde</button>` : ''}
+        ${canManage ? `<button id="momentsHiddenBtn" class="btn ghost" type="button" aria-pressed="${showHidden}">${escapeHtml(tr(showHidden ? 'momenter_back' : 'momenter_hidden'))}${showHidden ? '' : ` (${hidden.length})`}</button>` : ''}
         <span id="momentsFindStatus" class="mini-label"></span>
       </div>
-      ${(suggested.length || saved.length) ? '' : `<div class="moments-empty">${escapeHtml(tr('momenter_empty'))}</div>`}
+      ${showHidden ? `<h3 class="moments-section-heading">${escapeHtml(tr('momenter_hidden'))} (${hidden.length})</h3>${hidden.length ? `<div class="moments-grid">${hidden.map(m => _momentCardHtml(m, 'hidden')).join('')}</div>` : `<div class="moments-empty">${escapeHtml(tr('momenter_hidden_empty'))}</div>`}` : ''}
+      ${(showHidden || suggested.length || saved.length) ? '' : `<div class="moments-empty">${escapeHtml(tr('momenter_empty'))}</div>`}
       ${suggested.length ? `
         <h3 class="moments-section-heading">${escapeHtml(tr('momenter_suggested_heading'))}</h3>
         <div class="moments-grid">${suggestedHtml}</div>
@@ -3874,6 +3893,11 @@ function renderMomentsPanel() {
     </div>
   `;
 
+  document.getElementById('momentsHiddenBtn')?.addEventListener('click', () => {
+    state.momentsShowHidden = !showHidden;
+    renderMomentsPanel();
+    document.getElementById('momentsHiddenBtn')?.focus();
+  });
   document.getElementById('momentsHomeBtn')?.addEventListener('click', editMomentHome);
   const findBtn = document.getElementById('momentsFindNewBtn');
   if (findBtn) {
@@ -3887,11 +3911,19 @@ function renderMomentsPanel() {
     const id = Number(card.dataset.momentId || 0);
     if (!id) return;
     card.querySelectorAll('[data-moment-action]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const action = btn.dataset.momentAction;
+        if (action === 'dismiss' || action === 'restore') {
+          btn.disabled = true;
+          try {
+            await (action === 'dismiss' ? dismissMoment(id) : restoreMoment(id));
+          } finally {
+            btn.disabled = false;
+          }
+          return;
+        }
         if (action === 'accept') acceptMoment(id);
-        else if (action === 'dismiss') dismissMoment(id);
         else if (action === 'play') playMoment(id);
         else if (action === 'delete') deleteMoment(id);
         else if (action === 'edit') editMoment(id);
@@ -3914,6 +3946,7 @@ async function loadMoments() {
     if (res.ok && data.ok) {
       state.momentsSuggested = Array.isArray(data.suggested) ? data.suggested : [];
       state.momentsSaved = Array.isArray(data.saved) ? data.saved : [];
+      state.momentsHidden = Array.isArray(data.hidden) ? data.hidden : [];
     } else {
       showStatus(tr('momenter_load_failed'), 'err');
     }
@@ -4017,12 +4050,23 @@ async function acceptMoment(id) {
 
 async function dismissMoment(id) {
   try {
-    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/hide`, { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_dismiss_failed'));
     await loadMoments();
   } catch (error) {
     showStatus(String((error && error.message) || tr('momenter_dismiss_failed')), 'err');
+  }
+}
+
+async function restoreMoment(id) {
+  try {
+    const res = await fetch(`/api/moments/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || tr('momenter_restore_failed'));
+    await loadMoments();
+  } catch (error) {
+    showStatus(error.message || tr('momenter_restore_failed'), 'err');
   }
 }
 
@@ -12149,6 +12193,18 @@ async function loadMapperTreeIndex(force = false) {
   return request.promise;
 }
 
+function refreshMapperFolderPreviews(previews) {
+  if (state.view !== 'mapper' || state.mapperEditMode || !els.grid) return;
+  for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
+    const folderPath = String(card.dataset.folder || '');
+    const saved = previews[folderPath];
+    const key = JSON.stringify(saved ?? null);
+    if (card.dataset.previewKey === key) continue;
+    card.dataset.previewKey = key;
+    window.FjordLensFolderPreviews.watch(card, () => Array.isArray(saved) ? saved : loadMapperFolderPreview(folderPath));
+  }
+}
+
 async function loadMapperTools(preferred = null, useCache = false) {
   const path = _normalizeMapperPath(preferred !== null ? preferred : (state.mapperPath || ''));
   const requestSequence = ++mapperToolsRequestSequence;
@@ -12166,9 +12222,8 @@ async function loadMapperTools(preferred = null, useCache = false) {
     if (!current()) return false;
     const scopeChanged = acceptMapperIndexScope(data);
     const folders = data.folders.filter(Boolean), previews = mapperIndexPreviews(data);
-    const changed = JSON.stringify(state.mapperFolders) !== JSON.stringify(folders)
-      || JSON.stringify(state.mapperFolderPreviews || {}) !== JSON.stringify(previews)
-      || state.mapperIndexing !== !!data.indexing;
+    const foldersChanged = JSON.stringify(state.mapperFolders) !== JSON.stringify(folders);
+    const previewsChanged = JSON.stringify(state.mapperFolderPreviews || {}) !== JSON.stringify(previews);
     state.mapperFolders = folders;
     state.mapperFolderPreviews = previews;
     state.mapperIndexRevision = data.revision;
@@ -12180,10 +12235,12 @@ async function loadMapperTools(preferred = null, useCache = false) {
     }
     _expandMapperAncestors(path);
     renderMapperContext(path); _syncRouteStateToUrl();
-    if (changed || !state.items.length) {
+    if (foldersChanged) {
       const anchor = state.items.length ? captureGalleryScrollAnchor() : null;
       renderGrid();
       if (anchor) restoreGalleryScrollAnchor(anchor, current);
+    } else if (previewsChanged) {
+      refreshMapperFolderPreviews(previews);
     }
     scheduleMapperIndexRefresh(data);
     if (scopeChanged) loadPhotos(false, false, false);

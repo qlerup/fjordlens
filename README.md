@@ -1,8 +1,8 @@
 # FjordLens
 
-FjordLens is a self-hosted photo library for Synology NAS and Docker hosts, with built-in photoframe management for Raspberry Pi devices, Google Photos/Nest Hub photo-frame integration, and mobile AirPlay/Google Cast slideshow support.
+FjordLens is a self-hosted photo and video library for Synology NAS and Docker hosts. It combines searchable galleries, AI descriptions and face recognition, automatic moments with editable cinematic slideshows, public sharing, Raspberry Pi photoframe management, Google Photos/Nest Hub integration, and mobile AirPlay/Google Cast playback.
 
-This repository contains the FjordLens web app/API plus the Raspberry Pi photoframe client.
+This repository contains the FjordLens web app/API, AI service, updater, external Windows AI worker and native iOS AirPlay integration files. Raspberry Pi frames connect as separate clients; their installation files are not included in this checkout.
 
 See [Minder](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
 photo selection, editing, splitting and merging moments, cinematic slideshows,
@@ -19,7 +19,7 @@ music, public links and MP4 export.
 | Weather enrichment | | | | Open-Meteo |
 | Thumbnail generation | | | | |
 | AI embedding/search/similarity | | | | |
-| AI image description | X* | | X | |
+| Built-in AI image description (Light / Qwen) | | | | |
 | Face detection/indexing | | | | |
 | Public share links | | | | |
 | Automatic moments and attraction lookup | | | | OpenStreetMap / Overpass for places |
@@ -29,9 +29,15 @@ music, public links and MP4 export.
 | Google Photos / Nest Hub Photo Frame | | | | Google Photos OAuth |
 | AirPlay slideshow from iPhone/iPad | | | | Apple AirPlay |
 | Google Cast custom receiver | | | | Google Cast Receiver App ID |
-| External AI queue | X | | X | |
+| External AI description queue (Windows / Ollama) | X | | X | |
+| HEIC/RAW conversion and MOV to MP4 | | | | |
+| Camera client pairing and uploads | | | | Separate camera client |
+| Password recovery by email | | | | SMTP server |
 
-*Ollama is only required if you use the external AI describer/worker.
+Ollama is only required for the external Windows AI describer. Built-in AI search,
+face indexing and descriptions use `fjordlens-ai`; hardware requirements depend
+on the selected model. The base Docker configuration uses CPU, with an optional
+NVIDIA GPU override.
 
 ---
 
@@ -40,13 +46,27 @@ music, public links and MP4 export.
 ### Photo library
 
 - Timeline, Favorites, Folders, Places, Cameras, People views
+- Cameras groups the library into virtual folders by camera model; opening a camera shows its matching media without moving files
+- Search, sorting and metadata filters, including camera and location browsing
 - Metadata indexing (EXIF/file info)
 - Historical weather enrichment from photo date + GPS, with city fallback
 - Thumbnail generation and cache management
-- Per-photo editing for captured date, GPS and favorite state
+- Per-photo editing for captured date, GPS, uploader and favorite state, subject to permissions
 - Duplicate detection and merge tools
 - Single file and ZIP downloads
-- Progressive loading in Timeline, Folders and People
+- Progressive loading in Timeline, Favorites, camera galleries, Folders and People; Timeline loads five screen-width rows at a time
+- Cached folder views restore immediately and refresh in the background; folder cards appear before media and covers finish loading
+
+### Folders and media viewer
+
+- Create, rename, move and delete upload folders from the UI, with access checks for the source and destination
+- Move a folder under another folder or back to the upload root; original and converted files move together while photo IDs and stored references are preserved
+- Folder moves reject conflicting destinations, moves into the folder itself or its descendants, and moves while uploads or processing are busy
+- Folder previews are cached and can be refreshed through the folder-preview API
+- Browse photos and videos in the viewer with swipe navigation and touch pinch-to-zoom/panning for images
+- The selected media loads first, followed by sequential preparation of nearby items
+- A shared video playback setting controls autoplay when opening or swiping to a video
+- Download individual media or ZIP archives with capture-date metadata where supported
 
 ### Moments and cinematic slideshows
 
@@ -92,10 +112,13 @@ as public-domain or unrestricted stock music.
 ### Upload and file handling
 
 - Folder-based upload workflows from the UI
+- Remember the selected upload destination between uploads, including the upload root
 - Resumable uploads via TUS (`/api/upload/tus`)
 - Share-link uploads (including TUS on share links)
-- Optional HEIC and RAW conversion flows
-- Post-processing pipeline for uploads
+- Optional HEIC to JPEG, RAW/DNG to JPEG and MOV to browser-friendly MP4 conversion
+- Separate settings for each format control conversion and whether to retain originals; apply conversion to future uploads or run it on existing files
+- Configure accepted upload file types and the upload processing workflow
+- Post-processing pipeline with progress/status reporting; conversion work is staged in `DATA_DIR/conversion_work` before publishing completed files to upload storage
 
 ### External camera clients
 
@@ -125,14 +148,18 @@ behavior: a newly free slot immediately starts the next waiting conversion. GPU 
 prefers NVDEC + NVENC, falls back to CPU decode + NVENC, then full CPU.
 
 - AI embedding ingest with start/stop/status
-- AI description ingest with start/stop/status
+- Built-in AI description ingest with Light/Qwen model selection and start/stop/status
 - External AI description queue for offloaded processing workers
 - AI search and "similar photos" tools
 - Face indexing jobs with progress tracking
+- Face detections in photos and videos; person albums show the video frame where the face was detected, with face boxes for that frame
 - People training, rename, hide, unknown-face matching
+- Select multiple face detections in a person album and assign them to an existing person, create a new person or hide the selection
+- Search existing names and create a person from the same naming menu; naming and merging show progress feedback
+- When sorting People by photo count, named people appear before unknown groups
 - Person covers use still-photo face crops with corrected orientation, rather than video frames
 - Unnamed single-photo detections are hidden behind the single-find toggle; they keep participating in matching and appear automatically when more photos match
-- Explicitly hidden people stay hidden until unhidden, independently of the single-find filter
+- Explicitly hidden people stay hidden until unhidden, independently of the single-find filter, and are excluded from automatic matching
 - Name an unknown person from inside their album; named people have an explicit rename/merge dialog
 - Existing-person choices sort by photo count descending, then Danish alphabetical order
 - Face-box toggling updates immediately, and refreshing a person album preserves the selected person
@@ -207,12 +234,32 @@ FjordLens includes a custom Google Cast Web Receiver and sender flow for Android
 
 Google Cast requires a configured **Custom Web Receiver App ID**. Until an App ID has been registered/configured, the Cast backend and receiver page are present but Android Cast cannot start a real receiver session.
 
+For developers building an iOS Capacitor wrapper, [native AirPlay integration](mobile/ios/README.md)
+provides Swift files for AVPlayer and Apple's native route picker. These files
+require integration into an Xcode app target; they are not a prebuilt mobile app.
+
 ### Admin and security
 
 - Initial setup wizard for first admin account
 - Role-based access (`admin`, `manager`, `user`)
+- Per-user folder access and media-management permissions
 - TOTP 2FA for accounts
 - Per-user UI language and search language (`da`/`en`)
+- Profile and password management
+- **Glemt adgangskode** sends an email verification code before allowing a password reset; admins configure/test SMTP and can disable the feature
+- Optional FjordHub login and user-management integration
+- Shared Klassisk/Fjord design with personal light/dark/system preference (see [Shared appearance](#shared-appearance))
+
+### Maintenance and diagnostics
+
+- Metadata rescans, thumbnail rebuilds and a dedicated repair action for missing thumbnails
+- Administrators can queue post-processing again for an individual photo and follow its status
+- Rebuild an individual thumbnail or refresh a photo's weather information
+- Background task progress and stop controls, including **Stop alle processer**
+- Persistent event logs in `DATA_DIR/fjordlens-events.jsonl`, available in the Logs panel after restarts
+- AI runtime/device status and a **Frigiv GPU (Qwen)** action to unload Qwen; the model loads again when needed
+- In-app update checks, progress/log output and optional Docker cleanup (see [Updating](#updating))
+- Index reset and factory-reset tools for administrators
 
 ## Quick Start
 
@@ -283,8 +330,8 @@ When installing through FjordHub, use the optional GPU step in the wizard. It ca
 
 ```bash
 cd /volume1/docker
-git clone https://github.com/<your-user>/<your-repo>.git fjordlens
-cd fjordlens/fjordlens
+git clone https://github.com/qlerup/fjordlens.git
+cd fjordlens
 sh scripts/Fresh_start_ubuntu_vm.sh
 ```
 
@@ -437,19 +484,17 @@ AirPlay HLS conversion runs in the dedicated `fjordlens-convert` container. FFmp
 
 Open the `Photoframe` view and create a frame entry/token.
 
-### 2) Install photoframe on Raspberry Pi
+### 2) Install a compatible photoframe client on Raspberry Pi
 
-On a fresh Raspberry Pi (SSH as normal user):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/qlerup/fjordlens/main/photoframe/scripts/bootstrap_install.sh | bash
-```
+Install the Raspberry Pi client using the instructions supplied with that client.
+This checkout contains the server integration, but no `photoframe/` client or
+bootstrap installer. Have the FjordLens server URL and the frame token ready.
 
 ### 3) First setup on the frame
 
 Open `http://<frame-ip>:5001`.
 
-Current setup flow supports:
+Depending on the installed client version, its setup flow provides:
 
 - Country selection first
 - Wi-Fi setup
@@ -592,7 +637,10 @@ See `.env.example` for defaults. Most-used variables:
 - `TZ`: timezone
 - `LOG_LEVEL`: app log level
 - `ENABLE_LIBRARY_SOURCE`: enable/disable library source (`PHOTO_DIR`) usage (`0` by default)
-- `ENABLE_SCAN_FEATURES`: enable/disable scan/rescan/rethumb tools (`0` by default)
+- `ENABLE_SCAN_FEATURES`: show the full library-scan action (`0` by default); metadata rescan and thumbnail repair remain available under maintenance
+- `RAW_CONVERT_ON_UPLOAD`, `MOV_CONVERT_ON_UPLOAD`: initial upload-conversion defaults; manage conversion and original retention in Settings
+- `WEATHER_AUTO_FETCH`: automatic weather enrichment (`1` by default)
+- `MOMENT_POI_LOOKUP`: attraction lookup through OpenStreetMap/Overpass (`1` in `.env.example`)
 - `AI_DEVICE`: AI runtime preference (`cpu`, `auto`, `cuda`; default `cpu`)
 - `ENABLE_GPU_GUIDE`: enable guided GPU preflight in `scripts/fresh_setup_lxc.sh` (`1` by default)
 - The AI service is internal to the Compose network; it has no host debug port. Its inference and control endpoints must not be exposed to untrusted networks. For health diagnostics use `docker compose exec fjordlens-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"`.
@@ -627,6 +675,15 @@ Common advanced settings in code/env:
 - AI jobs: `/api/ai/ingest`, `/api/ai/describe/ingest`, `/api/faces/index`
 - Photos: `/api/photos`, `/api/photos/<id>`, `/api/photos/download-zip`
 - Shares: `/api/shares`, `/api/share/<token>/*`
+- Moments and detection: `/api/moments`, `/api/moments/detect`, `/api/moments/detect/status`
+- Moment MP4 export: `/api/moments/<id>/render-video`, `/api/moments/<id>/render-video/status`, `/api/moments/<id>/video`
+- Camera groups and folder previews: `/api/cameras`, `/api/folder-previews`
+- Folder moves: `POST /api/settings/upload-folder-move`
+- Face selection: `POST /api/people/faces/selection`
+- Per-photo processing: `/api/photos/<id>/reprocess`, `/api/photos/<id>/thumbnail`, `/api/photos/<id>/weather`
+- Conversion settings: `/api/settings/heic`, `/api/settings/raw`, `/api/settings/mov`
+- Camera client pairing: `/api/client-auth/pair/start`, `/api/client-auth/pair/status`
+- Paired client uploads: `/api/client/upload`
 - Raspberry Pi photoframes: `/api/photoframes/*`, `/api/frame/<token>/*`
 - Google Photo Frame: `/api/google-photo-frame/*`
 - AirPlay/Cast session: `POST /api/cast-airplay/session`
@@ -732,18 +789,25 @@ fjordlens/
 |- google_photo_frame.py
 |- google_photo_frame_picker.py
 |- google_photo_frame_selection.py
+|- gallery_browse.py
+|- moments_engine.py
+|- moments_service.py
+|- moment_slideshow.py
+|- moment_cinema.py
+|- moment_sharing.py
+|- moment_music.py
+|- person_faces.py
+|- person_video_frames.py
 |- static/
 |- templates/
 |- ai_service/
+|- updater_service/
 |- external_worker/
+|- mobile/ios/
+|- music/
+|- resources/
 |- scripts/
-`- photoframe/
-   |- app/
-   |- viewer/
-   |- systemd/
-   |- scripts/
-   |- install.sh
-   `- update.sh
+`- tests/
 ```
 
 ## Security Checklist
@@ -778,6 +842,12 @@ tar czf fjordlens-backup-$(date +%Y%m%d).tar.gz /path/to/data_dir /path/to/uploa
 
 ---
 
-## Screenshots & GIFs
+## Further documentation
 
-To improve onboarding, consider adding screenshots or GIFs for each major view (`Timeline`, `Folders`, `Photoframe`, `Google Photo Frame`, `AirPlay`, `Settings`).
+- [Moments, slideshow editing, sharing and video export](MOMENTS.md)
+- [Google Photos / Nest Hub integration](GOOGLE_PHOTO_FRAME.md)
+- [External Windows AI worker](external_worker/windows/README.md)
+- [Native iOS AirPlay integration](mobile/ios/README.md)
+- [Bundled music](music/README.md) and [music rights](music/COPYRIGHT.md)
+- [Proxmox LXC GPU recovery](GPU_RECOVERY_LXC.md)
+- [Place-name aliases](resources/PLACE_NAMES.md)

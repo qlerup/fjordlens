@@ -70,3 +70,11 @@ test('later reads pick up another user’s folder edits even with useCache=true'
   assert.equal(f.requests.length,2); assert.deepEqual([...f.state.mapperFolders],['A/New']);
   assert.ok(f.requests.every(r=>r.url.startsWith('/api/folder-index?')));
 });
+
+test('unchanged folder-index polls do not rebuild the mapper grid', async()=>{
+  const f=fixture(); f.state.items=[{id:1}];
+  const first=f.context.loadMapperTools('A',true); f.reply(0,'A',['A/Child']); await first;
+  const rendersAfterFirst=f.renders.length;
+  const next=f.context.loadMapperTools('A',true); f.reply(1,'A',['A/Child']); await next;
+  assert.equal(f.renders.length,rendersAfterFirst);
+});

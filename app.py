@@ -8132,20 +8132,21 @@ def api_moments_detect_status():
 def api_moments_list():
     with closing(get_conn()) as conn:
         rows = conn.execute(
-            "SELECT * FROM moments WHERE status IN ('suggested','saved') ORDER BY start_date DESC"
+            "SELECT * FROM moments WHERE status IN ('suggested','saved','hidden') ORDER BY start_date DESC"
         ).fetchall()
     suggested: list[Dict[str, Any]] = []
     saved: list[Dict[str, Any]] = []
+    hidden: list[Dict[str, Any]] = []
     for r in rows:
         # Apply the new minimum to old automatic suggestions immediately, without
         # deleting saved edits or the records used by existing share links.
         if r['status'] == 'suggested' and not r['user_edited'] and len(moments_service.members(r)) < MOMENT_MIN_PHOTOS:
             continue
-        if not moments_service.can_view(globals(), r):
+        if not moments_service.can_view(globals(), r, include_hidden=True):
             continue
         pub = _moment_row_to_public(r)
-        (suggested if pub["status"] == "suggested" else saved).append(pub)
-    return jsonify({"ok": True, "suggested": suggested, "saved": saved})
+        {"suggested": suggested, "saved": saved, "hidden": hidden}[pub["status"]].append(pub)
+    return jsonify({"ok": True, "suggested": suggested, "saved": saved, "hidden": hidden})
 
 
 @app.route("/api/moments/<int:moment_id>")
@@ -8214,6 +8215,26 @@ def api_moment_dismiss(moment_id: int):
         conn.execute("UPDATE moments SET status='dismissed', revision=revision+1, updated_at=? WHERE id=?", (now_iso(), moment_id))
         conn.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/api/moments/<int:moment_id>/hide", methods=["POST"])
+@app.route("/api/moments/<int:moment_id>/restore", methods=["POST"])
+@login_required
+def api_moment_visibility(moment_id: int):
+    forbidden = _forbid_media_management()
+    if forbidden:
+        return jsonify(forbidden[0]), forbidden[1]
+    target = "hidden" if request.path.endswith('/hide') else "suggested"
+    with closing(get_conn()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM moments WHERE id=?", (moment_id,)).fetchone()
+        if not row or row['status'] not in ('suggested', 'hidden'):
+            return jsonify(ok=False, error="Mindet findes ikke blandt forslag eller skjulte minder."), 404
+        if row['status'] != target:
+            conn.execute("UPDATE moments SET status=?, revision=revision+1, updated_at=? WHERE id=?",
+                         (target, now_iso(), moment_id))
+        conn.commit()
+    return jsonify(ok=True)
 
 
 @app.route("/api/moments/<int:moment_id>", methods=["DELETE"])
