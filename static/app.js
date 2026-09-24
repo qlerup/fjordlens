@@ -6048,6 +6048,9 @@ const galleryDataCache = window.FjordLensGalleryCache.createCache();
 const mapperViews = new Map();
 let pendingMapperView = null;
 let mapperUnchangedCards = null;
+// Last rendered item JSON per mapper photo card, so any re-render can keep
+// unchanged cards instead of rebuilding them (and re-decoding thumbnails).
+const mapperCardItemJson = new WeakMap();
 let mapperRevalidation = null;
 function revalidateMapperView() {
   const key = mapperViewKey(), sequence = photosRequestSequence;
@@ -6407,11 +6410,16 @@ function renderCameraFolders() {
 
 function renderGrid() {
   const reusableFolders = new Map();
+  const reusablePhotos = new Map();
   if (state.view === 'mapper' && !state.mapperEditMode && els.grid?.dataset.mapperPath === String(state.mapperPath || '')) {
+    // Upload/convert polling re-renders often. Keep existing cards so the grid
+    // does not flash; folder mosaics swap in place once new covers decode.
     for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
-      if (card.dataset.previewKey === JSON.stringify((state.mapperFolderPreviews || {})[card.dataset.folder] ?? null)) {
-        reusableFolders.set(card.dataset.folder, card);
-      }
+      reusableFolders.set(card.dataset.folder, card);
+    }
+    for (const card of els.grid.querySelectorAll('.photo-card[data-photo-id]:not(.folder-card)')) {
+      const json = mapperCardItemJson.get(card);
+      if (json) reusablePhotos.set(card.dataset.photoId, {card, json});
     }
   }
   if (els.statPhotos) els.statPhotos.style.display = state.view === 'personer' && state.personView.mode === 'photos' ? 'none' : '';
@@ -6718,7 +6726,17 @@ function renderGrid() {
     }
     for (const folderPath of sorted) {
       const existing = reusableFolders.get(folderPath);
-      if (existing) {els.grid.append(existing); continue;}
+      if (existing) {
+        els.grid.append(existing);
+        const saved = (state.mapperFolderPreviews || {})[folderPath];
+        const key = JSON.stringify(saved ?? null);
+        if (existing.dataset.previewKey !== key) {
+          existing.dataset.previewKey = key;
+          // render() keeps the old mosaic until the new images are decoded.
+          window.FjordLensFolderPreviews.watch(existing, () => Array.isArray(saved) ? saved : loadMapperFolderPreview(folderPath));
+        }
+        continue;
+      }
       const title = folderPath.split('/').filter(Boolean).pop() || folderPath;
       appendFolderCard(folderPath, [], {
         title,
@@ -6728,9 +6746,21 @@ function renderGrid() {
       });
     }
     items.forEach((item, index) => {
+      // Cards built in selection mode or another language differ from view-mode cards.
+      const json = JSON.stringify([state.mapperEditMode ? 1 : 0, state.uiLanguage || '', item]);
       let card = mapperUnchangedCards?.get(String(item.id));
-      if (card) els.grid.append(card); else card = appendCard(item);
-      if (card) card.dataset.mapperIndex = String(index);
+      if (!card) {
+        const previous = reusablePhotos.get(String(item.id));
+        if (previous && previous.json === json) card = previous.card;
+      }
+      if (card) {
+        card.classList.toggle('active', state.selectedId === item.id);
+        els.grid.append(card);
+      } else card = appendCard(item);
+      if (card) {
+        card.dataset.mapperIndex = String(index);
+        mapperCardItemJson.set(card, json);
+      }
     });
     const cols = Math.max(1, estimateMapperGridMetrics().cols);
     const total = mapperDisplayCapacity(cols);
@@ -12150,7 +12180,11 @@ async function loadMapperTools(preferred = null, useCache = false) {
     }
     _expandMapperAncestors(path);
     renderMapperContext(path); _syncRouteStateToUrl();
-    if (changed || !state.items.length) renderGrid();
+    if (changed || !state.items.length) {
+      const anchor = state.items.length ? captureGalleryScrollAnchor() : null;
+      renderGrid();
+      if (anchor) restoreGalleryScrollAnchor(anchor, current);
+    }
     scheduleMapperIndexRefresh(data);
     if (scopeChanged) loadPhotos(false, false, false);
     return true;
