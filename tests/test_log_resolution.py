@@ -8,7 +8,7 @@ import unittest
 from flask import Flask, jsonify, request
 from types import SimpleNamespace
 
-from log_retries import resolved_log_ids, hidden_error_log_ids, unresolved_error_logs
+from log_retries import resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids
 
 
 def error(identifier, rel='a.jpg', stage='faces'):
@@ -20,6 +20,67 @@ def success(identifier, rel='a.jpg', stage='faces'):
 
 
 class LogResolutionTests(unittest.TestCase):
+    def test_clear_file_matches_all_stages_and_pending_path_but_not_other_folders(self):
+        logs = [error(1, 'uploads/originals/family/a.HEIC'),
+                error(2, '/data/conversion_work/pending/originals/family/a.HEIC', 'metadata'),
+                error(3, '/data/uploads/originals/family/a.HEIC', 'conversion'),
+                error(4, 'uploads/originals/other/a.HEIC'),
+                success(5, 'uploads/originals/family/a.HEIC'),
+                dict(id=6, event='error', error='unknown')]
+        self.assertEqual(file_error_log_ids(logs, logs[0]), [1, 2, 3])
+        self.assertEqual(file_error_log_ids(logs, logs[5]), [6])
+        self.assertEqual(file_error_log_ids(logs, logs[4]), [])
+        self.assertEqual(file_error_log_ids(logs, None), [])
+
+    def test_file_clear_survives_restart_and_does_not_hide_future_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = [error(1), error(2, stage='conversion'), error(3, 'b.jpg'), success(4)]
+            env, path = self.persistence_fixture(directory, logs)
+            env['_clear_persistent_logs'](remove_ids=set(file_error_log_ids(logs, logs[0])))
+            env['_load_persistent_logs']()
+            self.assertEqual(env['LOG_SEQ'], 10)
+            self.assertEqual([item['id'] for item in unresolved_error_logs(list(env['LOG_BUFFER']))], [3])
+            env['LOG_BUFFER'].append(error(11))
+            self.assertEqual([item['id'] for item in unresolved_error_logs(list(env['LOG_BUFFER']))], [3, 11])
+            self.assertIn('processing_stage_done', path.read_text())
+
+    def test_file_clear_disk_failure_preserves_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, path = self.persistence_fixture(directory, [error(1)])
+            path.with_suffix('.tmp').mkdir()
+            with self.assertRaises(OSError):
+                env['_clear_persistent_logs'](remove_ids={1})
+            self.assertEqual(list(env['LOG_BUFFER']), [error(1)])
+
+    def test_file_clear_api_permissions_server_owned_target_and_write_failure(self):
+        source = Path(__file__).resolve().parents[1] / 'app.py'
+        tree = ast.parse(source.read_text(encoding='utf-8-sig'))
+        node = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == 'api_log_file_clear')
+        node.decorator_list = []
+        with tempfile.TemporaryDirectory() as directory:
+            logs = [error(1), error(2, stage='conversion'), error(3, 'b.jpg')]
+            env, path = self.persistence_fixture(directory, logs)
+            env.update(_forbid_user_role_for_maintenance=lambda: None,
+                       jsonify=jsonify, file_error_log_ids=file_error_log_ids)
+            exec(compile(ast.unparse(node), str(source), 'exec'), env)
+            app = Flask(__name__)
+            app.add_url_rule('/api/logs/<int:log_id>/clear', view_func=env['api_log_file_clear'], methods=['POST'])
+            client = app.test_client()
+            env['_forbid_user_role_for_maintenance'] = lambda: ({'ok': False}, 403)
+            self.assertEqual(client.post('/api/logs/1/clear').status_code, 403)
+            self.assertEqual(list(env['LOG_BUFFER']), logs)
+            env['_forbid_user_role_for_maintenance'] = lambda: None
+            self.assertEqual(client.post('/api/logs/99/clear').status_code, 404)
+            path.with_suffix('.tmp').mkdir()
+            self.assertEqual(client.post('/api/logs/1/clear').status_code, 500)
+            self.assertEqual(list(env['LOG_BUFFER']), logs)
+            path.with_suffix('.tmp').rmdir()
+            response = client.post('/api/logs/1/clear', json={'rel_path': 'b.jpg', 'remove_ids': [3]})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json['removed_ids'], [1, 2])
+            self.assertEqual([item['id'] for item in unresolved_error_logs(list(env['LOG_BUFFER']))], [3])
+
     def test_success_removes_only_older_errors_for_exact_file_and_stage(self):
         logs = [error(1), error(2, stage='weather'), error(3, rel='b.jpg'),
                 error(4), success(5), error(6)]

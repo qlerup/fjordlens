@@ -81,6 +81,18 @@ def canonical_log_rel(rel):
     return rel
 
 
+def file_error_log_ids(items, selected):
+    """Clear all stages for the exact file, never unrelated same-name files."""
+    if not selected or not is_error_log(selected):
+        return []
+    rel = selected.get('rel_path')
+    if not rel:
+        return [selected['id']]
+    target = canonical_log_rel(rel)
+    return [item['id'] for item in items if is_error_log(item)
+            and item.get('rel_path') and canonical_log_rel(item['rel_path']) == target]
+
+
 def resolved_log_ids(items):
     """A later committed success resolves only older errors for that file/stage."""
     successes = {}
@@ -155,6 +167,7 @@ class LogRetries:
     def describe(self, item):
         with self.tracker.lock:
             return dict(item, retry_stage=(retry_target(item) or (None, None))[1],
+                        clearable=is_error_log(item),
                         retry=dict(self.states.get(item['id'], {})))
 
     def run(self, log_id, rel, stage):

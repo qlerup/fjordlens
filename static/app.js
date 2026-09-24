@@ -20761,6 +20761,27 @@ async function retryLogItem(item) {
   renderLogList();
 }
 
+async function clearFileLogErrors(item) {
+  if (item.clearing) return;
+  item.clearing = true;
+  item.clearError = '';
+  ++logViewRevision;
+  renderLogList();
+  try {
+    const response = await fetch(`/api/logs/${item.id}/clear`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Kunne ikke rydde fejl');
+    ++logViewRevision;
+    const removed = new Set(data.removed_ids || []);
+    state.logItems = state.logItems.filter(entry => !removed.has(entry.id));
+  } catch (error) {
+    item.clearError = error.message;
+  } finally {
+    item.clearing = false;
+    renderLogList();
+  }
+}
+
 function renderLogList() {
   if (!els.mainLogsBox) return;
   const labels = logCategoryLabels();
@@ -20818,25 +20839,48 @@ function renderLogList() {
       detail.className = 'log-list-detail';
       detail.textContent = item._extra || '-';
       row.append(head, detail);
-      if (item.retry_stage) {
+      if (item.retry_stage || item.clearable) {
         row.classList.add('has-retry');
         const actions = document.createElement('div');
         actions.className = 'log-retry-actions';
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn log-retry-button';
         const status = item.retry?.status;
-        button.disabled = status === 'running' || status === 'succeeded';
-        button.textContent = status === 'running' ? (isEnglish ? 'Retrying…' : 'Prøver igen…')
-          : status === 'succeeded' ? (isEnglish ? 'Succeeded' : 'Lykkedes')
-          : (isEnglish ? 'Try again' : 'Prøv igen');
-        button.addEventListener('click', () => retryLogItem(item));
-        actions.appendChild(button);
+        if (item.retry_stage) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn log-retry-button';
+          button.disabled = status === 'running' || status === 'succeeded';
+          button.textContent = status === 'running' ? (isEnglish ? 'Retrying…' : 'Prøver igen…')
+            : status === 'succeeded' ? (isEnglish ? 'Succeeded' : 'Lykkedes')
+            : (isEnglish ? 'Try again' : 'Prøv igen');
+          button.addEventListener('click', () => retryLogItem(item));
+          actions.appendChild(button);
+        }
         if (item.retry?.error) {
           const message = document.createElement('span');
           message.className = 'log-retry-error';
           message.setAttribute('role', 'status');
           message.textContent = item.retry.error;
+          actions.appendChild(message);
+        }
+        if (item.clearable) {
+          const clear = document.createElement('button');
+          clear.type = 'button';
+          clear.className = 'btn log-clear-button';
+          clear.disabled = !!item.clearing;
+          clear.textContent = item.clearing ? (isEnglish ? 'Clearing…' : 'Rydder…')
+            : item.rel_path ? (isEnglish ? 'Clear file errors' : 'Ryd filens fejl')
+            : (isEnglish ? 'Clear error' : 'Ryd fejl');
+          clear.title = item.rel_path
+            ? (isEnglish ? 'Remove all logged errors for this file: ' : 'Fjern alle logfejl for denne fil: ') + item.rel_path
+            : (isEnglish ? 'Remove this log entry' : 'Fjern denne logpost');
+          clear.addEventListener('click', () => clearFileLogErrors(item));
+          actions.appendChild(clear);
+        }
+        if (item.clearError) {
+          const message = document.createElement('span');
+          message.className = 'log-retry-error';
+          message.setAttribute('role', 'status');
+          message.textContent = item.clearError;
           actions.appendChild(message);
         }
         row.appendChild(actions);

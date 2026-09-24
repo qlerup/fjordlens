@@ -98,3 +98,29 @@ test('failed clear keeps visible logs intact', async () => {
   assert.equal(f.ctx.state.logItems.length, 2);
   assert.equal(message, 'Disk full');
 });
+
+test('clear file action removes all server-selected errors with polling stopped', async () => {
+  const f = fixture();
+  Object.assign(f.items[0], {clearable: true, rel_path: 'uploads/a.HEIC'});
+  delete f.items[0].retry_stage;
+  f.ctx.fetch = async (url, options) => {
+    assert.equal(url, '/api/logs/1/clear');
+    assert.equal(options.method, 'POST');
+    return {ok: true, json: async () => ({ok: true, removed_ids: [1, 2]})};
+  };
+  f.ctx.renderLogList();
+  const button = f.box.children[1].children[2].children[0];
+  assert.equal(button.textContent, 'Ryd filens fejl');
+  await button.click();
+  assert.equal(f.ctx.state.logItems.length, 0);
+});
+
+test('failed file clear keeps errors visible and allows another attempt', async () => {
+  const f = fixture();
+  Object.assign(f.items[0], {clearable: true, rel_path: 'uploads/a.HEIC'});
+  f.ctx.fetch = async () => ({ok: false, json: async () => ({error: 'Disk full'})});
+  await f.ctx.clearFileLogErrors(f.items[0]);
+  assert.equal(f.ctx.state.logItems.length, 2);
+  assert.equal(f.items[0].clearing, false);
+  assert.equal(f.items[0].clearError, 'Disk full');
+});

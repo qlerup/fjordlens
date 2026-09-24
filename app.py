@@ -37,7 +37,7 @@ import conversion_client
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
-from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, StageRetryError
+from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids, StageRetryError
 from face_retry import FaceRetryGate, retry_video_frame
 from ai_service.memory_budget import MemoryBudget, MIB
 
@@ -1283,11 +1283,12 @@ def _load_persistent_logs() -> None:
             print(f"Could not load persistent event log: {exc}")
 
 
-def _clear_persistent_logs(*, preserve_errors: bool = False) -> list:
+def _clear_persistent_logs(*, preserve_errors: bool = False, remove_ids=None) -> list:
     global LOG_SEQ
     with LOG_LOCK:
-        if preserve_errors:
-            kept = unresolved_error_logs(list(LOG_BUFFER))
+        if preserve_errors or remove_ids is not None:
+            kept = ([item for item in LOG_BUFFER if item['id'] not in remove_ids]
+                    if remove_ids is not None else unresolved_error_logs(list(LOG_BUFFER)))
             # Keep IDs monotonic across reloads so a new log cannot inherit an
             # old retry state, even when the highest visible entry was removed.
             records = list(kept)
@@ -26034,6 +26035,24 @@ def api_logs_clear():
         return jsonify(fb[0]), fb[1]
     kept = _clear_persistent_logs(preserve_errors=True)
     return jsonify({"ok": True, "items": [log_retries.describe(item) for item in kept]})
+
+
+@app.route("/api/logs/<int:log_id>/clear", methods=["POST"])
+def api_log_file_clear(log_id):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with LOG_LOCK:
+        snapshot = list(LOG_BUFFER)
+        selected = next((item for item in snapshot if item['id'] == log_id), None)
+        removed = file_error_log_ids(snapshot, selected)
+        if not removed:
+            return jsonify(ok=False, error="Fejlloggen findes ikke længere."), 404
+        try:
+            _clear_persistent_logs(remove_ids=set(removed))
+        except OSError:
+            return jsonify(ok=False, error="Kunne ikke gemme ændringen i logfilen."), 500
+    return jsonify(ok=True, removed_ids=removed)
 
 
 # --- Authentication routes ---

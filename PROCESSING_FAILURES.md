@@ -1,5 +1,12 @@
 # Fejlede filer
 
+I **Logs** fjerner **Ryd filens fejl** alle eksisterende logfejl for den valgte
+fil på tværs af behandlingstrin. Midlertidige konverteringsstier regnes som
+samme fil; ens filnavne i forskellige mapper ryddes hver for sig. Fejl uden
+filsti har **Ryd fejl**, som kun fjerner den valgte logpost. Rydningen gemmes
+og overlever genstart. Nye fejl vises stadig, og selve billedfilen og listen
+**Fejlede filer** ændres ikke. Den almindelige **Ryd** bevarer fortsat uløste fejl.
+
 Administratorer finder **Fejlede filer** i indstillingerne ved ansigtsindeksering.
 Vælg **Vis / opdater fejl** for at se filnavn, behandlingstrin og seneste fejl.
 **Prøv igen** genkører ét fejlet trin; **Genkør fejlede trin** tager en enkelt
