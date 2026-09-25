@@ -3789,13 +3789,6 @@ def _postprocess_uploaded_rels(
         except Exception:
             pass
 
-    _emit_progress({
-        "phase": "metadata",
-        "current_rel": None,
-        "stage_processed": 0,
-        "stage_total": len(rels),
-    })
-
     # Conversion is a real slot queue, separate from face batching. If the user
     # selects 4, four conversions stay active; as soon as one completes the next
     # queued item starts immediately.
@@ -3835,6 +3828,13 @@ def _postprocess_uploaded_rels(
             )
         except Exception:
             pass
+        _emit_progress({
+            "phase": "converting",
+            "current_rel": None,
+            "stage_processed": 0,
+            "stage_total": len(conversion_candidates),
+            "conversion_workers": conversion_workers,
+        })
         with ThreadPoolExecutor(max_workers=conversion_workers, thread_name_prefix="fjordlens-convert-slot") as pool:
             futures = {
                 pool.submit(_queued_upload_conversion, candidate_rel, mode, stop_event,

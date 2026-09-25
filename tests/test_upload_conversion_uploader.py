@@ -179,6 +179,38 @@ class UploadConversionUploaderTests(unittest.TestCase):
         self.assertTrue(metadata_statuses[0]["running"])
         self.assertTrue(any(status["processed"] == 1 for status in metadata_statuses))
 
+    def test_aggressive_workflow_reports_conversion_before_metadata(self):
+        source = fjordlens.UPLOAD_DIR / "originals" / "camera" / "convert-first.mov"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"test mov")
+        rel = "uploads/originals/camera/convert-first.mov"
+        progress = []
+
+        with (
+            patch.object(fjordlens, "mov_convert_on_upload_enabled", return_value=True),
+            patch.object(fjordlens, "faces_auto_index_enabled", return_value=False),
+            patch.object(fjordlens, "ai_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "ai_desc_auto_ingest_enabled", return_value=False),
+            patch.object(fjordlens, "_sync_conversion_worker_concurrency"),
+            patch.object(
+                fjordlens,
+                "_queued_upload_conversion",
+                return_value={"attempted": True, "success": False, "error": "invalid MOV"},
+            ),
+        ):
+            result = fjordlens._postprocess_uploaded_rels(
+                "Kamera",
+                [rel],
+                progress_cb=progress.append,
+                workflow_mode=fjordlens.UPLOAD_WORKFLOW_MODE_AGGRESSIVE,
+            )
+
+        phases = [payload["phase"] for payload in progress]
+        self.assertEqual(result["indexed"], 0)
+        self.assertEqual(result["index_errors"], 1)
+        self.assertLess(phases.index("converting"), phases.index("metadata"))
+        self.assertNotIn("process_status", progress[phases.index("converting")])
+
     def test_ios_viewable_normalizes_jpeg_without_changing_original(self):
         source = fjordlens.UPLOAD_DIR / "originals" / "camera" / "ios.jpg"
         source.parent.mkdir(parents=True, exist_ok=True)

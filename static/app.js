@@ -623,7 +623,7 @@ function renderUploadTopProcessStatus(processStatus) {
     return false;
   }
   const order = ['metadata', 'thumbnails', 'faces', 'embeddings', 'descriptions'];
-  const cards = [];
+  let activeStage = null;
   for (const key of order) {
     const src = processStatus[key];
     if (!src || typeof src !== 'object') continue;
@@ -634,29 +634,32 @@ function renderUploadTopProcessStatus(processStatus) {
     const running = !!src.running;
     const inFlight = Math.max(0, Number(src.in_flight || 0));
     const queued = Math.max(0, Number(src.queued || Math.max(0, total - processed - inFlight)));
-    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
     if (!enabled) continue;
-    if (key === 'metadata' && !running && errors <= 0 && (total <= 0 || processed >= total)) continue;
-    const statusText = enabled ? `${processed}/${total}${errors ? ` · ${tr('status_errors_label')} ${errors}` : ''}` : tr('upload_proc_off');
-    const queueText = enabled
-      ? [
-          tr('upload_proc_queue').replace('{count}', String(queued)),
-          inFlight > 0 ? tr('upload_proc_running').replace('{count}', String(inFlight)) : '',
-        ].filter(Boolean).join(' · ')
-      : '';
-    cards.push(
-      `<div class="upload-top-proc ${enabled ? '' : 'off'} ${running ? 'run' : ''}" data-proc="${escapeHtml(key)}">` +
-      `<div class="upload-top-proc-name">${escapeHtml(_uploadProcessLabel(key))}</div>` +
-      `<div class="upload-top-proc-meta">${escapeHtml(statusText)}</div>` +
-      `<div class="upload-top-proc-queue">${escapeHtml(queueText)}</div>` +
-      `<div class="upload-top-proc-bar"><span style="width:${enabled ? pct : 0}%"></span></div>` +
-      `</div>`
-    );
+    if (!running && (total <= 0 || processed >= total)) continue;
+    activeStage = { key, enabled, total, processed, errors, running, inFlight, queued };
+    break;
   }
-  if (!cards.length) {
+  if (!activeStage) {
     clearUploadTopProcessStatus();
     return false;
   }
+  const { key, enabled, total, processed, errors, running, inFlight, queued } = activeStage;
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((processed / total) * 100))) : 0;
+  const statusText = enabled ? `${processed}/${total}${errors ? ` · ${tr('status_errors_label')} ${errors}` : ''}` : tr('upload_proc_off');
+  const queueText = enabled
+    ? [
+        tr('upload_proc_queue').replace('{count}', String(queued)),
+        inFlight > 0 ? tr('upload_proc_running').replace('{count}', String(inFlight)) : '',
+      ].filter(Boolean).join(' · ')
+    : '';
+  const cards = [
+    `<div class="upload-top-proc ${enabled ? '' : 'off'} ${running ? 'run' : ''}" data-proc="${escapeHtml(key)}">` +
+    `<div class="upload-top-proc-name">${escapeHtml(_uploadProcessLabel(key))}</div>` +
+    `<div class="upload-top-proc-meta">${escapeHtml(statusText)}</div>` +
+    `<div class="upload-top-proc-queue">${escapeHtml(queueText)}</div>` +
+    `<div class="upload-top-proc-bar"><span style="width:${enabled ? pct : 0}%"></span></div>` +
+    `</div>`
+  ];
   els.uploadTopStatus.classList.add('multi');
   els.uploadTopStatus.classList.remove('hidden');
   els.uploadTopProcessRow.innerHTML = cards.join('');
