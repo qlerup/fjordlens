@@ -22,10 +22,18 @@ def decorate(items):
                 item['thumb_url'] = f"/api/face-thumb/{faces[0]['id']}"
             item['thumbnail_faces'] = []
             continue
-        face = timed[0]
+        face = max(
+            timed,
+            key=lambda candidate: (
+                float(candidate.get('confidence') or 0),
+                float((candidate.get('pixel_box') or [0, 0, 0, 0])[2] or 0)
+                * float((candidate.get('pixel_box') or [0, 0, 0, 0])[3] or 0),
+                int(candidate.get('id') or 0),
+            ),
+        )
         item['thumb_url'] = f"/api/people/video-frame/{face['id']}?t={face['frame_sec']}"
         item['person_frame_sec'] = face['frame_sec']
-        item['thumbnail_faces'] = [f for f in timed if f['frame_sec'] == face['frame_sec']]
+        item['thumbnail_faces'] = [face]
     return items
 
 

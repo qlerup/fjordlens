@@ -1618,6 +1618,10 @@ const I18N = {
     person_btn_accept_maybe: 'Ja',
     person_btn_rename: 'Navngiv',
     person_btn_edit_name: 'Omdøb',
+    person_photo_reassign_title: 'Flyt ansigt til person',
+    person_photo_reassign_help: 'Vælg den person, som ansigtet på dette billede tilhører.',
+    person_photo_reassign_success: 'Ansigtet er flyttet til {name}.',
+    person_photo_reassign_failed: 'Kunne ikke flytte ansigtet.',
     person_btn_hide: 'Skjul',
     person_btn_unhide: 'Vis',
     person_hide_confirm: 'Skjul denne person fra listen?',
@@ -2498,6 +2502,10 @@ const I18N = {
     person_btn_accept_maybe: 'Yes',
     person_btn_rename: 'Rename',
     person_btn_edit_name: 'Rename',
+    person_photo_reassign_title: 'Move face to person',
+    person_photo_reassign_help: 'Choose the person this face belongs to in this photo.',
+    person_photo_reassign_success: 'Face moved to {name}.',
+    person_photo_reassign_failed: 'Could not move face.',
     person_btn_hide: 'Hide',
     person_btn_unhide: 'Show',
     person_hide_confirm: 'Hide this person from the list?',
@@ -6337,7 +6345,7 @@ function appendGalleryGhostRows(expectedView) {
   }
 }
 
-function appendPhotoLoadMoreButton(id, expectedView) {
+function appendPhotoLoadMoreButton(id, expectedView, loadNextPage = () => loadPhotos(true)) {
   try {
     if (photoLoadMoreObserver) photoLoadMoreObserver.disconnect();
   } catch {}
@@ -6367,7 +6375,7 @@ function appendPhotoLoadMoreButton(id, expectedView) {
     btn.disabled = true;
     btn.classList.add('loading');
     try {
-      await loadPhotos(true);
+      await loadNextPage();
     } finally {
       btn.disabled = false;
       btn.classList.remove('loading');
@@ -6671,6 +6679,11 @@ function renderGrid() {
       wrap.className = 'timeline-grid';
       els.grid.appendChild(wrap);
       (state.items||[]).forEach(it => appendCardTo(it, wrap));
+      appendPhotoLoadMoreButton('personPhotosLoadMoreBtn', 'personer', () => loadPersonPhotos(
+        state.personView.personId,
+        state.personView.personName,
+        true,
+      ));
       window.setupPersonFaceSelection?.(head, wrap);
       renderStats();
       return;
@@ -6818,6 +6831,13 @@ function renderGrid() {
   } else {
     items.forEach(item => appendCard(item));
     if (isPagedGalleryView(state.view)) appendPhotoLoadMoreButton(`${state.view}LoadMoreBtn`, state.view);
+    else if (state.view === 'personer' && state.personView.mode === 'photos') {
+      appendPhotoLoadMoreButton('personPhotosLoadMoreBtn', 'personer', () => loadPersonPhotos(
+        state.personView.personId,
+        state.personView.personName,
+        true,
+      ));
+    }
   }
 
   if (!state.items.some(i => i.id === state.selectedId)) {
@@ -6841,12 +6861,31 @@ function appendCardTo(item, container) {
   });
   // Note: photo cards have no folder-name marquee
 
-  // Add Info icon overlay (top-left, on red dot) on mouseover
   const thumb = card.querySelector('.card-thumb');
-  // Hide info overlay in mapper selection mode
+  const isPersonPhotoView = state?.view === 'personer' && state?.personView?.mode === 'photos';
+  const canReassignPersonPhoto = ['admin', 'manager'].includes(state?.currentUser?.role);
   const allowInfoOverlay = !(state && state.view === 'mapper' && state.mapperEditMode);
-  if (thumb && allowInfoOverlay) {
-    // Create info icon
+  if (thumb && isPersonPhotoView && canReassignPersonPhoto && Array.isArray(item?.faces) && item.faces.length) {
+    const renameButton = document.createElement('button');
+    renameButton.type = 'button';
+    renameButton.className = 'info-icon-overlay person-photo-reassign';
+    renameButton.title = tr('person_btn_edit_name');
+    renameButton.textContent = tr('person_btn_edit_name');
+    renameButton.style.position = 'absolute';
+    renameButton.style.left = '6px';
+    renameButton.style.top = '6px';
+    renameButton.style.zIndex = '3';
+    renameButton.style.opacity = '0';
+    renameButton.style.transition = 'opacity 0.15s';
+    card.addEventListener('mouseenter', () => { renameButton.style.opacity = '1'; });
+    card.addEventListener('mouseleave', () => { renameButton.style.opacity = '0'; });
+    thumb.style.position = 'relative';
+    thumb.appendChild(renameButton);
+    renameButton.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openPersonPhotoReassignDialog(item);
+    });
+  } else if (thumb && allowInfoOverlay) {
     const infoIcon = document.createElement('div');
     infoIcon.className = 'info-icon-overlay';
     infoIcon.title = 'Info';
@@ -6883,7 +6922,7 @@ function appendCardTo(item, container) {
         thumb.style.position = 'relative';
         img.style.objectFit = 'contain';
         img.style.background = '#0d1016';
-        const faces = item.thumbnail_faces || item.faces;
+        const faces = item.thumbnail_faces?.length ? [item.thumbnail_faces[0]] : [item.faces[0]];
         const draw = () => {
           try {
             if (!card.isConnected) return;
@@ -7017,6 +7056,33 @@ function appendCardTo(item, container) {
   });
   (container || els.grid).appendChild(card);
   return card;
+}
+
+function openPersonPhotoReassignDialog(item) {
+  const sourceId = state?.personView?.personId;
+  const faceIds = [...new Set((item?.faces || []).map(face => Number(face?.id)).filter(Number.isFinite))];
+  if ((sourceId === null || sourceId === undefined) || !faceIds.length || !window.openPersonFaceActionDialog) return;
+  window.openPersonFaceActionDialog({
+    sourceId: sourceId === 'unknown' ? sourceId : Number(sourceId),
+    faceIds,
+    people: state.people || [],
+    labels: {
+      title: tr('person_photo_reassign_title'),
+      help: tr('person_photo_reassign_help'),
+      create: tr('person_rename_save'),
+      placeholder: tr('person_rename_new_placeholder'),
+      hide: tr('person_btn_hide'),
+      cancel: tr('scan_modal_close'),
+      failed: tr('person_photo_reassign_failed'),
+    },
+    onSuccess: (result, action) => {
+      state.items = (state.items || []).filter(candidate => candidate.id !== item.id);
+      state._peopleCache = null;
+      if (action === 'hide') showStatus(tr('person_hidden_ok'), 'ok');
+      else showStatus(tr('person_photo_reassign_success').replace('{name}', result.name || ''), 'ok');
+      renderGrid();
+    },
+  });
 }
 
 function appendCard(item){ return appendCardTo(item, els.grid); }
@@ -7290,56 +7356,11 @@ async function renameOrMergePerson(pid, name, options = {}) {
       const pd = await pr.json();
       reconcilePeopleGrid(pd.items || []);
     } catch {}
-    schedulePersonRematch();
     return true;
   } catch {
     showStatus(tr('person_rename_merge_error'), 'err');
     return false;
   }
-}
-
-let personRematchRunning = false;
-let personRematchPending = false;
-
-function schedulePersonRematch() {
-  personRematchPending = true;
-  if (personRematchRunning) return;
-  personRematchRunning = true;
-  void (async () => {
-    try {
-      while (personRematchPending) {
-        personRematchPending = false;
-        try {
-          const response = await fetch('/api/faces/match-unknown', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({limit: 1000}),
-          });
-          const result = await response.json();
-          if (!response.ok || !result.ok) throw new Error(result.error || 'match_failed');
-          const promoted = Number(result.matched || 0) + Number(result.clusters_promoted || 0);
-          if (promoted > 0) {
-            showStatus(tr('person_more_matches_found').replace('{count}', String(promoted)), 'ok');
-            // Do not redraw a different view if the user has navigated away.
-            if (state.view === 'personer') {
-              const hidden = state.showHiddenPeople;
-              const peopleResponse = await fetch(hidden ? '/api/people?include_hidden=1' : '/api/people');
-              if (!peopleResponse.ok) throw new Error('people_refresh_failed');
-              const people = await peopleResponse.json();
-              if (state.view === 'personer' && state.showHiddenPeople === hidden) reconcilePeopleGrid(people.items || []);
-            }
-          }
-        } catch {
-          showStatus(state.uiLanguage === 'en'
-            ? 'Saved. Automatic face matching failed; use Match unknown to retry.'
-            : 'Gemt. Automatisk ansigtsmatch fejlede; prøv igen med Match ukendte.', 'err');
-        }
-        // Merges made during this pass are coalesced into one new pass using
-        // the latest centroids, instead of launching concurrent full scans.
-      }
-    } finally {
-      personRematchRunning = false;
-    }
-  })();
 }
 
 async function matchUnknownFaces(limit = 1000) {
@@ -8446,16 +8467,41 @@ async function loadPeople(useCache = true) {
   renderGrid();
 }
 
-async function loadPersonPhotos(pid, name) {
+async function loadPersonPhotos(pid, name, append = false) {
+  const appendStart = append ? state.items.length : 0;
   try {
     const url = (pid === 'unknown') ? '/api/people/unknown/photos-faces' : `/api/people/${pid}/photos`;
-    const res = await fetch(url);
+    const offset = append ? Math.max(0, Number(state.photosPageOffset || 0)) : 0;
+    const limit = Math.max(1, Number(estimateMapperPageLimit(append) || 60));
+    const res = await fetch(`${url}?offset=${offset}&limit=${limit}`);
     const data = await res.json();
-    state.items = data.items || [];
+    const incoming = Array.isArray(data.items) ? data.items : [];
+    state.items = append ? [...state.items, ...incoming] : incoming;
+    state.photosHasMore = !!data.has_more;
+    state.photosPageOffset = Number.isFinite(Number(data.next_offset))
+      ? Number(data.next_offset)
+      : offset + incoming.length;
     state.personView = { mode: 'photos', personId: pid, personName: name };
     _syncRouteStateToUrl();
-  } catch { state.items = []; }
-  renderGrid();
+  } catch {
+    if (!append) state.items = [];
+    state.photosHasMore = false;
+  }
+  if (append) {
+    els.grid?.querySelectorAll('[data-gallery-sentinel]').forEach(node => node.remove());
+    const fragment = document.createDocumentFragment();
+    state.items.slice(appendStart).forEach(item => appendCardTo(item, fragment));
+    const personGrid = els.grid?.querySelector('.timeline-grid');
+    personGrid?.append(fragment);
+    appendPhotoLoadMoreButton('personPhotosLoadMoreBtn', 'personer', () => loadPersonPhotos(
+      state.personView.personId,
+      state.personView.personName,
+      true,
+    ));
+    renderStats();
+  } else {
+    renderGrid();
+  }
 }
 
 async function fetchUploadDestinationConfig(destination = null) {

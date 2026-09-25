@@ -57,6 +57,21 @@ class PersonPhotosFacesTests(unittest.TestCase):
             session["_fresh"] = True
         return client
 
+    def add_photo_with_face(self, name):
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute(
+                """INSERT INTO photos(rel_path, filename, ext, file_size, width, height, created_fs, modified_fs, captured_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (f"uploads/originals/{name}.jpg", f"{name}.jpg", "jpg", 100, 400, 200,
+                 fjordlens.now_iso(), fjordlens.now_iso(), fjordlens.now_iso()),
+            )
+            photo_id = conn.execute("SELECT id FROM photos WHERE rel_path=?", (f"uploads/originals/{name}.jpg",)).fetchone()["id"]
+            conn.execute(
+                "INSERT INTO faces(photo_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, confidence, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (photo_id, self.person_id, 100, 50, 80, 60, 0.9, fjordlens.now_iso()),
+            )
+            conn.commit()
+
     def test_photos_endpoint_returns_normalized_face_box(self):
         client = self.authenticated_client()
         res = client.get(f"/api/people/{self.person_id}/photos")
@@ -69,6 +84,21 @@ class PersonPhotosFacesTests(unittest.TestCase):
         self.assertAlmostEqual(faces[0]["y"], 50 / 200)
         self.assertAlmostEqual(faces[0]["w"], 80 / 400)
         self.assertAlmostEqual(faces[0]["h"], 60 / 200)
+
+    def test_photos_endpoint_pages_unique_photos(self):
+        self.add_photo_with_face("p2")
+        self.add_photo_with_face("p3")
+        client = self.authenticated_client()
+
+        first = client.get(f"/api/people/{self.person_id}/photos?offset=0&limit=2").get_json()
+        second = client.get(f"/api/people/{self.person_id}/photos?offset=2&limit=2").get_json()
+
+        self.assertTrue(first["has_more"])
+        self.assertEqual(first["next_offset"], 2)
+        self.assertEqual(len(first["items"]), 2)
+        self.assertFalse(second["has_more"])
+        self.assertEqual(len(second["items"]), 1)
+        self.assertTrue({item["id"] for item in first["items"]}.isdisjoint({item["id"] for item in second["items"]}))
 
 
 if __name__ == "__main__":

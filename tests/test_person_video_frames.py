@@ -9,11 +9,15 @@ from person_video_frames import decorate, register
 
 
 class VideoFrameTests(unittest.TestCase):
-    def test_only_boxes_from_preview_frame_but_all_ids_remain_for_selection(self):
-        faces = [{'id':1,'frame_sec':9.5},{'id':2,'frame_sec':20},{'id':3,'frame_sec':9.5}]
+    def test_preview_uses_the_strongest_person_detection_and_one_box(self):
+        faces = [
+            {'id': 1, 'frame_sec': 9.5, 'confidence': 0.72, 'pixel_box': [0, 0, 60, 60]},
+            {'id': 2, 'frame_sec': 20, 'confidence': 0.98, 'pixel_box': [0, 0, 80, 80]},
+            {'id': 3, 'frame_sec': 9.5, 'confidence': 0.91, 'pixel_box': [0, 0, 120, 120]},
+        ]
         item = decorate([{'is_video':True,'faces':faces,'thumb_url':'default'}])[0]
-        self.assertEqual(item['thumb_url'],'/api/people/video-frame/1?t=9.5')
-        self.assertEqual([f['id'] for f in item['thumbnail_faces']],[1,3])
+        self.assertEqual(item['thumb_url'],'/api/people/video-frame/2?t=20')
+        self.assertEqual([f['id'] for f in item['thumbnail_faces']],[2])
         self.assertEqual(len(item['faces']),3)
 
     def test_old_detection_uses_crop_without_misleading_boxes_and_photos_unchanged(self):

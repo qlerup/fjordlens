@@ -5267,6 +5267,16 @@ body.compact-settings .settings-header { display: none !important; }
   background: rgba(91,140,255,0.12);
   border-color: rgba(91,140,255,0.4);
 }
+.person-photo-reassign {
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:4px 7px;
+  color:var(--text);
+  background:var(--panel);
+  font:inherit;
+  font-size:.72rem;
+  cursor:pointer;
+}
 .person-rename-empty {
   color: var(--muted);
   font-size: 0.8rem;

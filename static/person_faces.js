@@ -11,10 +11,72 @@
     .face-selection-search{display:flex;gap:8px;margin:16px 0}
     .face-selection-search input{min-width:0;flex:1;background:#152e37;color:inherit;border:1px solid #45636d;border-radius:8px;padding:10px}
     #face-selection-targets{display:grid;gap:6px;max-height:40dvh;overflow:auto}
+    .face-selection-actions{display:flex;gap:8px;justify-content:space-between;margin-top:16px}
     #face-selection-targets button{text-align:left}
     .face-selection-empty{padding:24px;color:var(--muted)}
   `;
   document.head.append(style);
+
+  window.openPersonFaceActionDialog = ({sourceId, faceIds, people = [], labels = {}, onSuccess}) => {
+    if (!Array.isArray(faceIds) || !faceIds.length) return;
+    const dialog = document.createElement('dialog');
+    dialog.id = 'face-selection-dialog';
+    dialog.innerHTML = `<h3>${labels.title || 'Flyt ansigt til person'}</h3><p>${labels.help || ''}</p>
+      <form class="face-selection-search"><input type="search" maxlength="160" placeholder="${labels.placeholder || ''}" aria-label="${labels.placeholder || ''}" required><button class="btn" type="submit">${labels.create || 'Opret'}</button></form>
+      <div id="face-selection-targets"></div><p role="alert"></p><div class="face-selection-actions"><button type="button" class="btn danger" data-hide>${labels.hide || 'Skjul'}</button><button type="button" class="btn" data-close>${labels.cancel || 'Annuller'}</button></div>`;
+    document.body.append(dialog);
+    const input = dialog.querySelector('input');
+    const list = dialog.querySelector('#face-selection-targets');
+    const alert = dialog.querySelector('[role="alert"]');
+    let targets = [];
+    const setTargets = values => {
+      targets = (values || []).filter(person => !person.hidden && person.id !== 'unknown'
+        && Number(person.id) !== Number(sourceId) && personHasName(person));
+    };
+    const submit = async (action, targetId = null, name = '') => {
+      dialog.querySelectorAll('button,input').forEach(element => { element.disabled = true; });
+      try {
+        const response = await fetch('/api/people/faces/selection', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({source_id: sourceId, face_ids: faceIds, action, target_id: targetId, name}),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || labels.failed || 'Kunne ikke gemme ændringen.');
+        onSuccess?.(result, action);
+        dialog.close();
+      } catch (error) {
+        alert.textContent = error.message || labels.failed || 'Kunne ikke gemme ændringen.';
+        dialog.querySelectorAll('button,input').forEach(element => { element.disabled = false; });
+      }
+    };
+    const filter = () => {
+      list.replaceChildren();
+      targets.filter(person => person.name.toLocaleLowerCase('da').includes(input.value.trim().toLocaleLowerCase('da'))).forEach(person => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn';
+        button.textContent = person.name;
+        button.addEventListener('click', () => submit('assign', Number(person.id)));
+        list.append(button);
+      });
+    };
+    setTargets(people); filter();
+    input.addEventListener('input', filter);
+    dialog.querySelector('form').addEventListener('submit', event => {
+      event.preventDefault();
+      if (input.value.trim()) submit('create', null, input.value.trim());
+    });
+    dialog.querySelector('[data-hide]').addEventListener('click', () => submit('hide'));
+    dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove());
+    fetch('/api/people').then(response => response.json()).then(data => {
+      if (!dialog.isConnected) return;
+      setTargets(data.items || []); filter();
+    }).catch(() => {});
+    dialog.showModal();
+    input.focus();
+  };
 
   window.setupPersonFaceSelection = (head, grid) => {
     if (!['admin','manager'].includes(state.currentUser?.role)) return;

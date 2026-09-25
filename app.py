@@ -15872,17 +15872,46 @@ def api_people_hide(pid: int):
 def api_people_photos(pid: int):
     """List photos that include a given person id, with that person's face box(es)
     per photo (normalized 0-1) so the client can optionally draw them."""
-    items: list[Dict[str, Any]] = []
+    return _person_photo_page_response("f.person_id = ?", (pid,))
+
+
+def _person_photo_page_response(where_sql: str, where_params: tuple[Any, ...]):
+    try:
+        offset = max(0, int(request.args.get("offset", "0") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", "60") or 60)))
+    except (TypeError, ValueError):
+        limit = 60
+
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            """
-            SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
+        page_rows = conn.execute(
+            f"""
+            SELECT p.id
             FROM photos p
             INNER JOIN faces f ON f.photo_id = p.id
-            WHERE f.person_id = ?
+            WHERE {where_sql}
+            GROUP BY p.id
+            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, MAX(f.id) DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*where_params, limit + 1, offset),
+        ).fetchall()
+        has_more = len(page_rows) > limit
+        photo_ids = [int(row["id"]) for row in page_rows[:limit]]
+        if not photo_ids:
+            return jsonify({"ok": True, "items": [], "offset": offset, "limit": limit, "has_more": False, "next_offset": offset})
+        placeholders = ",".join("?" for _ in photo_ids)
+        rows = conn.execute(
+            f"""
+            SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.confidence
+            FROM photos p
+            INNER JOIN faces f ON f.photo_id = p.id
+            WHERE {where_sql} AND p.id IN ({placeholders})
             ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, f.id DESC
             """,
-            (pid,),
+            (*where_params, *photo_ids),
         ).fetchall()
         by_photo: Dict[int, Dict[str, Any]] = {}
         for r in rows:
@@ -15901,47 +15930,15 @@ def api_people_photos(pid: int):
             y = max(0.0, float(r["bbox_y"] or 0) / h)
             bw = max(0.0, float(r["bbox_w"] or 0) / w)
             bh = max(0.0, float(r["bbox_h"] or 0) / h)
-            by_photo[photo_id]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"]), "frame_sec": r["frame_sec"], "pixel_box": [r["bbox_x"], r["bbox_y"], r["bbox_w"], r["bbox_h"]]})
+            by_photo[photo_id]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"]), "frame_sec": r["frame_sec"], "confidence": float(r["confidence"] or 0), "pixel_box": [r["bbox_x"], r["bbox_y"], r["bbox_w"], r["bbox_h"]]})
         items = list(by_photo.values())
     from person_video_frames import decorate
-    return jsonify({"ok": True, "items": decorate(items)})
+    return jsonify({"ok": True, "items": decorate(items), "offset": offset, "limit": limit, "has_more": has_more, "next_offset": offset + len(photo_ids)})
 
 
 @app.route("/api/people/unknown/photos-faces")
 def api_people_unknown_photos_faces():
-    items: list[Dict[str, Any]] = []
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            """
-            SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h
-            FROM photos p
-            INNER JOIN faces f ON f.photo_id = p.id
-            WHERE f.person_id IS NULL
-            ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, f.id DESC
-            """
-        ).fetchall()
-        # Group faces per photo
-        by_photo: Dict[int, Dict[str, Any]] = {}
-        for r in rows:
-            if not _is_rel_path_allowed_for_current_user(r["rel_path"], conn):
-                continue
-            pid_ = int(r["id"])  # photo id
-            if pid_ not in by_photo:
-                by_photo[pid_] = row_to_public(r)
-                by_photo[pid_]["faces"] = []
-            try:
-                w = float(r["width"] or 0) or 1.0
-                h = float(r["height"] or 0) or 1.0
-            except Exception:
-                w, h = 1.0, 1.0
-            x = max(0.0, float(r["bbox_x"] or 0) / w)
-            y = max(0.0, float(r["bbox_y"] or 0) / h)
-            bw = max(0.0, float(r["bbox_w"] or 0) / w)
-            bh = max(0.0, float(r["bbox_h"] or 0) / h)
-            by_photo[pid_]["faces"].append({"x": x, "y": y, "w": bw, "h": bh, "id": int(r["face_id"]), "frame_sec": r["frame_sec"], "pixel_box": [r["bbox_x"], r["bbox_y"], r["bbox_w"], r["bbox_h"]]})
-    items = list(by_photo.values())
-    from person_video_frames import decorate
-    return jsonify({"ok": True, "items": decorate(items)})
+    return _person_photo_page_response("f.person_id IS NULL", ())
 
 
 @app.route("/api/face-thumb/<int:face_id>")
