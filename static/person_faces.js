@@ -84,7 +84,9 @@
       });
       content.append(grid);
       const actions = document.createElement('div'); actions.className = 'face-review-actions';
-      const merge = document.createElement('button'); merge.type = 'button'; merge.className = 'btn'; merge.textContent = `Flet med ${group.target_name}`; merge.addEventListener('click', () => applyGroup(group, 'assign', Number(group.target_id))); actions.append(merge);
+      if (group.target_id !== null && group.target_id !== undefined) {
+        const merge = document.createElement('button'); merge.type = 'button'; merge.className = 'btn'; merge.textContent = `Flet med ${group.target_name}`; merge.addEventListener('click', () => applyGroup(group, 'assign', Number(group.target_id))); actions.append(merge);
+      }
       const targets = (state.people || []).filter(person => !person.hidden && person.id !== 'unknown' && Number(person.id) !== Number(sourceId) && personHasName(person));
       const select = document.createElement('select'); targets.forEach(person => { const option = document.createElement('option'); option.value = String(person.id); option.textContent = person.name; select.append(option); }); actions.append(select);
       const assign = document.createElement('button'); assign.type = 'button'; assign.className = 'btn'; assign.textContent = 'Flet med valgt'; assign.addEventListener('click', () => applyGroup(group, 'assign', Number(select.value))); actions.append(assign);

@@ -23,11 +23,11 @@ class FaceSelectionTests(unittest.TestCase):
         with connect() as conn:
             conn.executescript('''
                 CREATE TABLE people(id INTEGER PRIMARY KEY,name TEXT UNIQUE,hidden INTEGER DEFAULT 0,created_at TEXT,centroid_json TEXT);
-                CREATE TABLE photos(id INTEGER PRIMARY KEY,rel_path TEXT,width REAL,height REAL);
-                CREATE TABLE faces(id INTEGER PRIMARY KEY,photo_id INTEGER,person_id INTEGER,embedding_json TEXT,bbox_x REAL,bbox_y REAL,bbox_w REAL,bbox_h REAL);
+                CREATE TABLE photos(id INTEGER PRIMARY KEY,rel_path TEXT,ext TEXT,thumb_name TEXT,width REAL,height REAL);
+                CREATE TABLE faces(id INTEGER PRIMARY KEY,photo_id INTEGER,person_id INTEGER,embedding_json TEXT,frame_sec REAL,bbox_x REAL,bbox_y REAL,bbox_w REAL,bbox_h REAL);
                 INSERT INTO people(id,name,centroid_json) VALUES(1,'Ukendt-1','[1,0]'),(2,'Known','[0,1]');
-                INSERT INTO photos VALUES(1,'one.jpg',400,200),(2,'two.jpg',400,200);
-                INSERT INTO faces VALUES(1,1,1,'[0,1]',100,50,80,60),(2,1,2,'[0,1]',200,50,80,60),(3,2,1,'[1,0]',100,50,80,60),(4,2,NULL,'[1,1]',200,50,80,60);
+                INSERT INTO photos VALUES(1,'one.jpg','.jpg','one.webp',400,200),(2,'two.mp4','.mp4',NULL,400,200);
+                INSERT INTO faces VALUES(1,1,1,'[0,1]',NULL,100,50,80,60),(2,1,2,'[0,1]',NULL,200,50,80,60),(3,2,1,'[1,0]',12.5,100,50,80,60),(4,2,NULL,'[1,1]',12.5,200,50,80,60);
             ''')
         self.allowed = True
         self.manage = True
@@ -101,4 +101,25 @@ class FaceSelectionTests(unittest.TestCase):
         self.assertEqual(len(result['results']), 1)
         self.assertEqual(result['results'][0]['target_id'], 2)
         self.assertEqual(result['results'][0]['face_ids'], [1])
+        self.assertEqual(result['results'][0]['faces'][0]['image_url'], '/api/thumbs/one.webp')
         self.assertEqual(self.owners(), [1, 2, 1, None])
+
+    def test_review_lists_low_confidence_outliers_for_manual_decision(self):
+        with self.connect() as conn:
+            conn.execute("INSERT INTO photos VALUES(3,'three.jpg','.jpg','three.webp',400,200)")
+            conn.execute("INSERT INTO faces VALUES(5,3,1,'[0,0,1]',NULL,100,50,80,60)")
+            conn.commit()
+        job_id = 'review-unmatched'
+        _set_review_job(job_id, status='queued', source_id=1, scanned=0, total=0, results=[])
+        fake = SimpleNamespace(
+            get_conn=self.connect,
+            _is_rel_path_allowed_for_current_user=lambda path, conn: self.allowed,
+            FACE_MATCH_THRESHOLD_CENTROID=0.45,
+        )
+        _run_face_review(job_id, 1, fake)
+        with _REVIEW_JOBS_LOCK:
+            result = dict(_REVIEW_JOBS[job_id])
+            _REVIEW_JOBS.pop(job_id, None)
+        unmatched = next(group for group in result['results'] if group['target_id'] is None)
+        self.assertEqual(unmatched['face_ids'], [5])
+        self.assertEqual(self.owners()[-1], 1)

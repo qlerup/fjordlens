@@ -12,7 +12,7 @@ from flask import jsonify, request
 
 _REVIEW_JOBS: dict[str, dict] = {}
 _REVIEW_JOBS_LOCK = threading.RLock()
-_REVIEW_MARGIN = 0.075
+_REVIEW_MARGIN = 0.0
 
 
 def _face_vector(value):
@@ -34,6 +34,17 @@ def _cosine(first, second):
     return numerator / (first_length * second_length) if first_length and second_length else -1.0
 
 
+def _average_vector(vectors):
+    valid = [vector for vector in vectors if vector]
+    if not valid:
+        return None
+    size = len(valid[0])
+    same_size = [vector for vector in valid if len(vector) == size]
+    if not same_size:
+        return None
+    return [sum(vector[index] for vector in same_size) / len(same_size) for index in range(size)]
+
+
 def _set_review_job(job_id, **patch):
     with _REVIEW_JOBS_LOCK:
         current = dict(_REVIEW_JOBS.get(job_id) or {})
@@ -44,10 +55,17 @@ def _set_review_job(job_id, **patch):
 def _review_preview(row):
     width = max(1.0, float(row['width'] or 0))
     height = max(1.0, float(row['height'] or 0))
+    ext = str(row['ext'] or '').lower()
+    if ext in {'.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm'} and row['frame_sec'] is not None:
+        image_url = f"/api/people/video-frame/{int(row['face_id'])}?t={float(row['frame_sec'])}"
+    elif row['thumb_name']:
+        image_url = f"/api/thumbs/{quote(str(row['thumb_name']))}"
+    else:
+        image_url = f"/api/viewable/{quote(str(row['rel_path']))}"
     return {
         'face_id': int(row['face_id']),
         'photo_id': int(row['photo_id']),
-        'image_url': f"/api/viewable/{quote(str(row['rel_path']))}",
+        'image_url': image_url,
         'box': {
             'x': max(0.0, float(row['bbox_x'] or 0) / width),
             'y': max(0.0, float(row['bbox_y'] or 0) / height),
@@ -64,8 +82,7 @@ def _run_face_review(job_id, source_id, fjordlens):
             target_rows = conn.execute(
                 """
                 SELECT id, name, centroid_json FROM people
-                WHERE COALESCE(hidden,0)=0 AND centroid_json IS NOT NULL
-                  AND TRIM(centroid_json) != ''
+                                WHERE COALESCE(hidden,0)=0
                 """
             ).fetchall()
             targets = []
@@ -73,6 +90,12 @@ def _run_face_review(job_id, source_id, fjordlens):
             for row in target_rows:
                 person_id = int(row['id'])
                 vector = _face_vector(row['centroid_json'])
+                if vector is None:
+                    embedding_rows = conn.execute(
+                        "SELECT embedding_json FROM faces WHERE person_id=? AND embedding_json IS NOT NULL",
+                        (person_id,),
+                    ).fetchall()
+                    vector = _average_vector([_face_vector(candidate['embedding_json']) for candidate in embedding_rows])
                 if vector is None:
                     continue
                 if person_id == source_person_id:
@@ -87,8 +110,8 @@ def _run_face_review(job_id, source_id, fjordlens):
             source_params = () if source_person_id is None else (source_person_id,)
             rows = conn.execute(
                 f"""
-                SELECT f.id AS face_id, f.photo_id, f.embedding_json, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h,
-                       p.rel_path, p.width, p.height
+                  SELECT f.id AS face_id, f.photo_id, f.embedding_json, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h,
+                      p.rel_path, p.ext, p.thumb_name, p.width, p.height
                 FROM faces f INNER JOIN photos p ON p.id=f.photo_id
                 WHERE {source_where} AND f.embedding_json IS NOT NULL
                 ORDER BY f.id
@@ -116,6 +139,10 @@ def _run_face_review(job_id, source_id, fjordlens):
                     group = groups.setdefault(best_id, {'target_id': best_id, 'target_name': best_name, 'faces': [], 'best_score': best_score})
                     group['faces'].append(_review_preview(row))
                     group['best_score'] = max(group['best_score'], best_score)
+                elif source_person_id is not None and own_score < threshold:
+                    group = groups.setdefault('unmatched', {'target_id': None, 'target_name': 'Ingen sikker match', 'faces': [], 'best_score': own_score})
+                    group['faces'].append(_review_preview(row))
+                    group['best_score'] = max(group['best_score'], own_score)
                 _set_review_job(job_id, scanned=index)
             results = []
             for group in groups.values():
