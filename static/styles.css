@@ -867,6 +867,9 @@ body.view-kameraer .timeline-header-actions {
 .upload-top-status.multi {
   min-width: 0;
   width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 .upload-top-status.multi .upload-top-status-label,
 .upload-top-status.multi .upload-top-status-progress {
@@ -884,10 +887,7 @@ body.view-kameraer .timeline-header-actions {
 }
 .upload-top-proc {
   min-width: 128px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.02);
+  padding: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:

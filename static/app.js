@@ -13873,7 +13873,7 @@ async function setView(view, opts = {}) {
     // show logs panel, do not load photos
     renderGrid();
     const activeTab = _activeSettingsTabFromUi();
-    const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'other';
+    const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'logs';
     if (desiredTab && desiredTab !== activeTab) {
       activateSettingsTab(desiredTab);
     }
@@ -17022,7 +17022,7 @@ if (els.aiExternalLinksList) {
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
-    state.settingsTab = _normalizeSettingsTab(tab) || 'other';
+    state.settingsTab = _normalizeSettingsTab(tab) || 'logs';
     // activate button
     document.querySelectorAll('#settingsPanel .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');

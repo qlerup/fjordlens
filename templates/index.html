@@ -276,6 +276,7 @@
           <p>Vedligeholdelse og logs</p>
         </div>
         <nav class="tabs">
+          <button class="tab-btn active" data-tab="logs">Logs</button>
           {% if user_role == "admin" %}
           <button class="tab-btn" data-tab="update">Opdatering</button>
           {% endif %}
@@ -287,16 +288,16 @@
           <button class="tab-btn" data-tab="heic">Konvertering</button>
           <button class="tab-btn" data-tab="video">Video</button>
           <button class="tab-btn" data-tab="shared">Delte</button>
-          <button class="tab-btn" data-tab="logs">Logs</button>
           <button class="tab-btn" data-tab="users">Brugere</button>
           {% if user_role == "admin" %}
           <button class="tab-btn" data-tab="tokens">Tokens</button>
           {% endif %}
-          <button class="tab-btn active" data-tab="other">Andet</button>
+          <button class="tab-btn" data-tab="other">Andet</button>
         </nav>
         <!-- Mobile-friendly tab selector -->
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg faneblad">
+            <option value="logs" selected>Logs</option>
             {% if user_role == "admin" %}
             <option value="update">Opdatering</option>
             {% endif %}
@@ -308,12 +309,11 @@
             <option value="heic">Konvertering</option>
             <option value="video">Video</option>
             <option value="shared">Delte</option>
-            <option value="logs">Logs</option>
             <option value="users">Brugere</option>
             {% if user_role == "admin" %}
             <option value="tokens">Tokens</option>
             {% endif %}
-            <option value="other" selected>Andet</option>
+            <option value="other">Andet</option>
           </select>
         </div>
 
