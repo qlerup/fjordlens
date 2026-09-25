@@ -1,10 +1,139 @@
 """Move an explicitly selected set of faces without changing their photos."""
 import json
+import math
 import secrets
 import sqlite3
+import threading
 from contextlib import closing
+from urllib.parse import quote
 
 from flask import jsonify, request
+
+
+_REVIEW_JOBS: dict[str, dict] = {}
+_REVIEW_JOBS_LOCK = threading.RLock()
+_REVIEW_MARGIN = 0.075
+
+
+def _face_vector(value):
+    try:
+        parsed = json.loads(value) if value else None
+        if not isinstance(parsed, list) or not parsed:
+            return None
+        return [float(component) for component in parsed]
+    except (TypeError, ValueError):
+        return None
+
+
+def _cosine(first, second):
+    if not first or not second or len(first) != len(second):
+        return -1.0
+    numerator = sum(left * right for left, right in zip(first, second))
+    first_length = math.sqrt(sum(value * value for value in first))
+    second_length = math.sqrt(sum(value * value for value in second))
+    return numerator / (first_length * second_length) if first_length and second_length else -1.0
+
+
+def _set_review_job(job_id, **patch):
+    with _REVIEW_JOBS_LOCK:
+        current = dict(_REVIEW_JOBS.get(job_id) or {})
+        current.update(patch)
+        _REVIEW_JOBS[job_id] = current
+
+
+def _review_preview(row):
+    width = max(1.0, float(row['width'] or 0))
+    height = max(1.0, float(row['height'] or 0))
+    return {
+        'face_id': int(row['face_id']),
+        'photo_id': int(row['photo_id']),
+        'image_url': f"/api/viewable/{quote(str(row['rel_path']))}",
+        'box': {
+            'x': max(0.0, float(row['bbox_x'] or 0) / width),
+            'y': max(0.0, float(row['bbox_y'] or 0) / height),
+            'w': max(0.0, float(row['bbox_w'] or 0) / width),
+            'h': max(0.0, float(row['bbox_h'] or 0) / height),
+        },
+    }
+
+
+def _run_face_review(job_id, source_id, fjordlens):
+    try:
+        source_person_id = None if source_id == 'unknown' else int(source_id)
+        with closing(fjordlens.get_conn()) as conn:
+            target_rows = conn.execute(
+                """
+                SELECT id, name, centroid_json FROM people
+                WHERE COALESCE(hidden,0)=0 AND centroid_json IS NOT NULL
+                  AND TRIM(centroid_json) != ''
+                """
+            ).fetchall()
+            targets = []
+            own_centroid = None
+            for row in target_rows:
+                person_id = int(row['id'])
+                vector = _face_vector(row['centroid_json'])
+                if vector is None:
+                    continue
+                if person_id == source_person_id:
+                    own_centroid = vector
+                    continue
+                name = str(row['name'] or '').strip()
+                if not name or name.lower().startswith(('ukendt', 'unknown')):
+                    continue
+                targets.append((person_id, name, vector))
+
+            source_where = 'f.person_id IS NULL' if source_person_id is None else 'f.person_id=?'
+            source_params = () if source_person_id is None else (source_person_id,)
+            rows = conn.execute(
+                f"""
+                SELECT f.id AS face_id, f.photo_id, f.embedding_json, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h,
+                       p.rel_path, p.width, p.height
+                FROM faces f INNER JOIN photos p ON p.id=f.photo_id
+                WHERE {source_where} AND f.embedding_json IS NOT NULL
+                ORDER BY f.id
+                """,
+                source_params,
+            ).fetchall()
+            _set_review_job(job_id, status='running', total=len(rows), scanned=0)
+            groups = {}
+            threshold = float(getattr(fjordlens, 'FACE_MATCH_THRESHOLD_CENTROID', 0.45))
+            for index, row in enumerate(rows, start=1):
+                if not fjordlens._is_rel_path_allowed_for_current_user(row['rel_path'], conn):
+                    _set_review_job(job_id, scanned=index)
+                    continue
+                vector = _face_vector(row['embedding_json'])
+                if vector is None:
+                    _set_review_job(job_id, scanned=index)
+                    continue
+                best_id, best_name, best_score = None, '', -1.0
+                for person_id, name, centroid in targets:
+                    score = _cosine(vector, centroid)
+                    if score > best_score:
+                        best_id, best_name, best_score = person_id, name, score
+                own_score = _cosine(vector, own_centroid) if own_centroid else -1.0
+                if best_id is not None and best_score >= threshold and (source_person_id is None or best_score >= own_score + _REVIEW_MARGIN):
+                    group = groups.setdefault(best_id, {'target_id': best_id, 'target_name': best_name, 'faces': [], 'best_score': best_score})
+                    group['faces'].append(_review_preview(row))
+                    group['best_score'] = max(group['best_score'], best_score)
+                _set_review_job(job_id, scanned=index)
+            results = []
+            for group in groups.values():
+                group['count'] = len(group['faces'])
+                group['face_ids'] = [face['face_id'] for face in group['faces']]
+                group['previews'] = group['faces'][:4]
+                results.append(group)
+            results.sort(key=lambda group: (-group['count'], -group['best_score'], group['target_name'].casefold()))
+            _set_review_job(job_id, status='done', results=results, scanned=len(rows), total=len(rows), error=None)
+    except Exception as exc:
+        _set_review_job(job_id, status='error', error=str(exc))
+
+
+def _start_face_review(source_id, fjordlens):
+    job_id = secrets.token_urlsafe(18)
+    _set_review_job(job_id, status='queued', source_id=source_id, scanned=0, total=0, results=[], error=None)
+    threading.Thread(target=_run_face_review, args=(job_id, source_id, fjordlens), daemon=True).start()
+    return job_id
 
 
 def move_faces(conn, data, fjordlens):
@@ -65,6 +194,26 @@ def move_faces(conn, data, fjordlens):
 
 
 def register(app, fjordlens, can_manage):
+    @app.post('/api/people/face-review')
+    def api_person_face_review_start():
+        if not can_manage():
+            return jsonify(ok=False, error='Forbidden'), 403
+        data = request.get_json(silent=True) or {}
+        source_id = data.get('source_id')
+        if source_id != 'unknown' and (type(source_id) is not int or source_id <= 0):
+            return jsonify(ok=False, error='Ugyldig person.'), 400
+        return jsonify(ok=True, job_id=_start_face_review(source_id, fjordlens))
+
+    @app.get('/api/people/face-review/<job_id>')
+    def api_person_face_review_status(job_id):
+        if not can_manage():
+            return jsonify(ok=False, error='Forbidden'), 403
+        with _REVIEW_JOBS_LOCK:
+            job = dict(_REVIEW_JOBS.get(job_id) or {})
+        if not job:
+            return jsonify(ok=False, error='Analysen findes ikke.'), 404
+        return jsonify(ok=True, **job)
+
     @app.post('/api/people/faces/selection')
     def api_person_face_selection():
         if not can_manage():

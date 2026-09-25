@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from flask import Flask
-from person_faces import register
+from person_faces import _REVIEW_JOBS, _REVIEW_JOBS_LOCK, _run_face_review, _set_review_job, register
 
 
 class FaceSelectionTests(unittest.TestCase):
@@ -23,11 +23,11 @@ class FaceSelectionTests(unittest.TestCase):
         with connect() as conn:
             conn.executescript('''
                 CREATE TABLE people(id INTEGER PRIMARY KEY,name TEXT UNIQUE,hidden INTEGER DEFAULT 0,created_at TEXT,centroid_json TEXT);
-                CREATE TABLE photos(id INTEGER PRIMARY KEY,rel_path TEXT);
-                CREATE TABLE faces(id INTEGER PRIMARY KEY,photo_id INTEGER,person_id INTEGER,embedding_json TEXT);
-                INSERT INTO people(id,name) VALUES(1,'Ukendt-1'),(2,'Known');
-                INSERT INTO photos VALUES(1,'one.jpg'),(2,'two.jpg');
-                INSERT INTO faces VALUES(1,1,1,'[1,0]'),(2,1,2,'[0,1]'),(3,2,1,'[1,0]'),(4,2,NULL,'[1,1]');
+                CREATE TABLE photos(id INTEGER PRIMARY KEY,rel_path TEXT,width REAL,height REAL);
+                CREATE TABLE faces(id INTEGER PRIMARY KEY,photo_id INTEGER,person_id INTEGER,embedding_json TEXT,bbox_x REAL,bbox_y REAL,bbox_w REAL,bbox_h REAL);
+                INSERT INTO people(id,name,centroid_json) VALUES(1,'Ukendt-1','[1,0]'),(2,'Known','[0,1]');
+                INSERT INTO photos VALUES(1,'one.jpg',400,200),(2,'two.jpg',400,200);
+                INSERT INTO faces VALUES(1,1,1,'[0,1]',100,50,80,60),(2,1,2,'[0,1]',200,50,80,60),(3,2,1,'[1,0]',100,50,80,60),(4,2,NULL,'[1,1]',200,50,80,60);
             ''')
         self.allowed = True
         self.manage = True
@@ -83,3 +83,22 @@ class FaceSelectionTests(unittest.TestCase):
         self.assertEqual(self.post(face_ids=[]).status_code,409)
         self.assertEqual(self.post(target_id=1).status_code,409)
         self.assertEqual(self.owners(),[1,2,1,None])
+
+    def test_review_suggests_wrong_faces_without_moving_them(self):
+        job_id = 'review-test'
+        _set_review_job(job_id, status='queued', source_id=1, scanned=0, total=0, results=[])
+        fake = SimpleNamespace(
+            get_conn=self.connect,
+            _is_rel_path_allowed_for_current_user=lambda path, conn: self.allowed,
+            FACE_MATCH_THRESHOLD_CENTROID=0.45,
+        )
+        _run_face_review(job_id, 1, fake)
+        with _REVIEW_JOBS_LOCK:
+            result = dict(_REVIEW_JOBS[job_id])
+            _REVIEW_JOBS.pop(job_id, None)
+        self.assertEqual(result['status'], 'done')
+        self.assertEqual(result['scanned'], 2)
+        self.assertEqual(len(result['results']), 1)
+        self.assertEqual(result['results'][0]['target_id'], 2)
+        self.assertEqual(result['results'][0]['face_ids'], [1])
+        self.assertEqual(self.owners(), [1, 2, 1, None])

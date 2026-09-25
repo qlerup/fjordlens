@@ -6660,6 +6660,17 @@ function renderGrid() {
         });
         head.appendChild(renameBtn);
       }
+      if (['admin', 'manager'].includes(state.currentUser?.role)) {
+        const reviewBtn = document.createElement('button');
+        reviewBtn.type = 'button';
+        reviewBtn.className = 'btn tiny';
+        reviewBtn.textContent = 'Genmatch ansigter';
+        reviewBtn.addEventListener('click', () => window.openPersonFaceReview?.({
+          sourceId: state.personView.personId,
+          sourceName: state.personView.personName,
+        }));
+        head.appendChild(reviewBtn);
+      }
       const boxToggleWrap = document.createElement('label');
       boxToggleWrap.style.display = 'inline-flex';
       boxToggleWrap.style.alignItems = 'center';

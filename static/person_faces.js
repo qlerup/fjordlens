@@ -14,8 +14,114 @@
     .face-selection-actions{display:flex;gap:8px;justify-content:space-between;margin-top:16px}
     #face-selection-targets button{text-align:left}
     .face-selection-empty{padding:24px;color:var(--muted)}
+    #face-review-dialog{background:#102129;color:#edf6f8;border:1px solid #36515b;border-radius:16px;width:min(980px,calc(100vw - 32px));max-height:88dvh;overflow:auto;padding:20px;box-sizing:border-box}
+    #face-review-dialog::backdrop{background:#0009}
+    .face-review-header{display:flex;align-items:center;justify-content:space-between;gap:12px}.face-review-header h3{margin:0}
+    .face-review-progress{height:7px;background:#203842;border-radius:999px;overflow:hidden;margin:12px 0}.face-review-progress span{display:block;height:100%;background:#20c875;transition:width .2s ease}
+    .face-review-groups{display:grid;gap:8px}.face-review-group{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}.face-review-group small{color:#9fb4ba}
+    .face-review-preview{display:flex;gap:4px;overflow:hidden}.face-review-preview img{width:38px;height:38px;object-fit:cover;border-radius:4px}
+    .face-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:14px 0}.face-review-card{position:relative;aspect-ratio:1;overflow:hidden;border:1px solid #36515b;border-radius:8px}.face-review-card img{width:100%;height:100%;object-fit:cover}.face-review-box{position:absolute;border:2px solid #ff5757;box-sizing:border-box;pointer-events:none}
+    .face-review-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-actions select{max-width:230px;background:#152e37;color:inherit;border:1px solid #45636d;border-radius:8px;padding:8px}
   `;
   document.head.append(style);
+
+  window.openPersonFaceReview = ({sourceId, sourceName}) => {
+    if (sourceId === null || sourceId === undefined) return;
+    const dialog = document.createElement('dialog');
+    dialog.id = 'face-review-dialog';
+    dialog.innerHTML = `<div class="face-review-header"><h3>Genmatch ansigter</h3><button type="button" class="btn tiny" data-close>Drop alt</button></div>
+      <p data-status>Forbereder analyse…</p><div class="face-review-progress"><span></span></div><div data-content></div>`;
+    document.body.append(dialog);
+    const status = dialog.querySelector('[data-status]');
+    const progress = dialog.querySelector('.face-review-progress span');
+    const content = dialog.querySelector('[data-content]');
+    let changed = false;
+    let groups = [];
+    const sourceValue = sourceId === 'unknown' ? sourceId : Number(sourceId);
+    const refreshSource = () => {
+      if (changed && state.view === 'personer' && String(state.personView.personId) === String(sourceId)) {
+        loadPersonPhotos(sourceId, sourceName);
+      }
+    };
+    const setStatus = job => {
+      const total = Math.max(0, Number(job.total || 0));
+      const scanned = Math.max(0, Number(job.scanned || 0));
+      progress.style.width = total ? `${Math.min(100, Math.round((scanned / total) * 100))}%` : '0%';
+      status.textContent = job.status === 'done'
+        ? `Færdig: ${groups.length} forslag fundet.`
+        : `Scanner ${scanned} / ${total || '…'} ansigter…`;
+    };
+    const applyGroup = async (group, action, targetId = null) => {
+      dialog.querySelectorAll('button,select').forEach(control => { control.disabled = true; });
+      try {
+        const response = await fetch('/api/people/faces/selection', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({source_id: sourceValue, face_ids: group.face_ids, action, target_id: targetId}),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke gemme ændringen.');
+        changed = true;
+        groups = groups.filter(candidate => candidate !== group);
+        renderGroups();
+      } catch (error) {
+        status.textContent = error.message || 'Kunne ikke gemme ændringen.';
+      } finally {
+        dialog.querySelectorAll('button,select').forEach(control => { control.disabled = false; });
+      }
+    };
+    const showGroup = group => {
+      content.replaceChildren();
+      const back = document.createElement('button'); back.type = 'button'; back.className = 'btn tiny'; back.textContent = 'Tilbage'; back.addEventListener('click', renderGroups); content.append(back);
+      const title = document.createElement('h4'); title.textContent = `${group.target_name} · ${group.count} ansigt(er)`; content.append(title);
+      const grid = document.createElement('div'); grid.className = 'face-review-grid';
+      (group.faces || []).forEach(face => {
+        const card = document.createElement('div'); card.className = 'face-review-card';
+        const image = document.createElement('img'); image.src = face.image_url; image.alt = ''; image.loading = 'lazy'; card.append(image);
+        const box = document.createElement('div'); box.className = 'face-review-box';
+        box.style.left = `${Math.max(0, Number(face.box?.x || 0)) * 100}%`; box.style.top = `${Math.max(0, Number(face.box?.y || 0)) * 100}%`;
+        box.style.width = `${Math.max(0, Number(face.box?.w || 0)) * 100}%`; box.style.height = `${Math.max(0, Number(face.box?.h || 0)) * 100}%`;
+        card.append(box); grid.append(card);
+      });
+      content.append(grid);
+      const actions = document.createElement('div'); actions.className = 'face-review-actions';
+      const merge = document.createElement('button'); merge.type = 'button'; merge.className = 'btn'; merge.textContent = `Flet med ${group.target_name}`; merge.addEventListener('click', () => applyGroup(group, 'assign', Number(group.target_id))); actions.append(merge);
+      const targets = (state.people || []).filter(person => !person.hidden && person.id !== 'unknown' && Number(person.id) !== Number(sourceId) && personHasName(person));
+      const select = document.createElement('select'); targets.forEach(person => { const option = document.createElement('option'); option.value = String(person.id); option.textContent = person.name; select.append(option); }); actions.append(select);
+      const assign = document.createElement('button'); assign.type = 'button'; assign.className = 'btn'; assign.textContent = 'Flet med valgt'; assign.addEventListener('click', () => applyGroup(group, 'assign', Number(select.value))); actions.append(assign);
+      const hide = document.createElement('button'); hide.type = 'button'; hide.className = 'btn danger'; hide.textContent = 'Skjul'; hide.addEventListener('click', () => applyGroup(group, 'hide')); actions.append(hide);
+      content.append(actions);
+    };
+    const renderGroups = () => {
+      content.replaceChildren();
+      if (!groups.length) { content.textContent = 'Ingen mulige fejl fundet.'; return; }
+      const list = document.createElement('div'); list.className = 'face-review-groups';
+      groups.forEach(group => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn face-review-group';
+        const label = document.createElement('span'); label.innerHTML = `<strong>${group.target_name}</strong><small>${group.count} ansigt(er) foreslås flyttet</small>`; button.append(label);
+        const previews = document.createElement('span'); previews.className = 'face-review-preview'; (group.previews || []).forEach(face => { const image = document.createElement('img'); image.src = face.image_url; image.alt = ''; previews.append(image); }); button.append(previews);
+        button.addEventListener('click', () => showGroup(group)); list.append(button);
+      });
+      content.append(list);
+    };
+    const poll = async jobId => {
+      while (dialog.isConnected) {
+        const response = await fetch(`/api/people/face-review/${encodeURIComponent(jobId)}`);
+        const job = await response.json().catch(() => ({}));
+        if (!response.ok || !job.ok) { status.textContent = job.error || 'Analysen fejlede.'; return; }
+        if (job.status === 'done') { groups = Array.isArray(job.results) ? job.results : []; setStatus(job); renderGroups(); return; }
+        if (job.status === 'error') { status.textContent = job.error || 'Analysen fejlede.'; return; }
+        setStatus(job);
+        await new Promise(resolve => window.setTimeout(resolve, 350));
+      }
+    };
+    dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { refreshSource(); dialog.remove(); });
+    dialog.showModal();
+    fetch('/api/people/face-review', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id: sourceValue})})
+      .then(response => response.json().then(data => ({response, data})))
+      .then(({response, data}) => { if (!response.ok || !data.ok) throw new Error(data.error || 'Kunne ikke starte analysen.'); return poll(data.job_id); })
+      .catch(error => { status.textContent = error.message || 'Kunne ikke starte analysen.'; });
+  };
 
   window.openPersonFaceActionDialog = ({sourceId, faceIds, people = [], labels = {}, onSuccess}) => {
     if (!Array.isArray(faceIds) || !faceIds.length) return;

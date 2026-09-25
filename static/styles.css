@@ -5268,6 +5268,9 @@ body.compact-settings .settings-header { display: none !important; }
   border-color: rgba(91,140,255,0.4);
 }
 .person-photo-reassign {
+  width:auto;
+  min-width:58px;
+  height:26px;
   border:1px solid var(--border);
   border-radius:6px;
   padding:4px 7px;
@@ -5275,6 +5278,8 @@ body.compact-settings .settings-header { display: none !important; }
   background:var(--panel);
   font:inherit;
   font-size:.72rem;
+  line-height:1;
+  white-space:nowrap;
   cursor:pointer;
 }
 .person-rename-empty {
