@@ -148,6 +148,7 @@ class UploadConversionUploaderTests(unittest.TestCase):
         rel = "uploads/originals/camera/order.jpg"
         fjordlens._upsert_uploaded_stub(rel, source, "Kamera")
         events = []
+        progress = []
 
         with (
             patch.object(fjordlens, "heic_convert_on_upload_enabled", return_value=False),
@@ -162,11 +163,21 @@ class UploadConversionUploaderTests(unittest.TestCase):
             result = fjordlens._postprocess_uploaded_rels(
                 "Kamera",
                 [rel],
+                progress_cb=progress.append,
                 workflow_mode=fjordlens.UPLOAD_WORKFLOW_MODE_AGGRESSIVE,
             )
 
         self.assertEqual(result["indexed"], 1)
         self.assertEqual(events, ["thumb", "face"])
+        metadata_statuses = [
+            payload["process_status"]["metadata"]
+            for payload in progress
+            if payload.get("phase") == "metadata" and payload.get("process_status")
+        ]
+        self.assertTrue(metadata_statuses)
+        self.assertEqual(metadata_statuses[0]["processed"], 0)
+        self.assertTrue(metadata_statuses[0]["running"])
+        self.assertTrue(any(status["processed"] == 1 for status in metadata_statuses))
 
     def test_ios_viewable_normalizes_jpeg_without_changing_original(self):
         source = fjordlens.UPLOAD_DIR / "originals" / "camera" / "ios.jpg"

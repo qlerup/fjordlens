@@ -3748,6 +3748,7 @@ def _postprocess_uploaded_rels(
     ai_enabled = ai_auto_ingest_enabled()
     ai_desc_enabled = ai_desc_auto_ingest_enabled()
     mode = _normalize_upload_workflow_mode(workflow_mode or upload_workflow_mode())
+    index_errors = 0
     try:
         pause_sec = max(0.0, min(2.0, float(item_pause_sec or 0.0)))
     except Exception:
@@ -3769,7 +3770,22 @@ def _postprocess_uploaded_rels(
         if not progress_cb:
             return
         try:
-            progress_cb(payload)
+            emitted = dict(payload)
+            if mode == UPLOAD_WORKFLOW_MODE_AGGRESSIVE and emitted.get("phase") == "metadata":
+                processed = max(0, int(emitted.get("stage_processed") or 0))
+                total = len(rels)
+                emitted["process_status"] = {
+                    "metadata": {
+                        "enabled": True,
+                        "running": processed < total and not _should_stop(),
+                        "processed": processed,
+                        "total": total,
+                        "errors": index_errors,
+                        "queued": max(0, total - processed),
+                        "in_flight": 0,
+                    }
+                }
+            progress_cb(emitted)
         except Exception:
             pass
 
@@ -3844,7 +3860,6 @@ def _postprocess_uploaded_rels(
 
     indexed_ok: list[str] = []
     heic_converted_count = 0
-    index_errors = 0
     for i, rel in enumerate(rels, start=1):
         if _should_stop():
             break
