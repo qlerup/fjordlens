@@ -546,6 +546,7 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
 .sidebar-footer {
   margin-top: auto;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   border-top: 1px solid var(--border);
   padding-top: 10px;
@@ -556,6 +557,15 @@ body.drawer-open .drawer-backdrop { display: block; pointer-events: auto; cursor
   text-decoration: none;
 }
 .mini-link:hover { color: var(--text); }
+.sidebar-date {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+}
 
 /* Small form bits */
 .mini-label { color: var(--muted); font-size: 0.82rem; }

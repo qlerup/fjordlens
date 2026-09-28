@@ -1,3 +1,25 @@
+// Keep the sidebar date current, including when the app stays open overnight.
+(() => {
+  const element = document.getElementById('sidebarDate');
+  if (!element) return;
+  const formatter = new Intl.DateTimeFormat(document.documentElement.lang || 'da', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  let timer;
+  function refresh() {
+    const now = new Date();
+    element.dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    element.textContent = formatter.format(now);
+    clearTimeout(timer);
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    timer = setTimeout(refresh, midnight.getTime() - now.getTime());
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+  refresh();
+})();
+
 const els = {
   grid: document.getElementById("galleryGrid"),
   topbar: document.getElementById("topbar"),
