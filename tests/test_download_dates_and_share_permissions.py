@@ -17,6 +17,60 @@ import app as fjordlens
 
 
 class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
+    def test_folder_zip_selects_original_or_converted_without_duplicate_mirrors(self):
+        _, original = self._add_jpeg('album', 'photo.jpg')
+        converted = fjordlens.UPLOAD_DIR / 'converted/album/photo.jpg'
+        converted.parent.mkdir(parents=True)
+        Image.new('RGB', (12, 8), (200, 0, 0)).save(converted, 'JPEG')
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute("INSERT INTO photos(rel_path,filename,ext) VALUES(?,?,?)",
+                         ('uploads/converted/album/photo.jpg', 'photo.jpg', '.jpg'))
+            conn.commit()
+        for mode, expected in [('original', original), ('converted', converted)]:
+            response = self.client.post('/api/photos/download-zip', json={
+                'folders': ['album'], 'mode': mode, 'date_mode': 'original',
+            })
+            self.assertEqual(response.status_code, 200)
+            with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+                self.assertEqual(archive.namelist(), ['album/photo.jpg'])
+                self.assertEqual(archive.read('album/photo.jpg'), expected.read_bytes())
+            response.close()
+
+    def test_folder_zip_includes_nested_files_and_preserves_dates_and_paths(self):
+        _, first = self._add_jpeg('album', 'photo.jpg')
+        _, nested = self._add_jpeg('album/child', 'photo.jpg')
+        self._add_jpeg('album-other', 'outside.jpg')
+        fixed = datetime(2026, 7, 13, 18, 30, 45, tzinfo=timezone.utc)
+        before = [p.read_bytes() for p in (first, nested)]
+        for mode in ('original', 'converted'):
+            for date_mode in ('original', 'today'):
+                with self.subTest(mode=mode, date_mode=date_mode), patch.object(fjordlens, '_download_now', return_value=fixed):
+                    response = self.client.post('/api/photos/download-zip', json={
+                        'folders': ['album', 'album/child'], 'mode': mode, 'date_mode': date_mode,
+                    })
+                    self.assertEqual(response.status_code, 200)
+                    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+                        self.assertEqual(set(archive.namelist()), {'album/photo.jpg', 'album/child/photo.jpg'})
+                        for name in archive.namelist():
+                            expected = b'2020:01:02 03:04:05' if date_mode == 'original' else b'2026:07:13 18:30:45'
+                            self.assertEqual(piexif.load(archive.read(name))['Exif'][piexif.ExifIFD.DateTimeOriginal], expected)
+                    response.close()
+        self.assertEqual([p.read_bytes() for p in (first, nested)], before)
+
+    def test_folder_zip_checks_each_file_permission_and_literal_folder_name(self):
+        self._add_jpeg('album_100%', 'allowed.jpg')
+        self._add_jpeg('album_100%/private', 'hidden.jpg')
+        self._add_jpeg('albumX100extra', 'outside.jpg')
+        with patch.object(fjordlens, '_is_rel_path_allowed_for_current_user', side_effect=lambda rel: '/private/' not in rel):
+            response = self.client.post('/api/photos/download-zip', json={'folders': ['album_100%']})
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            self.assertEqual(archive.namelist(), ['album_100%/allowed.jpg'])
+        response.close()
+        for folders in (['../album'], 'album', [123]):
+            self.assertEqual(self.client.post('/api/photos/download-zip', json={'folders': folders}).status_code, 400)
+        self.assertEqual(self.client.post('/api/photos/download-zip', json={'folders': ['missing']}).status_code, 404)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         root = Path(self.tempdir.name)

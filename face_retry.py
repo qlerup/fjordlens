@@ -1,7 +1,20 @@
 """Pause a face queue on service outages without consuming pending photos."""
 import threading
 import time
+import sqlite3
 from processing_failures import ServiceUnavailable
+
+
+def is_database_busy(error):
+    """Only retry SQLite lock contention, not corrupt data or other failures."""
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    code = getattr(error, 'sqlite_errorcode', None)
+    if code is not None:
+        return (code & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    return str(error).lower() in {
+        'database is locked', 'database table is locked', 'database schema is locked',
+    }
 
 
 def retry_video_frame(extract, detect, allowed, notify, attempts=2, delay=2):

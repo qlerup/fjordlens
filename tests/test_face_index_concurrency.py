@@ -1,7 +1,9 @@
 import tempfile
 import threading
+import sqlite3
 import unittest
 from pathlib import Path
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import app as fjordlens
@@ -33,6 +35,102 @@ class _CountingLock:
 
 
 class FaceIndexConcurrencyTests(unittest.TestCase):
+    def test_direct_import_retries_after_all_chunks_and_reports_final_result(self):
+        events = []
+        paths = ['one.jpg', 'two.jpg', 'three.jpg']
+        def process(user, chunk, **kwargs):
+            events.extend(chunk)
+            if chunk == paths[:1]:
+                kwargs['deferred_face_writes'].append((chunk[0], []))
+            return {'received': len(chunk), 'faces_enabled': True, 'faces_done': int(chunk != paths[:1])}
+        def retry(items, **kwargs):
+            events.append('retry:' + items[0][0])
+            return [(items[0][0], 0, None)], None
+        with ExitStack() as stack:
+            for name, value in {
+                'DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE': 1,
+                'DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC': 0,
+                'UPLOAD_POSTPROCESS_STOP_EVENT': threading.Event(),
+                'DIRECT_UPLOAD_POSTPROCESS_ACTIVE_RELS': set(),
+            }.items():
+                stack.enter_context(patch.object(fjordlens, name, value))
+            for name, value in {
+                '_is_managed_preserved_upload_original': False,
+                '_is_upload_postprocess_running': False,
+                'faces_auto_index_enabled': True,
+                'ai_auto_ingest_enabled': False,
+                'ai_desc_auto_ingest_enabled': False,
+                '_pop_uploaded_rels': [],
+                '_ai_face_runtime_warmup': None,
+                '_ai_face_runtime_release': None,
+                'log_event': None,
+            }.items():
+                stack.enter_context(patch.object(fjordlens, name, return_value=value))
+            updates = stack.enter_context(patch.object(fjordlens, '_set_upload_postprocess_state'))
+            thread = stack.enter_context(patch.object(fjordlens.threading, 'Thread'))
+            stack.enter_context(patch.object(fjordlens, '_run_postprocess_serialized', side_effect=process))
+            stack.enter_context(patch.object(fjordlens, '_store_face_results_batch', side_effect=retry))
+            fail = stack.enter_context(patch.object(fjordlens.processing_failures, 'fail'))
+            stack.enter_context(patch.object(fjordlens.processing_failures, 'clear'))
+            self.assertTrue(fjordlens._start_direct_upload_postprocess(paths))
+            thread.call_args.kwargs['target']()
+            fail.assert_not_called()
+            final = updates.call_args.args[1]
+            self.assertEqual(final['phase'], 'done')
+            self.assertEqual(final['result']['faces_done'], 3)
+            self.assertEqual(final['result']['faces_errors'], 0)
+        self.assertEqual(events, paths + ['retry:one.jpg'])
+
+    def test_database_busy_retries_after_first_pass_without_repeating_detection(self):
+        paths = ['first.jpg', 'second.jpg', 'third.jpg']
+        attempts = []
+        completed = []
+
+        def store(items, **kwargs):
+            results = []
+            for rel, faces in items:
+                attempts.append(rel)
+                error = sqlite3.OperationalError('database is locked') if rel == paths[0] and attempts.count(rel) == 1 else None
+                results.append((rel, 0, error))
+            return results, object()
+
+        with patch.object(fjordlens, '_detect_faces_for_photo', return_value=[]) as detect, \
+             patch.object(fjordlens, '_store_face_results_batch', side_effect=store), \
+             patch.object(fjordlens, 'faces_index_throttle_enabled_sec', return_value=0), \
+             patch.object(fjordlens.processing_failures, 'fail') as fail, \
+             patch.object(fjordlens.processing_failures, 'clear'), \
+             patch.object(fjordlens, 'log_event'):
+            stats = fjordlens._run_face_slot_queue(paths, 1, on_complete=lambda *args: completed.append(args))
+        self.assertEqual(attempts, paths + paths[:1])
+        self.assertEqual(detect.call_count, 3)
+        fail.assert_not_called()
+        self.assertEqual(stats['processed'], 3)
+        self.assertEqual(stats['errors'], 0)
+        self.assertEqual([rel for rel, _, _ in completed], paths[1:] + paths[:1])
+        self.assertTrue(all(error is None for _, _, error in completed))
+
+    def test_database_busy_exhaustion_reports_once_and_stop_skips_retry(self):
+        for stop in (False, True):
+            with self.subTest(stop=stop):
+                active = [True]
+                error = sqlite3.OperationalError('database is locked')
+                def store(*args, **kwargs):
+                    if stop:
+                        active[0] = False
+                    raise error
+                with patch.object(fjordlens, '_detect_faces_for_photo', return_value=[]), \
+                     patch.object(fjordlens, '_store_face_results_batch', side_effect=store) as persist, \
+                     patch.object(fjordlens, 'faces_index_throttle_enabled_sec', return_value=0), \
+                     patch.object(fjordlens.processing_failures, 'fail') as fail, \
+                     patch.object(fjordlens, 'log_event'):
+                    completed = []
+                    stats = fjordlens._run_face_slot_queue(['photo.jpg'], 1,
+                        should_continue=lambda: active[0], on_complete=lambda *args: completed.append(args))
+                self.assertEqual(persist.call_count, 1 if stop else 2)
+                self.assertEqual(fail.call_count, 0 if stop else 1)
+                self.assertEqual(len(completed), 0 if stop else 1)
+                self.assertEqual(stats['errors'], 0 if stop else 1)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         root = Path(self.tempdir.name)

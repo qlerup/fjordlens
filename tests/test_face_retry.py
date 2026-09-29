@@ -1,10 +1,20 @@
 import unittest
+import sqlite3
 from unittest.mock import Mock
-from face_retry import FaceRetryGate
+from face_retry import FaceRetryGate, is_database_busy
 from processing_failures import ServiceUnavailable, FailureTracker
 
 
 class RetryTests(unittest.TestCase):
+    def test_only_sqlite_lock_errors_are_retryable(self):
+        self.assertTrue(is_database_busy(sqlite3.OperationalError('database is locked')))
+        extended = sqlite3.OperationalError('busy snapshot')
+        extended.sqlite_errorcode = sqlite3.SQLITE_BUSY | (2 << 8)
+        self.assertTrue(is_database_busy(extended))
+        self.assertFalse(is_database_busy(sqlite3.OperationalError('no such table: photos')))
+        self.assertFalse(is_database_busy(RuntimeError('database is locked')))
+        self.assertFalse(is_database_busy(None))
+
     def test_outage_retries_same_item_without_consuming_queue(self):
         notify = Mock()
         operation = Mock(side_effect=[ServiceUnavailable('offline'), ServiceUnavailable('offline'), ['face']])

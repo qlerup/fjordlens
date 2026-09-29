@@ -1447,6 +1447,8 @@ const I18N = {
     mapper_rename_success: 'Mappe omd\u00f8bt',
     mapper_delete_selected: 'Slet valgte',
     mapper_download: 'Download',
+    mapper_download_folder: 'Download mappe',
+    download_hint_folder: 'Hele mappen med undermapper hentes som ZIP.',
     mapper_download_converted: 'Download konverterede',
     mapper_download_original: 'Download originale',
     download_modal_title: 'Download',
@@ -2331,6 +2333,8 @@ const I18N = {
     mapper_rename_success: 'Folder renamed',
     mapper_delete_selected: 'Delete selected',
     mapper_download: 'Download',
+    mapper_download_folder: 'Download folder',
+    download_hint_folder: 'The complete folder, including subfolders, is downloaded as a ZIP.',
     mapper_download_converted: 'Download converted',
     mapper_download_original: 'Download originals',
     download_modal_title: 'Download',
@@ -6495,6 +6499,9 @@ function renderGrid() {
     // Upload/convert polling re-renders often. Keep existing cards so the grid
     // does not flash; folder mosaics swap in place once new covers decode.
     for (const card of els.grid.querySelectorAll('.folder-card[data-folder]')) {
+      // Selection-mode cards still contain badges after the selection is cleared.
+      // Rebuild them when returning to browse mode, including unselected cards.
+      if (card.querySelector('.folder-select-badge')) continue;
       reusableFolders.set(card.dataset.folder, card);
     }
     for (const card of els.grid.querySelectorAll('.photo-card[data-photo-id]:not(.folder-card)')) {
@@ -10097,7 +10104,7 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperDownloadBtn) {
     const show = !!state.mapperEditMode;
-    const canDownload = show && (selPhotos > 0);
+    const canDownload = show && (selPhotos > 0 || selFolders > 0);
     els.mapperDownloadBtn.classList.toggle('hidden', !show);
     els.mapperDownloadBtn.disabled = !canDownload;
     els.mapperDownloadBtn.textContent = tr('mapper_download');
@@ -10180,7 +10187,7 @@ function _updateMapperMobileFallbackButton() {
 
 function updateMapperDownloadHint() {
   if (!els.mapperDownloadHint) return;
-  els.mapperDownloadHint.textContent = tr(isMobileDownloadDevice() ? 'download_hint_mobile' : 'download_hint_zip');
+  els.mapperDownloadHint.textContent = tr(_mapperDownloadFolders.length ? 'download_hint_folder' : isMobileDownloadDevice() ? 'download_hint_mobile' : 'download_hint_zip');
 }
 
 function _setMapperDownloadControlsBusy(busy) {
@@ -10190,8 +10197,12 @@ function _setMapperDownloadControlsBusy(busy) {
   });
 }
 
-function openDownloadModal(){
+let _mapperDownloadFolders = [];
+let _mapperDownloadPhotoIds = [];
+function openDownloadModal(folderPath){
   if (!els.mapperDownloadModal) return;
+  _mapperDownloadFolders = typeof folderPath === 'string' ? [folderPath] : Array.from(state.mapperSelectedFolders || []);
+  _mapperDownloadPhotoIds = typeof folderPath === 'string' ? [] : Array.from(state.mapperSelectedPhotoIds || []);
   _clearPreparedMobileDownloads();
   updateMapperDownloadHint();
   els.mapperDownloadModal.classList.remove('hidden');
@@ -10203,6 +10214,10 @@ function closeDownloadModal(options = {}) {
   _clearPreparedMobileDownloads();
   _setMapperDownloadControlsBusy(false);
   if (els.mapperDownloadModal) els.mapperDownloadModal.classList.add('hidden');
+  if (!options.preserveTarget) {
+    _mapperDownloadFolders = [];
+    _mapperDownloadPhotoIds = [];
+  }
 }
 
 let _downloadStatusTimer = null;
@@ -10379,8 +10394,9 @@ async function _fetchBlobWithProgress(url, options, onProgress) {
 }
 
 async function runMapperDownload(mode){
-  const ids = Array.from(state.mapperSelectedPhotoIds || []);
-  if (!ids.length) { showStatus(tr('mapper_select_download_none'), 'err'); return; }
+  const folders = _mapperDownloadFolders.slice();
+  const ids = _mapperDownloadPhotoIds.slice();
+  if (!ids.length && !folders.length) { showStatus(tr('mapper_select_download_none'), 'err'); return; }
   if (_downloadInProgress) {
     showStatus(tr('download_status_already_running'), 'err');
     return;
@@ -10390,8 +10406,8 @@ async function runMapperDownload(mode){
   _activeDownloadController = new AbortController();
   const normalizedMode = String(mode || '').toLowerCase() === 'original' ? 'original' : 'converted';
   const dateMode = getMapperDownloadDateMode();
-  const useMobileFlow = isMobileDownloadDevice();
-  const isSingle = ids.length === 1;
+  const useMobileFlow = isMobileDownloadDevice() && !folders.length;
+  const isSingle = !folders.length && ids.length === 1;
   const fallbackName = isSingle ? `photo_${ids[0]}` : `fjordlens_download_${ids.length}.zip`;
   _clearPreparedMobileDownloads();
   _setMapperDownloadControlsBusy(true);
@@ -10442,7 +10458,7 @@ async function runMapperDownload(mode){
       : {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ photo_ids: ids, mode: normalizedMode, date_mode: dateMode }),
+          body: JSON.stringify({ photo_ids: ids, folders, mode: normalizedMode, date_mode: dateMode }),
           signal: _activeDownloadController.signal,
         };
     showDownloadTopStatusMessage(tr(isSingle ? 'download_status_fetching_one' : 'download_status_zipping'));
@@ -10520,7 +10536,7 @@ function downloadPreparedMobileFilesIndividually() {
 }
 
 function startMapperDownloadFromModal(mode) {
-  if (!isMobileDownloadDevice()) closeDownloadModal({ cancelActive: false });
+  if (!isMobileDownloadDevice() || _mapperDownloadFolders.length) closeDownloadModal({ cancelActive: false, preserveTarget: true });
   runMapperDownload(mode);
 }
 
@@ -14878,6 +14894,7 @@ function mapperContextMenuItemsForBackground() {
 
 function mapperContextMenuItemsForFolder(folderPath) {
   return [
+    { label: tr('mapper_download_folder'), action: () => openDownloadModal(folderPath) },
     { label: 'Flyt mappe', action: () => openMapperMoveDialog(folderPath) },
     { label: tr('mapper_ctx_rename'), action: () => openMapperRenameModal(folderPath) },
     { label: tr('mapper_ctx_select'), action: () => { setMapperEditMode(true); toggleMapperFolderSelection(folderPath); } },

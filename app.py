@@ -38,7 +38,7 @@ from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
 from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids, StageRetryError
-from face_retry import FaceRetryGate, retry_video_frame
+from face_retry import FaceRetryGate, retry_video_frame, is_database_busy
 from ai_service.memory_budget import MemoryBudget, MIB
 
 processing_failures = FailureTracker(
@@ -3733,6 +3733,7 @@ def _postprocess_uploaded_rels(
     stop_event: Optional[threading.Event] = None,
     force_reprocess: bool = False,
     reuse_existing_conversions: bool = False,
+    deferred_face_writes: Optional[list] = None,
 ) -> Dict[str, Any]:
     user = str(uploaded_by or "").strip()
     rels = []
@@ -4381,6 +4382,7 @@ def _postprocess_uploaded_rels(
                 batch_size,
                 should_continue=lambda: not _should_stop(),
                 on_complete=progress_completed,
+                deferred_writes=deferred_face_writes,
             )
             _update_stage("faces", set_running=False)
             with process_lock:
@@ -4562,6 +4564,7 @@ def _postprocess_uploaded_rels(
                 batch_size,
                 should_continue=lambda: not _should_stop(),
                 on_complete=gentle_completed,
+                deferred_writes=deferred_face_writes,
             )
             _pause_between_items()
 
@@ -13956,12 +13959,29 @@ def _is_faces_index_supported_rel(rel_path: str, video_enabled: Optional[bool] =
         (faces_video_index_enabled() if video_enabled is None else video_enabled))
 
 
+def _retry_deferred_face_writes(items, allowed, complete, touched_person_ids):
+    """One serial persistence retry, using GPU output retained from the first pass."""
+    for rel, faces in items:
+        if not allowed():
+            break
+        try:
+            stored, _ = _store_face_results_batch(
+                [(rel, faces)], match_cache=None,
+                touched_person_ids=touched_person_ids,
+            )
+            _, count, error = stored[0]
+        except Exception as exc:
+            count, error = 0, exc
+        complete(rel, count, error)
+
+
 def _run_face_slot_queue(
     rel_paths: list[str],
     concurrency: int,
     *,
     should_continue: Optional[Callable[[], bool]] = None,
     on_complete: Optional[Callable[[str, int, Optional[Exception]], None]] = None,
+    deferred_writes: Optional[list] = None,
 ) -> Dict[str, int]:
     """Independent GPU producer + batched SQLite consumer."""
     items = [str(rel or "").strip() for rel in rel_paths if str(rel or "").strip()]
@@ -14022,6 +14042,7 @@ def _run_face_slot_queue(
 
     def persistence_worker() -> None:
         match_cache: Optional[_FaceMatchCache] = None
+        deferred = []
         try:
             while True:
                 first = persistence_queue.get()
@@ -14071,7 +14092,13 @@ def _run_face_slot_queue(
                         complete(rel, 0, detection_error)
                     else:
                         count, store_error = stored_by_rel.get(rel, (0, RuntimeError("missing_store_result")))
-                        complete(rel, count, store_error)
+                        if is_database_busy(store_error):
+                            # Keep the GPU result until the first pass has drained.
+                            # Do not publish a file failure or completion yet.
+                            deferred.append((rel, faces))
+                            match_cache = None
+                        else:
+                            complete(rel, count, store_error)
                     persistence_queue.task_done()
 
                 # Preserve the existing background-load control, but apply it once
@@ -14079,6 +14106,14 @@ def _run_face_slot_queue(
                 batch_delay = faces_index_throttle_enabled_sec()
                 if batch_delay > 0 and allowed():
                     time.sleep(batch_delay)
+
+            # One final, serial attempt after every first-pass result was handled.
+            # Reuse detection output; a busy database does not require more GPU work.
+            if deferred_writes is not None:
+                # A multi-chunk background job owns the final retry pass.
+                deferred_writes.extend(deferred)
+            else:
+                _retry_deferred_face_writes(deferred, allowed, complete, touched_person_ids)
         finally:
             if touched_person_ids:
                 try:
@@ -14893,6 +14928,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
     def run() -> None:
         processed_total = 0
         known_total = len(rels)
+        deferred_face_writes = []
         if aggregate.get("faces_enabled") and rels:
             _ai_face_runtime_warmup()
 
@@ -14931,6 +14967,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     workflow_mode=workflow_mode,
                     item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
                     stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
+                    deferred_face_writes=deferred_face_writes,
                 )
                 merge_result(result)
                 processed_total += int(result.get("received") or len(chunk))
@@ -14964,6 +15001,33 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 _set_upload_postprocess_state(state_user, state_patch)
                 if batch and DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC > 0:
                     time.sleep(DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC)
+
+            if deferred_face_writes and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                retried = 0
+                touched = set()
+                def retry_completed(rel, count, error):
+                    nonlocal retried
+                    retried += 1
+                    if error is not None:
+                        aggregate['faces_errors'] += 1
+                        processing_failures.fail(rel, 'faces', error)
+                        log_event('error', rel_path=rel, error=f'postprocess_faces_queue: {error}')
+                    else:
+                        aggregate['faces_done'] += 1
+                        aggregate['faces_found'] += int(count > 0)
+                        processing_failures.clear(rel, 'faces')
+                    _set_upload_postprocess_state(state_user, {
+                        'phase': 'faces', 'current_rel': rel, 'process_status': None,
+                        'stage_processed': retried, 'stage_total': len(deferred_face_writes),
+                    })
+                _set_upload_postprocess_state(state_user, {
+                    'phase': 'faces', 'current_rel': None, 'process_status': None,
+                    'stage_processed': 0, 'stage_total': len(deferred_face_writes),
+                })
+                _retry_deferred_face_writes(deferred_face_writes,
+                    lambda: not UPLOAD_POSTPROCESS_STOP_EVENT.is_set(), retry_completed, touched)
+                if touched:
+                    _recompute_person_centroids_bulk(touched)
 
             _set_upload_postprocess_state(
                 state_user,
@@ -23581,7 +23645,7 @@ def _unique_archive_name(name: str, used: set[str]) -> str:
     return candidate
 
 
-def _send_photos_download_zip(rows: Iterable[sqlite3.Row], mode: str, date_mode: str):
+def _send_photos_download_zip(rows: Iterable[sqlite3.Row], mode: str, date_mode: str, *, preserve_folders=False):
     resolved: list[tuple[sqlite3.Row, Path]] = []
     for row in rows:
         try:
@@ -23599,8 +23663,15 @@ def _send_photos_download_zip(rows: Iterable[sqlite3.Row], mode: str, date_mode:
     try:
         with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             used: set[str] = set()
+            names_by_folder = {}
             for row, use_path in resolved:
-                archive_name = _unique_archive_name(use_path.name, used)
+                if preserve_folders:
+                    _, tail = _upload_storage_tail(str(row['rel_path']))
+                    parent = _normalize_folder_acl_path(str(Path(tail).parent))
+                    name = _unique_archive_name(use_path.name, names_by_folder.setdefault(parent, set()))
+                    archive_name = f'{parent}/{name}' if parent else name
+                else:
+                    archive_name = _unique_archive_name(use_path.name, used)
                 write_path = use_path
                 cleanup_dir: Optional[Path] = None
                 try:
@@ -23690,14 +23761,23 @@ def api_photos_download_zip():
     """
     body = request.get_json(silent=True) or {}
     raw_ids = body.get("photo_ids")
+    raw_folders = body.get('folders', [])
     try:
         mode, date_mode = _normalize_download_options(body.get("mode"), body.get("date_mode"))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    if not isinstance(raw_ids, list) or not raw_ids:
+    if not isinstance(raw_folders, list) or len(raw_folders) > 100 or any(not isinstance(f, str) for f in raw_folders):
+        return jsonify(ok=False, error='Ugyldigt mappevalg'), 400
+    try:
+        folders = list(dict.fromkeys(_normalize_folder_acl_path(f) for f in raw_folders))
+    except ValueError:
+        return jsonify(ok=False, error='Ugyldig mappesti'), 400
+    if raw_ids is None and folders:
+        raw_ids = []
+    if not isinstance(raw_ids, list) or (not raw_ids and not folders):
         return jsonify({"ok": False, "error": "Angiv photo_ids"}), 400
     ids = [int(pid) for pid in raw_ids if str(pid).isdigit()]
-    if not ids:
+    if not ids and not folders:
         return jsonify({"ok": False, "error": "Ingen gyldige billeder valgt"}), 400
 
     rows = [
@@ -23705,8 +23785,21 @@ def api_photos_download_zip():
         for row in _photo_rows_for_ids(ids)
         if _is_rel_path_allowed_for_current_user(str(row["rel_path"] or ""))
     ]
+    if folders:
+        with closing(get_conn()) as conn:
+            for folder in folders:
+                prefixes = [f'{root}/{folder}/' if folder else f'{root}/'
+                            for root in ('uploads', 'uploads/originals', 'uploads/converted')]
+                folder_rows = conn.execute('''SELECT * FROM photos WHERE
+                    (instr(rel_path, ?) = 1 OR instr(rel_path, ?) = 1 OR instr(rel_path, ?) = 1)
+                    AND UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%'
+                    AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%'
+                    AND rel_path NOT LIKE '%/@eaDir/%' ORDER BY rel_path''', prefixes).fetchall()
+                rows.extend(row for row in folder_rows
+                            if _is_rel_path_allowed_for_current_user(str(row['rel_path'] or '')))
+        rows = _dedupe_upload_storage_rows(rows)
     try:
-        return _send_photos_download_zip(rows, mode, date_mode)
+        return _send_photos_download_zip(rows, mode, date_mode, preserve_folders=bool(folders))
     except Exception as exc:
         log_event("download_zip_error", error=str(exc))
         return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
