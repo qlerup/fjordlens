@@ -2888,6 +2888,7 @@ let state = {
   mapperTreeOpen: false,
   mapperTreeExpanded: new Set([""]),
   // Small initial pages keep navigation responsive on phones as well as desktops.
+  photosTotalItems: null,
   photosPageOffset: 0,
   mapperPageRows: 5,
   mapperTotalItems: 0,
@@ -3638,7 +3639,9 @@ function renderStats() {
     if (els.photoCount) els.photoCount.textContent = visiblePeople().length;
   } else {
     if (els.photoCount) els.photoCount.textContent = state.view === 'kameraer' && !state.cameraModel
-      ? state.cameras.reduce((sum, camera) => sum + camera.count, 0) : state.items.length;
+      ? state.cameras.reduce((sum, camera) => sum + camera.count, 0)
+      : state.view === 'mapper' ? (state.mapperTotalItems ?? state.items.length)
+      : isPagedGalleryView(state.view) ? (state.photosTotalItems ?? '...') : state.items.length;
     if (els.favoriteCount) els.favoriteCount.textContent = state.items.filter(i => i.favorite).length;
     if (els.selectedCount) els.selectedCount.textContent = state.selectedId ? "1" : "0";
   }
@@ -6174,7 +6177,7 @@ async function refreshMapperViewInBackground() {
     && galleryDataCache.generation() === generation && !state.mapperEditMode;
   const qs = new URLSearchParams({view:'mapper',folder:state.mapperPath || '',direct:'1',q:state.q || '',
     sort:_normalizeMapperSort(state.mapperSort),search_lang:state.searchLanguage || 'da',offset:'0',
-    limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false)))), browse:'1'});
+    limit:String(Math.min(2000, Math.max(state.items.length, estimateMapperPageLimit(false)))), browse:'1', include_total:'1'});
   appendPersonSearchParams(qs);
   try {
     const [photos, folders] = await Promise.all([
@@ -6212,7 +6215,7 @@ async function refreshMapperViewInBackground() {
       }
       state.items = photos.items; state.mapperFolders = nextFolders; state.mapperFolderPreviews = previews;
       state.mapperTotalItems = photos.total; state.photosPageOffset = photos.next_offset;
-      state.photosHasMore = photos.total != null ? photos.next_offset < photos.total : !!photos.has_more;
+      state.photosHasMore = !!photos.has_more;
       renderGrid(); mapperUnchangedCards = null;
       window.FjordLensFolderPreviews.resume?.(els.grid);
       renderMapperContext(state.mapperPath || ''); restoreGalleryScrollAnchor(anchor, current);
@@ -8375,6 +8378,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
   // All photo grids use bounded pages. Folder discovery is a separate request.
   const pagedView = isPagedGalleryView(state.view);
   if (!append) {
+    state.photosTotalItems = null;
     state.photosPageOffset = 0;
     state.photosHasMore = false;
   }
@@ -8394,6 +8398,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     qs.set('limit', String(estimateMapperPageLimit(append)));
   }
   if (pagedView) qs.set('browse', '1');
+  if (pagedView && !append) qs.set('include_total', '1');
   if (state.view === 'kameraer' && state.cameraModel) qs.set('camera', state.cameraModel);
   const cameraOverview = state.view === 'kameraer' && !state.cameraModel;
   appendPersonSearchParams(qs);
@@ -8429,9 +8434,12 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     if (append) state.items = (state.items || []).concat(incoming);
     else state.items = incoming;
     state.photosHasMore = !!data.has_more;
+    if (data.total != null && Number.isFinite(Number(data.total))) {
+      state.photosTotalItems = Math.max(0, Number(data.total));
+    }
     if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined' && Number.isFinite(Number(data.total))) {
       state.mapperTotalItems = Math.max(0, Number(data.total));
-    } else if (state.view === 'mapper') {
+    } else if (state.view === 'mapper' && !append) {
       state.mapperTotalItems = null;
     }
     if (pagedView) {
@@ -8440,9 +8448,6 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
       state.photosPageOffset = Number.isFinite(nextOffset) && nextOffset >= 0
         ? nextOffset
         : ((state.photosPageOffset || 0) + used);
-    }
-    if (state.view === 'mapper' && data.total !== null && typeof data.total !== 'undefined') {
-      state.photosHasMore = state.photosPageOffset < state.mapperTotalItems;
     }
     if (!append && state.view === 'mapper') {
       handleMapperDiskSyncStatus(data.disk_sync);

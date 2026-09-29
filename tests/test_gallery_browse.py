@@ -42,6 +42,25 @@ class GalleryBrowseTests(unittest.TestCase):
             sync.assert_not_called()
             count.assert_not_called()
 
+    def test_requested_total_counts_all_visible_matches_without_public_records(self):
+        self.seed(350, mirrors=True)
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 2, [{'folder_path': 'Allowed', 'permission': 'view'}])
+            conn.commit()
+        client = self._authenticated_client(2)
+        with patch.object(fl, 'row_to_public', wraps=fl.row_to_public) as convert:
+            first = self.page(client, 'favorites', limit=6, q='needle', include_total='1')
+        self.assertEqual(first['total'], 10)
+        self.assertEqual(len(first['items']), 6)
+        self.assertLessEqual(convert.call_count, 64)
+        last = self.page(client, 'favorites', limit=6, q='needle', offset=first['next_offset'])
+        self.assertEqual(len(last['items']), 4)
+        self.assertFalse(last['has_more'])
+        self.assertIsNone(last['total'])
+        self.assertEqual(self.page(client, include_total='1')['total'], 70)
+        self.assertEqual(self.page(client, q='not-present', include_total='1')['total'], 0)
+        self.assertEqual(self.page(self._authenticated_client(), include_total='1')['total'], 350)
+
     def test_full_last_page_and_mirrors_do_not_drop_or_repeat_photos(self):
         self.seed(240, mirrors=True)
         client = self._authenticated_client()

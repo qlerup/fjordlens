@@ -16641,7 +16641,8 @@ def query_photos(
     camera_model: Optional[str] = None,
     filename_query: str = "",
     person_ids: Optional[list[int]] = None,
-) -> list[Dict[str, Any]]:
+    count_only: bool = False,
+) -> list[Dict[str, Any]] | int:
     sort_map = {
         "date_desc": "COALESCE(captured_at, modified_fs, created_fs) DESC",
         "date_asc": "COALESCE(captured_at, modified_fs, created_fs) ASC",
@@ -16740,6 +16741,15 @@ def query_photos(
                 params.extend(pfx.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + '/%' for pfx in uniq_prefixes)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    if count_only:
+        # Reuse the exact gallery filters and mirror selection, but read paths
+        # only: counting must not deserialize metadata or build public records.
+        with closing(get_conn()) as conn:
+            if filename_term:
+                conn.create_function("filename_search_key", 1, _filename_search_key, deterministic=True)
+            rows = conn.execute(f"SELECT rel_path FROM photos {where_sql}", params).fetchall()
+        rows = _dedupe_upload_storage_rows(rows)
+        return len(_filter_public_items_by_current_user_acl([dict(row) for row in rows]))
     sql = f"""
         SELECT
             photos.*,
@@ -22594,11 +22604,16 @@ def api_photos():
                 lambda item: True,
                 offset=offset, limit=page_limit,
             )
+            total = None
+            if request.args.get("include_total") == "1":
+                total = query_photos(view, sort, folder=folder, direct_only=direct_only,
+                                     camera_model=camera_model, filename_query=q,
+                                     person_ids=person_ids, count_only=True)
             return jsonify({"items": items, "count": len(items), "query": q,
                             "view": view, "sort": sort, "folder": folder,
                             "offset": offset, "limit": page_limit,
                             "has_more": has_more, "next_offset": next_offset,
-                            "total": None, "search_lang": search_language, "disk_sync": None})
+                            "total": total, "search_lang": search_language, "disk_sync": None})
         disk_sync: Optional[Dict[str, Any]] = None
         if view == "mapper":
             try:

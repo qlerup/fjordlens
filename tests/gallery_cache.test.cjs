@@ -11,6 +11,7 @@ function fixture() {
     els: { viewTitle: {}, viewSubtitle: {} }, renderGrid() {}, renderStats() {}, showStatus() {},
     navLabels: () => ({}), restoreGalleryScrollAnchor() {}, restoreMapperView: () => false,
     _normalizeMapperPath: s => s, _normalizeMapperSort: s => s || 'date', estimateMapperPageLimit: () => 100,
+    appendPersonSearchParams() {}, appendGalleryPage() {},
     handleMapperDiskSyncStatus() {}, hydrateMapperItems() {}, setupMapperGhostLoading() {},
     isPagedGalleryView: view => ['timeline', 'mapper', 'kameraer', 'favorites'].includes(view),
     fetch: async () => { requests++; return { ok: true, headers: { get: () => 'application/json' },
@@ -54,3 +55,33 @@ test('cache is bounded and evicts least recently visited pages', () => {
   c.set('a', {}); c.set('b', {}); c.get('a'); c.set('c', {});
   assert.equal(c.get('b'), null); assert.notEqual(c.get('a'), null);
 });
+
+for (const view of ['timeline', 'favorites', 'kameraer', 'mapper']) {
+  test(`${view}: total stays stable when another page loads`, async () => {
+    const f = fixture();
+    f.context.state.view = view;
+    f.context.state.cameraModel = 'Test camera';
+    let request = 0;
+    f.context.fetch = async url => {
+      const first = request++ === 0;
+      assert.equal(new URLSearchParams(url.split('?')[1]).get('include_total'), first ? '1' : null);
+      return { ok: true, headers: { get: () => 'application/json' },
+        json: async () => ({ items: [{ id: request }], total: first ? 350 : null,
+          has_more: true, next_offset: request * 90 }) };
+    };
+    f.context.els.grid = { querySelectorAll: () => [] };
+    f.context.expandMapperGhostChunk = () => {};
+    await f.load();
+    assert.equal(f.context.state.photosTotalItems, 350);
+    await f.load(true);
+    assert.equal(f.context.state.photosTotalItems, 350);
+    if (view === 'mapper') assert.equal(f.context.state.mapperTotalItems, 350);
+    assert.equal(f.context.state.photosHasMore, true);
+    f.context.document = { querySelector: () => null };
+    f.context.tr = key => key;
+    f.context.els.photoCount = {};
+    vm.runInContext(source.slice(source.indexOf('function renderStats()'), source.indexOf('function photoframeSourceLabel(')), f.context);
+    f.context.renderStats();
+    assert.equal(f.context.els.photoCount.textContent, 350);
+  });
+}
