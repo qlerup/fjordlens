@@ -21257,11 +21257,12 @@ els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryRese
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
 
 // Bulk retries use the server's complete unresolved log snapshot, not only the visible page.
-if (els.logsClear) {
+const logsRetryAnchor = els.mainLogsClear || els.logsClear;
+if (logsRetryAnchor) {
   const button=document.createElement('button');
   button.type='button';button.className='btn';button.id='logsRetryAll';button.textContent='Prøv alle igen';
   const status=document.createElement('span');status.setAttribute('role','status');status.className='muted';
-  els.logsClear.after(button,status);
+  logsRetryAnchor.after(button,status);
   let timer=null, requesting=false;
   async function updateBulkRetry(method='GET') {
     if(requesting)return;
