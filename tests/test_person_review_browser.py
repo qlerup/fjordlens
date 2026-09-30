@@ -132,6 +132,42 @@ class FaceReviewBrowserTests(unittest.TestCase):
             self.assertAlmostEqual(b['width'],m['width']*.5,delta=1)
             self.assertAlmostEqual(b['height'],m['height']*.25,delta=1)
 
+    def test_large_image_zoom_keeps_box_and_selection(self):
+        self.page.get_by_role('button',name='Luk',exact=True).click()
+        self.page.evaluate('''() => {
+            groups[0].faces[0].full_url='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000"><rect width="1600" height="1000" fill="#537c8c"/></svg>');
+            openPersonFaceReview({sourceId:7});
+        }''')
+        self.page.locator('.face-review-group').first.click()
+        self.page.get_by_label('Vælg ansigt 2',exact=True).check()
+        self.page.get_by_role('button',name='Forstør billede for ansigt 1',exact=True).click()
+        viewer=self.page.locator('#face-review-image')
+        expect(viewer.locator('.face-review-box')).to_be_visible()
+        self.assertEqual(viewer.locator('img').evaluate('(el)=>el.naturalWidth'),1600)
+        original=viewer.locator('.face-review-box').bounding_box()['width']
+        viewer.get_by_role('button',name='Zoom ind',exact=True).click()
+        self.assertAlmostEqual(viewer.locator('.face-review-box').bounding_box()['width'],original*2,delta=2)
+        viewer.get_by_role('button',name='Zoom til ansigt',exact=True).click()
+        self.page.set_viewport_size({'width':390,'height':844})
+        self.assertLessEqual(viewer.bounding_box()['width'],390)
+        viewer.get_by_role('button',name='Tilpas',exact=True).click()
+        self.page.keyboard.press('Escape')
+        expect(viewer).to_have_count(0)
+        expect(self.page.locator('#face-review-dialog')).to_be_visible()
+        expect(self.page.get_by_label('Vælg ansigt 1',exact=True)).not_to_be_checked()
+        expect(self.page.get_by_label('Vælg ansigt 2',exact=True)).to_be_checked()
+        self.assertEqual(self.page.evaluate('calls'),[])
+
+    def test_large_image_error_can_be_closed(self):
+        self.page.get_by_role('button',name='Luk',exact=True).click()
+        self.page.evaluate("groups[0].faces[0].full_url='data:image/png,invalid';openPersonFaceReview({sourceId:7})")
+        self.page.locator('.face-review-group').first.click()
+        self.page.get_by_role('button',name='Forstør billede for ansigt 1',exact=True).click()
+        viewer=self.page.locator('#face-review-image')
+        expect(viewer.locator('[role=status]')).to_contain_text('kunne ikke indlæses')
+        viewer.get_by_role('button',name='Luk billede').click()
+        expect(self.page.locator('#face-review-dialog')).to_be_visible()
+
     def test_person_name_is_text_not_html(self):
         self.page.get_by_role('button',name='Luk',exact=True).click()
         self.page.evaluate("groups[0].target_name='<img src=x onerror=alert(1)>'; openPersonFaceReview({sourceId:7})")

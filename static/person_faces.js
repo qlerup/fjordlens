@@ -24,6 +24,75 @@
     .face-review-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-actions select{max-width:230px;background:#152e37;color:inherit;border:1px solid #45636d;border-radius:8px;padding:8px}
   `;
   document.head.append(style);
+  style.textContent += `
+    button.face-review-media{width:100%;padding:0;border:0;color:inherit;cursor:zoom-in}button.face-review-media:focus-visible{outline:3px solid #20c875;outline-offset:-3px}
+    #face-review-image{background:#102129;color:#edf6f8;border:1px solid #36515b;border-radius:14px;width:calc(100vw - 24px);max-width:1600px;height:92dvh;max-height:92dvh;padding:14px;box-sizing:border-box}
+    #face-review-image[open]{display:flex;flex-direction:column;gap:10px}#face-review-image::backdrop{background:#000c}
+    .review-image-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.review-image-tools h3{margin:0 auto 0 0;font-size:16px}.review-image-tools button{white-space:normal}
+    .review-image-viewport{flex:1;min-height:0;overflow:auto;background:#061016;overscroll-behavior:contain}.review-image-stage{position:relative;margin:auto}.review-image-stage img{display:block;width:100%;height:100%;object-fit:contain}
+    .review-image-status{margin:0;font-size:13px;color:#afc4cc}
+  `;
+
+  function openReviewImage(face) {
+    const viewer = document.createElement('dialog'); viewer.id='face-review-image'; viewer.setAttribute('aria-label','Forstørret billede');
+    viewer.innerHTML='<div class="review-image-tools"><h3>Forstørret billede</h3><button class="btn tiny" data-out aria-label="Zoom ud">−</button><button class="btn tiny" data-in aria-label="Zoom ind">+</button><button class="btn tiny" data-fit>Tilpas</button><button class="btn tiny" data-face>Zoom til ansigt</button><button class="btn tiny" data-close>Luk billede</button></div><p class="review-image-status" role="status">Indlæser stort billede…</p><div class="review-image-viewport" tabindex="0" aria-label="Billede, rul for at se hele det forstørrede billede"><div class="review-image-stage"><img alt="Stort billede med ansigtsramme"><span class="face-review-box" hidden aria-hidden="true"></span></div></div>';
+    document.body.append(viewer);
+    const viewport=viewer.querySelector('.review-image-viewport'), stage=viewer.querySelector('.review-image-stage');
+    const image=viewer.querySelector('img'), box=viewer.querySelector('.face-review-box'), status=viewer.querySelector('[role=status]');
+    let zoom=1, loaded=false;
+    const layout=()=>{
+      if(!loaded)return;
+      const scale=Math.min(viewport.clientWidth/image.naturalWidth,viewport.clientHeight/image.naturalHeight)*zoom;
+      stage.style.width=`${Math.max(1,image.naturalWidth*scale)}px`; stage.style.height=`${Math.max(1,image.naturalHeight*scale)}px`;
+      drawReviewBox(face,image,stage,box);
+      viewer.querySelector('[data-out]').disabled=zoom<=1; viewer.querySelector('[data-in]').disabled=zoom>=16;
+      viewer.querySelector('[data-face]').disabled=box.hidden;
+    };
+    const centerFace=()=>{
+      if(box.hidden)return;
+      viewport.scrollLeft=stage.offsetLeft-viewport.offsetLeft+parseFloat(box.style.left)+parseFloat(box.style.width)/2-viewport.clientWidth/2;
+      viewport.scrollTop=stage.offsetTop-viewport.offsetTop+parseFloat(box.style.top)+parseFloat(box.style.height)/2-viewport.clientHeight/2;
+    };
+    viewer.querySelector('[data-in]').onclick=()=>{zoom=Math.min(16,zoom*2);layout();centerFace();};
+    viewer.querySelector('[data-out]').onclick=()=>{zoom=Math.max(1,zoom/2);layout();centerFace();};
+    viewer.querySelector('[data-fit]').onclick=()=>{zoom=1;layout();viewport.scrollTo(0,0);};
+    viewer.querySelector('[data-face]').onclick=()=>{
+      zoom=1;layout();
+      zoom=Math.max(1,Math.min(16,Math.min(viewport.clientWidth,viewport.clientHeight)*.45/Math.max(parseFloat(box.style.width),parseFloat(box.style.height))));
+      layout();centerFace();
+    };
+    viewer.querySelector('[data-close]').onclick=()=>viewer.close();
+    viewer.querySelectorAll('button:not([data-close])').forEach(button=>button.disabled=true);
+    image.onload=()=>{loaded=true;viewer.querySelectorAll('button').forEach(button=>button.disabled=false);layout();status.textContent='Den røde ramme viser ansigtet. Brug + eller Zoom til ansigt for at se nærmere.';};
+    image.onerror=()=>{loaded=false;box.hidden=true;status.textContent='Det store billede kunne ikke indlæses. Luk og prøv igen.';};
+    const observer=new ResizeObserver(layout); observer.observe(viewport);
+    viewer.addEventListener('close',()=>{observer.disconnect();viewer.remove();},{once:true});
+    viewer.showModal(); image.src=face.full_url || face.image_url;
+  }
+
+  function drawReviewBox(face, image, media, box) {
+            box.hidden = true;
+            if (!image.naturalWidth || !image.naturalHeight || face.box_available === false) return;
+            let rect = face.box;
+            if (face.pixel_box && face.source_size) {
+              let [width, height] = face.exact_frame ? [image.naturalWidth, image.naturalHeight] : face.source_size;
+              // Stored photo dimensions may precede EXIF rotation; boxes use display orientation.
+              const ratio = image.naturalWidth / image.naturalHeight;
+              if (!face.exact_frame && Math.abs(Math.log(ratio / (height / width))) < Math.abs(Math.log(ratio / (width / height)))) [width, height] = [height, width];
+              const [x,y,w,h] = face.pixel_box;
+              rect = {x:x/width,y:y/height,w:w/width,h:h/height};
+            }
+            if (!rect || ![rect.x,rect.y,rect.w,rect.h].every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return;
+            const left = Math.max(0,rect.x), top = Math.max(0,rect.y);
+            const right = Math.min(1,rect.x+rect.w), bottom = Math.min(1,rect.y+rect.h);
+            if (right <= left || bottom <= top) return;
+            const scale = Math.min(media.clientWidth/image.naturalWidth,media.clientHeight/image.naturalHeight);
+            const width = image.naturalWidth*scale, height = image.naturalHeight*scale;
+            box.style.left = `${(media.clientWidth-width)/2+left*width}px`;
+            box.style.top = `${(media.clientHeight-height)/2+top*height}px`;
+            box.style.width = `${(right-left)*width}px`; box.style.height = `${(bottom-top)*height}px`;
+            box.hidden = false;
+  }
 
   window.openPersonFaceReview = ({sourceId, sourceName}) => {
     if (sourceId === null || sourceId === undefined) return;
@@ -98,6 +167,7 @@
       const title = document.createElement('h4'); title.textContent = `${group.target_name} · ${group.count} ansigt(er)`; content.append(title);
       const help = document.createElement('p'); help.className = 'face-review-explanation';
       help.textContent = hasTarget(group) ? 'Muligt bedre match. Kontrollér ansigterne og markér kun dem, der skal flyttes.' : 'Der er ikke et entydigt bedre match. Det betyder ikke nødvendigvis, at ansigterne ligger forkert.';
+      help.textContent += ' Klik på billedet for at forstørre det. Brug afkrydsningsfeltet til at vælge ansigtet.';
       content.append(help);
       const toolbar = document.createElement('div'); toolbar.className = 'face-review-toolbar';
       const pickPage = document.createElement('button'); pickPage.type = 'button'; pickPage.className = 'btn tiny'; pickPage.textContent = 'Vælg denne side';
@@ -131,33 +201,11 @@
         grid.replaceChildren();
         const faces = group.faces || [];
         faces.slice(page * pageSize, (page + 1) * pageSize).forEach(face => {
-          const card = document.createElement('label'); card.className = 'face-review-card';
-          const media = document.createElement('span'); media.className = 'face-review-media'; card.append(media);
+          const card = document.createElement('div'); card.className = 'face-review-card';
+          const media = document.createElement('button'); media.type = 'button'; media.className = 'face-review-media'; media.setAttribute('aria-label', `Forstør billede for ansigt ${face.face_id}`); media.title = 'Åbn stort billede'; media.addEventListener('click', () => openReviewImage(face)); card.append(media);
           const image = document.createElement('img'); image.alt = 'Billede med det valgte ansigt markeret'; image.loading = 'lazy'; media.append(image);
           const box = document.createElement('span'); box.className = 'face-review-box'; box.hidden = true; box.setAttribute('aria-hidden', 'true'); media.append(box);
-          const drawBox = () => {
-            box.hidden = true;
-            if (!image.naturalWidth || !image.naturalHeight || face.box_available === false) return;
-            let rect = face.box;
-            if (face.pixel_box && face.source_size) {
-              let [width, height] = face.exact_frame ? [image.naturalWidth, image.naturalHeight] : face.source_size;
-              // Stored photo dimensions may precede EXIF rotation; boxes use display orientation.
-              const ratio = image.naturalWidth / image.naturalHeight;
-              if (!face.exact_frame && Math.abs(Math.log(ratio / (height / width))) < Math.abs(Math.log(ratio / (width / height)))) [width, height] = [height, width];
-              const [x,y,w,h] = face.pixel_box;
-              rect = {x:x/width,y:y/height,w:w/width,h:h/height};
-            }
-            if (!rect || ![rect.x,rect.y,rect.w,rect.h].every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return;
-            const left = Math.max(0,rect.x), top = Math.max(0,rect.y);
-            const right = Math.min(1,rect.x+rect.w), bottom = Math.min(1,rect.y+rect.h);
-            if (right <= left || bottom <= top) return;
-            const scale = Math.min(media.clientWidth/image.naturalWidth,media.clientHeight/image.naturalHeight);
-            const width = image.naturalWidth*scale, height = image.naturalHeight*scale;
-            box.style.left = `${(media.clientWidth-width)/2+left*width}px`;
-            box.style.top = `${(media.clientHeight-height)/2+top*height}px`;
-            box.style.width = `${(right-left)*width}px`; box.style.height = `${(bottom-top)*height}px`;
-            box.hidden = false;
-          };
+          const drawBox = () => drawReviewBox(face, image, media, box);
           image.addEventListener('load',drawBox);
           image.addEventListener('error',()=>{box.hidden=true;image.alt='Billedet kunne ikke indlæses';});
           image.src = face.image_url;

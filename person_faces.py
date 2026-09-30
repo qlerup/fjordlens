@@ -71,6 +71,7 @@ def _review_preview(row):
         'photo_id': int(row['photo_id']),
         'face_url': f"/api/face-thumb/{int(row['face_id'])}",
         'image_url': image_url,
+        'full_url': image_url if ext in {'.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm'} else f"/api/viewable/{quote(str(row['rel_path']))}",
         'pixel_box': [float(row[key] or 0) for key in ('bbox_x', 'bbox_y', 'bbox_w', 'bbox_h')],
         'source_size': [width, height],
         'exact_frame': ext in {'.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm'} and row['frame_sec'] is not None,
