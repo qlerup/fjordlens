@@ -3110,6 +3110,10 @@ body.viewer-scroll-lock {
 }
 
 /* Make main media sit "over" the sliding panel so it looks like panel glides out from behind */
+#viewerImg, #shareViewerImg {
+  width: var(--viewer-small-image-width, auto);
+  height: auto;
+}
 #viewerImg, #viewerVideo {
   position: relative;
   z-index: 2;

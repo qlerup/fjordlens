@@ -226,14 +226,28 @@
         if (name !== 'src') node.setAttribute(name, value);
       }
       node.style.display = 'block';
+      // Give small originals a readable display size without changing their
+      // pixels. CSS still constrains the image to the available viewport.
+      const sizeImage = () => {
+        const width = node.naturalWidth;
+        const height = node.naturalHeight;
+        const longest = Math.max(width, height);
+        if (longest > 0 && longest < 800) {
+          node.style.setProperty('--viewer-small-image-width', `min(${800 * width / longest}px, ${90 * width / height}vh)`);
+        } else {
+          node.style.removeProperty('--viewer-small-image-width');
+        }
+      };
+      node.style.removeProperty('--viewer-small-image-width');
       const isCurrent = () => currentGeneration === generation && getNode() === node;
-      node.onload = () => { if (isCurrent()) onReady(item); };
+      node.onload = () => { if (isCurrent()) { sizeImage(); onReady(item); } };
       if (!readyFull && item.thumb_url) node.src = item.thumb_url;
       previous.onload = null;
       previous.replaceWith(node);
       setNode(node);
 
       if (readyFull) {
+        sizeImage();
         onReady(item);
         return;
       }

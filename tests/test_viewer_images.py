@@ -34,6 +34,7 @@ class ViewerImageTests(unittest.TestCase):
         self.context = self.browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
         self.page = self.context.new_page()
         self.pending = {}
+        self.released = {}
         self.page.route("https://viewer.test/**", self.route)
         self.page.goto("https://viewer.test/")
         self.page.add_script_tag(content=self.script)
@@ -68,6 +69,8 @@ class ViewerImageTests(unittest.TestCase):
             route.fulfill(content_type="text/html", body='<img id="photo" alt="" style="width:300px">')
         elif "-thumb" in path:
             self.fulfill_image(route, path, size=(12, 8))
+        elif path in self.released:
+            self.fulfill_image(route, path, size=self.released[path])
         else:
             self.pending.setdefault(path, []).append(route)
 
@@ -77,14 +80,17 @@ class ViewerImageTests(unittest.TestCase):
         Image.new("RGB", size, colors[path[0]]).save(data, "JPEG")
         route.fulfill(content_type="image/jpeg", body=data.getvalue())
 
-    def release(self, path):
+    def release(self, path, size=(600, 400)):
         for _ in range(100):
             if self.pending.get(path):
                 break
             self.page.wait_for_timeout(10)
         self.assertTrue(self.pending.get(path), f"No request for {path}")
+        # Routing disables the browser cache. Once released, also serve later
+        # requests when the presenter assigns this URL to its visible node.
+        self.released[path] = size
         for route in self.pending.pop(path):
-            self.fulfill_image(route, path)
+            self.fulfill_image(route, path, size=size)
 
     def show(self, index):
         self.page.evaluate("index => presenter.show(items[index])", index)
@@ -154,6 +160,7 @@ class ViewerImageTests(unittest.TestCase):
 
     def test_preloaded_image_survives_cache_eviction_and_viewer_close(self):
         self.page.evaluate("preloader.update(items, 0)")
+        self.release("a.jpg")
         self.release("b.jpg")
         self.page.wait_for_timeout(100)
         self.show(1)
@@ -168,6 +175,38 @@ class ViewerImageTests(unittest.TestCase):
             route.abort()
         self.page.wait_for_timeout(100)
         self.wait_image("/b-thumb.jpg", 12)
+
+    def test_small_originals_enlarge_without_distortion_or_affecting_large_photos(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ("styles.css", "redesign.css"):
+            self.page.add_style_tag(content=(root / "static" / name).read_text(encoding="utf-8"))
+        self.page.set_viewport_size({"width": 1992, "height": 1045})
+        self.page.evaluate("""() => {
+          current.id = 'viewerImg';
+          current.style.cssText = 'max-width:92vw;max-height:90vh';
+        }""")
+        self.show(0)
+        self.release("a.jpg", size=(256, 342))
+        self.wait_image("/a.jpg", 256)
+        rect = self.page.locator('#viewerImg').bounding_box()
+        self.assertAlmostEqual(rect['height'], 800, delta=1)
+        self.assertAlmostEqual(rect['width'] / rect['height'], 256 / 342, delta=0.002)
+        # A shorter viewport must constrain both axes proportionally.
+        self.page.set_viewport_size({"width": 1000, "height": 600})
+        rect = self.page.locator('#viewerImg').bounding_box()
+        self.assertLessEqual(rect['height'], 541)
+        self.assertAlmostEqual(rect['width'] / rect['height'], 256 / 342, delta=0.002)
+        self.show(1)
+        self.release("b.jpg", size=(1200, 900))
+        self.wait_image("/b.jpg", 1200)
+        self.assertEqual(self.page.evaluate("current.style.getPropertyValue('--viewer-small-image-width')"), '')
+        # Cached navigation and the shared viewer use the same sizing.
+        self.page.set_viewport_size({"width": 1992, "height": 1045})
+        self.page.evaluate("current.id = 'shareViewerImg'")
+        self.show(0)
+        self.wait_image("/a.jpg", 256)
+        rect = self.page.locator('#shareViewerImg').bounding_box()
+        self.assertAlmostEqual(rect['height'], 800, delta=2)
 
     def test_cached_navigation_does_not_restart_the_design_entrance_animation(self):
         root = Path(__file__).resolve().parents[1]
