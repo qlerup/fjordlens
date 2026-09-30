@@ -43,6 +43,38 @@ class LogRetryTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/logs/99/retry').status_code, 404)
 
     @patch('log_retries.threading.Thread')
+    def test_bulk_queues_while_busy_and_deduplicates(self, thread):
+        self.retries.snapshot=lambda:[self.item,dict(self.item,id=8),
+            dict(id=9,event='error',error='unknown')]
+        self.busy.return_value=True
+        response=self.client.post('/api/logs/retry-all')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['total'],1)
+        self.assertTrue(response.json['waiting'])
+        self.client.post('/api/logs/retry-all')
+        thread.assert_called_once()
+        self.assertEqual(thread.call_args.kwargs['args'][0],[(8,'uploads/a.jpg','faces')])
+
+    def test_bulk_continues_after_failure_and_waits_for_pipeline(self):
+        self.tracker.retrying=True
+        self.retries.batch=dict(running=True,total=2,processed=0,failed=0,waiting=False)
+        self.busy.side_effect=[True,False,False]
+        self.handler.side_effect=[RuntimeError('failed'),None]
+        with patch('log_retries.time.sleep') as sleep:
+            self.retries.run_batch([(7,'uploads/a.jpg','faces'),(8,'uploads/b.jpg','thumbnails')])
+        sleep.assert_called_once_with(1)
+        self.assertEqual(self.handler.call_count,2)
+        self.assertEqual(self.retries.batch['processed'],2)
+        self.assertEqual(self.retries.batch['failed'],1)
+        self.assertFalse(self.tracker.retrying)
+        self.assertFalse(self.retries.batch['running'])
+
+    def test_bulk_requires_admin(self):
+        self.assertEqual(self.app.test_client().post('/api/logs/retry-all').status_code,401)
+        self.user.is_admin=False
+        self.assertEqual(self.client.post('/api/logs/retry-all').status_code,403)
+
+    @patch('log_retries.threading.Thread')
     def test_server_selects_original_file_and_stage_and_prevents_duplicate(self, thread):
         response = self.client.post('/api/logs/7/retry', json={'rel_path': 'other', 'stage': 'conversion'})
         self.assertEqual(response.json['status'], 'running')

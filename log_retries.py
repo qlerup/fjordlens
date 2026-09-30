@@ -1,5 +1,6 @@
 """Retry known per-file log failures using server-owned targets."""
 import threading
+import time
 
 
 PREFIX_STAGES = {
@@ -159,10 +160,12 @@ def missing_stages(row, *, thumbnail_exists, faces, embeddings, descriptions):
 
 
 class LogRetries:
-    def __init__(self, tracker, lookup, handler, log, busy):
+    def __init__(self, tracker, lookup, handler, log, busy, snapshot=lambda: []):
         self.tracker, self.lookup, self.handler = tracker, lookup, handler
         self.log, self.busy = log, busy
         self.states = {}
+        self.snapshot = snapshot
+        self.batch = {'running': False, 'total': 0, 'processed': 0, 'failed': 0, 'waiting': False}
 
     def describe(self, item):
         with self.tracker.lock:
@@ -170,7 +173,7 @@ class LogRetries:
                         clearable=is_error_log(item),
                         retry=dict(self.states.get(item['id'], {})))
 
-    def run(self, log_id, rel, stage):
+    def run(self, log_id, rel, stage, *, batch=False):
         result = {'status': 'failed'}
         try:
             self.log('log_retry_started', rel_path=rel, stage=stage, original_log_id=log_id)
@@ -188,11 +191,66 @@ class LogRetries:
         finally:
             with self.tracker.lock:
                 self.states[log_id] = result
+                if not batch:
+                    self.tracker.retrying = False
+
+    def run_batch(self, items):
+        try:
+            for log_id, rel, stage in items:
+                while self.busy():
+                    with self.tracker.lock:
+                        self.batch['waiting'] = True
+                    time.sleep(1)
+                with self.tracker.lock:
+                    self.batch['waiting'] = False
+                    self.states[log_id] = {'status': 'running'}
+                current = self.lookup(log_id)
+                if current and current.get('resolved'):
+                    self.states[log_id] = {'status': 'succeeded'}
+                else:
+                    self.run(log_id, rel, stage, batch=True)
+                with self.tracker.lock:
+                    self.batch['processed'] += 1
+                    self.batch['failed'] += self.states[log_id]['status'] == 'failed'
+        finally:
+            with self.tracker.lock:
+                self.batch.update(running=False, waiting=False)
                 self.tracker.retrying = False
 
     def register(self, app):
         from flask import jsonify, request
         from flask_login import current_user, login_required
+
+        @app.route('/api/logs/retry-all', methods=['GET', 'POST'])
+        @login_required
+        def retry_all_logs():
+            if not getattr(current_user, 'is_admin', False):
+                return jsonify(ok=False, error='Kun administratorer kan genkøre fejlede trin.'), 403
+            with self.tracker.lock:
+                if request.method == 'POST' and not self.batch['running']:
+                    if self.tracker.retrying:
+                        return jsonify(ok=False, error='Et genforsøg kører allerede.'), 409
+                    targets = {}
+                    for item in unresolved_error_logs(self.snapshot()):
+                        for target in failure_targets(item):
+                            if not str(target[0]).startswith('weather:'):
+                                targets[target] = item['id']
+                    order = {'conversion':0, 'metadata':1, 'thumbnails':2, 'faces':3, 'embeddings':4, 'descriptions':5, 'weather':6}
+                    items = [(log_id, *target) for target, log_id in sorted(targets.items(), key=lambda pair:(order.get(pair[0][1],99),pair[0][0]))]
+                    self.batch = dict(running=bool(items), total=len(items), processed=0, failed=0, waiting=bool(items) and self.busy())
+                    if items:
+                        self.tracker.retrying = True
+                        for log_id, _, _ in items:
+                            self.states[log_id] = {'status':'queued'}
+                        try:
+                            threading.Thread(target=self.run_batch,args=(items,),daemon=True).start()
+                        except Exception:
+                            self.tracker.retrying = False
+                            self.batch['running'] = False
+                            for log_id, _, _ in items:
+                                self.states.pop(log_id,None)
+                            raise
+                return jsonify(ok=True, retry_states=self.states, **self.batch)
 
         @app.route('/api/logs/<int:log_id>/retry', methods=['GET', 'POST'])
         @login_required
@@ -207,7 +265,7 @@ class LogRetries:
                 return jsonify(ok=True, status='succeeded')
             with self.tracker.lock:
                 previous = self.states.get(log_id, {})
-                if request.method == 'POST' and previous.get('status') not in {'running', 'succeeded'}:
+                if request.method == 'POST' and previous.get('status') not in {'queued', 'running', 'succeeded'}:
                     if self.tracker.retrying or self.busy():
                         return jsonify(ok=False, error='Vent til den igangværende behandling er færdig, og prøv igen.'), 409
                     self.tracker.retrying = True

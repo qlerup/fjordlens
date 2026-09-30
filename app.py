@@ -28282,8 +28282,12 @@ def _retry_log_lookup(log_id):
 
 
 processing_failures.register(app, _retry_processing_failure, busy=_processing_retry_busy)
+def _retry_log_snapshot():
+    with LOG_LOCK:
+        return list(LOG_BUFFER)
+
 log_retries = LogRetries(processing_failures, _retry_log_lookup,
-                         _retry_logged_failure, log_event, _processing_retry_busy)
+                         _retry_logged_failure, log_event, _processing_retry_busy, _retry_log_snapshot)
 log_retries.register(app)
 
 

@@ -20923,7 +20923,7 @@ async function monitorLogRetry(item) {
   if (logRetryMonitors.has(item.id)) return;
   logRetryMonitors.add(item.id);
   try {
-    while (item.retry?.status === 'running') {
+    while (['queued','running'].includes(item.retry?.status)) {
       await new Promise(resolve => window.setTimeout(resolve, 1000));
       const response = await fetch(`/api/logs/${item.id}/retry`);
       const result = await response.json();
@@ -21043,8 +21043,8 @@ function renderLogList() {
           const button = document.createElement('button');
           button.type = 'button';
           button.className = 'btn log-retry-button';
-          button.disabled = status === 'running' || status === 'succeeded';
-          button.textContent = status === 'running' ? (isEnglish ? 'Retrying…' : 'Prøver igen…')
+          button.disabled = ['queued', 'running', 'succeeded'].includes(status);
+          button.textContent = status === 'queued' ? (isEnglish ? 'Queued' : 'I kø') : status === 'running' ? (isEnglish ? 'Retrying…' : 'Prøver igen…')
             : status === 'succeeded' ? (isEnglish ? 'Succeeded' : 'Lykkedes')
             : (isEnglish ? 'Try again' : 'Prøv igen');
           button.addEventListener('click', () => retryLogItem(item));
@@ -21255,3 +21255,34 @@ els.logNextPage && els.logNextPage.addEventListener('click', () => {
 renderLogList();
 els.factoryResetBtn && els.factoryResetBtn.addEventListener('click', factoryReset);
 els.fixThumbsBtn && els.fixThumbsBtn.addEventListener('click', fixMissingThumbs);
+
+// Bulk retries use the server's complete unresolved log snapshot, not only the visible page.
+if (els.logsClear) {
+  const button=document.createElement('button');
+  button.type='button';button.className='btn';button.id='logsRetryAll';button.textContent='Prøv alle igen';
+  const status=document.createElement('span');status.setAttribute('role','status');status.className='muted';
+  els.logsClear.after(button,status);
+  let timer=null, requesting=false;
+  async function updateBulkRetry(method='GET') {
+    if(requesting)return;
+    requesting=true;clearTimeout(timer);
+    if(method==='POST')button.disabled=true;
+    try{
+      const response=await fetch('/api/logs/retry-all',{method});const result=await response.json();
+      if(!response.ok || !result.ok)throw new Error(result.error || 'Kunne ikke hente genforsøg');
+      button.disabled=result.running;
+      for(const item of state.logItems || []){
+        if(result.retry_states?.[item.id])item.retry=result.retry_states[item.id];
+      }
+      renderLogList();
+      status.textContent=result.running
+        ? `${result.waiting?'I kø – venter på igangværende behandling. ':'Prøver igen. '}${result.processed}/${result.total} trin færdige`
+        : result.total ? `${result.processed}/${result.total} trin færdige · ${result.failed} fejlede` : method==='POST'?'Ingen fejl kan genkøres.':'';
+      if(method==='POST' || result.total)await refreshResolvedLogs();
+      if(result.running)timer=setTimeout(()=>updateBulkRetry(),1500);
+    }catch(error){button.disabled=false;if(method==='POST')status.textContent=error.message;}
+    finally{requesting=false;}
+  }
+  button.addEventListener('click',()=>updateBulkRetry('POST'));
+  updateBulkRetry();
+}
