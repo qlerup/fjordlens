@@ -144,7 +144,7 @@ def _inject_people_fast_asset(app) -> None:
             tags = (
                 f'<script src="{PEOPLE_FAST_ASSET}"></script>\n'
                 f'<script src="{PEOPLE_CACHE_ASSET}"></script>'
-                '<script src="/static/person_faces.js?v=1"></script>'
+                '<script src="/static/person_faces.js?v=3"></script>'
             )
             response.set_data(html.replace("</body>", f"{tags}\n</body>", 1))
             response.headers["Content-Length"] = str(len(response.get_data()))

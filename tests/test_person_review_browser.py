@@ -33,7 +33,7 @@ class FaceReviewBrowserTests(unittest.TestCase):
           window.loadPersonPhotos = () => { refreshed++; };
           window.calls = []; window.failSave = false;
           const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#537c8c"/></svg>');
-          const face = id => ({face_id:id,photo_id:id,face_url:image,image_url:'/full/'+id,
+          const face = id => ({face_id:id,photo_id:id,face_url:image,image_url:image,box:{x:.25,y:.25,w:.5,h:.5},
                               reason:id<=62?'better_match':'ambiguous'});
           window.groups = [
             {target_id:9,target_name:'Other person',count:62,face_ids:Array.from({length:62},(_,i)=>i+1),faces:Array.from({length:62},(_,i)=>face(i+1)),previews:[face(1)]},
@@ -107,11 +107,54 @@ class FaceReviewBrowserTests(unittest.TestCase):
         self.assertFalse(dialog.evaluate('(node)=>node.scrollWidth>node.clientWidth'))
         self.assertEqual(self.page.evaluate('calls'),[])
 
+    def test_box_tracks_contained_photo_and_resize(self):
+        self.page.get_by_role('button',name='Luk',exact=True).click()
+        self.page.evaluate('''() => {
+            const face = groups[0].faces[0];
+            face.image_url = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#537c8c"/></svg>');
+            face.pixel_box = [100,50,200,100]; face.source_size = [400,200];
+            openPersonFaceReview({sourceId:7});
+        }''')
+        self.page.locator('.face-review-group').first.click()
+        media = self.page.locator('.face-review-media').first
+        box = media.locator('.face-review-box')
+        expect(box).to_be_visible()
+        for width in (1200,390):
+            self.page.set_viewport_size({'width':width,'height':900})
+            self.page.wait_for_function('''() => {
+                const media=document.querySelector('.face-review-media');
+                const box=media.querySelector('.face-review-box');
+                return Math.abs(parseFloat(box.style.top)-media.clientHeight*.375)<1;
+            }''')
+            m,b=media.bounding_box(),box.bounding_box()
+            self.assertAlmostEqual(b['x']-m['x'],m['width']*.25,delta=1)
+            self.assertAlmostEqual(b['y']-m['y'],m['height']*.375,delta=1)
+            self.assertAlmostEqual(b['width'],m['width']*.5,delta=1)
+            self.assertAlmostEqual(b['height'],m['height']*.25,delta=1)
+
     def test_person_name_is_text_not_html(self):
         self.page.get_by_role('button',name='Luk',exact=True).click()
         self.page.evaluate("groups[0].target_name='<img src=x onerror=alert(1)>'; openPersonFaceReview({sourceId:7})")
         expect(self.page.locator('.face-review-group').first).to_contain_text('<img src=x onerror=alert(1)>')
         expect(self.page.locator('.face-review-group strong img')).to_have_count(0)
+
+    def test_portrait_rotation_and_exact_video_frame_coordinates(self):
+        for exact_frame in (False, True):
+            self.page.get_by_role('button',name='Luk',exact=True).click()
+            self.page.evaluate('''exact => {
+                const face=groups[0].faces[0];
+                face.image_url='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="400"/>');
+                face.pixel_box=[50,100,100,200]; face.source_size=exact?[1920,1080]:[400,200];
+                face.exact_frame=exact; openPersonFaceReview({sourceId:7});
+            }''', exact_frame)
+            self.page.locator('.face-review-group').first.click()
+            media=self.page.locator('.face-review-media').first
+            expect(media.locator('.face-review-box')).to_be_visible()
+            m,b=media.bounding_box(),media.locator('.face-review-box').bounding_box()
+            self.assertAlmostEqual(b['x']-m['x'],m['width']*.375,delta=1)
+            self.assertAlmostEqual(b['y']-m['y'],m['height']*.25,delta=1)
+            self.assertAlmostEqual(b['width'],m['width']*.25,delta=1)
+            self.assertAlmostEqual(b['height'],m['height']*.5,delta=1)
 
 
 if __name__ == '__main__':

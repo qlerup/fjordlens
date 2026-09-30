@@ -20,7 +20,7 @@
     .face-review-progress{height:7px;background:#203842;border-radius:999px;overflow:hidden;margin:12px 0}.face-review-progress span{display:block;height:100%;background:#20c875;transition:width .2s ease}
     .face-review-groups{display:grid;gap:8px}.face-review-group{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}.face-review-group strong,.face-review-group small{display:block}.face-review-group small{color:#9fb4ba;margin-top:5px}
     .face-review-preview{display:flex;gap:4px;overflow:hidden}.face-review-preview img{width:48px;height:48px;object-fit:cover;border-radius:6px}
-    .face-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:14px 0}.face-review-card{position:relative;overflow:hidden;border:1px solid #36515b;border-radius:8px;cursor:pointer}.face-review-card:has(input:checked){outline:2px solid #20c875}.face-review-card img{display:block;width:100%;aspect-ratio:1;object-fit:cover}.face-review-card input{position:absolute;top:8px;left:8px;width:22px;height:22px;accent-color:#20c875}.face-review-card small{display:block;padding:7px;font-size:11px;color:#b5c8ce}.face-review-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-explanation{color:#afc4cc;line-height:1.5;font-size:13px}.face-review-box{position:absolute;border:2px solid #ff5757;box-sizing:border-box;pointer-events:none}
+    .face-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:14px 0}.face-review-card{position:relative;overflow:hidden;border:1px solid #36515b;border-radius:8px;cursor:pointer}.face-review-card:has(input:checked){outline:2px solid #20c875}.face-review-card img{display:block;width:100%;aspect-ratio:1;object-fit:cover}.face-review-card input{position:absolute;top:8px;left:8px;width:22px;height:22px;accent-color:#20c875}.face-review-card small{display:block;padding:7px;font-size:11px;color:#b5c8ce}.face-review-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-explanation{color:#afc4cc;line-height:1.5;font-size:13px}.face-review-media{position:relative;display:block;aspect-ratio:1;background:#08151b}.face-review-card .face-review-media img{width:100%;height:100%;object-fit:contain}.face-review-box{position:absolute;border:2px solid #ff5757;box-shadow:0 0 0 1px #0009;box-sizing:border-box;pointer-events:none}.face-review-card input{z-index:1}
     .face-review-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-actions select{max-width:230px;background:#152e37;color:inherit;border:1px solid #45636d;border-radius:8px;padding:8px}
   `;
   document.head.append(style);
@@ -40,6 +40,7 @@
     let applying = false;
     let groups = [];
     let finishedJob = null;
+    let reviewObserver = null;
     const sourceValue = sourceId === 'unknown' ? sourceId : Number(sourceId);
     const refreshSource = () => {
       if (changed && state.view === 'personer' && String(state.personView.personId) === String(sourceId)) {
@@ -88,6 +89,7 @@
       }
     };
     const showGroup = (group, initialSelection = []) => {
+      reviewObserver?.disconnect();
       content.replaceChildren();
       const selected = new Set(initialSelection);
       const pageSize = 60;
@@ -130,7 +132,36 @@
         const faces = group.faces || [];
         faces.slice(page * pageSize, (page + 1) * pageSize).forEach(face => {
           const card = document.createElement('label'); card.className = 'face-review-card';
-          const image = document.createElement('img'); image.src = face.face_url || face.image_url; image.alt = 'Ansigt til gennemgang'; image.loading = 'lazy'; card.append(image);
+          const media = document.createElement('span'); media.className = 'face-review-media'; card.append(media);
+          const image = document.createElement('img'); image.alt = 'Billede med det valgte ansigt markeret'; image.loading = 'lazy'; media.append(image);
+          const box = document.createElement('span'); box.className = 'face-review-box'; box.hidden = true; box.setAttribute('aria-hidden', 'true'); media.append(box);
+          const drawBox = () => {
+            box.hidden = true;
+            if (!image.naturalWidth || !image.naturalHeight || face.box_available === false) return;
+            let rect = face.box;
+            if (face.pixel_box && face.source_size) {
+              let [width, height] = face.exact_frame ? [image.naturalWidth, image.naturalHeight] : face.source_size;
+              // Stored photo dimensions may precede EXIF rotation; boxes use display orientation.
+              const ratio = image.naturalWidth / image.naturalHeight;
+              if (!face.exact_frame && Math.abs(Math.log(ratio / (height / width))) < Math.abs(Math.log(ratio / (width / height)))) [width, height] = [height, width];
+              const [x,y,w,h] = face.pixel_box;
+              rect = {x:x/width,y:y/height,w:w/width,h:h/height};
+            }
+            if (!rect || ![rect.x,rect.y,rect.w,rect.h].every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return;
+            const left = Math.max(0,rect.x), top = Math.max(0,rect.y);
+            const right = Math.min(1,rect.x+rect.w), bottom = Math.min(1,rect.y+rect.h);
+            if (right <= left || bottom <= top) return;
+            const scale = Math.min(media.clientWidth/image.naturalWidth,media.clientHeight/image.naturalHeight);
+            const width = image.naturalWidth*scale, height = image.naturalHeight*scale;
+            box.style.left = `${(media.clientWidth-width)/2+left*width}px`;
+            box.style.top = `${(media.clientHeight-height)/2+top*height}px`;
+            box.style.width = `${(right-left)*width}px`; box.style.height = `${(bottom-top)*height}px`;
+            box.hidden = false;
+          };
+          image.addEventListener('load',drawBox);
+          image.addEventListener('error',()=>{box.hidden=true;image.alt='Billedet kunne ikke indlæses';});
+          image.src = face.image_url;
+          media._drawBox = drawBox;
           const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = String(face.face_id); checkbox.setAttribute('aria-label', `Vælg ansigt ${face.face_id}`);
           checkbox.addEventListener('change', () => { if (checkbox.checked && selected.size < 5000) selected.add(face.face_id); else selected.delete(face.face_id); updateSelection(); }); card.append(checkbox);
           const note = document.createElement('small');
@@ -147,8 +178,11 @@
       select.addEventListener('change', updateSelection);
       previous.addEventListener('click', () => { page--; renderPage(); }); next.addEventListener('click', () => { page++; renderPage(); });
       renderPage();
+      reviewObserver = new ResizeObserver(() => grid.querySelectorAll('.face-review-media').forEach(media => media._drawBox()));
+      reviewObserver.observe(grid);
     };
     const renderGroups = () => {
+      reviewObserver?.disconnect();
       content.replaceChildren();
       if (finishedJob) setStatus(finishedJob);
       if (!groups.length) { content.textContent = 'Ingen ansigter kræver yderligere gennemgang i dette resultat.'; return; }
@@ -177,7 +211,7 @@
     };
     dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
     dialog.addEventListener('cancel', event => { if (applying) event.preventDefault(); });
-    dialog.addEventListener('close', () => { refreshSource(); dialog.remove(); });
+    dialog.addEventListener('close', () => { reviewObserver?.disconnect(); refreshSource(); dialog.remove(); });
     dialog.showModal();
     fetch('/api/people/face-review', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id: sourceValue})})
       .then(response => response.json().then(data => ({response, data})))
