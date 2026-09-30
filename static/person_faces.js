@@ -18,9 +18,9 @@
     #face-review-dialog::backdrop{background:#0009}
     .face-review-header{display:flex;align-items:center;justify-content:space-between;gap:12px}.face-review-header h3{margin:0}
     .face-review-progress{height:7px;background:#203842;border-radius:999px;overflow:hidden;margin:12px 0}.face-review-progress span{display:block;height:100%;background:#20c875;transition:width .2s ease}
-    .face-review-groups{display:grid;gap:8px}.face-review-group{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}.face-review-group small{color:#9fb4ba}
-    .face-review-preview{display:flex;gap:4px;overflow:hidden}.face-review-preview img{width:38px;height:38px;object-fit:cover;border-radius:4px}
-    .face-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:14px 0}.face-review-card{position:relative;aspect-ratio:1;overflow:hidden;border:1px solid #36515b;border-radius:8px}.face-review-card img{width:100%;height:100%;object-fit:cover}.face-review-box{position:absolute;border:2px solid #ff5757;box-sizing:border-box;pointer-events:none}
+    .face-review-groups{display:grid;gap:8px}.face-review-group{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}.face-review-group strong,.face-review-group small{display:block}.face-review-group small{color:#9fb4ba;margin-top:5px}
+    .face-review-preview{display:flex;gap:4px;overflow:hidden}.face-review-preview img{width:48px;height:48px;object-fit:cover;border-radius:6px}
+    .face-review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:14px 0}.face-review-card{position:relative;overflow:hidden;border:1px solid #36515b;border-radius:8px;cursor:pointer}.face-review-card:has(input:checked){outline:2px solid #20c875}.face-review-card img{display:block;width:100%;aspect-ratio:1;object-fit:cover}.face-review-card input{position:absolute;top:8px;left:8px;width:22px;height:22px;accent-color:#20c875}.face-review-card small{display:block;padding:7px;font-size:11px;color:#b5c8ce}.face-review-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-explanation{color:#afc4cc;line-height:1.5;font-size:13px}.face-review-box{position:absolute;border:2px solid #ff5757;box-sizing:border-box;pointer-events:none}
     .face-review-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.face-review-actions select{max-width:230px;background:#152e37;color:inherit;border:1px solid #45636d;border-radius:8px;padding:8px}
   `;
   document.head.append(style);
@@ -29,78 +29,137 @@
     if (sourceId === null || sourceId === undefined) return;
     const dialog = document.createElement('dialog');
     dialog.id = 'face-review-dialog';
-    dialog.innerHTML = `<div class="face-review-header"><h3>Genmatch ansigter</h3><button type="button" class="btn tiny" data-close>Drop alt</button></div>
-      <p data-status>Forbereder analyse…</p><div class="face-review-progress"><span></span></div><div data-content></div>`;
+    dialog.innerHTML = `<div class="face-review-header"><h3>Genmatch ansigter</h3><button type="button" class="btn tiny" data-close>Luk</button></div>
+      <p data-status>Forbereder analyse…</p><div class="face-review-progress"><span></span></div>
+      <p class="face-review-explanation">Sammenligner gemte ansigter med den nuværende og andre navngivne personer. Intet flyttes automatisk. Åbn en gruppe og vælg de ansigter, du vil flytte.</p><div data-content></div>`;
     document.body.append(dialog);
     const status = dialog.querySelector('[data-status]');
     const progress = dialog.querySelector('.face-review-progress span');
     const content = dialog.querySelector('[data-content]');
     let changed = false;
+    let applying = false;
     let groups = [];
+    let finishedJob = null;
     const sourceValue = sourceId === 'unknown' ? sourceId : Number(sourceId);
     const refreshSource = () => {
       if (changed && state.view === 'personer' && String(state.personView.personId) === String(sourceId)) {
         loadPersonPhotos(sourceId, sourceName);
       }
     };
+    const hasTarget = group => group.target_id !== null && group.target_id !== undefined;
     const setStatus = job => {
       const total = Math.max(0, Number(job.total || 0));
       const scanned = Math.max(0, Number(job.scanned || 0));
-      progress.style.width = total ? `${Math.min(100, Math.round((scanned / total) * 100))}%` : '0%';
-      status.textContent = job.status === 'done'
-        ? `Færdig: ${groups.length} forslag fundet.`
-        : `Scanner ${scanned} / ${total || '…'} ansigter…`;
+      progress.style.width = job.status === 'done' ? '100%' : total ? `${Math.min(100, Math.round((scanned / total) * 100))}%` : '0%';
+      if (job.status === 'done') {
+        const suggested = groups.filter(hasTarget).reduce((sum, group) => sum + group.face_ids.length, 0);
+        const manual = groups.filter(group => !hasTarget(group)).reduce((sum, group) => sum + group.face_ids.length, 0);
+        status.textContent = `Færdig: ${scanned} ansigter gennemgået. ${suggested} med forslag til en anden person. ${manual} kræver manuel gennemgang.`;
+        if (job.skipped) status.textContent += ` ${job.skipped} kunne ikke sammenlignes.`;
+      } else {
+        status.textContent = job.phase === 'references' ? 'Indlæser gemte ansigtsvektorer…' : `Genmatcher ${scanned} / ${total || '…'} ansigter…`;
+      }
     };
-    const applyGroup = async (group, action, targetId = null) => {
-      dialog.querySelectorAll('button,select').forEach(control => { control.disabled = true; });
+    const applyGroup = async (group, selectedIds, action, targetId = null) => {
+      if (!selectedIds.length || applying) return;
+      applying = true;
+      dialog.querySelectorAll('button,select,input').forEach(control => { control.disabled = true; });
       try {
         const response = await fetch('/api/people/faces/selection', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({source_id: sourceValue, face_ids: group.face_ids, action, target_id: targetId}),
+          body: JSON.stringify({source_id: sourceValue, face_ids: selectedIds, action, target_id: targetId}),
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke gemme ændringen.');
         changed = true;
-        groups = groups.filter(candidate => candidate !== group);
+        const moved = new Set(selectedIds);
+        group.faces = group.faces.filter(face => !moved.has(face.face_id));
+        group.face_ids = group.face_ids.filter(id => !moved.has(id));
+        group.count = group.face_ids.length;
+        group.previews = group.faces.slice(0, 4);
+        if (!group.count) groups = groups.filter(candidate => candidate !== group);
         renderGroups();
       } catch (error) {
+        showGroup(group, selectedIds);
         status.textContent = error.message || 'Kunne ikke gemme ændringen.';
       } finally {
-        dialog.querySelectorAll('button,select').forEach(control => { control.disabled = false; });
+        applying = false;
+        dialog.querySelector('[data-close]').disabled = false;
       }
     };
-    const showGroup = group => {
+    const showGroup = (group, initialSelection = []) => {
       content.replaceChildren();
+      const selected = new Set(initialSelection);
+      const pageSize = 60;
+      let page = 0;
       const back = document.createElement('button'); back.type = 'button'; back.className = 'btn tiny'; back.textContent = 'Tilbage'; back.addEventListener('click', renderGroups); content.append(back);
       const title = document.createElement('h4'); title.textContent = `${group.target_name} · ${group.count} ansigt(er)`; content.append(title);
-      const grid = document.createElement('div'); grid.className = 'face-review-grid';
-      (group.faces || []).forEach(face => {
-        const card = document.createElement('div'); card.className = 'face-review-card';
-        const image = document.createElement('img'); image.src = face.image_url; image.alt = ''; image.loading = 'lazy'; card.append(image);
-        const box = document.createElement('div'); box.className = 'face-review-box';
-        box.style.left = `${Math.max(0, Number(face.box?.x || 0)) * 100}%`; box.style.top = `${Math.max(0, Number(face.box?.y || 0)) * 100}%`;
-        box.style.width = `${Math.max(0, Number(face.box?.w || 0)) * 100}%`; box.style.height = `${Math.max(0, Number(face.box?.h || 0)) * 100}%`;
-        card.append(box); grid.append(card);
-      });
-      content.append(grid);
-      const actions = document.createElement('div'); actions.className = 'face-review-actions';
-      if (group.target_id !== null && group.target_id !== undefined) {
-        const merge = document.createElement('button'); merge.type = 'button'; merge.className = 'btn'; merge.textContent = `Flet med ${group.target_name}`; merge.addEventListener('click', () => applyGroup(group, 'assign', Number(group.target_id))); actions.append(merge);
-      }
+      const help = document.createElement('p'); help.className = 'face-review-explanation';
+      help.textContent = hasTarget(group) ? 'Muligt bedre match. Kontrollér ansigterne og markér kun dem, der skal flyttes.' : 'Der er ikke et entydigt bedre match. Det betyder ikke nødvendigvis, at ansigterne ligger forkert.';
+      content.append(help);
+      const toolbar = document.createElement('div'); toolbar.className = 'face-review-toolbar';
+      const pickPage = document.createElement('button'); pickPage.type = 'button'; pickPage.className = 'btn tiny'; pickPage.textContent = 'Vælg denne side';
+      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn tiny'; clear.textContent = 'Fravælg alle';
+      const count = document.createElement('span'); toolbar.append(pickPage, clear, count); content.append(toolbar);
+      const grid = document.createElement('div'); grid.className = 'face-review-grid'; content.append(grid);
+      const pager = document.createElement('div'); pager.className = 'face-review-toolbar';
+      const previous = document.createElement('button'); previous.type = 'button'; previous.className = 'btn tiny'; previous.textContent = 'Forrige';
+      const next = document.createElement('button'); next.type = 'button'; next.className = 'btn tiny'; next.textContent = 'Næste';
+      const pageLabel = document.createElement('span'); pager.append(previous, pageLabel, next); content.append(pager);
+      const actions = document.createElement('div'); actions.className = 'face-review-actions'; content.append(actions);
+      const actionButtons = [];
+      const addAction = (label, action, getTarget, disabled = () => false) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = action === 'hide' ? 'btn danger' : 'btn'; button.textContent = label;
+        button.addEventListener('click', () => applyGroup(group, Array.from(selected), action, getTarget?.() ?? null));
+        actionButtons.push({button, disabled}); actions.append(button);
+      };
+      if (hasTarget(group)) addAction(`Flyt valgte til ${group.target_name}`, 'assign', () => Number(group.target_id));
       const targets = (state.people || []).filter(person => !person.hidden && person.id !== 'unknown' && Number(person.id) !== Number(sourceId) && personHasName(person));
-      const select = document.createElement('select'); targets.forEach(person => { const option = document.createElement('option'); option.value = String(person.id); option.textContent = person.name; select.append(option); }); actions.append(select);
-      const assign = document.createElement('button'); assign.type = 'button'; assign.className = 'btn'; assign.textContent = 'Flet med valgt'; assign.addEventListener('click', () => applyGroup(group, 'assign', Number(select.value))); actions.append(assign);
-      const hide = document.createElement('button'); hide.type = 'button'; hide.className = 'btn danger'; hide.textContent = 'Skjul'; hide.addEventListener('click', () => applyGroup(group, 'hide')); actions.append(hide);
-      content.append(actions);
+      const select = document.createElement('select'); select.setAttribute('aria-label', 'Flyt til person');
+      const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Vælg en anden person'; select.append(placeholder);
+      targets.forEach(person => { const option = document.createElement('option'); option.value = String(person.id); option.textContent = person.name; select.append(option); }); actions.append(select);
+      addAction('Flyt valgte til valgt person', 'assign', () => Number(select.value), () => !select.value);
+      addAction('Skjul valgte', 'hide');
+      const updateSelection = () => {
+        count.textContent = `${selected.size} valgt`;
+        actionButtons.forEach(({button, disabled}) => { button.disabled = !selected.size || disabled(); });
+        grid.querySelectorAll('input').forEach(input => { input.checked = selected.has(Number(input.value)); });
+      };
+      const renderPage = () => {
+        grid.replaceChildren();
+        const faces = group.faces || [];
+        faces.slice(page * pageSize, (page + 1) * pageSize).forEach(face => {
+          const card = document.createElement('label'); card.className = 'face-review-card';
+          const image = document.createElement('img'); image.src = face.face_url || face.image_url; image.alt = 'Ansigt til gennemgang'; image.loading = 'lazy'; card.append(image);
+          const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = String(face.face_id); checkbox.setAttribute('aria-label', `Vælg ansigt ${face.face_id}`);
+          checkbox.addEventListener('change', () => { if (checkbox.checked && selected.size < 5000) selected.add(face.face_id); else selected.delete(face.face_id); updateSelection(); }); card.append(checkbox);
+          const note = document.createElement('small');
+          note.textContent = ({no_reference:'Ingen uafhængig reference', ambiguous:'Flere næsten lige gode match', weak_match:'Svagt match med nuværende person', better_match:'Muligt bedre match'})[face.reason] || 'Kontrollér før flytning';
+          card.append(note); grid.append(card);
+        });
+        const pages = Math.max(1, Math.ceil(faces.length / pageSize));
+        previous.disabled = page === 0; next.disabled = page + 1 >= pages;
+        pager.hidden = pages === 1; pageLabel.textContent = `Side ${page+1} / ${pages}`;
+        updateSelection();
+      };
+      pickPage.addEventListener('click', () => { (group.faces || []).slice(page*pageSize, (page+1)*pageSize).forEach(face => { if (selected.size < 5000) selected.add(face.face_id); }); updateSelection(); });
+      clear.addEventListener('click', () => { selected.clear(); updateSelection(); });
+      select.addEventListener('change', updateSelection);
+      previous.addEventListener('click', () => { page--; renderPage(); }); next.addEventListener('click', () => { page++; renderPage(); });
+      renderPage();
     };
     const renderGroups = () => {
       content.replaceChildren();
-      if (!groups.length) { content.textContent = 'Ingen mulige fejl fundet.'; return; }
+      if (finishedJob) setStatus(finishedJob);
+      if (!groups.length) { content.textContent = 'Ingen ansigter kræver yderligere gennemgang i dette resultat.'; return; }
       const list = document.createElement('div'); list.className = 'face-review-groups';
       groups.forEach(group => {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'btn face-review-group';
-        const label = document.createElement('span'); label.innerHTML = `<strong>${group.target_name}</strong><small>${group.count} ansigt(er) foreslås flyttet</small>`; button.append(label);
-        const previews = document.createElement('span'); previews.className = 'face-review-preview'; (group.previews || []).forEach(face => { const image = document.createElement('img'); image.src = face.image_url; image.alt = ''; previews.append(image); }); button.append(previews);
+        const label = document.createElement('span');
+        const name = document.createElement('strong'); name.textContent = group.target_name;
+        const detail = document.createElement('small'); detail.textContent = hasTarget(group) ? `${group.count} ansigt(er) har et muligt bedre match` : `${group.count} ansigt(er) uden entydigt match`;
+        label.append(name, detail); button.append(label);
+        const previews = document.createElement('span'); previews.className = 'face-review-preview'; (group.previews || []).forEach(face => { const image = document.createElement('img'); image.src = face.face_url || face.image_url; image.alt = ''; image.loading = 'lazy'; previews.append(image); }); button.append(previews);
         button.addEventListener('click', () => showGroup(group)); list.append(button);
       });
       content.append(list);
@@ -110,13 +169,14 @@
         const response = await fetch(`/api/people/face-review/${encodeURIComponent(jobId)}`);
         const job = await response.json().catch(() => ({}));
         if (!response.ok || !job.ok) { status.textContent = job.error || 'Analysen fejlede.'; return; }
-        if (job.status === 'done') { groups = Array.isArray(job.results) ? job.results : []; setStatus(job); renderGroups(); return; }
+        if (job.status === 'done') { groups = Array.isArray(job.results) ? job.results : []; finishedJob = job; setStatus(job); renderGroups(); return; }
         if (job.status === 'error') { status.textContent = job.error || 'Analysen fejlede.'; return; }
         setStatus(job);
         await new Promise(resolve => window.setTimeout(resolve, 350));
       }
     };
     dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('cancel', event => { if (applying) event.preventDefault(); });
     dialog.addEventListener('close', () => { refreshSource(); dialog.remove(); });
     dialog.showModal();
     fetch('/api/people/face-review', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id: sourceValue})})

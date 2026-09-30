@@ -98,7 +98,10 @@ class FaceSelectionTests(unittest.TestCase):
             _REVIEW_JOBS.pop(job_id, None)
         self.assertEqual(result['status'], 'done')
         self.assertEqual(result['scanned'], 2)
-        self.assertEqual(len(result['results']), 1)
+        # Face 3 has no independent evidence supporting its current person:
+        # its own stored centroid must not let it confirm itself.
+        self.assertEqual(len(result['results']), 2)
+        self.assertEqual((result['suggested'], result['manual_review']), (1, 1))
         self.assertEqual(result['results'][0]['target_id'], 2)
         self.assertEqual(result['results'][0]['face_ids'], [1])
         self.assertEqual(result['results'][0]['faces'][0]['image_url'], '/api/thumbs/one.webp')
@@ -121,5 +124,84 @@ class FaceSelectionTests(unittest.TestCase):
             result = dict(_REVIEW_JOBS[job_id])
             _REVIEW_JOBS.pop(job_id, None)
         unmatched = next(group for group in result['results'] if group['target_id'] is None)
-        self.assertEqual(unmatched['face_ids'], [5])
+        self.assertEqual(unmatched['face_ids'], [3, 5])
         self.assertEqual(self.owners()[-1], 1)
+
+    def review_fixture(self, people, faces, allowed=None):
+        with self.connect() as conn:
+            conn.execute('DELETE FROM faces')
+            conn.execute('DELETE FROM photos')
+            conn.execute('DELETE FROM people')
+            for pid, name, hidden, centroid in people:
+                conn.execute('INSERT INTO people(id,name,hidden,centroid_json) VALUES(?,?,?,?)',
+                             (pid, name, hidden, json.dumps(centroid)))
+            for face_id, photo_id, pid, vector in faces:
+                conn.execute('INSERT OR IGNORE INTO photos VALUES(?,?,?,NULL,400,200)',
+                             (photo_id, f'{photo_id}.jpg', '.jpg'))
+                conn.execute('INSERT INTO faces VALUES(?,?,?,?,NULL,0,0,100,100)',
+                             (face_id, photo_id, pid, json.dumps(vector)))
+        before = self.owners()
+        fake = SimpleNamespace(get_conn=self.connect,
+                               _is_rel_path_allowed_for_current_user=allowed or (lambda path, conn: True),
+                               FACE_MATCH_THRESHOLD_CENTROID=0.5, FACE_MATCH_THRESHOLD=0.5)
+        _run_face_review('fixture', 1, fake)
+        result = _REVIEW_JOBS.pop('fixture')
+        self.assertEqual(result['status'], 'done', result.get('error'))
+        self.assertEqual(self.owners(), before)
+        return result
+
+    def test_review_uses_individual_references_when_mean_hides_a_matching_appearance(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[0,1,0]), (2,'Target',0,[0,0,1])],
+            [(1,1,1,[1,0,0]), (2,2,1,[0,1,0]), (3,3,2,[1,0,0]), (4,4,2,[0.9,0,0.436])]
+            + [(i,i,2,[0,0,1]) for i in range(5,15)])
+        target = next(g for g in result['results'] if g['target_id'] == 2)
+        self.assertEqual(target['face_ids'], [1])
+        self.assertEqual(target['faces'][0]['reason'], 'better_match')
+        self.assertEqual(target['faces'][0]['face_url'], '/api/face-thumb/1')
+
+    def test_review_cannot_confirm_itself_or_other_frames_of_same_video(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[1,0]), (2,'Target',0,[1,0])],
+            [(1,1,1,[1,0]), (2,1,1,[1,0]), (3,2,1,[0,1]),
+             (4,3,2,[1,0]), (5,4,2,[1,0])])
+        target = next(g for g in result['results'] if g['target_id'] == 2)
+        self.assertEqual(target['face_ids'], [1,2])
+
+    def test_review_does_not_turn_one_bad_target_reference_into_a_match(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[1,0]), (2,'Target',0,[0,1])],
+            [(1,1,1,[1,0]), (2,2,2,[1,0]), (3,3,2,[0,1]), (4,4,2,[0,1])])
+        self.assertEqual(result['suggested'], 0)
+        self.assertEqual(result['manual_review'], 1)
+
+    def test_review_marks_equal_alternatives_ambiguous_instead_of_picking_first(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[1,0]), (2,'Alice',0,[1,0]), (3,'Bob',0,[1,0])],
+            [(1,1,1,[1,0]), (2,2,2,[1,0]), (3,3,3,[1,0])])
+        self.assertEqual(result['suggested'], 0)
+        self.assertEqual(result['results'][0]['faces'][0]['reason'], 'ambiguous')
+
+    def test_review_retains_independently_supported_current_person(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[1,0]), (2,'Target',0,[0.8,0.6])],
+            [(1,1,1,[1,0]), (2,2,1,[1,0]), (3,3,1,[1,0]), (4,4,2,[0.8,0.6])])
+        self.assertEqual(result['results'], [])
+        self.assertEqual(result['kept'], 3)
+
+    def test_review_excludes_hidden_unnamed_and_inaccessible_reference_faces(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[0,1]), (2,'Hidden',1,[1,0]), (3,'Ukendt-3',0,[1,0]), (4,'Private',0,[1,0])],
+            [(1,1,1,[1,0]), (2,2,2,[1,0]), (3,3,3,[1,0]), (4,4,4,[1,0])],
+            allowed=lambda path, conn: path != '4.jpg')
+        self.assertEqual(result['suggested'], 0)
+        self.assertEqual(result['reference_faces'], 1)
+
+    def test_review_reports_invalid_vectors_and_handles_multiple_dimensions(self):
+        result = self.review_fixture(
+            [(1,'Source',0,[1,0]), (2,'Target',0,[1,0,0])],
+            [(1,1,1,[1,0]), (2,2,1,[0,0]), (3,3,1,[float('nan'),1]),
+             (4,4,1,[]), (5,5,1,None), (6,6,2,[1,0,0])])
+        self.assertEqual(result['suggested'], 0)
+        self.assertEqual(result['skipped'], 4)
+        self.assertEqual(result['scanned'], 5)

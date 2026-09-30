@@ -135,6 +135,15 @@ Use an HTTPS address whenever the client crosses an untrusted network. Plain HTT
 
 ### AI and face features
 
+**Rematch faces** reviews the faces already assigned to a person using their saved
+embeddings, without rescanning images or automatically changing assignments. It
+compares individual references and recomputed centroids; the face's own photo or
+video is excluded from its current person's supporting references. Clearer matches
+to other named people are proposed separately from weak or ambiguous cases that
+need manual review. Select individual faces before moving or hiding them. A manual
+review flag is not proof of a wrong assignment, and consistently misassigned
+clusters may still support one another.
+
 Face detection uses a refillable slot queue. The batch size is configured in
 **Settings → Upload workflow** and is shared by upload post-processing and manual
 face indexing. The default is 4 (selectable 1, 2, 4, 6 or 8). A value of 8 means up
