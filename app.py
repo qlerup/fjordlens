@@ -34,6 +34,7 @@ import exifread
 import requests
 import numpy as np
 import conversion_client
+from mov_timing import probe_slow_motion, timing_args
 from conversion_jobs import ConversionJob
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
@@ -633,6 +634,7 @@ def _mov_ffmpeg_command(
     audio_stream_index: Optional[int],
     *,
     use_nvenc: bool,
+    slow_factor: float = 1.0,
 ) -> list[str]:
     cmd = [
         ffmpeg_bin,
@@ -688,6 +690,7 @@ def _mov_ffmpeg_command(
 
     # use_metadata_tags retains Apple/QuickTime mdta keys such as the
     # timezone-aware creation date in addition to standard MP4 metadata.
+    cmd.extend(timing_args(slow_factor, audio_stream_index is not None))
     cmd.extend(["-movflags", "+faststart+use_metadata_tags", str(tmp)])
     return cmd
 
@@ -702,6 +705,7 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
     tmp = dst.with_name(f".{dst.stem}.{secrets.token_hex(6)}.tmp{dst.suffix}")
     try:
         audio_stream_index = _probe_mov_audio_stream(src, ffmpeg_bin)
+        slow_factor = probe_slow_motion(src)
         use_nvenc = _mov_nvenc_available(ffmpeg_bin)
         attempts = [True, False] if use_nvenc else [False]
 
@@ -719,6 +723,7 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
                 tmp,
                 audio_stream_index,
                 use_nvenc=gpu_attempt,
+                slow_factor=slow_factor,
             )
             try:
                 subprocess.run(

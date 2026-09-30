@@ -31,6 +31,7 @@ except Exception:
     rawpy = None
 
 import moment_cinema
+from mov_timing import probe_slow_motion, timing_args
 import moment_music
 
 app = Flask(__name__)
@@ -309,6 +310,7 @@ def _mov_command(
     audio_index: Optional[int],
     use_nvenc: bool,
     use_nvdec: bool = False,
+    slow_factor: float = 1.0,
 ) -> list[str]:
     command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
     if use_nvdec:
@@ -336,6 +338,7 @@ def _mov_command(
         command.append("-an")
     else:
         command += ["-map", f"0:{audio_index}", "-c:a", "aac", "-b:a", MOV_CONVERT_AUDIO_BITRATE]
+    command += timing_args(slow_factor, audio_index is not None)
     command += ["-movflags", "+faststart+use_metadata_tags", str(dst)]
     return command
 
@@ -346,6 +349,7 @@ def _convert_mov(src: Path, dst: Path, device_mode: Optional[str] = None) -> str
         raise RuntimeError("ffmpeg not available")
 
     audio_index = _probe_audio_stream(src, ffmpeg)
+    slow_factor = probe_slow_motion(src)
     device = _normalize_video_device(device_mode)
     nvenc = _nvenc_available(ffmpeg, device)
     nvdec = nvenc and _nvdec_available(ffmpeg, device)
@@ -369,6 +373,7 @@ def _convert_mov(src: Path, dst: Path, device_mode: Optional[str] = None) -> str
                     audio_index,
                     use_nvenc=use_nvenc,
                     use_nvdec=use_nvdec,
+                    slow_factor=slow_factor,
                 ),
                 check=True,
                 capture_output=True,

@@ -11,6 +11,21 @@ from convert_service import app as convert_worker
 
 
 class MovConversionTests(unittest.TestCase):
+    def test_slow_motion_applied_to_local_cpu_and_worker_gpu_commands(self):
+        for gpu in (False, True):
+            local=fjordlens._mov_ffmpeg_command('ffmpeg',Path('in.mov'),Path('out.mp4'),1,use_nvenc=gpu,slow_factor=4)
+            worker=convert_worker._mov_command('ffmpeg',Path('in.mov'),Path('out.mp4'),1,use_nvenc=gpu,use_nvdec=gpu,slow_factor=4)
+            for command in (local,worker):
+                self.assertIn('setpts=4*(PTS-STARTPTS)',command)
+                self.assertIn('asetpts=PTS-STARTPTS,atempo=0.5,atempo=0.5',command)
+                self.assertEqual(command[command.index('-r')+1],'30')
+
+    def setUp(self):
+        for module in (fjordlens, convert_worker):
+            patcher = patch.object(module, 'probe_slow_motion', return_value=1.0)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_probe_prefers_aac_and_does_not_select_apac(self):
         probe_result = SimpleNamespace(
             stdout=json.dumps({
