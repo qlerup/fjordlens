@@ -398,14 +398,20 @@
         if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke gemme valget.');
         saved = true;
         if (state.view === 'personer' && state.personView.mode === 'photos' && state.personView.personId === source) {
+          const currentName = state.personView.personName;
           state.items = (state.items || []).filter(item => !chosen.has(item.id));
+          state.personView = {mode:'photos', personId:source, personName:currentName};
+          try { if (typeof _syncRouteStateToUrl === 'function') _syncRouteStateToUrl(); } catch (_) {}
         }
         if (selection.source === source) selection.ids.clear();
         state._peopleCache = null;
         dialog?.close();
         showStatus(action === 'hide' ? 'Valgte ansigter er skjult. De findes igen under Vis skjulte.' : 'Valgte ansigter er flyttet til ' + result.name, 'ok');
-        // Refresh counts/cache without leaving the current review context.
-        if (state.view === 'personer') {try {await loadPeople(false);} catch (_) {}}
+        // The edit is already saved. Refresh People counts/covers in the
+        // background so the current person stays interactive immediately.
+        if (state.view === 'personer') {
+          Promise.resolve().then(() => loadPeople(false)).catch(() => {});
+        }
       } catch (error) {
         showStatus(error.message, 'err');
         if (dialog) dialog.querySelector('[role="alert"]').textContent = error.message;
