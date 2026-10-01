@@ -7718,6 +7718,7 @@ let viewerTransitionRunning = false;
 let viewerPendingStep = 0;
 let viewerVideoManualPlayRequired = false;
 let viewerVideoSourceGeneration = 0;
+let viewerVideoResizeObserver = null;
 const viewerMediaPreloader = (window.FjordLensMediaPreloader && typeof window.FjordLensMediaPreloader.create === 'function')
   ? window.FjordLensMediaPreloader.create({ ahead: 10, behind: 10 })
   : { update() {}, clear() {} };
@@ -17467,14 +17468,29 @@ function shouldReplaceNativeMediaContextMenu() {
   }
 }
 if (els.viewerVideo) {
+  const syncViewerVideoLayout = () => {
+    syncViewerVideoPlayOverlay();
+    scheduleViewerInfoPosition();
+  };
+
   els.viewerVideo.addEventListener('play', () => {
     if (isViewerVideoActive() && !els.viewerVideo.paused) setViewerVideoPlayOverlayVisible(false);
     else syncViewerVideoPlayOverlay();
+    scheduleViewerInfoPosition();
   });
+  els.viewerVideo.addEventListener('playing', scheduleViewerInfoPosition);
   els.viewerVideo.addEventListener('pause', syncViewerVideoPlayOverlay);
   els.viewerVideo.addEventListener('ended', syncViewerVideoPlayOverlay);
-  els.viewerVideo.addEventListener('loadedmetadata', syncViewerVideoPlayOverlay);
+  els.viewerVideo.addEventListener('loadedmetadata', syncViewerVideoLayout);
+  els.viewerVideo.addEventListener('loadeddata', scheduleViewerInfoPosition);
   els.viewerVideo.addEventListener('error', () => setViewerVideoPlayOverlayVisible(false));
+
+  if (typeof ResizeObserver === 'function') {
+    viewerVideoResizeObserver = new ResizeObserver(() => {
+      if (isViewerVideoActive()) scheduleViewerInfoPosition();
+    });
+    viewerVideoResizeObserver.observe(els.viewerVideo);
+  }
 }
 
 let viewerTouchStartX = null;
