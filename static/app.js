@@ -7103,6 +7103,7 @@ function appendCardTo(item, container) {
 
 function openPersonPhotoReassignDialog(item) {
   const sourceId = state?.personView?.personId;
+  const sourceName = state?.personView?.personName || '';
   const faceIds = [...new Set((item?.faces || []).map(face => Number(face?.id)).filter(Number.isFinite))];
   if ((sourceId === null || sourceId === undefined) || !faceIds.length || !window.openPersonFaceActionDialog) return;
   window.openPersonFaceActionDialog({
@@ -7119,11 +7120,23 @@ function openPersonPhotoReassignDialog(item) {
       failed: tr('person_photo_reassign_failed'),
     },
     onSuccess: (result, action) => {
+      const stillInSourcePerson = state.view === 'personer'
+        && String(state?.personView?.personId) === String(sourceId);
       state.items = (state.items || []).filter(candidate => candidate.id !== item.id);
+      if (stillInSourcePerson) {
+        state.personView = {mode:'photos', personId:sourceId, personName:sourceName};
+        try { _syncRouteStateToUrl(); } catch (_) {}
+      }
       state._peopleCache = null;
       if (action === 'hide') showStatus(tr('person_hidden_ok'), 'ok');
       else showStatus(tr('person_photo_reassign_success').replace('{name}', result.name || ''), 'ok');
       renderGrid();
+
+      // Counts and cover portraits can update after the card has disappeared.
+      // Do not make that refresh control navigation or keep the album blocked.
+      if (stillInSourcePerson) {
+        Promise.resolve().then(() => loadPeople(false)).catch(() => {});
+      }
     },
   });
 }
