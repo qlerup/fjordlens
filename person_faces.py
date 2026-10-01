@@ -17,6 +17,10 @@ _REVIEW_JOBS_LOCK = threading.RLock()
 _REVIEW_MARGIN = 0.03
 _REVIEW_BATCH_SIZE = 64
 
+_CENTROID_REFRESH_LOCK = threading.Lock()
+_CENTROID_REFRESH_PENDING: set[int] = set()
+_CENTROID_REFRESH_RUNNING = False
+
 
 def _face_vector(value):
     try:
@@ -280,6 +284,43 @@ def _start_face_review(source_id, fjordlens):
     return job_id
 
 
+def _run_centroid_refresh_queue(fjordlens):
+    global _CENTROID_REFRESH_RUNNING
+    while True:
+        with _CENTROID_REFRESH_LOCK:
+            person_ids = set(_CENTROID_REFRESH_PENDING)
+            _CENTROID_REFRESH_PENDING.clear()
+            if not person_ids:
+                _CENTROID_REFRESH_RUNNING = False
+                return
+        try:
+            recompute = getattr(fjordlens, '_recompute_person_centroids_bulk', None)
+            if callable(recompute):
+                recompute(person_ids)
+        except Exception:
+            # Centroids are an optimization for future matching. A failed refresh
+            # must never make a manual People edit fail or keep the UI blocked.
+            pass
+
+
+def _queue_centroid_refresh(fjordlens, person_ids):
+    global _CENTROID_REFRESH_RUNNING
+    ids = {int(pid) for pid in person_ids if pid is not None}
+    if not ids:
+        return
+    with _CENTROID_REFRESH_LOCK:
+        _CENTROID_REFRESH_PENDING.update(ids)
+        if _CENTROID_REFRESH_RUNNING:
+            return
+        _CENTROID_REFRESH_RUNNING = True
+    threading.Thread(
+        target=_run_centroid_refresh_queue,
+        args=(fjordlens,),
+        name='fjordlens-person-centroid-refresh',
+        daemon=True,
+    ).start()
+
+
 def move_faces(conn, data, fjordlens):
     ids = data.get('face_ids')
     if not isinstance(ids, list) or not ids or len(ids) > 5000 or any(type(i) is not int or i <= 0 for i in ids):
@@ -321,19 +362,12 @@ def move_faces(conn, data, fjordlens):
         target = conn.execute('INSERT INTO people(name,created_at,hidden) VALUES(?,?,?)',
                               (name, fjordlens.now_iso(), int(action == 'hide'))).lastrowid
     conn.executemany('UPDATE faces SET person_id=? WHERE id=?', [(target, i) for i in ids])
-    # Compute inside this transaction; the older helper commits on its own.
-    for pid in {source, target} - {None}:
-        vectors = []
-        for row in conn.execute('SELECT embedding_json FROM faces WHERE person_id=?', (pid,)):
-            try:
-                value = json.loads(row['embedding_json'])
-                if isinstance(value, list) and value:
-                    vectors.append([float(v) for v in value])
-            except (ValueError, TypeError):
-                pass
-        centroid = fjordlens._compute_centroid(vectors)
-        conn.execute('UPDATE people SET centroid_json=? WHERE id=?', (json.dumps(centroid) if centroid else None, pid))
     conn.commit()
+
+    # The face move is durable at this point. Rebuilding centroids can require
+    # reading/parsing every embedding for both people, so never keep the
+    # BEGIN IMMEDIATE write lock (or the HTTP request) waiting for that work.
+    _queue_centroid_refresh(fjordlens, {source, target})
     return {'ok': True, 'target_id': target, 'name': name, 'face_ids': ids}
 
 
