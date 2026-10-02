@@ -1898,6 +1898,21 @@ body.view-mapper .photo-card img {
 
 /* Make folder cards uniform height regardless of title length */
 .folder-card { display: flex; flex-direction: column; }
+.folder-private-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(10, 24, 29, .9);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .3);
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
 .folder-card .card-body {
   min-height: 74px;
   display: flex;

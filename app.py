@@ -7583,6 +7583,10 @@ def api_folder_index():
         if parent and not conn.execute("SELECT 1 FROM folder_index WHERE path=?", (parent,)).fetchone():
             return jsonify({"ok": False, "error": "Mappen findes ikke i indekset"}), 404
         items = folder_index.list_folders(conn, parent, visible, tree=tree)
+        if not tree:
+            private_paths = [row[0] for row in conn.execute('SELECT folder_path FROM private_folders')]
+            for item in items:
+                item['private'] = any(item['path'] == path or item['path'].startswith(path + '/') for path in private_paths)
         version = conn.execute("SELECT revision,disk_root FROM folder_index_state WHERE id=1").fetchone()
         workers = bool(app.config.get("FOLDER_INDEX_WORKERS", False))
         pending = workers and not tree and bool(conn.execute(

@@ -6,7 +6,7 @@ const source = fs.readFileSync('static/app.js','utf8');
 function fixture() {
   const requests=[], renders=[], timers=[];
   const state={view:'mapper',mapperPath:'A',items:[],mapperFolders:[],mapperFolderPreviews:{},currentUser:{id:1},photosLoading:false};
-  const context=vm.createContext({state,URLSearchParams,document:{hidden:false},mapperViews:new Map(),
+  const context=vm.createContext({state,URLSearchParams,document:{hidden:false},mapperViews:new Map(),els:{grid:null},
     galleryDataCache:{clear(){},generation:()=>0},galleryCacheKey:value=>JSON.stringify([state.currentUser.id,value]),
     _normalizeMapperPath:value=>String(value||''),_expandMapperAncestors(){},renderMapperContext(){},_syncRouteStateToUrl(){},
     renderGrid(){renders.push({folders:[...state.mapperFolders],loading:state.mapperFoldersLoading,error:state.mapperFoldersError});},

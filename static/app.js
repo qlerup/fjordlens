@@ -2868,6 +2868,7 @@ let state = {
   mapperPath: "",
   mapperFolders: [],
   mapperFolderPreviews: {},
+  mapperFolderPrivacy: {},
   mapperFoldersLoading: false,
   mapperFoldersError: '',
   mapperPhotosError: '',
@@ -7253,6 +7254,15 @@ function mapperImmediateChildFolder(folderPath, parentPath) {
   return seg ? `${p}/${seg}` : null;
 }
 
+function updateFolderPrivacyBadge(card, folder) {
+  card.querySelector('.folder-private-badge')?.remove();
+  if (!state.mapperFolderPrivacy?.[folder]) return;
+  const badge = document.createElement('span');
+  badge.className = 'folder-private-badge';
+  badge.textContent = state.uiLanguage === 'en' ? 'Private' : 'Privat';
+  card.querySelector('.card-thumb')?.append(badge);
+}
+
 function appendFolderCard(folder, arr, opts = {}) {
   const card = document.createElement("article");
   const isSelected = !!(state.mapperEditMode && state.mapperSelectedFolders && state.mapperSelectedFolders.has(folder));
@@ -7275,6 +7285,7 @@ function appendFolderCard(folder, arr, opts = {}) {
         <span>Mapper</span>
       </div>
       </div>`;
+  updateFolderPrivacyBadge(card, folder);
   bindFolderNameMarquee(card, title || folder || '');
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
@@ -12251,6 +12262,9 @@ let mapperIndexRefreshTimer = null;
 let mapperTreeIndexRequest = null;
 
 function mapperIndexPreviews(data) {
+  state.mapperFolderPrivacy ||= {};
+  for (const item of data.items || []) state.mapperFolderPrivacy[item.path] = !!item.private;
+  els.grid?.querySelectorAll('.folder-card[data-folder]').forEach(card => updateFolderPrivacyBadge(card, card.dataset.folder));
   return Object.fromEntries((data.items || []).map(item => [item.path, Array.isArray(item.previews) ? item.previews : []]));
 }
 

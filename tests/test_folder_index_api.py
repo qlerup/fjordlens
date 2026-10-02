@@ -40,12 +40,24 @@ class FolderIndexApiTests(unittest.TestCase):
         ):
             response=self.admin.get('/api/folder-index')
             self.assertEqual(response.status_code,200)
-            self.assertEqual(response.get_json()['items'],[{'path':'A','name':'A','previews':['/api/thumbs/a.jpg']}])
+            self.assertEqual(response.get_json()['items'],[{'path':'A','name':'A','previews':['/api/thumbs/a.jpg'],'private':False}])
             picker=self.admin.get('/api/settings/upload-destination?destination=uploads')
             self.assertEqual(picker.status_code,200)
             self.assertIn('A/Sub',picker.get_json()['folders'])
         self.assertIn('no-store',response.headers['Cache-Control'])
         self.assertIn('Cookie',response.headers['Vary'])
+
+    def test_private_marker_includes_inherited_folders_and_is_reversible(self):
+        self.seed('A/Sub', 'a.jpg')
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("INSERT INTO private_folders VALUES ('A')")
+            conn.commit()
+        self.assertTrue(self.admin.get('/api/folder-index').get_json()['items'][0]['private'])
+        self.assertTrue(self.admin.get('/api/folder-index?parent=A').get_json()['items'][0]['private'])
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute('DELETE FROM private_folders')
+            conn.commit()
+        self.assertFalse(self.admin.get('/api/folder-index').get_json()['items'][0]['private'])
 
     def test_shared_catalogue_does_not_share_permissions_or_cover_refs(self):
         self.seed('Public','public.jpg'); self.seed('Private','private.jpg')
