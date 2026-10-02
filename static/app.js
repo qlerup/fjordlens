@@ -19779,6 +19779,9 @@ async function renderUsersPanel(){
               <option value="en">English</option>
             </select>
           </div>
+          <div class="form-row">
+            <button id="eu_acl" type="button" class="btn">${escapeHtml(tr('users_folders_title'))}…</button>
+          </div>
           <div class="actions" style="justify-content:space-between;gap:8px;">
             <button id="eu_delete" class="btn danger">Slet bruger</button>
             <div style="display:flex;gap:8px;">
@@ -20000,10 +20003,8 @@ async function renderUsersPanel(){
       aclEditingUserId = null;
     }
 
-    wrap.querySelectorAll('button[data-acl]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = String(btn.getAttribute('data-acl') || '');
-        const user = byId.get(id);
+    function openUserAcl(id) {
+        const user = byId.get(String(id));
         if (!user) return;
         aclEditingUserId = user.id;
         if (aclUserLabel) {
@@ -20013,7 +20014,9 @@ async function renderUsersPanel(){
         setFolderSelection('ua_folder_access', user.allowed_folders || [], availableFolders);
         bindAclHierarchy('ua_folder_access');
         if (aclModal) aclModal.classList.remove('hidden');
-      });
+    }
+    wrap.querySelectorAll('button[data-acl]').forEach(btn => {
+      btn.addEventListener('click', () => openUserAcl(btn.getAttribute('data-acl')));
     });
 
     aclCloseBtn && aclCloseBtn.addEventListener('click', closeAclModal);
@@ -20045,8 +20048,11 @@ async function renderUsersPanel(){
             return;
           }
           showStatus(tr('users_status_acl_saved'), 'ok');
+          const user = byId.get(String(aclEditingUserId));
+          if (user) user.allowed_folders = jj.allowed_folders || allowed_folders;
           closeAclModal();
-          renderUsersPanel();
+          // Keep unsaved profile edits when folder access was opened from Edit user.
+          if (!editModal || editModal.classList.contains('hidden')) renderUsersPanel();
         });
       } else {
         // Pre-create mode: just store locally for the new user form
@@ -20073,7 +20079,11 @@ async function renderUsersPanel(){
     const editModal = document.getElementById('eu_modal');
     const editCloseBtn = document.getElementById('eu_close');
     const editCancelBtn = document.getElementById('eu_cancel');
+    const editAclBtn = document.getElementById('eu_acl');
     let editingUserId = null;
+    editAclBtn && editAclBtn.addEventListener('click', () => {
+      if (editingUserId) openUserAcl(editingUserId);
+    });
 
     function closeEdit(){
       if (!editModal) return;
@@ -20104,6 +20114,7 @@ async function renderUsersPanel(){
         if (er) er.value = user.role || 'user';
         if (eul) eul.value = user.ui_language || 'da';
         if (esl) esl.value = user.search_language || 'da';
+        if (editAclBtn) editAclBtn.classList.toggle('hidden', ['admin', 'manager'].includes(user.role));
         if (editModal) editModal.classList.remove('hidden');
       });
     });
