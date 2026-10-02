@@ -14946,10 +14946,21 @@ async function openMapperPrivacyDialog(folder) {
       dialog.querySelector('.privacy-inherited').textContent = 'Privatmarkeringen kommer fra mappen “' + info.private_parent + '”. Fjern den dér først.';
       save.disabled = true;
     }
-    dialog.querySelector('.privacy-cancel').onclick = () => dialog.close();
+    const cancel = dialog.querySelector('.privacy-cancel');
+    let busy = false;
+    cancel.onclick = () => { if (!busy) dialog.close(); };
+    dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
     dialog.addEventListener('close', () => dialog.remove());
     save.onclick = async () => {
+      if (busy) return;
+      busy = true;
       save.disabled = true;
+      cancel.disabled = true;
+      save.classList.add('loading');
+      save.setAttribute('aria-busy', 'true');
+      const label = save.textContent;
+      save.textContent = info.private ? 'Fjerner privatmarkering…' : 'Gør mappen privat…';
+      dialog.querySelector('.move-error').textContent = '';
       try {
         const result = await fetch('/api/folder-privacy', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder, private:!info.private})});
         const data = await result.json();
@@ -14958,7 +14969,15 @@ async function openMapperPrivacyDialog(folder) {
           if (key.startsWith('fjordlens:people-list:')) sessionStorage.removeItem(key);
         }
         window.location.reload();
-      } catch (error) {dialog.querySelector('.move-error').textContent = error.message; save.disabled = false;}
+      } catch (error) {
+        dialog.querySelector('.move-error').textContent = error.message;
+        busy = false;
+        save.disabled = false;
+        cancel.disabled = false;
+        save.classList.remove('loading');
+        save.removeAttribute('aria-busy');
+        save.textContent = label;
+      }
     };
     document.body.append(dialog); dialog.showModal();
   } catch (error) {showStatus(error.message, 'err');}
