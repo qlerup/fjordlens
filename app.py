@@ -55,6 +55,7 @@ import moment_cinema
 import moment_music
 import moments_engine
 import moments_service
+import folder_privacy
 import pyotp
 import qrcode
 import base64
@@ -1877,6 +1878,8 @@ def _ai_detect_faces_path(path: Path) -> Optional[list[Dict[str, Any]]]:
 
 
 def _ai_detect_faces_batch_paths(rel_paths: list[str]) -> Dict[str, Optional[list[Dict[str, Any]]]]:
+    with closing(get_conn()) as conn:
+        rel_paths = [rel for rel in rel_paths if not folder_privacy.private_parent(conn, rel)]
     """Send a group of still images to one AI batch request.
 
     Video items are intentionally excluded here because their sampled-frame flow
@@ -2177,6 +2180,7 @@ class _FaceMatchCache:
     """In-memory, vectorized person matcher shared across one face queue run."""
 
     def __init__(self, conn: sqlite3.Connection):
+        self.privacy_signature = tuple(r[0] for r in conn.execute('SELECT folder_path FROM private_folders ORDER BY folder_path'))
         self.centroid_pids: dict[int, list[int]] = {}
         self.centroid_vectors: dict[int, list[np.ndarray]] = {}
         self.centroid_pid_index: dict[int, tuple[int, int]] = {}
@@ -2191,11 +2195,12 @@ class _FaceMatchCache:
         self._load_people(conn)
 
     def _load_people(self, conn: sqlite3.Connection) -> None:
+        active = folder_privacy.active_centroids(conn, _compute_centroid) if self.privacy_signature else None
         rows = conn.execute(
             """
             SELECT p.id, p.name, p.centroid_json, COUNT(f.id) AS face_count
             FROM people p
-            LEFT JOIN faces f ON f.person_id=p.id
+            LEFT JOIN discovery_faces f ON f.person_id=p.id
             WHERE COALESCE(p.hidden,0)=0
             GROUP BY p.id, p.name, p.centroid_json
             """
@@ -2209,7 +2214,7 @@ class _FaceMatchCache:
             if match:
                 highest_unknown = max(highest_unknown, int(match.group(1)))
             try:
-                raw = json.loads(row["centroid_json"]) if row["centroid_json"] else None
+                raw = active.get(pid) if active is not None else (json.loads(row["centroid_json"]) if row["centroid_json"] else None)
             except Exception:
                 raw = None
             arr = _np_face_vector(raw)
@@ -2263,7 +2268,7 @@ class _FaceMatchCache:
         rows = conn.execute(
             """
             SELECT f.embedding_json, f.person_id
-            FROM faces f
+            FROM discovery_faces f
             LEFT JOIN people p ON p.id=f.person_id
             WHERE f.embedding_json IS NOT NULL
               AND f.person_id IS NOT NULL
@@ -2358,7 +2363,7 @@ def _recompute_person_centroids_bulk(person_ids: set[int]) -> None:
             chunk = ids[start:start + 400]
             placeholders = ",".join(["?"] * len(chunk))
             rows = conn.execute(
-                f"SELECT person_id, embedding_json FROM faces WHERE person_id IN ({placeholders}) AND embedding_json IS NOT NULL",
+                f"SELECT person_id, embedding_json FROM discovery_faces WHERE person_id IN ({placeholders}) AND embedding_json IS NOT NULL",
                 chunk,
             ).fetchall()
             for row in rows:
@@ -2422,7 +2427,7 @@ def _find_or_create_person_id(conn: sqlite3.Connection, emb: list[float]) -> tup
     best_score = -1.0
     try:
         rows = conn.execute(
-            "SELECT f.embedding_json, f.person_id FROM faces f "
+            "SELECT f.embedding_json, f.person_id FROM discovery_faces f "
             "LEFT JOIN people p ON p.id = f.person_id "
             "WHERE f.embedding_json IS NOT NULL AND (p.id IS NULL OR COALESCE(p.hidden,0)=0)"
         ).fetchall()
@@ -2479,7 +2484,7 @@ def _compute_centroid(vectors: list[list[float]]) -> Optional[list[float]]:
 def _recompute_person_centroid(conn: sqlite3.Connection, pid: int) -> dict:
     """Recompute centroid from all face embeddings for a given person and store on people.centroid_json."""
     try:
-        rows = conn.execute("SELECT embedding_json FROM faces WHERE person_id=? AND embedding_json IS NOT NULL", (pid,)).fetchall()
+        rows = conn.execute("SELECT embedding_json FROM discovery_faces WHERE person_id=? AND embedding_json IS NOT NULL", (pid,)).fetchall()
         vecs: list[list[float]] = []
         for r in rows:
             try:
@@ -2501,6 +2506,10 @@ def _recompute_person_centroid(conn: sqlite3.Connection, pid: int) -> dict:
 
 def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[float]]]:
     """Return list of (person_id, centroid_vec) for non-hidden people. Recompute missing on the fly."""
+    if conn.execute('SELECT 1 FROM private_folders LIMIT 1').fetchone():
+        active = folder_privacy.active_centroids(conn, _compute_centroid)
+        visible = {r[0] for r in conn.execute('SELECT id FROM people WHERE COALESCE(hidden,0)=0')}
+        return [(pid, vec) for pid, vec in active.items() if pid in visible and vec]
     out: list[tuple[int, list[float]]] = []
     try:
         rows = conn.execute("SELECT id, centroid_json FROM people WHERE COALESCE(hidden,0)=0").fetchall()
@@ -2527,6 +2536,9 @@ def _load_person_centroids(conn: sqlite3.Connection) -> list[tuple[int, list[flo
 @processing_failures.track("faces", lambda rel_path: rel_path, clear_success=False)
 def _detect_faces_for_photo(rel_path: str) -> list[Dict[str, Any]]:
     """Detection-only stage. No SQLite/person writes happen here."""
+    with closing(get_conn()) as conn:
+        if folder_privacy.private_parent(conn, rel_path):
+            return []
     if Path(rel_path).suffix.lower() in VIDEO_EXTS and not faces_video_index_enabled():
         raise FaceIndexSkipped('Ansigtsgenkendelse på videoer er slået fra')
     disk_path = _disk_path_from_rel_path(rel_path)
@@ -2553,6 +2565,11 @@ def _store_faces_for_photo_conn(
     touched_person_ids: set[int],
 ) -> Dict[str, Any]:
     """Store one photo using an existing transaction/connection."""
+    if folder_privacy.private_parent(conn, rel_path):
+        return {"count": 0, "matched": 0, "created": 0}
+    signature = tuple(r[0] for r in conn.execute('SELECT folder_path FROM private_folders ORDER BY folder_path'))
+    if signature != match_cache.privacy_signature:
+        match_cache.__init__(conn)
     row = conn.execute("SELECT id FROM photos WHERE rel_path=?", (rel_path,)).fetchone()
     if not row:
         return {"count": 0, "matched": 0, "created": 0}
@@ -2729,6 +2746,9 @@ def index_faces_for_photo(
     detected_faces: Optional[list[Dict[str, Any]]] = None,
 ) -> int:
     """Detect/store faces for one item; queue callers can separate both stages."""
+    with closing(get_conn()) as conn:
+        if folder_privacy.private_parent(conn, rel_path):
+            return 0
     try:
         disk_path = _disk_path_from_rel_path(rel_path)
         if not disk_path.exists():
@@ -5366,6 +5386,7 @@ def init_db() -> None:
             """
         )
         conn.commit()
+        folder_privacy.migrate(conn)
         moments_service.migrate(conn)
         place_names.migrate(conn)
         conn.commit()
@@ -7767,6 +7788,10 @@ def api_folder_previews_get():
             pass
     # For any requested keys without saved previews, compute and store now
     for k in keys:
+        with closing(get_conn()) as conn:
+            if folder_privacy.private_parent(conn, k):
+                items[k] = []
+                continue
         if k not in items or not items[k]:
             try:
                 items[k] = _compute_and_store_folder_previews(k)
@@ -8273,6 +8298,7 @@ def api_moment_delete(moment_id: int):
 
 
 moments_service.register_routes(app, globals())
+folder_privacy.register(app, globals())
 
 
 # --- Moments: on-demand MP4 export (ffmpeg) ---
@@ -14183,7 +14209,7 @@ def _faces_index_coverage() -> Dict[str, int]:
     counts = {"total": 0, "indexed": 0, "missing": 0, "with_faces": 0, "faces": 0, "unsupported": 0}
     try:
         with closing(get_conn()) as conn:
-            rows = conn.execute("SELECT rel_path, people_count, faces_indexed_at FROM photos").fetchall()
+            rows = conn.execute("SELECT rel_path, people_count, faces_indexed_at FROM discovery_photos").fetchall()
     except Exception:
         return counts
 
@@ -14210,12 +14236,12 @@ def _index_faces_worker(all_photos: bool = False):
     try:
         with closing(get_conn()) as conn:
             if all_photos:
-                rows = conn.execute("SELECT rel_path FROM photos").fetchall()
+                rows = conn.execute("SELECT rel_path FROM discovery_photos").fetchall()
             else:
                 rows = conn.execute(
                     """
                     SELECT rel_path
-                    FROM photos
+                    FROM discovery_photos
                     WHERE faces_indexed_at IS NULL OR TRIM(faces_indexed_at) = ''
                     """
                 ).fetchall()
@@ -15342,6 +15368,10 @@ def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
 
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
+    d['private'] = folder_privacy.private_for_response(get_conn, d.get('rel_path'))
+    if d['private']:
+        d['people_count'] = 0
+        d['people_names'] = ''
     # embedding_json is a raw CLIP vector (hundreds of floats) used only for
     # server-side AI similarity search; the client never reads it, so drop it
     # here instead of JSON-decoding + re-serializing + sending it on every
@@ -15467,7 +15497,7 @@ def api_people_suggest():
             SELECT p.id, p.name FROM people p
             WHERE COALESCE(p.hidden,0)=0 AND person_is_named(p.name)
               AND substr(person_name_key(p.name),1,?) = ?
-              AND EXISTS (SELECT 1 FROM faces f JOIN photos ph ON ph.id=f.photo_id
+              AND EXISTS (SELECT 1 FROM discovery_faces f JOIN photos ph ON ph.id=f.photo_id
                           WHERE f.person_id=p.id {visibility})
             ORDER BY person_name_key(p.name), p.id LIMIT 51
         """, params).fetchall()
@@ -15515,12 +15545,12 @@ def api_people_list():
             hidden = bool(int(r["hidden"] or 0))
 
             if acl_prefixes is None:
-                cnt_row = conn.execute(f"SELECT COUNT(DISTINCT f.photo_id) AS c, COUNT(DISTINCT CASE WHEN {still_sql} THEN f.photo_id END) AS images FROM faces f JOIN photos ph ON ph.id=f.photo_id WHERE f.person_id=?", (pid,)).fetchone()
+                cnt_row = conn.execute(f"SELECT COUNT(DISTINCT f.photo_id) AS c, COUNT(DISTINCT CASE WHEN {still_sql} THEN f.photo_id END) AS images FROM discovery_faces f JOIN photos ph ON ph.id=f.photo_id WHERE f.person_id=?", (pid,)).fetchone()
                 cnt = int(cnt_row["c"] or 0) if cnt_row else 0
                 face_row = conn.execute(
                     f"""
                     SELECT f.id
-                    FROM faces f
+                    FROM discovery_faces f
                     LEFT JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=?
                     AND ({still_sql})
@@ -15553,7 +15583,7 @@ def api_people_list():
                 cnt_row = conn.execute(
                     f"""
                     SELECT COUNT(DISTINCT f.photo_id) AS c, COUNT(DISTINCT CASE WHEN {still_sql} THEN f.photo_id END) AS images
-                    FROM faces f
+                    FROM discovery_faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
                     """,
@@ -15563,7 +15593,7 @@ def api_people_list():
                 face_row = conn.execute(
                     f"""
                     SELECT f.id
-                    FROM faces f
+                    FROM discovery_faces f
                     INNER JOIN photos ph ON ph.id = f.photo_id
                     WHERE f.person_id=? AND ({where_acl})
                     AND ({still_sql})
@@ -15604,13 +15634,13 @@ def api_people_list():
 
         if acl_prefixes is None:
             unk = conn.execute(
-                "SELECT COUNT(DISTINCT photo_id) AS c FROM faces WHERE person_id IS NULL"
+                "SELECT COUNT(DISTINCT photo_id) AS c FROM discovery_faces WHERE person_id IS NULL"
             ).fetchone()
             unk_count = int(unk["c"] or 0) if unk else 0
             frow = conn.execute(
                 f"""
                 SELECT f.id
-                FROM faces f
+                FROM discovery_faces f
                 LEFT JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL
                 AND ({still_sql})
@@ -15642,7 +15672,7 @@ def api_people_list():
             unk = conn.execute(
                 f"""
                 SELECT COUNT(DISTINCT f.photo_id) AS c
-                FROM faces f
+                FROM discovery_faces f
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
                 """,
@@ -15652,7 +15682,7 @@ def api_people_list():
             frow = conn.execute(
                 f"""
                 SELECT f.id
-                FROM faces f
+                FROM discovery_faces f
                 INNER JOIN photos ph ON ph.id = f.photo_id
                 WHERE f.person_id IS NULL AND ({where_acl})
                 AND ({still_sql})
@@ -15842,7 +15872,7 @@ def api_faces_match_unknown():
             if not cents:
                 return jsonify({"ok": True, "scanned": 0, "matched": 0})
             # Load unknown faces
-            sql = "SELECT id, embedding_json FROM faces WHERE person_id IS NULL AND embedding_json IS NOT NULL"
+            sql = "SELECT id, embedding_json FROM discovery_faces WHERE person_id IS NULL AND embedding_json IS NOT NULL"
             if isinstance(limit, int) and limit > 0:
                 sql += f" LIMIT {int(limit)}"
             rows = conn.execute(sql).fetchall()
@@ -15959,7 +15989,7 @@ def _person_photo_page_response(where_sql: str, where_params: tuple[Any, ...]):
             f"""
             SELECT p.id
             FROM photos p
-            INNER JOIN faces f ON f.photo_id = p.id
+            INNER JOIN discovery_faces f ON f.photo_id = p.id
             WHERE {where_sql}
             GROUP BY p.id
             ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, MAX(f.id) DESC
@@ -15976,7 +16006,7 @@ def _person_photo_page_response(where_sql: str, where_params: tuple[Any, ...]):
             f"""
             SELECT p.*, f.id as face_id, f.frame_sec, f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.confidence
             FROM photos p
-            INNER JOIN faces f ON f.photo_id = p.id
+            INNER JOIN discovery_faces f ON f.photo_id = p.id
             WHERE {where_sql} AND p.id IN ({placeholders})
             ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC, f.id DESC
             """,
@@ -16016,7 +16046,7 @@ def api_face_thumb(face_id: int):
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM discovery_faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -16089,7 +16119,7 @@ def _build_face_thumb(face_id: int) -> bool:
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.embedding_json, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name, p.width AS src_w, p.height AS src_h FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, f.embedding_json, f.frame_sec, p.id AS photo_id, p.rel_path, p.thumb_name, p.width AS src_w, p.height AS src_h FROM discovery_faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -16414,7 +16444,7 @@ def api_face_thumb_status(face_id: int):
     try:
         with closing(get_conn()) as conn:
             r = conn.execute(
-                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
+                "SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, p.rel_path, p.thumb_name FROM discovery_faces f INNER JOIN photos p ON p.id = f.photo_id WHERE f.id=?",
                 (face_id,),
             ).fetchone()
         if not r:
@@ -16455,7 +16485,7 @@ def api_people_unknown_photos():
             """
             SELECT DISTINCT p.*
             FROM photos p
-            INNER JOIN faces f ON f.photo_id = p.id
+            INNER JOIN discovery_faces f ON f.photo_id = p.id
             WHERE f.person_id IS NULL
             ORDER BY COALESCE(p.captured_at, p.modified_fs, p.created_fs) DESC
             """
@@ -16723,9 +16753,11 @@ def query_photos(
     order_by = sort_map.get(sort, sort_map["date_desc"])
 
     where = []
+    if view != 'mapper' or person_ids:
+        where.append('photos.id IN (SELECT id FROM discovery_photos)')
     params: list[Any] = []
     for person_id in dict.fromkeys(person_ids or []):
-        where.append('EXISTS (SELECT 1 FROM faces sf JOIN people sp ON sp.id=sf.person_id '
+        where.append('EXISTS (SELECT 1 FROM discovery_faces sf JOIN people sp ON sp.id=sf.person_id '
                      'WHERE sf.photo_id=photos.id AND sf.person_id=? AND COALESCE(sp.hidden,0)=0)')
         params.append(person_id)
     filename_term = _filename_search_term(filename_query)
@@ -16826,7 +16858,7 @@ def query_photos(
                 SELECT GROUP_CONCAT(name, ' ')
                 FROM (
                     SELECT DISTINCT p2.name AS name
-                    FROM faces f2
+                    FROM discovery_faces f2
                     INNER JOIN people p2 ON p2.id = f2.person_id
                     WHERE f2.photo_id = photos.id
                       AND COALESCE(p2.hidden, 0) = 0
@@ -17806,6 +17838,10 @@ def api_share_thumb(token: str, photo_id: int):
         row = _get_share_scoped_photo_row(conn, share, photo_id)
     if not row or not row["thumb_name"]:
         return ("Not found", 404)
+    with closing(get_conn()) as conn:
+        if folder_privacy.private_parent(conn, row['rel_path']):
+            path = THUMB_DIR / str(row['thumb_name'])
+            return folder_privacy.blurred_thumbnail(path) if path.is_file() else ('Not found', 404)
     return send_from_directory(THUMB_DIR, str(row["thumb_name"]))
 
 
@@ -22011,7 +22047,7 @@ def api_ai_search():
     if not vec:
         return jsonify({"items": [], "count": 0, "error": "embed_failed"})
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT * FROM photos WHERE embedding_json IS NOT NULL AND embedding_json != ''").fetchall()
+        rows = conn.execute("SELECT * FROM discovery_photos WHERE embedding_json IS NOT NULL AND embedding_json != ''").fetchall()
     scored = []
     for r in rows:
         try:
@@ -22045,7 +22081,7 @@ def api_ai_hardware_qwen_unload():
 def api_similar(photo_id: int):
     limit = max(1, min(200, int(request.args.get("limit", "60"))))
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        row = conn.execute("SELECT * FROM discovery_photos WHERE id=?", (photo_id,)).fetchone()
     if not row:
         return jsonify({"ok": False, "error": "not_found"}), 404
     if not _is_rel_path_allowed_for_current_user(row["rel_path"]):
@@ -22066,7 +22102,7 @@ def api_similar(photo_id: int):
             conn.execute("UPDATE photos SET embedding_json=? WHERE id=?", (json.dumps(emb), photo_id))
             conn.commit()
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT * FROM photos WHERE embedding_json IS NOT NULL AND embedding_json != '' AND id<>?", (photo_id,)).fetchall()
+        rows = conn.execute("SELECT * FROM discovery_photos WHERE embedding_json IS NOT NULL AND embedding_json != '' AND id<>?", (photo_id,)).fetchall()
     scored = []
     for r in rows:
         rel = str(r["rel_path"] or "")
@@ -22104,7 +22140,7 @@ def api_similar_phash(photo_id: int):
 
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, rel_path, phash, phash_dct, dhash, ahash FROM photos WHERE id=?",
+            "SELECT id, rel_path, phash, phash_dct, dhash, ahash FROM discovery_photos WHERE id=?",
             (photo_id,),
         ).fetchone()
         if not row:
@@ -22113,7 +22149,7 @@ def api_similar_phash(photo_id: int):
             return jsonify({"ok": False, "error": "not_found"}), 404
 
         source_folder_key = _similar_rel_folder_key(str(row["rel_path"] or ""))
-        source_row = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+        source_row = conn.execute("SELECT * FROM discovery_photos WHERE id=?", (photo_id,)).fetchone()
         source_item = row_to_public(source_row) if source_row else None
         ai_folder_coverage = _ai_embedding_coverage_for_source_folder(conn, str(row["rel_path"] or ""))
         hash_distances_by_id: dict[int, Dict[str, int]] = {}
@@ -22135,7 +22171,7 @@ def api_similar_phash(photo_id: int):
             candidates = conn.execute(
                 """
                 SELECT id, rel_path, phash, phash_dct, dhash, ahash
-                FROM photos
+                FROM discovery_photos
                 WHERE id<>?
                   AND (
                     phash IS NOT NULL OR phash_dct IS NOT NULL OR dhash IS NOT NULL OR ahash IS NOT NULL
@@ -22231,7 +22267,7 @@ def api_similar_phash(photo_id: int):
             rows = conn.execute(
                 """
                 SELECT id, rel_path, embedding_json
-                FROM photos
+                FROM discovery_photos
                 WHERE id<>?
                   AND embedding_json IS NOT NULL
                   AND embedding_json != ''
@@ -22303,7 +22339,7 @@ def api_similar_phash(photo_id: int):
 
         top_ids = ordered_ids
         ph = ",".join(["?"] * len(top_ids))
-        rows = conn.execute(f"SELECT * FROM photos WHERE id IN ({ph})", top_ids).fetchall()
+        rows = conn.execute(f"SELECT * FROM discovery_photos WHERE id IN ({ph})", top_ids).fetchall()
         by_id = {int(r["id"]): r for r in rows}
 
         items = []
@@ -22598,7 +22634,7 @@ def api_cameras():
     groups = {}
     with closing(get_conn()) as conn:
         rows = conn.execute("""
-            SELECT id, rel_path, camera_model, thumb_name FROM photos
+            SELECT id, rel_path, camera_model, thumb_name FROM discovery_photos
             WHERE TRIM(COALESCE(camera_model, '')) != ''
               AND UPPER(filename) NOT LIKE 'SYNOPHOTO_THUMB_%'
               AND UPPER(filename) NOT LIKE 'SYNOPHOTO_CACHE_%'
@@ -23167,11 +23203,11 @@ def api_filters():
     with closing(get_conn()) as conn:
         acl_prefixes = _current_user_acl_prefixes(conn)
         if acl_prefixes is None:
-            total = conn.execute("SELECT COUNT(*) AS c FROM photos").fetchone()["c"]
-            favorites = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE favorite = 1").fetchone()["c"]
-            places = conn.execute("SELECT COUNT(*) AS c FROM photos WHERE gps_lat IS NOT NULL OR gps_name IS NOT NULL").fetchone()["c"]
+            total = conn.execute("SELECT COUNT(*) AS c FROM discovery_photos").fetchone()["c"]
+            favorites = conn.execute("SELECT COUNT(*) AS c FROM discovery_photos WHERE favorite = 1").fetchone()["c"]
+            places = conn.execute("SELECT COUNT(*) AS c FROM discovery_photos WHERE gps_lat IS NOT NULL OR gps_name IS NOT NULL").fetchone()["c"]
             cameras = [r["camera_model"] for r in conn.execute(
-                "SELECT DISTINCT camera_model FROM photos WHERE camera_model IS NOT NULL AND camera_model != '' ORDER BY camera_model"
+                "SELECT DISTINCT camera_model FROM discovery_photos WHERE camera_model IS NOT NULL AND camera_model != '' ORDER BY camera_model"
             ).fetchall()]
         else:
             conds = []
@@ -23180,11 +23216,11 @@ def api_filters():
                 conds.append("(rel_path=? OR rel_path LIKE ?)")
                 params.extend([pref, pref + "/%"])
             acl_where = " OR ".join(conds) if conds else "0=1"
-            total = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE ({acl_where})", params).fetchone()["c"]
-            favorites = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE favorite = 1 AND ({acl_where})", params).fetchone()["c"]
-            places = conn.execute(f"SELECT COUNT(*) AS c FROM photos WHERE (gps_lat IS NOT NULL OR gps_name IS NOT NULL) AND ({acl_where})", params).fetchone()["c"]
+            total = conn.execute(f"SELECT COUNT(*) AS c FROM discovery_photos WHERE ({acl_where})", params).fetchone()["c"]
+            favorites = conn.execute(f"SELECT COUNT(*) AS c FROM discovery_photos WHERE favorite = 1 AND ({acl_where})", params).fetchone()["c"]
+            places = conn.execute(f"SELECT COUNT(*) AS c FROM discovery_photos WHERE (gps_lat IS NOT NULL OR gps_name IS NOT NULL) AND ({acl_where})", params).fetchone()["c"]
             cameras = [r["camera_model"] for r in conn.execute(
-                f"SELECT DISTINCT camera_model FROM photos WHERE camera_model IS NOT NULL AND camera_model != '' AND ({acl_where}) ORDER BY camera_model",
+                f"SELECT DISTINCT camera_model FROM discovery_photos WHERE camera_model IS NOT NULL AND camera_model != '' AND ({acl_where}) ORDER BY camera_model",
                 params,
             ).fetchall()]
     return jsonify({
@@ -23210,6 +23246,13 @@ def api_thumb_file(thumb_name: str):
             rows = conn.execute("SELECT rel_path FROM photos WHERE thumb_name=?", (thumb_name,)).fetchall()
         if not rows or not any(_is_rel_visible_for_current_user(r["rel_path"], conn) for r in rows):
             return ("Not found", 404)
+        if any(folder_privacy.private_parent(conn, r['rel_path']) for r in rows):
+            if face:
+                return ('Not found', 404)
+            path = THUMB_DIR / thumb_name
+            if not path.is_file():
+                return ('Not found', 404)
+            return folder_privacy.blurred_thumbnail(path)
     resp = send_from_directory(str(THUMB_DIR), thumb_name)
     resp.headers["Cache-Control"] = "private, no-store"
     return resp
@@ -24277,6 +24320,18 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str, *, reject_c
             "DELETE FROM folder_owners WHERE folder_path=? OR folder_path LIKE ? ESCAPE '!'",
             (old_acl, old_acl.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "/%"),
         )
+
+        # Preserve privacy when renaming/moving a marked folder or a private subtree.
+        inherited_private = folder_privacy.private_parent(conn, old_sub)
+        privacy_rows = conn.execute('SELECT folder_path FROM private_folders').fetchall()
+        for row in privacy_rows:
+            old_private = row[0]
+            if old_private == old_sub or old_private.startswith(old_sub + '/'):
+                new_private = new_sub + old_private[len(old_sub):]
+                conn.execute('DELETE FROM private_folders WHERE folder_path=?', (old_private,))
+                conn.execute('INSERT OR IGNORE INTO private_folders VALUES (?)', (new_private,))
+        if inherited_private:
+            conn.execute('INSERT OR IGNORE INTO private_folders VALUES (?)', (new_sub,))
 
         # Folder previews
         preview_rows = conn.execute(

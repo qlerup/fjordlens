@@ -14,6 +14,7 @@ from moments_engine import discover, photo_date, country_for_name
 import moment_places
 import moment_folders
 import moment_titles
+import folder_privacy
 
 _scan_context = threading.local()
 
@@ -136,7 +137,7 @@ def complete_detection(g):
 def detect_years(g):
     stats = dict(created=0, updated=0)
     with closing(g["get_conn"]()) as conn:
-        rows = conn.execute("SELECT id,rel_path,captured_at,modified_fs,created_fs,favorite FROM photos").fetchall()
+        rows = conn.execute("SELECT id,rel_path,captured_at,modified_fs,created_fs,favorite FROM discovery_photos").fetchall()
     by_year = {}
     for row in g["_dedupe_upload_storage_rows"](rows):
         dt = photo_date(dict(row))
@@ -154,6 +155,8 @@ def detect_years(g):
             now = g["now_iso"]()
             if existing:
                 row = existing[0]
+                if folder_privacy.moment_is_private(conn, members(row)):
+                    continue
                 if len(existing) != 1 or row["status"] != "suggested" or row["user_edited"] or row["video_status"] in ("queued", "running", "rendering"):
                     continue
                 if members(row) == set(ids):
@@ -186,6 +189,9 @@ def members(row):
 def can_view(g, row, *, include_hidden=False):
     if not row or row["status"] == "dismissed":
         return False
+    with closing(g['get_conn']()) as conn:
+        if folder_privacy.moment_is_private(conn, members(row)):
+            return False
     if row["status"] == "hidden":
         return include_hidden and bool(getattr(current_user, "can_manage_media", False))
     if getattr(current_user, "can_manage_media", False):
@@ -194,7 +200,7 @@ def can_view(g, row, *, include_hidden=False):
     with closing(g["get_conn"]()) as conn:
         for offset in range(0, len(ids), 500):
             batch = ids[offset:offset+500]
-            photos = conn.execute(f"SELECT rel_path FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch).fetchall()
+            photos = conn.execute(f"SELECT rel_path FROM discovery_photos WHERE id IN ({','.join('?' for _ in batch)})", batch).fetchall()
             if len(photos) != len(batch) or any(not g["_is_rel_visible_for_current_user"](p["rel_path"], conn) for p in photos):
                 return False
     return bool(ids)
@@ -217,7 +223,7 @@ def detect(g):
     with closing(g["get_conn"]()) as conn:
         # Narrow columns keep the scan independent of large embeddings/EXIF blobs.
         rows = conn.execute("""SELECT id,rel_path,captured_at,modified_fs,created_fs,gps_name,gps_lat,gps_lon,
-            favorite,uploaded_by,camera_make,camera_model,ai_desc_caption,ai_desc_tags FROM photos""").fetchall()
+            favorite,uploaded_by,camera_make,camera_model,ai_desc_caption,ai_desc_tags FROM discovery_photos""").fetchall()
         home = settings(conn)
     rows = g["_dedupe_upload_storage_rows"](rows)
     candidates, stats, _ = discover(rows, min_photos=g["MOMENT_MIN_PHOTOS"],
@@ -234,8 +240,9 @@ def detect(g):
         if settings(conn) != home:
             raise ValueError("Hjemsted blev ændret under scanningen. Start søgningen igen.")
         existing = list(conn.execute("SELECT * FROM moments WHERE kind != 'year_review'"))
-        protected = [r for r in existing if r["status"] != "suggested" or r["user_edited"]]
-        available = [r for r in existing if r["status"] == "suggested" and not r["user_edited"]]
+        private_ids = {r['id'] for r in existing if folder_privacy.moment_is_private(conn, members(r))}
+        protected = [r for r in existing if r["status"] != "suggested" or r["user_edited"] or r['id'] in private_ids]
+        available = [r for r in existing if r["status"] == "suggested" and not r["user_edited"] and r['id'] not in private_ids]
         retained = set()
         for candidate in candidates:
             ids = set(candidate["photo_ids"])
@@ -305,7 +312,7 @@ _MISSING = object()
 
 def _get(conn, moment_id, revision=_MISSING):
     row = conn.execute("SELECT * FROM moments WHERE id=? AND status != 'dismissed'", (moment_id,)).fetchone()
-    if not row:
+    if not row or folder_privacy.moment_is_private(conn, members(row)):
         raise EditError("Mindet findes ikke længere.", 404)
     if revision is not _MISSING and (type(revision) is not int or revision != row["revision"]):
         raise EditError("Mindet er ændret. Luk og åbn redigeringen igen.", 409)
@@ -334,7 +341,7 @@ def _photos(conn, ids, *, strict=True):
     result = []
     for offset in range(0, len(ids), 500):
         batch = ids[offset:offset+500]
-        result.extend(dict(r) for r in conn.execute(f"SELECT * FROM photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
+        result.extend(dict(r) for r in conn.execute(f"SELECT * FROM discovery_photos WHERE id IN ({','.join('?' for _ in batch)})", batch))
     if strict and len(result) != len(ids):
         raise EditError("Et eller flere billeder findes ikke længere. Åbn mindet igen.", 409)
     return sorted(result, key=lambda r: (photo_date(r) or datetime.min, r["id"]))
@@ -401,7 +408,7 @@ def register_routes(app, g):
                 conn.execute("INSERT INTO moment_settings(id,home_json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET home_json=excluded.home_json", (json.dumps(home),))
                 conn.commit()
             places = [dict(r) for r in conn.execute("""SELECT gps_name AS name, AVG(gps_lat) AS lat,
-                AVG(gps_lon) AS lon FROM photos WHERE gps_name IS NOT NULL AND gps_name != ''
+                AVG(gps_lon) AS lon FROM discovery_photos WHERE gps_name IS NOT NULL AND gps_name != ''
                 GROUP BY gps_name ORDER BY COUNT(*) DESC LIMIT 1000""")]
             return jsonify(ok=True, home=settings(conn), places=places)
 
@@ -435,7 +442,7 @@ def register_routes(app, g):
             raise EditError("Ugyldig side.")
         place = str(request.args.get("place") or "").strip().casefold()
         with closing(g["get_conn"]()) as conn:
-            rows = conn.execute("""SELECT * FROM photos WHERE substr(COALESCE(NULLIF(captured_at,''),
+            rows = conn.execute("""SELECT * FROM discovery_photos WHERE substr(COALESCE(NULLIF(captured_at,''),
                 NULLIF(modified_fs,''),created_fs),1,10) BETWEEN ? AND ?
                 ORDER BY COALESCE(NULLIF(captured_at,''),NULLIF(modified_fs,''),created_fs),id""", (start, end)).fetchall()
         rows = g["_dedupe_upload_storage_rows"](rows)

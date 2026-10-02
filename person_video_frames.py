@@ -41,7 +41,7 @@ def register(app, fjordlens):
     @app.get('/api/people/video-frame/<int:face_id>')
     def api_person_video_frame(face_id):
         with closing(fjordlens.get_conn()) as conn:
-            row = conn.execute('SELECT f.frame_sec,p.rel_path FROM faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?', (face_id,)).fetchone()
+            row = conn.execute('SELECT f.frame_sec,p.rel_path FROM discovery_faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?', (face_id,)).fetchone()
         if not row:
             abort(404)
         rel = row['rel_path']

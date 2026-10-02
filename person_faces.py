@@ -156,7 +156,7 @@ def _run_face_review(job_id, source_id, fjordlens):
             rows = conn.execute(f"""
                 SELECT f.id AS face_id,f.photo_id,f.embedding_json,f.frame_sec,f.bbox_x,f.bbox_y,f.bbox_w,f.bbox_h,
                        p.rel_path,p.ext,p.thumb_name,p.width,p.height
-                FROM faces f JOIN photos p ON p.id=f.photo_id
+                FROM discovery_faces f JOIN photos p ON p.id=f.photo_id
                 WHERE {source_where} ORDER BY f.id
             """, source_params).fetchall()
             _set_review_job(job_id, status='running', phase='references', total=len(rows), scanned=0)
@@ -170,7 +170,7 @@ def _run_face_review(job_id, source_id, fjordlens):
             reference_count = 0
             for row in conn.execute("""
                 SELECT f.person_id,f.photo_id,f.embedding_json,p.rel_path
-                FROM faces f JOIN people person ON person.id=f.person_id
+                FROM discovery_faces f JOIN people person ON person.id=f.person_id
                 JOIN photos p ON p.id=f.photo_id
                 WHERE COALESCE(person.hidden,0)=0 AND f.embedding_json IS NOT NULL
             """):
@@ -336,7 +336,7 @@ def move_faces(conn, data, fjordlens):
     conn.execute('BEGIN IMMEDIATE')
     rows = []
     for face_id in ids:
-        row = conn.execute('SELECT f.person_id,p.rel_path FROM faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?', (face_id,)).fetchone()
+        row = conn.execute('SELECT f.person_id,p.rel_path FROM discovery_faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?', (face_id,)).fetchone()
         if row is None or row['person_id'] != source:
             raise ValueError('Ansigterne er ændret. Genindlæs personen og vælg igen.')
         if not fjordlens._is_rel_path_allowed_for_current_user(row['rel_path'], conn):

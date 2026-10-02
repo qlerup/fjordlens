@@ -3,6 +3,7 @@ import hashlib
 import json
 import secrets
 import moment_music
+import folder_privacy
 from contextlib import closing
 from flask import abort, jsonify, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
@@ -42,6 +43,9 @@ def register(app, g, managed):
         if not row or row['status'] == 'dismissed' or row['revoked'] or g['_share_is_expired'](row['expires_at']):
             abort(404)
         script = json.loads(row['script_json'])
+        with closing(g['get_conn']()) as conn:
+            if folder_privacy.moment_is_private(conn, media_ids(script)):
+                abort(404)
         if not media_ids(script).issubset(set(json.loads(row['photo_ids_json']))):
             abort(404)
         return row, script

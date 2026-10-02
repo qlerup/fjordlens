@@ -14908,6 +14908,7 @@ function mapperContextMenuItemsForBackground() {
 
 function mapperContextMenuItemsForFolder(folderPath) {
   return [
+    ...(['admin', 'manager'].includes(state.currentUser?.role) ? [{label: 'Privat mappe …', action: () => openMapperPrivacyDialog(folderPath)}] : []),
     { label: tr('mapper_download_folder'), action: () => openDownloadModal(folderPath) },
     { label: 'Flyt mappe', action: () => openMapperMoveDialog(folderPath) },
     { label: tr('mapper_ctx_rename'), action: () => openMapperRenameModal(folderPath) },
@@ -14923,6 +14924,44 @@ function mapperContextMenuItemsForFolder(folderPath) {
       action: () => { state.mapperUploadTargetOverride = folderPath; openMapperUploadPicker(); },
     },
   ];
+}
+
+async function openMapperPrivacyDialog(folder) {
+  try {
+    const response = await fetch('/api/folder-privacy?folder=' + encodeURIComponent(folder), {cache:'no-store'});
+    const info = await response.json();
+    if (!response.ok) throw new Error(info.error || 'Kunne ikke hente privatindstillingen.');
+    const dialog = document.createElement('dialog');
+    dialog.className = 'mapper-move-dialog';
+    dialog.setAttribute('aria-labelledby', 'folderPrivacyTitle');
+    dialog.innerHTML = `<h3 id="folderPrivacyTitle">Privat mappe</h3><p class="privacy-folder"></p>
+      <p>Mappen og dens undermapper skjules fra tidslinje, minder, kameraer, kort og personer. Mappecoveret skjules, og miniaturebilleder sløres på serveren. Billeder og ansigtsdata bevares.</p>
+      <p>Fjern privatmarkeringen for at vise indholdet normalt igen. Adgang til selve mappen ændres ikke.</p>
+      <p class="privacy-inherited"></p><p class="move-error" role="alert"></p>
+      <div class="actions"><button type="button" class="btn ghost privacy-cancel">Annuller</button><button type="button" class="btn primary privacy-save"></button></div>`;
+    dialog.querySelector('.privacy-folder').textContent = folder;
+    const save = dialog.querySelector('.privacy-save');
+    save.textContent = info.private ? 'Fjern privatmarkering' : 'Gør mappen privat';
+    if (info.inherited) {
+      dialog.querySelector('.privacy-inherited').textContent = 'Privatmarkeringen kommer fra mappen “' + info.private_parent + '”. Fjern den dér først.';
+      save.disabled = true;
+    }
+    dialog.querySelector('.privacy-cancel').onclick = () => dialog.close();
+    dialog.addEventListener('close', () => dialog.remove());
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        const result = await fetch('/api/folder-privacy', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folder, private:!info.private})});
+        const data = await result.json();
+        if (!result.ok) throw new Error(data.error || 'Kunne ikke gemme privatindstillingen.');
+        for (const key of Object.keys(sessionStorage)) {
+          if (key.startsWith('fjordlens:people-list:')) sessionStorage.removeItem(key);
+        }
+        window.location.reload();
+      } catch (error) {dialog.querySelector('.move-error').textContent = error.message; save.disabled = false;}
+    };
+    document.body.append(dialog); dialog.showModal();
+  } catch (error) {showStatus(error.message, 'err');}
 }
 
 async function openMapperMoveDialog(source) {

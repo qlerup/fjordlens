@@ -49,6 +49,9 @@ class FolderMoveTests(unittest.TestCase):
             return result.status_code,result.get_json()
 
     def test_moves_both_trees_and_preserves_photo_id(self):
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("INSERT INTO private_folders VALUES ('Old/Album')")
+            conn.commit()
         status,data = self.move('New')
         self.assertEqual(status,200,data)
         for kind in ('originals','converted'):
@@ -59,6 +62,8 @@ class FolderMoveTests(unittest.TestCase):
             row = conn.execute('SELECT id,rel_path FROM photos').fetchone()
             self.assertEqual(row['id'],self.photo_id)
             self.assertEqual(row['rel_path'],'uploads/originals/New/Album/Nested/file.jpg')
+            self.assertEqual(conn.execute('SELECT folder_path FROM private_folders').fetchone()[0], 'New/Album')
+            self.assertEqual(conn.execute('SELECT count(*) FROM discovery_photos').fetchone()[0], 0)
         self.assertEqual(self.move('',source='New/Album')[0],200)
         self.assertTrue((fl.UPLOAD_DIR/'originals/Album/Nested/file.jpg').exists())
 

@@ -337,6 +337,8 @@ def _make_fast_people_view(app, fjordlens, original):
             # Restricted users need per-folder ACL counts. Keep the original exact
             # behavior for them; admins/managers use the materialized global stats.
             acl_prefixes = fjordlens._current_user_acl_prefixes(conn)
+            if conn.execute('SELECT 1 FROM private_folders LIMIT 1').fetchone():
+                return None  # Stored counts/covers include private faces; use exact filtered queries.
             if acl_prefixes is not None:
                 return None
 

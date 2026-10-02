@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from flask import Flask
+import folder_privacy
 from person_faces import _REVIEW_JOBS, _REVIEW_JOBS_LOCK, _run_face_review, _set_review_job, register
 
 
@@ -29,6 +30,8 @@ class FaceSelectionTests(unittest.TestCase):
                 INSERT INTO photos VALUES(1,'one.jpg','.jpg','one.webp',400,200),(2,'two.mp4','.mp4',NULL,400,200);
                 INSERT INTO faces VALUES(1,1,1,'[0,1]',NULL,100,50,80,60),(2,1,2,'[0,1]',NULL,200,50,80,60),(3,2,1,'[1,0]',12.5,100,50,80,60),(4,2,NULL,'[1,1]',12.5,200,50,80,60);
             ''')
+        with connect() as conn:
+            folder_privacy.migrate(conn)
         self.allowed = True
         self.manage = True
         fake = SimpleNamespace(get_conn=connect, now_iso=lambda:'now',
