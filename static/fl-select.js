@@ -207,5 +207,23 @@
   else init();
   window.addEventListener('fjordlens:ui-design', init);
 
+  // Settings dialogs are inserted after page load, and may be replaced on refresh.
+  // Enhance their selects too, while retaining native controls in Classic mode.
+  var domObserver = new MutationObserver(function (records) {
+    instances.forEach(function (api, select) {
+      if (!select.isConnected) {
+        api.destroy();
+        instances.delete(select);
+      }
+    });
+    var addedSelect = records.some(function (record) {
+      return Array.prototype.some.call(record.addedNodes, function (node) {
+        return node.nodeType === 1 && (node.matches('select.select') || node.querySelector('select.select'));
+      });
+    });
+    if (addedSelect) init();
+  });
+  domObserver.observe(document.documentElement, { childList: true, subtree: true });
+
   window.flEnhanceSelect = enhance;
 })();
