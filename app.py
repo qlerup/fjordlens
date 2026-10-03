@@ -1205,9 +1205,20 @@ def _get_secret_key() -> bytes:
 
 
 app.secret_key = _get_secret_key()
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_REFRESH_EACH_REQUEST=False,
+)
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
+
+
+def _login_on_device(user):
+    """Keep this browser signed in for 30 days, with a fixed login deadline."""
+    if login_user(user):
+        session.permanent = True
+        session["login_expires_at"] = time.time() + app.permanent_session_lifetime.total_seconds()
 
 # Global scan control
 scan_stop_event = threading.Event()
@@ -6162,6 +6173,12 @@ def enforce_login_for_app():
     # Allow static assets without touching DB/bootstrap.
     if request.endpoint == "static" or (request.endpoint or "").startswith("static"):
         return None
+
+    # Session writes can reissue the cookie, but must not extend the login.
+    expires_at = session.get("login_expires_at")
+    if expires_at is not None and time.time() >= float(expires_at):
+        logout_user()
+        session.clear()
 
     # Ensure DB/schema exists before auth/setup decisions.
     ensure_runtime_bootstrap()
@@ -26300,11 +26317,11 @@ def _complete_managed_login(local_user: User, username_input: str, success_reaso
         totp_secret = row["totp_secret"]
         if not totp_secret or setup_done == 0:
             _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_password", "2fa_setup_required")
-            login_user(local_user)
+            _login_on_device(local_user)
             return _no_store_response(redirect(url_for("setup_2fa")))
         if _trust_cookie_valid_for(int(local_user.id)):
             _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_success", "fjordhub_trusted_device")
-            login_user(local_user)
+            _login_on_device(local_user)
             return _no_store_response(redirect(safe_next))
         session["2fa_user_id"] = int(local_user.id)
         session["2fa_issued_at"] = time.time()
@@ -26312,7 +26329,7 @@ def _complete_managed_login(local_user: User, username_input: str, success_reaso
         return _no_store_response(redirect(url_for("verify_2fa", next=safe_next)))
 
     _log_login_attempt(username_input, int(local_user.id), str(local_user.username), True, "login_success", success_reason)
-    login_user(local_user)
+    _login_on_device(local_user)
     return _no_store_response(redirect(safe_next))
 
 
@@ -26365,13 +26382,13 @@ def login():
                 if not totp_secret or setup_done == 0:
                     _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_password", "2fa_setup_required")
                     user = _row_to_user(row)
-                    login_user(user)
+                    _login_on_device(user)
                     return _no_store_response(redirect(url_for("setup_2fa")))
                 # Otherwise require 2FA unless trusted cookie is valid
                 if _trust_cookie_valid_for(int(row["id"])):
                     _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "trusted_device")
                     user = _row_to_user(row)
-                    login_user(user)
+                    _login_on_device(user)
                     return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
                 from flask import session
                 session["2fa_user_id"] = int(row["id"])
@@ -26380,7 +26397,7 @@ def login():
                 return _no_store_response(redirect(url_for("verify_2fa", next=request.args.get("next"))))
             _log_login_attempt(username, int(row["id"]), str(row["username"]), True, "login_success", "password_ok")
             user = _row_to_user(row)
-            login_user(user)
+            _login_on_device(user)
             return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
         _log_login_attempt(username, None, None, False, "login_failed", "invalid_credentials")
         return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
@@ -26495,6 +26512,8 @@ def login_change_password():
 @login_required
 def logout():
     logout_user()
+    session.pop("login_expires_at", None)
+    session.permanent = False
     return _no_store_response(redirect(url_for("login")))
 
 
@@ -26568,7 +26587,7 @@ def verify_2fa():
             _log_login_attempt(str(row["username"]), int(row["id"]), str(row["username"]), True, "login_2fa", "2fa_ok")
             user = _row_to_user(row)
             resp = redirect(_safe_auth_next_url(request.args.get("next")))
-            login_user(user)
+            _login_on_device(user)
             # mark that initial setup is completed
             with closing(get_conn()) as conn:
                 conn.execute("UPDATE users SET totp_setup_done=1 WHERE id=?", (current_user.id,))
