@@ -1434,6 +1434,7 @@ body.view-kameraer .timeline-header-actions {
 /* Align the 'Tilbage' button to the far right; keep delete just to its left */
 #mapperUpBtn { margin-left: auto; order: 3; }
 #mapperDeleteBtn { order: 2; }
+#mapperDeleteBtn.loading { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 #mapperCancelBtn { order: 1; }
 .mapper-input {
   min-width: 260px;

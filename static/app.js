@@ -1490,6 +1490,12 @@ const I18N = {
     mapper_select_download_none: 'Vælg mindst ét billede at downloade.',
     mapper_delete_confirm: 'Slet {count} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.',
     mapper_delete_pending: 'Sletter...',
+    mapper_delete_progress: 'Sletter {kind}: {done} af {total} · {remaining} tilbage',
+    mapper_delete_folders: 'mapper',
+    mapper_delete_photos: 'billeder',
+    mapper_delete_refreshing: 'Slettet {total} af {total} · opdaterer visning…',
+    mapper_delete_partial: '{done} af {total} behandlet. {error}',
+    mapper_delete_incomplete: 'Ikke alle valgte billeder kunne slettes. Kontrollér adgang og opdatér visningen.',
     mapper_delete_failed: 'Kunne ikke slette mapper',
     mapper_delete_error: 'Fejl ved sletning af mapper.',
     mapper_delete_success: 'Slettet {count} mappe(r) og {removed} indekserede filer.',
@@ -2376,6 +2382,12 @@ const I18N = {
     mapper_select_download_none: 'Select at least one photo to download.',
     mapper_delete_confirm: 'Delete {count} folder(s) including all content? This cannot be undone.',
     mapper_delete_pending: 'Deleting...',
+    mapper_delete_progress: 'Deleting {kind}: {done} of {total} · {remaining} remaining',
+    mapper_delete_folders: 'folders',
+    mapper_delete_photos: 'photos',
+    mapper_delete_refreshing: 'Deleted {total} of {total} · refreshing view…',
+    mapper_delete_partial: '{done} of {total} processed. {error}',
+    mapper_delete_incomplete: 'Not all selected photos could be deleted. Check permissions and refresh the view.',
     mapper_delete_failed: 'Could not delete folders',
     mapper_delete_error: 'Error while deleting folders.',
     mapper_delete_success: 'Deleted {count} folder(s) and {removed} indexed files.',
@@ -10119,13 +10131,14 @@ function renderMapperContext(path = '') {
       : tr('mapper_refresh_previews_select_one');
   }
   if (els.mapperDeleteBtn) {
-    const show = !!state.mapperEditMode;
+    const show = !!state.mapperEditMode || !!state.mapperDeleteProgress;
     const canDelete = show && selectedCount > 0;
     els.mapperDeleteBtn.classList.toggle('hidden', !show);
     els.mapperDeleteBtn.disabled = !canDelete;
     els.mapperDeleteBtn.textContent = canDelete
       ? `${tr('mapper_delete_selected')} (${selectedCount})`
       : tr('mapper_delete_selected');
+    renderMapperDeleteProgress();
   }
   if (els.mapperDownloadBtn) {
     const show = !!state.mapperEditMode;
@@ -12873,7 +12886,67 @@ function toggleMapperFolderSelection(folderPath) {
   try { renderMapperContext(state.mapperPath || ''); } catch {}
 }
 
+function renderMapperDeleteProgress() {
+  const progress = state.mapperDeleteProgress;
+  const button = els.mapperDeleteBtn;
+  if (!button || !progress) return;
+  button.disabled = true;
+  button.classList.remove('hidden');
+  button.classList.add('loading');
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = tr(progress.done === progress.total ? 'mapper_delete_refreshing' : 'mapper_delete_progress')
+    .replace('{kind}', tr(progress.kind === 'folders' ? 'mapper_delete_folders' : 'mapper_delete_photos'))
+    .replaceAll('{done}', String(progress.done))
+    .replaceAll('{total}', String(progress.total))
+    .replace('{remaining}', String(progress.total - progress.done));
+  button.title = progress.current || '';
+}
+
+async function runMapperDeleteBatches(items, kind, send, accept) {
+  if (state.mapperDeleteProgress) return false;
+  const progress = {kind, total: items.length, done: 0, current: ''};
+  state.mapperDeleteProgress = progress;
+  try {
+    // Folders remain whole operations (including originals, converted and index cleanup).
+    // Photo batches keep database/preview overhead bounded while exposing real progress.
+    const size = kind === 'folders' ? 1 : 25;
+    for (let offset = 0; offset < items.length; offset += size) {
+      const batch = items.slice(offset, offset + size);
+      progress.current = kind === 'folders' ? batch[0] : '';
+      renderMapperDeleteProgress();
+      const data = await send(batch);
+      const accepted = accept(data, batch) ?? batch.length;
+      progress.done += accepted;
+      renderMapperDeleteProgress();
+      if (accepted !== batch.length) throw new Error(tr('mapper_delete_incomplete'));
+    }
+    return true;
+  } catch (error) {
+    showStatus(tr('mapper_delete_partial').replace('{done}', String(progress.done))
+      .replace('{total}', String(progress.total)).replace('{error}', error.message || tr('mapper_delete_error')), 'err');
+    return false;
+  }
+}
+
+function finishMapperDeleteProgress() {
+  state.mapperDeleteProgress = null;
+  if (els.mapperDeleteBtn) {
+    els.mapperDeleteBtn.classList.remove('loading');
+    els.mapperDeleteBtn.removeAttribute('aria-busy');
+    els.mapperDeleteBtn.removeAttribute('title');
+  }
+  renderMapperContext(state.mapperPath || '');
+}
+
+async function requestMapperDeletion(url, payload) {
+  const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || tr('mapper_delete_failed'));
+  return data;
+}
+
 async function deleteSelectedMapperFolders() {
+  if (state.mapperDeleteProgress) return;
   const selected = Array.from(state.mapperSelectedFolders || []);
   if (!selected.length) {
     showStatus(tr('mapper_select_delete_none'), 'err');
@@ -12882,75 +12955,57 @@ async function deleteSelectedMapperFolders() {
   const confirmMsg = tr('mapper_delete_confirm').replace('{count}', String(selected.length));
   const ok = confirm(confirmMsg);
   if (!ok) return;
-  const deleteBtn = els.mapperDeleteBtn;
-  const originalLabel = deleteBtn ? deleteBtn.textContent : 'Slet valgte';
+  // Match the backend's top-most selection rule so a selected child is not sent twice.
+  const folders = selected.filter(path => !selected.some(parent => parent !== path && path.startsWith(parent + '/')));
+  let deletedCount = 0, removedPhotos = 0;
   try {
-    if (deleteBtn) {
-      deleteBtn.disabled = true;
-      deleteBtn.classList.add('loading');
-      deleteBtn.textContent = tr('mapper_delete_pending');
-    }
-    const res = await fetch('/api/settings/upload-folder-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination: 'uploads', paths: selected }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data || !data.ok) {
-      showStatus((data && data.error) || tr('mapper_delete_failed'), 'err');
-      return;
-    }
-    state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(f => !!f) : [];
-    invalidateStoredFolderPreviews([...(data.preview_folders || []), ...selected]);
-    state.mapperSelectedFolders = new Set();
-    setMapperEditMode(false);
+    const completed = await runMapperDeleteBatches(folders, 'folders',
+      paths => requestMapperDeletion('/api/settings/upload-folder-delete', {destination: 'uploads', paths}),
+      (data, paths) => {
+        deletedCount += Array.isArray(data.deleted) ? data.deleted.length : 0;
+        removedPhotos += Number(data.removed_photos || 0);
+        state.mapperFolders = Array.isArray(data.folders) ? data.folders.filter(Boolean) : state.mapperFolders;
+        invalidateStoredFolderPreviews([...(data.preview_folders || []), ...paths]);
+        for (const path of selected) {
+          if (paths.some(parent => path === parent || path.startsWith(parent + '/'))) state.mapperSelectedFolders.delete(path);
+        }
+      });
+    if (completed) setMapperEditMode(false);
     await loadMapperTools(state.mapperPath || '');
     await loadPhotos();
-    const deletedCount = Array.isArray(data.deleted) ? data.deleted.length : 0;
-    const removedPhotos = Number(data.removed_photos || 0);
-    const successMsg = tr('mapper_delete_success')
-      .replace('{count}', String(deletedCount))
-      .replace('{removed}', String(removedPhotos));
-    showStatus(successMsg, 'ok');
+    if (completed) showStatus(tr('mapper_delete_success').replace('{count}', String(deletedCount)).replace('{removed}', String(removedPhotos)), 'ok');
   } catch {
     showStatus(tr('mapper_delete_error'), 'err');
   } finally {
-    if (deleteBtn) {
-      deleteBtn.classList.remove('loading');
-      deleteBtn.textContent = originalLabel || 'Slet valgte';
-    }
-    renderMapperContext(state.mapperPath || '');
+    finishMapperDeleteProgress();
   }
 }
 
 async function deleteSelectedMapperPhotos() {
+  if (state.mapperDeleteProgress) return;
   const selected = Array.from(state.mapperSelectedPhotoIds || []);
   if (!selected.length) {
     showStatus(tr('mapper_select_delete_none'), 'err');
     return;
   }
-  const ok = confirm(tr('mapper_delete_confirm').replace('{count}', String(selected.length)));
-  if (!ok) return;
-  const deleteBtn = els.mapperDeleteBtn;
-  const originalLabel = deleteBtn ? deleteBtn.textContent : 'Slet valgte';
+  if (!confirm(tr('mapper_delete_confirm').replace('{count}', String(selected.length)))) return;
+  let removed = 0;
   try {
-    if (deleteBtn) {
-      deleteBtn.disabled = true; deleteBtn.classList.add('loading'); deleteBtn.textContent = tr('mapper_delete_pending');
-    }
-    const res = await fetch('/api/photos/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photo_ids: selected }) });
-    const data = await res.json().catch(()=>({}));
-    if (!res.ok || !data || !data.ok) { showStatus((data && data.error) || tr('mapper_delete_failed'), 'err'); return; }
-    invalidateStoredFolderPreviews(data.preview_folders || (data.removed && data.removed.preview_folders) || []);
-    state.mapperSelectedPhotoIds = new Set();
-    setMapperEditMode(false);
+    const completed = await runMapperDeleteBatches(selected, 'photos',
+      photo_ids => requestMapperDeletion('/api/photos/delete', {photo_ids}),
+      (data, batch) => {
+        invalidateStoredFolderPreviews(data.preview_folders || (data.removed && data.removed.preview_folders) || []);
+        for (const id of (data.deleted_ids || batch)) state.mapperSelectedPhotoIds.delete(id);
+        removed += Number((data.removed && data.removed.photos) || 0);
+        return batch.filter(id => (data.deleted_ids || batch).includes(id)).length;
+      });
+    if (completed) setMapperEditMode(false);
     await loadPhotos();
-    const removed = Number((data.removed && data.removed.photos) || selected.length);
-    showStatus(tr('mapper_delete_success').replace('{count}', String(removed)).replace('{removed}', String(removed)), 'ok');
+    if (completed) showStatus(tr('mapper_delete_success').replace('{count}', String(removed)).replace('{removed}', String(removed)), 'ok');
   } catch {
     showStatus(tr('mapper_delete_error'), 'err');
   } finally {
-    if (deleteBtn) { deleteBtn.classList.remove('loading'); deleteBtn.textContent = originalLabel || 'Slet valgte'; }
-    renderMapperContext(state.mapperPath || '');
+    finishMapperDeleteProgress();
   }
 }
 
