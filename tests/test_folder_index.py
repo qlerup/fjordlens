@@ -1,5 +1,6 @@
 """Stand-alone catalogue tests; no Flask, media services, GPU or NAS required."""
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -153,6 +154,7 @@ class FolderIndexTests(unittest.TestCase):
             self.photo(f'uploads/originals/A/{i}.jpg', f'{i}.jpg')
         selected = ['/api/thumbs/4.jpg', '/api/thumbs/1.jpg']
         self.conn.execute('INSERT INTO folder_previews VALUES(?,?,?)', ('A', json.dumps(selected),'now')); self.conn.commit()
+        self.conn.execute('INSERT INTO folder_preview_manual VALUES(?,?)', ('A', json.dumps(selected))); self.conn.commit()
         index.refresh_covers(self.conn)
         self.assertEqual(self.folders()[0]['previews'], selected)
         self.conn.execute('UPDATE folder_previews SET previews_json=?', (json.dumps(['/api/viewable/uploads/originals/A/0.jpg']),)); self.conn.commit()
@@ -162,6 +164,81 @@ class FolderIndexTests(unittest.TestCase):
         index.ensure_path(self.conn, 'A')
         self.conn.execute("INSERT INTO folder_previews VALUES('A','not json','now')"); self.conn.commit()
         self.assertEqual(self.folders()[0]['previews'], [])
+
+    def test_automatic_cover_grows_from_one_to_four(self):
+        self.photo('uploads/originals/A/0.jpg', '0.jpg')
+        index.refresh_covers(self.conn)
+        self.assertEqual(len(self.folders()[0]['previews']), 1)
+        for i in range(1, 5):
+            self.photo(f'uploads/originals/A/{i}.jpg', f'{i}.jpg')
+        index.refresh_covers(self.conn)
+        self.assertEqual(len(self.folders()[0]['previews']), 4)
+
+    def test_waits_for_all_thumbnails_without_starving_other_folders(self):
+        for i in range(5):
+            self.photo(f'uploads/originals/A/{i}.jpg', f'{i}.jpg' if i == 0 else None)
+        self.photo('uploads/originals/B/ready.jpg', 'ready.jpg')
+        index.refresh_covers(self.conn)
+        self.assertEqual(self.folders()[0]['previews'], [])
+        self.assertEqual(len(self.folders()[1]['previews']), 1)
+        for i in range(1,5):
+            self.conn.execute('UPDATE photos SET thumb_name=? WHERE rel_path=?', (f'{i}.jpg',f'uploads/originals/A/{i}.jpg'))
+        self.conn.commit()
+        index.refresh_covers(self.conn)
+        self.assertEqual(len(self.folders()[0]['previews']), 4)
+
+    def test_active_job_in_another_connection_prevents_early_cover(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp)/'test.db'
+            with closing(sqlite3.connect(db)) as other:
+                self.conn.backup(other)
+            def connect(): return sqlite3.connect(db)
+            @index.defer_covers(connect)
+            def upload():
+                with closing(connect()) as writer:
+                    writer.execute("INSERT INTO photos(rel_path,thumb_name) VALUES('uploads/originals/A/a.jpg','a.jpg')")
+                    writer.commit()
+                with closing(connect()) as reader:
+                    self.assertEqual(index.refresh_covers(reader),0)
+                    self.assertEqual(reader.execute('SELECT count(*) FROM folder_previews').fetchone()[0],0)
+                raise RuntimeError('interrupted batch')
+            with self.assertRaises(RuntimeError): upload()
+            with closing(connect()) as reader:
+                self.assertEqual(reader.execute('SELECT count(*) FROM folder_cover_jobs').fetchone()[0],0)
+                self.assertEqual(index.refresh_covers(reader),1)
+
+    def test_dead_job_marker_is_reaped(self):
+        self.photo('uploads/originals/A/a.jpg')
+        self.conn.execute("INSERT INTO folder_cover_jobs VALUES('dead',123456,'old')");self.conn.commit()
+        with patch.object(index.os,'kill',side_effect=ProcessLookupError):
+            self.assertEqual(index.refresh_covers(self.conn),1)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM folder_cover_jobs').fetchone()[0],0)
+
+    def test_recorded_thumbnail_failure_does_not_block_usable_cover(self):
+        self.photo('uploads/originals/A/broken.jpg', None)
+        self.photo('uploads/originals/A/ready.jpg', 'ready.jpg')
+        self.conn.execute('CREATE TABLE processing_failures(rel_path TEXT,stage TEXT)')
+        self.conn.execute("INSERT INTO processing_failures VALUES('uploads/originals/A/broken.jpg','thumbnails')")
+        self.conn.commit()
+        index.refresh_covers(self.conn)
+        self.assertEqual(self.folders()[0]['previews'], ['/api/thumbs/ready.jpg'])
+
+    def test_ready_storage_mirror_satisfies_missing_original_thumbnail(self):
+        self.photo('uploads/originals/A/photo.heic', None)
+        self.photo('uploads/converted/A/photo.jpg', 'ready.jpg')
+        index.refresh_covers(self.conn)
+        self.assertEqual(self.folders()[0]['previews'], ['/api/thumbs/ready.jpg'])
+
+    def test_legacy_short_cover_is_queued_once_on_upgrade(self):
+        for i in range(4): self.photo(f'uploads/originals/A/{i}.jpg', f'{i}.jpg')
+        self.conn.execute("INSERT INTO folder_previews VALUES('A','[\"/api/thumbs/0.jpg\"]','old')")
+        self.conn.execute('DELETE FROM folder_index_dirty')
+        self.conn.execute('DELETE FROM folder_cover_migrations');self.conn.commit()
+        index.install(self.conn);self.conn.commit()
+        index.refresh_covers(self.conn)
+        self.assertEqual(len(self.folders()[0]['previews']),4)
+        index.install(self.conn);self.conn.commit()
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM folder_index_dirty').fetchone()[0],0)
 
     def test_acl_scoped_names_and_thumbnails_and_nested_owner_override(self):
         self.photo('uploads/originals/A/Open/a.jpg', 'allowed.jpg')

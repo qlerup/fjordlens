@@ -3760,6 +3760,7 @@ def _queued_upload_conversion(
         _release_postprocess_conversion_destination(new_path)
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
@@ -4723,6 +4724,7 @@ def _run_postprocess_serialized(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             return _postprocess_uploaded_rels(*args, **kwargs)
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
     user = str(uploaded_by or "").strip() or "__unknown__"
     workflow_mode = upload_workflow_mode()
@@ -5791,7 +5793,7 @@ def ensure_runtime_bootstrap() -> None:
         _ensure_install_state_for_existing_users()
         DB_BOOTSTRAP_READY = True
         if app.config.get("FOLDER_INDEX_WORKERS", False):
-            folder_index.start_workers(DB_PATH, UPLOAD_DIR)
+            folder_index.start_workers(DB_PATH, UPLOAD_DIR, THUMB_DIR)
 
 
 def _normalize_folder_acl_path(value: Optional[str]) -> str:
@@ -7697,74 +7699,16 @@ def _mapper_folder_from_rel(rel_path: str) -> str:
 
 
 def _compute_and_store_folder_previews(folder_key: str) -> list[str]:
-    # Build accepted prefixes under uploads
     f = str(folder_key or "").strip()
-    # Avoid scanning the entire library for root previews; show placeholder instead
-    if f == "":
+    if not f:
         return []
-    prefixes = [
-        f"uploads/{f}",
-        f"uploads/originals/{f}" if f else "uploads/originals",
-        f"uploads/converted/{f}" if f else "uploads/converted",
-    ]
-    where = " OR ".join(["rel_path LIKE ? || '/%'"] * len(prefixes))
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            f"SELECT id, rel_path, thumb_name FROM photos WHERE ({where}) "
-            "AND COALESCE(thumb_name, '') != '' "
-            "ORDER BY COALESCE(captured_at, modified_fs, created_fs) DESC LIMIT 800",
-            prefixes,
-        ).fetchall()
-    rows = _dedupe_upload_storage_rows(rows)
-    own: list[str] = []
-    desc: list[str] = []
-    seen: set[str] = set()
-    for r in rows:
-        rel = str(r["rel_path"] or "")
-        photo_folder = _mapper_folder_from_rel(rel)
-        bucket = own if photo_folder == f else desc
-        if len(bucket) >= 4:
-            continue
-        thumb_name = str(r["thumb_name"] or "").strip()
-        if not thumb_name or thumb_name in seen or not (THUMB_DIR / thumb_name).is_file():
-            continue
-        if photo_folder != f and not photo_folder.startswith(f + "/"):
-            continue
-        bucket.append(f"/api/thumbs/{thumb_name}")
-        seen.add(thumb_name)
-        if len(own) == 4:
-            break
-    ordered = own + desc
-    if not ordered:
-        try:
-            with closing(get_conn()) as conn:
-                conn.execute("DELETE FROM folder_previews WHERE folder_path=?", (f,))
-                conn.commit()
-        except Exception:
-            pass
-        return []
-    pick: list[str]
-    if len(ordered) >= 4:
-        pick = ordered[:4]
-    elif len(ordered) >= 2:
-        pick = ordered[:2]
-    else:
-        pick = ordered[:1]
-    payload = json.dumps(pick, ensure_ascii=False)
-    now = now_iso()
-    with closing(get_conn()) as conn:
-        conn.execute(
-            """
-            INSERT INTO folder_previews(folder_path, previews_json, updated_at)
-            VALUES(?,?,?)
-            ON CONFLICT(folder_path) DO UPDATE SET
-                previews_json=excluded.previews_json,
-                updated_at=excluded.updated_at
-            """,
-            (f, payload, now),
-        )
+        folder_index.ensure_path(conn, f)
+        folder_index.mark_dirty(conn, f)
         conn.commit()
-    return pick
+        folder_index.refresh_covers(conn, limit=1, thumb_root=THUMB_DIR, only=f)
+        row = conn.execute("SELECT previews_json FROM folder_previews WHERE folder_path=?", (f,)).fetchone()
+        return folder_index._saved_urls(row[0]) if row else []
 
 
 @app.route("/api/folder-previews", methods=["GET"])
@@ -7803,7 +7747,9 @@ def api_folder_previews_get():
         try:
             key = str(r[0])
             urls = json.loads(str(r[1] or "[]")) or []
-            if _folder_preview_urls_are_current(key, urls):
+            with closing(get_conn()) as conn:
+                manual = folder_index.manual_cover(conn, key, str(r[1] or "[]"))
+            if _folder_preview_urls_are_current(key, urls) and (len(urls) == 4 or manual):
                 items[key] = urls
         except Exception:
             pass
@@ -7858,6 +7804,7 @@ def api_folder_previews_set():
             """,
             (folder, payload, now),
         )
+        conn.execute("INSERT OR REPLACE INTO folder_preview_manual(folder_path,previews_json) VALUES(?,?)", (folder, payload))
         conn.commit()
     return jsonify({"ok": True, "folder": folder, "previews": urls, "updated_at": now})
 
@@ -13900,6 +13847,7 @@ def reverse_geocode_providers(lat: float, lon: float) -> tuple[Optional[str], Op
     return None, None
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def rescan_metadata(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("rescan_start")
@@ -14477,6 +14425,7 @@ def iter_photo_files(root: Path, prefix: str = "") -> Iterable[Tuple[Path, str]]
         yield p, rel
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def scan_library(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("scan_start")
@@ -20910,6 +20859,7 @@ def api_rescan_status():
     return jsonify(resp)
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def rethumb_all(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("rethumb_start")
@@ -20971,6 +20921,7 @@ def api_rethumb_status():
     return jsonify(resp)
 
 
+@folder_index.defer_covers(lambda: get_conn())
 def rethumb_missing(stop_event=None) -> Dict[str, Any]:
     init_db()
     log_event("rethumb_missing_start")

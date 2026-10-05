@@ -6,6 +6,8 @@ are never opened by this module. The directory discovery worker is separate from
 both HTTP requests and the cover worker; an unavailable NAS cannot block browsing.
 """
 from contextlib import closing
+from functools import wraps
+import uuid
 from datetime import datetime, timezone
 import json
 import hashlib
@@ -96,6 +98,14 @@ def _install(conn):
     conn.execute('CREATE TABLE IF NOT EXISTS folder_index(path TEXT PRIMARY KEY, parent TEXT NOT NULL, name TEXT NOT NULL)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_folder_index_parent ON folder_index(parent,name)')
     conn.execute('CREATE TABLE IF NOT EXISTS folder_index_dirty(path TEXT PRIMARY KEY)')
+    conn.execute('CREATE TABLE IF NOT EXISTS folder_preview_manual(folder_path TEXT PRIMARY KEY, previews_json TEXT NOT NULL)')
+    conn.execute('CREATE TABLE IF NOT EXISTS folder_cover_jobs(token TEXT PRIMARY KEY, pid INTEGER NOT NULL, process_start TEXT NOT NULL)')
+    # Revisit old undersized automatic covers once; the old format did not
+    # distinguish a first-ready thumbnail from an explicit user selection.
+    conn.execute('CREATE TABLE IF NOT EXISTS folder_cover_migrations(version INTEGER PRIMARY KEY)')
+    if not conn.execute('SELECT 1 FROM folder_cover_migrations WHERE version=1').fetchone():
+        conn.execute('INSERT OR IGNORE INTO folder_index_dirty SELECT folder_path FROM folder_previews')
+        conn.execute('INSERT INTO folder_cover_migrations VALUES(1)')
     conn.execute("CREATE TABLE IF NOT EXISTS folder_index_state(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, topology INTEGER NOT NULL DEFAULT 0, disk_root TEXT NOT NULL DEFAULT '')")
     conn.execute('INSERT OR IGNORE INTO folder_index_state(id) VALUES(1)')
     for path in legacy:
@@ -146,7 +156,7 @@ def remove_tree(conn, path):
     path = normalize(path)
     if not path:
         raise ValueError('Cannot delete catalogue root')
-    for table, column in [('folder_index', 'path'), ('folder_index_dirty', 'path'), ('folder_previews', 'folder_path')]:
+    for table, column in [('folder_index', 'path'), ('folder_index_dirty', 'path'), ('folder_previews', 'folder_path'), ('folder_preview_manual', 'folder_path')]:
         conn.execute(f'DELETE FROM {table} WHERE {column}=? OR ({column}>=? AND {column}<?)', (path, path+'/', path+'0'))
     mark_dirty(conn, path.rpartition('/')[0])
 
@@ -160,6 +170,8 @@ def rename_tree(conn, old, new):
     for row in rows:
         ensure_path(conn, new+row[0][len(old):])
     # Existing app moves saved preview selections before calling this function.
+    for path, payload in conn.execute('SELECT folder_path,previews_json FROM folder_preview_manual WHERE folder_path=? OR (folder_path>=? AND folder_path<?)', (old, old+'/', old+'0')).fetchall():
+        conn.execute('INSERT OR REPLACE INTO folder_preview_manual VALUES(?,?)', (new+path[len(old):], payload))
     remove_tree(conn, old)
     mark_dirty(conn, new)
     for row in rows:
@@ -234,37 +246,109 @@ def list_folders(conn, parent, visible, *, tree=False):
     return items
 
 
-def refresh_covers(conn, limit=8):
+def _process_start(pid):
+    try:
+        return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+    except OSError:
+        return ''
+
+
+def covers_busy(conn):
+    """Cross-worker batch barrier. Reap markers left by terminated workers."""
+    busy = False
+    for token, pid, started in conn.execute('SELECT token,pid,process_start FROM folder_cover_jobs').fetchall():
+        try:
+            if pid != os.getpid():
+                os.kill(pid, 0)
+            alive = not started or _process_start(pid) == started
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            alive = True
+        if alive:
+            busy = True
+        else:
+            conn.execute('DELETE FROM folder_cover_jobs WHERE token=?', (token,))
+    return busy
+
+
+def defer_covers(connect):
+    """Keep partial scan/upload/rethumbnail batches out of automatic covers."""
+    def decorate(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            token = uuid.uuid4().hex
+            with closing(connect()) as conn:
+                conn.execute('CREATE TABLE IF NOT EXISTS folder_cover_jobs(token TEXT PRIMARY KEY, pid INTEGER NOT NULL, process_start TEXT NOT NULL)')
+                conn.execute('INSERT INTO folder_cover_jobs VALUES(?,?,?)', (token, os.getpid(), _process_start(os.getpid())))
+                conn.commit()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                with closing(connect()) as conn:
+                    conn.execute('DELETE FROM folder_cover_jobs WHERE token=?', (token,))
+                    conn.commit()
+        return wrapped
+    return decorate
+
+
+def manual_cover(conn, path, saved):
+    row = conn.execute('SELECT previews_json FROM folder_preview_manual WHERE folder_path=?', (path,)).fetchone()
+    return bool(row and _saved_urls(row[0]) == _saved_urls(saved))
+
+
+def refresh_covers(conn, limit=8, thumb_root=None, only=None):
     """Drain coalesced invalidations. All reads/writes share a transaction.
 
     A concurrent upload either commits before this snapshot or requeues the
     folder afterwards. Deletion cannot be resurrected by a stale cover job.
     """
     done = 0
+    attempted = set()
     for _ in range(limit):
         conn.execute('BEGIN IMMEDIATE')
         try:
-            row = conn.execute('SELECT path FROM folder_index_dirty ORDER BY rowid LIMIT 1').fetchone()
+            if covers_busy(conn):
+                conn.commit()
+                break
+            row = (conn.execute('SELECT path FROM folder_index_dirty WHERE path=?', (only,)).fetchone() if only is not None
+                   else conn.execute('SELECT path FROM folder_index_dirty ORDER BY rowid LIMIT 1').fetchone())
             if not row:
                 conn.commit()
                 break
             path = row[0]
+            if path in attempted:
+                conn.commit()
+                break
+            attempted.add(path)
             if conn.execute('SELECT 1 FROM folder_index WHERE path=?', (path,)).fetchone():
                 saved = conn.execute('SELECT previews_json FROM folder_previews WHERE folder_path=?', (path,)).fetchone()
                 candidates = []
                 for prefix in ('uploads/converted/', 'uploads/originals/', 'uploads/'):
                     base = prefix+path
                     candidates.extend(conn.execute('''SELECT rel_path,thumb_name FROM photos
-                        WHERE rel_path>=? AND rel_path<? AND coalesce(thumb_name,'')<>''
-                        ORDER BY rel_path LIMIT 64''', (base+'/',base+'0')).fetchall())
+                        WHERE rel_path>=? AND rel_path<?
+                        ORDER BY rel_path''', (base+'/',base+'0')).fetchall())
                 candidates = [r for r in candidates if _valid_photo_folder(r[0]) is not None]
                 candidates.sort(key=lambda r: _valid_photo_folder(r[0]) != path)
+                ready = [r for r in candidates if r[1] and (thumb_root is None or (Path(thumb_root) / r[1]).is_file())]
+                ready_keys = {_logical_photo(r[0]) for r in ready}
+                failed = set()
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='processing_failures'").fetchone():
+                    failed = {r[0] for r in conn.execute("SELECT rel_path FROM processing_failures WHERE stage='thumbnails'")}
+                if any(_logical_photo(r[0]) not in ready_keys and r[0] not in failed for r in candidates):
+                    # Retry missing thumbnails without starving other folders.
+                    conn.execute('DELETE FROM folder_index_dirty WHERE path=?', (path,))
+                    conn.execute('INSERT INTO folder_index_dirty(path) VALUES(?)', (path,))
+                    conn.commit()
+                    continue
+                candidates = ready
                 urls, logical = [], set()
-                # Keep explicit/previous selections, even if not in the first 64.
+                # Keep valid existing selections while filling automatic covers.
                 old = _saved_urls(saved[0]) if saved else []
                 for url in old:
                     name = _thumb_name(url)
-                    if not name:
+                    if not name or (thumb_root is not None and not (Path(thumb_root) / name).is_file()):
                         continue
                     for rel, in conn.execute('SELECT rel_path FROM photos WHERE thumb_name=?', (name,)):
                         folder = _valid_photo_folder(rel)
@@ -273,9 +357,9 @@ def refresh_covers(conn, limit=8):
                                 urls.append(url)
                             logical.add(_logical_photo(rel))
                             break
-                # A selected 1/2/4-image mosaic stays selected; only fill empty or
-                # partially deleted selections, not all previously valid mosaics.
-                target = len(old) if old else 4
+                # Only explicit user selections fix the size. Automatic covers
+                # must grow when more thumbnails become available.
+                target = len(old) if saved and manual_cover(conn, path, saved[0]) else 4
                 for rel, name in candidates:
                     if len(urls) >= target:
                         break
@@ -359,7 +443,7 @@ _workers = set()
 _worker_lock = threading.Lock()
 
 
-def start_workers(db_path, upload_root):
+def start_workers(db_path, upload_root, thumb_root=None):
     """Called only by production bootstrap. Capture paths, not mutable globals."""
     key = (str(db_path), str(upload_root))
     with _worker_lock:
@@ -372,7 +456,7 @@ def start_workers(db_path, upload_root):
         while True:
             try:
                 with closing(connect()) as conn:
-                    count = refresh_covers(conn)
+                    count = refresh_covers(conn, thumb_root=thumb_root)
                 time.sleep(.2 if count else 2)
             except Exception:
                 log.exception('Folder cover index update failed; will retry')

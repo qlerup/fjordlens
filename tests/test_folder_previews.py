@@ -58,7 +58,9 @@ class FolderPreviewTests(unittest.TestCase):
         self.photo('Empty', 'missing', thumb=False)
         self.assertEqual(self.get(['Empty'])['Empty'], [])
         url = self.photo('Empty', 'ready')
-        self.assertEqual(self.get(['Empty'])['Empty'], [url])
+        self.assertEqual(self.get(['Empty'])['Empty'], [])
+        Image.new('RGB', (16, 12), 'green').save(fjordlens.THUMB_DIR / 'missing.jpg')
+        self.assertEqual(set(self.get(['Empty'])['Empty']), {url, '/api/thumbs/missing.jpg'})
 
     def test_legacy_original_covers_are_replaced_and_manual_thumbs_preserved(self):
         urls = [self.photo('Folder', str(i)) for i in range(5)]
@@ -67,9 +69,8 @@ class FolderPreviewTests(unittest.TestCase):
                          ('Folder', json.dumps(['/api/viewable/uploads/originals/Folder/0.jpg']), fjordlens.now_iso()))
             conn.commit()
         self.assertTrue(all(url.startswith('/api/thumbs/') for url in self.get(['Folder'])['Folder']))
-        with fjordlens.closing(fjordlens.get_conn()) as conn:
-            conn.execute('UPDATE folder_previews SET previews_json=?', (json.dumps([urls[4], urls[1]]),))
-            conn.commit()
+        with fjordlens.app.test_request_context('/api/folder-previews', method='POST', json={'folder':'Folder', 'previews':[urls[4], urls[1]]}):
+            self.assertTrue(fjordlens.api_folder_previews_set().get_json()['ok'])
         self.assertEqual(self.get(['Folder'])['Folder'], [urls[4], urls[1]])
 
     def test_removed_photo_does_not_stay_in_saved_cover(self):
