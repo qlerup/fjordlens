@@ -19324,7 +19324,6 @@ async function startExistingConversion(type, btn = null) {
       if (els.editUploaderBtn) els.editUploaderBtn.classList.remove('hidden');
       if (els.viEditUploaderBtn) els.viEditUploaderBtn.classList.remove('hidden');
     }
-    if (role === 'admin' && !state.logsRunning) startLogs();
   } catch {}
 })();
 
@@ -19339,20 +19338,7 @@ setView(state.view, { syncUrl: false, personId: _initialRoute.personId, cameraMo
       }
     }).catch(() => {});
   }
-  // Start logs only for administrators.
-  try {
-    const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
-    if (role === 'admin') {
-      startLogs();
-    } else {
-      // Ensure UI reflects stopped state
-      state.logsRunning = false;
-      if (els.logsStart) els.logsStart.textContent = tr ? tr('btn_start') : 'Start';
-    }
-  } catch {
-    // Fallback: do not start logs if uncertain about role
-    state.logsRunning = false;
-  }
+  // Log fetching starts only when the user presses Start.
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
     if (role === 'admin') loadVideoPlaybackSettings({ silent: true }).catch(() => {});
@@ -21304,11 +21290,19 @@ function fmtLogTime(ts) {
   }
 }
 
+let logsPollTimer = null;
+let logsPollGeneration = 0;
+let logsRequestController = null;
+
 async function pollLogs() {
   if (!state.logsRunning) return;
+  const generation = logsPollGeneration;
   const revision = logViewRevision;
+  const controller = new AbortController();
+  logsRequestController = controller;
   try {
-    const res = await fetch(`/api/logs?after=${state.logsAfter}`);
+    const res = await fetch(`/api/logs?after=${state.logsAfter}`, { signal: controller.signal });
+    if (!state.logsRunning || generation !== logsPollGeneration) return;
     // If user lacks permission (401/403), stop polling to avoid spam
     if (res && (res.status === 401 || res.status === 403)) {
       stopLogs();
@@ -21318,6 +21312,7 @@ async function pollLogs() {
       throw new Error('logs fetch failed');
     }
     const data = await res.json();
+    if (!state.logsRunning || generation !== logsPollGeneration) return;
     if (data && data.items && revision === logViewRevision) {
       applyLogResolutions(data);
       const knownIds = new Set(state.logItems.map(item => item.id));
@@ -21370,7 +21365,12 @@ async function pollLogs() {
       renderLogList();
     }
   } catch {}
-  setTimeout(pollLogs, 1000);
+  finally {
+    if (logsRequestController === controller) logsRequestController = null;
+  }
+  if (state.logsRunning && generation === logsPollGeneration) {
+    logsPollTimer = setTimeout(pollLogs, 1000);
+  }
 }
 
 function startLogs() {
@@ -21381,6 +21381,11 @@ function startLogs() {
 }
 function stopLogs() {
   state.logsRunning = false;
+  ++logsPollGeneration;
+  clearTimeout(logsPollTimer);
+  logsPollTimer = null;
+  if (logsRequestController) logsRequestController.abort();
+  logsRequestController = null;
   if (els.logsStart) els.logsStart.textContent = "Start";
 }
 
