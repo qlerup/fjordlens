@@ -1901,17 +1901,14 @@ body.view-mapper .photo-card img {
 .folder-card { display: flex; flex-direction: column; }
 .folder-private-badge {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0 0 var(--folder-overlay-h);
+  display: grid;
+  place-items: center;
   z-index: 2;
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: rgba(10, 24, 29, .9);
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, .3);
-  font-size: 14px;
-  font-weight: 700;
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-weight: 800;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, .85);
   pointer-events: none;
 }
 .folder-card .card-body {
