@@ -9,11 +9,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}FjordLens{% endblock %}</title>
   <!-- Icons / PWA manifest -->
-  <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v=app_build) }}" sizes="any">
-  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='logos/web/favicon-32x32.png', v=app_build) }}">
-  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='logos/web/favicon-16x16.png', v=app_build) }}">
-  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v=app_build) }}">
-  <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v=app_build) }}">
+  <link rel="icon" href="{{ url_for('static', filename='logos/web/favicon.ico', v='brand-20261005') }}" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='logos/web/favicon-32x32.png', v='brand-20261005') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='logos/web/favicon-16x16.png', v='brand-20261005') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='logos/web/apple-touch-icon.png', v='brand-20261005') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='logos/web/site.webmanifest', v='brand-20261005') }}">
   <!-- Match browser chrome with theme; supports auto and overrides -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="{{ dark_color if saved_theme == 'dark' else light_color }}">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="{{ light_color if saved_theme == 'light' else dark_color }}">
@@ -24,7 +24,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="msapplication-TileColor" content="#041A44">
-  <meta name="msapplication-config" content="{{ url_for('static', filename='logos/web/browserconfig.xml', v=app_build) }}">
+  <meta name="msapplication-config" content="{{ url_for('static', filename='logos/web/browserconfig.xml', v='brand-20261005') }}">
   <script>
     (function () {
       'use strict';
