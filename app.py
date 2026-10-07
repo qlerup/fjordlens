@@ -17503,6 +17503,7 @@ def index():
         "index.html",
         user_role=(role or "user"),
         user_profile=profile,
+        no_folder_access=(_current_user_acl_prefixes() == []),
         scan_enabled=bool(ENABLE_SCAN_FEATURES),
     )
 
@@ -22692,6 +22693,14 @@ def api_photos():
     requested_lang = request.args.get("search_lang")
     _, user_lang = _current_user_pref_languages()
     search_language = _normalize_language(requested_lang, user_lang)
+
+    # No grants means no visible photos. Avoid scanning and serializing the
+    # entire library just to discard every row in the paged ACL filter.
+    if _current_user_acl_prefixes() == []:
+        return jsonify(items=[], count=0, total=0, has_more=False,
+                       next_offset=offset, offset=offset, limit=limit,
+                       view=view, sort=sort, folder=folder, query=q,
+                       search_lang=search_language, disk_sync=None, no_folder_access=True)
 
     try:
         # Interactive browsing reads the existing index immediately. Filesystem

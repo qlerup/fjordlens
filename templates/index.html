@@ -30,7 +30,7 @@
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
   <!-- JS indlæses nu lazy via app.js når 'Steder' åbnes -->
 </head>
-<body>
+<body data-no-folder-access="{{ 'true' if no_folder_access else 'false' }}">
   <div class="fjord-backdrop" aria-hidden="true">
     <div class="fl-aurora fl-aurora-a"></div>
     <div class="fl-aurora fl-aurora-b"></div>
@@ -827,9 +827,10 @@
         <div class="tab-panel hidden" data-tabpanel="logs" id="logsPanel">
           <div class="status" style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
             <strong>Logs:</strong>
-            <button id="logsStart" class="btn">Start</button>
             <button id="mainLogsClear" class="btn">Ryd</button>
           </div>
+          <p class="mini-label">Logs hentes og opdateres automatisk.</p>
+          <p id="logsError" role="alert" hidden></p>
           <div class="log-browser">
             <div id="logCategoryTabs" class="log-category-tabs" role="tablist" aria-label="Logkategorier"></div>
             <div id="mainLogs" class="log-list" aria-live="polite"></div>
@@ -1453,6 +1454,9 @@
         hideTab('upload_workflow');
         hideTab('file_types');
         hideTab('update');
+        // System settings are administrator-only. Do not activate a hidden
+        // settings tab and fetch privileged APIs during a normal user's login.
+        return;
       }
       // Ensure one visible tab is active
       const activeBtn = document.querySelector('#settingsPanel .tab-btn.active');

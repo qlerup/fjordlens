@@ -11,6 +11,18 @@ class GalleryBrowseTests(unittest.TestCase):
     setUp = fixtures.VideoAutoplaySettingsTests.setUp
     tearDown = fixtures.VideoAutoplaySettingsTests.tearDown
     _authenticated_client = fixtures.VideoAutoplaySettingsTests._authenticated_client
+
+    def test_no_folder_grants_return_empty_without_reading_library(self):
+        self.seed(350)
+        client = self._authenticated_client(2)
+        with patch.object(fl, 'query_photos', side_effect=AssertionError('must not read library')):
+            for view in ('timeline', 'favorites', 'mapper', 'kameraer'):
+                with self.subTest(view=view):
+                    data = self.page(client, view, include_total='1')
+                    self.assertEqual(data['items'], [])
+                    self.assertEqual(data['total'], 0)
+                    self.assertFalse(data['has_more'])
+                    self.assertTrue(data['no_folder_access'])
     def seed(self, count=180, mirrors=False):
         with fl.closing(fl.get_conn()) as conn:
             for i in range(count):

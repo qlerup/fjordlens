@@ -278,10 +278,9 @@ const els = {
   detailRethumbBtn: document.getElementById("detailRethumbBtn"),
   // logs
   logsBox: document.getElementById("liveLogs"),
-  logsStart: document.getElementById("logsStart"),
+  logsError: document.getElementById("logsError"),
   logsClear: document.getElementById("logsClear"),
   mainLogsBox: document.getElementById("mainLogs"),
-  mainLogsStart: document.getElementById("mainLogsStart"),
   mainLogsClear: document.getElementById("mainLogsClear"),
   logCategoryTabs: document.getElementById("logCategoryTabs"),
   logPagination: document.getElementById("logPagination"),
@@ -2912,6 +2911,7 @@ let state = {
   mapperGhostCapacity: 0,
   photosHasMore: false,
   photosLoading: false,
+  noFolderAccess: document.body.dataset.noFolderAccess === 'true',
   currentUser: {
     id: APP_PROFILE.id || null,
     username: APP_PROFILE.username || '',
@@ -6532,6 +6532,17 @@ function renderGrid() {
   // Always hide special panels first
   if (els.settingsPanel) els.settingsPanel.classList.add("hidden");
   if (els.placesMapWrap) els.placesMapWrap.classList.add("hidden");
+  if (state.noFolderAccess && isPagedGalleryView(state.view) && !state.items.length) {
+    els.grid.replaceChildren();
+    els.grid.setAttribute('aria-busy', 'false');
+    state.photosTotalItems = 0;
+    state.mapperTotalItems = 0;
+    renderEmpty(state.uiLanguage === 'en'
+      ? 'You do not have access to any folders yet. Ask an administrator to give you access.'
+      : 'Du har endnu ikke adgang til nogen mapper. Bed en administrator om at give dig adgang.');
+    setDetail(null); renderStats();
+    return;
+  }
   const loading = isPagedGalleryView(state.view) && (state.photosLoading || (state.view === 'mapper' && (state.mapperFoldersLoading || state.mapperIndexing))) && !state.items.length;
   if (els.grid) els.grid.setAttribute('aria-busy', loading ? 'true' : 'false');
   // Folder cards are usable before photos or cover thumbnails arrive.
@@ -8526,6 +8537,7 @@ async function loadPhotosPage(append = false, preserveScroll = false, useCache =
     throw new Error(data?.error || 'photos_failed');
   } else {
     const incoming = Array.isArray(data.items) ? data.items : [];
+    state.noFolderAccess = data.no_folder_access === true;
     if (cameraOverview) state.cameras = Array.isArray(data.cameras) ? data.cameras : [];
     if (append) state.items = (state.items || []).concat(incoming);
     else state.items = incoming;
@@ -14420,7 +14432,6 @@ function applyUiLanguage() {
 
   const logsLabel = document.querySelector('#logsPanel strong');
   if (logsLabel) logsLabel.textContent = tr('logs_label');
-  if (els.logsStart) els.logsStart.textContent = state.logsRunning ? tr('btn_stop') : tr('btn_start');
   if (els.mainLogsClear) els.mainLogsClear.textContent = tr('btn_clear');
   renderLogList();
 
@@ -16053,6 +16064,7 @@ function collectAiExternalFoldersFromModal() {
 }
 
 async function loadAiExternalSettings({ openModal = false } = {}) {
+  if (state.currentUser?.role !== 'admin') return null;
   try {
     const res = await fetch('/api/ai/describe/external/settings');
     const data = await res.json().catch(() => ({}));
@@ -17355,6 +17367,7 @@ if (els.aiExternalLinksList) {
 // Settings tabs switching
 document.querySelectorAll('#settingsPanel .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (state.currentUser?.role !== 'admin') return;
     const tab = btn.dataset.tab;
     state.settingsTab = _normalizeSettingsTab(tab) || 'logs';
     // activate button
@@ -19449,6 +19462,7 @@ async function startExistingConversion(type, btn = null) {
     if (role === 'admin') {
       if (els.editUploaderBtn) els.editUploaderBtn.classList.remove('hidden');
       if (els.viEditUploaderBtn) els.viEditUploaderBtn.classList.remove('hidden');
+      startLogs();
     }
   } catch {}
 })();
@@ -19464,7 +19478,6 @@ setView(state.view, { syncUrl: false, personId: _initialRoute.personId, cameraMo
       }
     }).catch(() => {});
   }
-  // Log fetching starts only when the user presses Start.
   try {
     const role = (state.currentUser && state.currentUser.role) ? String(state.currentUser.role) : 'user';
     if (role === 'admin') loadVideoPlaybackSettings({ silent: true }).catch(() => {});
@@ -21420,6 +21433,12 @@ let logsPollTimer = null;
 let logsPollGeneration = 0;
 let logsRequestController = null;
 
+function showLogsError(message) {
+  if (!els.logsError) return;
+  els.logsError.textContent = message;
+  els.logsError.hidden = !message;
+}
+
 async function pollLogs() {
   if (!state.logsRunning) return;
   const generation = logsPollGeneration;
@@ -21432,13 +21451,16 @@ async function pollLogs() {
     // If user lacks permission (401/403), stop polling to avoid spam
     if (res && (res.status === 401 || res.status === 403)) {
       stopLogs();
+      showLogsError(res.status === 401 ? 'Log ind igen for at hente logs.' : 'Du har ikke adgang til logs. Log ind som administrator.');
       return;
     }
     if (!res.ok) {
-      throw new Error('logs fetch failed');
+      throw new Error(`Serveren kunne ikke hente logs (HTTP ${res.status}).`);
     }
     const data = await res.json();
     if (!state.logsRunning || generation !== logsPollGeneration) return;
+    if (!data || !Array.isArray(data.items)) throw new Error('Serveren returnerede et ugyldigt logsvar.');
+    showLogsError('');
     if (data && data.items && revision === logViewRevision) {
       applyLogResolutions(data);
       const knownIds = new Set(state.logItems.map(item => item.id));
@@ -21490,7 +21512,11 @@ async function pollLogs() {
       state.logsAfter = Math.max(Number(state.logsAfter || 0), Number(data.next || 0));
       renderLogList();
     }
-  } catch {}
+  } catch (error) {
+    if (state.logsRunning && generation === logsPollGeneration && error.name !== 'AbortError') {
+      showLogsError(`Kunne ikke hente logs: ${error.message} Prøver automatisk igen.`);
+    }
+  }
   finally {
     if (logsRequestController === controller) logsRequestController = null;
   }
@@ -21502,7 +21528,6 @@ async function pollLogs() {
 function startLogs() {
   if (state.logsRunning) return;
   state.logsRunning = true;
-  if (els.logsStart) els.logsStart.textContent = "Stop";
   pollLogs();
 }
 function stopLogs() {
@@ -21512,7 +21537,6 @@ function stopLogs() {
   logsPollTimer = null;
   if (logsRequestController) logsRequestController.abort();
   logsRequestController = null;
-  if (els.logsStart) els.logsStart.textContent = "Start";
 }
 
 async function clearLogs() {
@@ -21537,9 +21561,6 @@ async function clearLogs() {
   }
 }
 
-els.logsStart && els.logsStart.addEventListener('click', () => {
-  if (state.logsRunning) stopLogs(); else startLogs();
-});
 els.logsClear && els.logsClear.addEventListener('click', clearLogs);
 els.mainLogsClear && els.mainLogsClear.addEventListener('click', clearLogs);
 els.logPrevPage && els.logPrevPage.addEventListener('click', () => {

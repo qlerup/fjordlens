@@ -91,6 +91,12 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         if url.hostname != 'fjordlens.test':
             route.abort(); return
         self.requests.append(url.path + '?' + url.query)
+        if getattr(self, 'real_access_checks', False) and url.path in (
+                '/api/me', '/api/photos', '/api/ai/describe/external/settings'):
+            response = self.client.get(url.path + ('?' + url.query if url.query else ''))
+            route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
+            response.close()
+            return
         if url.path in ('/api/photos', '/api/cameras'):
             view = parse_qs(url.query).get('view', [''])[0]
             if view == self.hold_view:
@@ -123,6 +129,33 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         route.fulfill(json={'ok': True, 'folders': paths, 'parent': parent, 'revision': 1,
                             'items': [{'path': p, 'name': p.split('/')[-1], 'previews': ['/test/thumb.jpg']} for p in paths],
                             'indexing': False, 'pending_previews': False})
+
+    def test_login_without_folder_access_finishes_loading_without_admin_errors(self):
+        self.real_access_checks = True
+        self.client = self.fixture._authenticated_client(user_id=2)
+        for role in ('user', 'manager'):
+            with self.subTest(role=role):
+                with fixtures.fjordlens.closing(fixtures.fjordlens.get_conn()) as conn:
+                    conn.execute('UPDATE users SET role=? WHERE id=2', (role,))
+                    conn.commit()
+                self.requests.clear()
+                self.errors.clear()
+                self.page.reload(wait_until='networkidle')
+                self.page.wait_for_function('!state.photosLoading')
+                self.assertEqual(self.errors, [])
+                self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
+                self.assertFalse(self.page.evaluate("els.empty.classList.contains('hidden')"))
+                self.assertEqual(self.page.locator('#galleryGrid .photo-card').count(), 0)
+                self.assertFalse(any('/api/ai/describe/external/settings' in request for request in self.requests))
+
+    def test_no_folder_access_has_no_ghosts_even_while_photos_request_is_pending(self):
+        self.client = self.fixture._authenticated_client(user_id=2)
+        self.page.route('**/api/photos?**', lambda route: self.pending.append(route))
+        self.page.reload(wait_until='domcontentloaded')
+        self.page.wait_for_function('state.photosLoading && state.noFolderAccess')
+        self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
+        self.assertIn('Du har endnu ikke adgang', self.page.evaluate('els.empty.textContent'))
+        self.assertEqual(self.page.evaluate('els.photoCount.textContent'), '0')
 
     def test_empty_photo_page_does_not_flash_empty_while_folder_index_is_pending(self):
         self.total = 0
