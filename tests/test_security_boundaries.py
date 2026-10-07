@@ -241,6 +241,14 @@ class SecurityBoundaryTests(unittest.TestCase):
             sess['2fa_user_id'] = 3
             sess['2fa_issued_at'] = time.time() if issued is None else issued
 
+    def test_password_login_locks_after_five_failures(self):
+        for _ in range(5):
+            response = self.anonymous.post('/login', data={'username': 'user3', 'password': 'wrong-password'})
+            self.assertEqual(response.status_code, 200)
+        blocked = self.anonymous.post('/login', data={'username': 'user3', 'password': 'test-password'})
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn('For mange mislykkede forsøg', blocked.get_data(as_text=True))
+
     def test_totp_budget_survives_cookie_replay_and_new_password_login(self):
         secret = core.pyotp.random_base32()
         with core.closing(core.get_conn()) as conn:
