@@ -14,10 +14,11 @@ function setup() {
   };
   const button = {textContent:'Delete', classList:{add(){},remove(){}}, setAttribute(){},removeAttribute(){}};
   const messages = [];
-  const ctx = vm.createContext({state:{mapperSelectedFolders:new Set(),mapperSelectedPhotoIds:new Set()},
+  const ctx = vm.createContext({state:{currentUser:{role:'admin'},mapperSelectedFolders:new Set(),mapperSelectedPhotoIds:new Set()},
     els:{mapperDeleteBtn:button}, tr:key=>labels[key]||key, showStatus:(...args)=>messages.push(args),
     renderMapperContext(){},confirm:()=>true, invalidateStoredFolderPreviews(){},
     loadMapperTools:async()=>{},loadPhotos:async()=>{},setMapperEditMode(){}});
+  vm.runInContext(source.slice(source.indexOf('function mediaPathPermission('), source.indexOf('function mapperContextMenuItemsForFolder(')), ctx);
   vm.runInContext(source.slice(source.indexOf('function renderMapperDeleteProgress()'),source.indexOf('// Select all visible items in Mapper')),ctx);
   return {ctx,button,messages};
 }

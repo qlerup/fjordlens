@@ -10148,7 +10148,7 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperDropZone) {
     els.mapperDropZone.textContent = `${tr('mapper_drop_here')}: ${p || tr('mapper_root_folder')}`;
-    els.mapperDropZone.classList.toggle('hidden', !!state.mapperEditMode);
+    els.mapperDropZone.classList.toggle('hidden', !!state.mapperEditMode || !mapperFolderAllows(p, 'upload'));
   }
   if (els.mapperUpBtn) {
     els.mapperUpBtn.textContent = tr('mapper_up');
@@ -10161,6 +10161,7 @@ function renderMapperContext(path = '') {
     els.mapperEditBtn.setAttribute('aria-label', mapperEditTitle);
   }
   if (els.mapperHeaderEditAction) {
+    els.mapperHeaderEditAction.disabled = !!state.mapperEditMode && selectedCount > 0 && !mapperSelectionCanDelete();
     els.mapperHeaderEditAction.textContent = state.mapperEditMode
       ? (selectedCount > 0 ? `${tr('mapper_delete_selected')} (${selectedCount})` : tr('mapper_menu_done'))
       : tr('mapper_menu_edit');
@@ -10174,12 +10175,12 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperHeaderCreateAction) {
     els.mapperHeaderCreateAction.textContent = tr('mapper_menu_create');
-    els.mapperHeaderCreateAction.disabled = !!state.mapperEditMode;
+    els.mapperHeaderCreateAction.disabled = !!state.mapperEditMode || !mapperFolderAllows(p, 'upload');
     els.mapperHeaderCreateAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_create');
   }
   if (els.mapperHeaderUploadAction) {
     els.mapperHeaderUploadAction.textContent = tr('mapper_menu_upload');
-    els.mapperHeaderUploadAction.disabled = !!state.mapperEditMode;
+    els.mapperHeaderUploadAction.disabled = !!state.mapperEditMode || !mapperFolderAllows(p, 'upload');
     els.mapperHeaderUploadAction.title = state.mapperEditMode ? tr('mapper_done_title') : tr('mapper_menu_upload');
   }
   const mapperSortMode = _normalizeMapperSort(state.mapperSort);
@@ -10200,7 +10201,7 @@ function renderMapperContext(path = '') {
   if (els.mapperHeaderRenameAction) {
     const canRenameInEdit = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0;
     const canRenameCurrent = !state.mapperEditMode && !!p;
-    const canRename = canRenameInEdit || canRenameCurrent;
+    const canRename = (canRenameInEdit || canRenameCurrent) && mapperFolderAllows(canRenameInEdit ? Array.from(state.mapperSelectedFolders)[0] : p);
     els.mapperHeaderRenameAction.textContent = tr('mapper_menu_rename');
     els.mapperHeaderRenameAction.disabled = !canRename;
     if (state.mapperEditMode) {
@@ -10209,8 +10210,13 @@ function renderMapperContext(path = '') {
       els.mapperHeaderRenameAction.title = canRename ? tr('mapper_menu_rename') : tr('mapper_rename_root_block');
     }
   }
+  const moveAction = document.getElementById('mapperHeaderMoveAction');
+  if (moveAction) {
+    const target = selFolders === 1 ? Array.from(state.mapperSelectedFolders)[0] : p;
+    moveAction.disabled = !target || selFolders > 1 || !mapperFolderAllows(target);
+  }
   if (els.mapperHeaderRefreshPreviewsAction) {
-    const canRefresh = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0;
+    const canRefresh = !!state.mapperEditMode && selFolders === 1 && selPhotos === 0 && mapperFolderAllows(Array.from(state.mapperSelectedFolders)[0]);
     els.mapperHeaderRefreshPreviewsAction.textContent = tr('mapper_menu_refresh_previews');
     els.mapperHeaderRefreshPreviewsAction.disabled = !canRefresh;
     els.mapperHeaderRefreshPreviewsAction.title = canRefresh
@@ -10219,7 +10225,7 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperDeleteBtn) {
     const show = !!state.mapperEditMode || !!state.mapperDeleteProgress;
-    const canDelete = show && selectedCount > 0;
+    const canDelete = show && selectedCount > 0 && mapperSelectionCanDelete();
     els.mapperDeleteBtn.classList.toggle('hidden', !show);
     els.mapperDeleteBtn.disabled = !canDelete;
     els.mapperDeleteBtn.textContent = canDelete
@@ -13035,6 +13041,7 @@ async function requestMapperDeletion(url, payload) {
 async function deleteSelectedMapperFolders() {
   if (state.mapperDeleteProgress) return;
   const selected = Array.from(state.mapperSelectedFolders || []);
+  if (!selected.every(mapperFolderCanDelete)) { showStatus('Ingen slette-adgang til de valgte mapper.', 'err'); return; }
   if (!selected.length) {
     showStatus(tr('mapper_select_delete_none'), 'err');
     return;
@@ -13071,6 +13078,7 @@ async function deleteSelectedMapperFolders() {
 async function deleteSelectedMapperPhotos() {
   if (state.mapperDeleteProgress) return;
   const selected = Array.from(state.mapperSelectedPhotoIds || []);
+  if (!selected.every(mapperPhotoCanDelete)) { showStatus('Ingen slette-adgang til de valgte billeder.', 'err'); return; }
   if (!selected.length) {
     showStatus(tr('mapper_select_delete_none'), 'err');
     return;
@@ -15095,10 +15103,50 @@ function selectSingleMapperPhoto(photoId) {
 
 function mapperContextMenuItemsForBackground() {
   return [
-    { label: tr('mapper_ctx_upload'), action: () => openMapperUploadPicker() },
-    { label: tr('mapper_ctx_create_folder'), action: () => openMapperCreateModal() },
+    { label: tr('mapper_ctx_upload'), disabled: !mapperFolderAllows(state.mapperPath, 'upload'), action: () => openMapperUploadPicker() },
+    { label: tr('mapper_ctx_create_folder'), disabled: !mapperFolderAllows(state.mapperPath, 'upload'), action: () => openMapperCreateModal() },
     { label: tr('mapper_ctx_select'), action: () => setMapperEditMode(true) },
   ];
+}
+
+function mediaPathPermission(path) {
+  const user = state.currentUser;
+  if (['admin', 'manager'].includes(user?.role)) return 'edit';
+  const canonical = value => String(value || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/^uploads\/(originals|converted)\//, 'uploads/');
+  const rel = canonical(path);
+  const matches = folder => rel === folder || rel.startsWith(folder + '/');
+  if ((user?.owned_folders || []).some(folder => matches(canonical(folder)))) return 'edit';
+  let best = null;
+  for (const grant of user?.allowed_folders || []) {
+    const folder = canonical(grant.folder_path);
+    if (matches(folder) && (!best || folder.length > best.folder.length)) best = {folder, permission: grant.permission};
+  }
+  return best?.permission || null;
+}
+
+function mapperFolderAllows(folder, required = 'edit') {
+  const rel = 'uploads/' + String(folder || '').replace(/^uploads\//, '').replace(/^\/+|\/+$/g, '');
+  const rank = {view: 1, upload: 2, edit: 3};
+  return (rank[mediaPathPermission(rel)] || 0) >= rank[required];
+}
+
+function mapperFolderCanDelete(folder) {
+  if (!mapperFolderAllows(folder)) return false;
+  const rel = 'uploads/' + String(folder || '').replace(/^uploads\//, '').replace(/^\/+|\/+$/g, '');
+  return (state.currentUser?.allowed_folders || []).every(grant =>
+    !grant.folder_path.startsWith(rel + '/') || mediaPathPermission(grant.folder_path) === 'edit');
+}
+
+function mapperPhotoCanDelete(id) {
+  if (['admin', 'manager'].includes(state.currentUser?.role)) return true;
+  const photo = (state.items || []).find(item => Number(item.id) === Number(id));
+  return !!photo && mediaPathPermission(photo.rel_path) === 'edit';
+}
+
+function mapperSelectionCanDelete() {
+  const folders = Array.from(state.mapperSelectedFolders || []);
+  const photos = Array.from(state.mapperSelectedPhotoIds || []);
+  return folders.every(mapperFolderCanDelete) && photos.every(mapperPhotoCanDelete);
 }
 
 function mapperContextMenuItemsForFolder(folderPath) {
@@ -15106,17 +15154,19 @@ function mapperContextMenuItemsForFolder(folderPath) {
     ...(['admin', 'manager'].includes(state.currentUser?.role) ? [{label: 'Mappetilladelser …', action: () => openFolderPermissionsDialog(folderPath)}] : []),
     ...(['admin', 'manager'].includes(state.currentUser?.role) ? [{label: 'Privat mappe …', action: () => openMapperPrivacyDialog(folderPath)}] : []),
     { label: tr('mapper_download_folder'), action: () => openDownloadModal(folderPath) },
-    { label: 'Flyt mappe', action: () => openMapperMoveDialog(folderPath) },
-    { label: tr('mapper_ctx_rename'), action: () => openMapperRenameModal(folderPath) },
+    { label: 'Flyt mappe', disabled: !mapperFolderAllows(folderPath), action: () => openMapperMoveDialog(folderPath) },
+    { label: tr('mapper_ctx_rename'), disabled: !mapperFolderAllows(folderPath), action: () => openMapperRenameModal(folderPath) },
     { label: tr('mapper_ctx_select'), action: () => { setMapperEditMode(true); toggleMapperFolderSelection(folderPath); } },
     {
       label: tr('mapper_ctx_delete'),
       danger: true,
+      disabled: !mapperFolderCanDelete(folderPath),
       action: () => { selectSingleMapperFolder(folderPath); deleteSelectedMapperFolders(); },
     },
-    { label: tr('mapper_ctx_choose_thumbnails'), action: () => openMapperThumbnailPickerModal(folderPath) },
+    { label: tr('mapper_ctx_choose_thumbnails'), disabled: !mapperFolderAllows(folderPath), action: () => openMapperThumbnailPickerModal(folderPath) },
     {
       label: tr('mapper_ctx_upload'),
+      disabled: !mapperFolderAllows(folderPath, 'upload'),
       action: () => { state.mapperUploadTargetOverride = folderPath; openMapperUploadPicker(); },
     },
   ];
@@ -15264,9 +15314,10 @@ function mapperContextMenuItemsForPhoto(photoId) {
     {
       label: tr('mapper_ctx_delete'),
       danger: true,
+      disabled: !mapperPhotoCanDelete(photoId),
       action: () => { selectSingleMapperPhoto(photoId); deleteSelectedMapperPhotos(); },
     },
-    { label: tr('mapper_ctx_upload'), action: () => openMapperUploadPicker() },
+    { label: tr('mapper_ctx_upload'), disabled: !mapperFolderAllows(state.mapperPath, 'upload'), action: () => openMapperUploadPicker() },
   ];
 }
 
@@ -19472,7 +19523,8 @@ async function startExistingConversion(type, btn = null) {
     const mr = await fetch('/api/me');
     const mj = await mr.json();
     if (mr.ok && mj && mj.ok && mj.item) {
-      state.currentUser = { id: mj.item.id, username: mj.item.username, role: mj.item.role || 'user' };
+      state.currentUser = { ...mj.item, role: mj.item.role || 'user' };
+      renderMapperContext(state.mapperPath || '');
     }
   } catch {}
   try {
@@ -20597,7 +20649,7 @@ async function renderProfilePanel() {
       return;
     }
     const me = js.item;
-    state.currentUser = { id: me.id, username: me.username, role: me.role || 'user' };
+    state.currentUser = { ...me, role: me.role || 'user' };
     wrap.innerHTML = `
       <div class="panel" style="max-width:700px;">
         <div class="form-row"><label for="pf_username">${tr('profile_username')}</label><input id="pf_username" value="${escapeHtml(me.username || '')}" /></div>

@@ -24048,9 +24048,8 @@ def api_settings_upload_folder():
 
 @app.route("/api/settings/upload-folder-delete", methods=["POST"])
 def api_settings_upload_folder_delete():
-    fb = _forbid_media_management()
-    if fb:
-        return jsonify(fb[0]), fb[1]
+    if not current_user.is_authenticated:
+        return jsonify(ok=False, error="Forbidden"), 403
 
     body = request.get_json(silent=True) or {}
     destination = str(body.get("destination") or "uploads").strip().lower()
@@ -24113,6 +24112,17 @@ def api_settings_upload_folder_delete():
                 legacy_base = None
     except Exception:
         return jsonify({"ok": False, "error": "Upload-rodmappe kunne ikke lÃ¦ses"}), 500
+
+    # Validate the entire selection before deleting anything. A more specific
+    # read-only child grant must also prevent deletion through its parent.
+    with closing(get_conn()) as conn:
+        grants = _get_user_allowed_folders(conn, current_user.id)
+        for subdir in selected:
+            base_rel = f"uploads/{subdir}"
+            paths = [base_rel] + [grant['folder_path'] for grant in grants
+                                   if grant['folder_path'].startswith(base_rel + '/')]
+            if any(not _perm_allows(_current_user_folder_permission_for_rel(path, conn), 'edit') for path in paths):
+                return jsonify(ok=False, error=f"Ingen slette-adgang til '{subdir}'"), 403
 
     deleted: list[str] = []
     missing: list[str] = []
@@ -28046,6 +28056,8 @@ def api_me():
                     ).fetchone()
                 else:
                     raise
+            allowed_folders = _get_user_allowed_folders(conn, current_user.id)
+            owned_folders = [r[0] for r in conn.execute("SELECT folder_path FROM folder_owners WHERE user_id=?", (current_user.id,))]
         if not row:
             return jsonify({"ok": False, "error": "not_found"}), 404
         raw_role = str((row["role"] if "role" in row.keys() else "") or "").strip().lower()
@@ -28061,6 +28073,8 @@ def api_me():
                     "id": int(row["id"]),
                     "username": row["username"],
                     "role": raw_role,
+                    "allowed_folders": allowed_folders,
+                    "owned_folders": owned_folders,
                     "ui_language": _normalize_language(row["ui_language"], DEFAULT_UI_LANGUAGE),
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
                     "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),

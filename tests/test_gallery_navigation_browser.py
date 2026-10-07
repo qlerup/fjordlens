@@ -99,8 +99,8 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
             route.fulfill(status=response.status_code, json=data)
             response.close()
             return
-        if getattr(self, 'real_access_checks', False) and url.path in (
-                '/api/me', '/api/photos', '/api/ai/describe/external/settings'):
+        if (getattr(self, 'real_profile', False) and url.path == '/api/me') or (getattr(self, 'real_access_checks', False) and url.path in (
+                '/api/me', '/api/photos', '/api/ai/describe/external/settings')):
             response = self.client.get(url.path + ('?' + url.query if url.query else ''))
             route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.data)
             response.close()
@@ -232,6 +232,36 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
                 with fl.closing(fl.get_conn()) as conn:
                     grants = fl._get_user_allowed_folders(conn, 3)
                 self.assertEqual(grants[-1]['permission'], 'edit')
+
+    def test_mixed_folder_permissions_gate_context_and_bulk_delete(self):
+        fl = fixtures.fjordlens
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 2, [
+                {'folder_path':'uploads/Album','permission':'view'},
+                {'folder_path':'uploads/Second','permission':'edit'}])
+            conn.commit()
+        self.real_profile = True
+        self.client = self.fixture._authenticated_client(user_id=2)
+        self.page.set_viewport_size({'width':1440, 'height':900})
+        self.page.reload(wait_until='networkidle')
+        self.page.wait_for_function("state.currentUser?.allowed_folders?.length === 2")
+        if self.page.locator('#uiDesignIntroModal').is_visible():
+            self.page.locator('#uiDesignIntroLater').click()
+        self.page.evaluate("void setView('mapper')")
+        self.page.locator('.folder-card[data-folder="Album"]').wait_for()
+        menu = self.page.locator('#mapperContextMenu')
+        for folder, disabled in (('Album', True), ('Second', False)):
+            self.page.locator(f'.folder-card[data-folder="{folder}"]').click(button='right')
+            self.assertEqual(menu.get_by_role('button', name='Slet', exact=True).is_disabled(), disabled)
+            self.assertEqual(menu.get_by_role('button', name='Upload', exact=True).is_disabled(), disabled)
+            self.page.evaluate('closeMapperContextMenu()')
+        self.page.evaluate("setMapperEditMode(true); state.mapperSelectedFolders = new Set(['Album', 'Second']); renderMapperContext('')")
+        self.assertTrue(self.page.locator('#mapperDeleteBtn').is_disabled())
+        self.assertTrue(self.page.locator('#mapperHeaderEditAction').is_disabled())
+        self.page.evaluate("state.mapperSelectedFolders = new Set(['Second']); renderMapperContext('')")
+        self.assertFalse(self.page.locator('#mapperDeleteBtn').is_disabled())
+        self.page.evaluate("state.items = [{id:101, rel_path:'uploads/originals/Album/a.jpg'}, {id:102, rel_path:'uploads/converted/Second/b.jpg'}]")
+        self.assertEqual(self.page.evaluate("[mapperContextMenuItemsForPhoto(101).find(x=>x.danger).disabled, mapperContextMenuItemsForPhoto(102).find(x=>x.danger).disabled]"), [True, False])
 
     def test_existing_admin_folder_permissions_still_use_shared_folder_controls(self):
         self.real_permissions = True

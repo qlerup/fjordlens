@@ -9,6 +9,53 @@ class FolderAccessTests(unittest.TestCase):
     tearDown = fixtures.ManagerRoleTests.tearDown
     client = fixtures.ManagerRoleTests.client
 
+    def mixed_grants(self):
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 3, [
+                {'folder_path': 'uploads/private', 'permission': 'view'},
+                {'folder_path': 'uploads/Editable', 'permission': 'edit'}])
+            path = fl.UPLOAD_DIR / 'originals/Editable/b.jpg'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'test')
+            conn.execute("INSERT INTO photos(rel_path,filename,ext) VALUES('uploads/originals/Editable/b.jpg','b.jpg','.jpg')")
+            conn.commit()
+
+    def test_view_folder_cannot_be_deleted_while_other_folder_has_edit(self):
+        self.mixed_grants()
+        user = self.client(3)
+        self.assertEqual(user.get('/api/me').json['item']['allowed_folders'][1]['permission'], 'view')
+        result = user.post('/api/photos/delete', json={'photo_ids':[1]})
+        self.assertEqual(result.status_code, 403, result.json)
+        result = user.post('/api/settings/upload-folder-delete', json={'paths':['Editable', 'private']})
+        self.assertEqual(result.status_code, 403, result.json)
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/private/a.jpg').exists())
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
+        result = user.post('/api/photos/delete', json={'photo_ids':[1,3]})
+        self.assertEqual(result.json['deleted_ids'], [3])
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/private/a.jpg').exists())
+
+    def test_edit_folder_can_be_deleted_but_upload_folder_cannot(self):
+        self.mixed_grants()
+        user = self.client(3)
+        result = user.post('/api/settings/upload-folder-delete', json={'paths':['Editable']})
+        self.assertEqual(result.status_code, 200, result.json)
+        self.assertFalse((fl.UPLOAD_DIR / 'originals/Editable').exists())
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 3, [{'folder_path':'uploads/private','permission':'upload'}])
+            conn.commit()
+        self.assertEqual(user.post('/api/settings/upload-folder-delete', json={'paths':['private']}).status_code, 403)
+
+    def test_read_only_child_prevents_recursive_parent_deletion(self):
+        self.mixed_grants()
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 3, [
+                {'folder_path':'uploads/Editable','permission':'edit'},
+                {'folder_path':'uploads/Editable/Protected','permission':'view'}])
+            conn.commit()
+        result = self.client(3).post('/api/settings/upload-folder-delete', json={'paths':['Editable']})
+        self.assertEqual(result.status_code, 403, result.json)
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
+
     def test_admin_and_manager_list_only_needed_user_fields_and_save_access(self):
         for uid in (1, 2):
             with self.subTest(actor=uid):
