@@ -3409,6 +3409,34 @@ def _describe_device(user_agent: str) -> str:
     return f"{browser} on {platform}"
 
 
+LOGIN_PASSWORD_MAX_FAILURES = 5
+LOGIN_PASSWORD_WINDOW_SECONDS = 300
+
+
+def _password_login_rate_limited() -> bool:
+    ip = _request_client_ip()[:80]
+    if not ip:
+        return False
+    cutoff = (datetime.utcnow() - timedelta(seconds=LOGIN_PASSWORD_WINDOW_SECONDS)).isoformat(timespec="seconds") + "Z"
+    try:
+        with closing(get_conn()) as conn:
+            latest_success = conn.execute(
+                """SELECT MAX(at) FROM login_audit
+                   WHERE ip=? AND success=1
+                     AND event_type IN ('login_success','login_password')""",
+                (ip,),
+            ).fetchone()[0]
+            params = [ip, cutoff]
+            sql = """SELECT COUNT(*) FROM login_audit
+                     WHERE ip=? AND success=0 AND event_type='login_failed' AND at>=?"""
+            if latest_success:
+                sql += " AND at>?"
+                params.append(latest_success)
+            return int(conn.execute(sql, params).fetchone()[0] or 0) >= LOGIN_PASSWORD_MAX_FAILURES
+    except Exception:
+        return False
+
+
 def _log_login_attempt(
     username_input: str,
     user_id: Optional[int],
@@ -26293,6 +26321,10 @@ def login():
         if request.method == "POST":
             username = (request.form.get("username") or "").strip()
             password = request.form.get("password") or ""
+            if _password_login_rate_limited():
+                return _no_store_response(make_response(
+                    render_template("login.html", error="For mange mislykkede forsøg. Vent fem minutter."), 429
+                ))
             hub_user = _hub_authenticate(username, password)
             if hub_user:
                 if hub_user.get("must_change_password"):
@@ -26316,6 +26348,10 @@ def login():
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
+        if _password_login_rate_limited():
+            return _no_store_response(make_response(
+                render_template("login.html", error="For mange mislykkede forsøg. Vent fem minutter."), 429
+            ))
         with closing(get_conn()) as conn:
             row = conn.execute(
                 "SELECT id, username, password_hash, is_admin, role, totp_enabled, totp_secret, totp_setup_done, totp_remember_days FROM users WHERE username=?",
