@@ -1580,7 +1580,7 @@ const I18N = {
     users_create_title: 'Tilføj bruger',
     users_edit_title: 'Rediger bruger',
     users_folders_title: 'Mappeadgang',
-    users_folders_hint: 'Vælg mapper brugeren må se. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti.',
+    users_folders_hint: 'Klik på den valgte markering igen for at fjerne tilladelsen. Hvis du vælger en undermappe, vises overmapper automatisk kun som sti. Adgang fra en overmappe skal fjernes på overmappen.',
     users_save_access: 'Gem adgang',
     users_label_username: 'Brugernavn',
     users_label_password: 'Adgangskode',
@@ -1597,7 +1597,7 @@ const I18N = {
     users_create: 'Opret',
     users_save: 'Gem',
     users_acl_none_found: 'Ingen mapper fundet endnu.',
-    users_acl_all_folders: 'Alle mapper (ingen begrænsning)',
+    users_acl_all_folders: 'Ingen mapper valgt',
     users_acl_selected_suffix: 'valgte mapper',
     users_acl_user_prefix: 'Bruger',
     users_status_acl_save_failed: 'Kunne ikke gemme mappeadgang:',
@@ -2472,7 +2472,7 @@ const I18N = {
     users_create_title: 'Add user',
     users_edit_title: 'Edit user',
     users_folders_title: 'Folder access',
-    users_folders_hint: 'Select folders the user can access. If you select a subfolder, parent folders are shown only as path containers.',
+    users_folders_hint: 'Click the selected marker again to remove the permission. If you select a subfolder, parent folders are shown only as path containers. Access inherited from a parent must be removed on that parent.',
     users_save_access: 'Save access',
     users_label_username: 'Username',
     users_label_password: 'Password',
@@ -2489,7 +2489,7 @@ const I18N = {
     users_create: 'Create',
     users_save: 'Save',
     users_acl_none_found: 'No folders found yet.',
-    users_acl_all_folders: 'All folders (no restriction)',
+    users_acl_all_folders: 'No folders selected',
     users_acl_selected_suffix: 'selected folders',
     users_acl_user_prefix: 'User',
     users_status_acl_save_failed: 'Could not save folder access:',
@@ -19943,7 +19943,7 @@ const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
       const name = `perm:${folder}`;
       const cell = (val, txt) => `
         <label class="ua-dot" data-level="${val}" title="${escapeHtml(txt||'')}">
-          <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
+          <input type="checkbox" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
           <span class="dot" aria-hidden="true"></span>
           <span class="ua-cap">${escapeHtml(txt||'')}</span>
         </label>`;
@@ -19972,7 +19972,7 @@ const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
     const toRank = (v) => (v==='edit'?3:(v==='upload'?2:(v==='view'?1:0)));
     const updateRowLevel = (row) => {
       const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-      const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+      const sel = row.querySelector(`input[name="perm:${CSS.escape(folder)}"]:checked`);
       const val = sel ? String(sel.value||'') : 'none';
       row.classList.remove('lvl-view','lvl-upload','lvl-edit');
       if (val==='view') row.classList.add('lvl-view');
@@ -20012,8 +20012,14 @@ const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
     rowsAll.forEach((row)=>{
       updateRowLevel(row);
       const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-      row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`).forEach((r)=>{
-        r.addEventListener('change', ()=> updateRowLevel(row));
+      row.querySelectorAll(`input[name="perm:${CSS.escape(folder)}"]`).forEach((r)=>{
+        r.addEventListener('change', ()=> {
+          // One permission per folder, with a second click clearing the grant.
+          if (r.checked) row.querySelectorAll('input').forEach(other => {
+            if (other !== r) other.checked = false;
+          });
+          updateRowLevel(row);
+        });
       });
     });
   } else if (!root.children.length) {
@@ -20030,7 +20036,7 @@ const getFolderSelection = (containerId) => {
   rows.forEach((row) => {
     const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
     if (!folder || folder === 'uploads') return;
-    const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+    const sel = row.querySelector(`input[name="perm:${CSS.escape(folder)}"]:checked`);
     const perm = sel ? toPerm(sel.value) : 'none';
     if (perm !== 'none') out.push({ folder_path: folder, permission: perm });
   });
@@ -20316,7 +20322,7 @@ async function renderUsersPanel(){
       if (!root) return;
       root.querySelectorAll('.ua-row[data-folder]').forEach((row) => {
         const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-        const radios = row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`);
+        const radios = row.querySelectorAll(`input[name="perm:${CSS.escape(folder)}"]`);
         radios.forEach((r)=>{ r.checked = false; });
         row.classList.remove('lvl-view','lvl-upload','lvl-edit');
       });

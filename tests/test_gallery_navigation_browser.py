@@ -277,6 +277,39 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
             grants = fixtures.fjordlens._get_user_allowed_folders(conn, 2)
         self.assertEqual(grants, [{'folder_path':'uploads/Album', 'permission':'upload'}])
 
+    def test_folder_permission_can_be_unchecked_and_saved_without_removing_other_grants(self):
+        fl = fixtures.fjordlens
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 2, [
+                {'folder_path':'uploads/Album','permission':'view'},
+                {'folder_path':'uploads/Second','permission':'edit'}])
+            conn.commit()
+        self.real_permissions = True
+        self.page.evaluate("void setView('settings')")
+        self.page.locator('#settingsPanel .tab-btn[data-tab="users"]').click()
+        self.page.locator('#usersPanelInner button[data-edit="2"]').click()
+        self.page.locator('#eu_acl').click()
+        row = self.page.locator('#ua_folder_access .ua-row[data-folder="uploads/Album"]')
+        row.locator('.ua-dot[data-level="view"]').click()
+        self.assertEqual(row.locator('input:checked').count(), 0)
+        self.assertFalse(row.evaluate("el=>el.classList.contains('lvl-view')"))
+        # Selecting another level replaces the previous one; Space clears it too.
+        row.locator('.ua-dot[data-level="upload"]').click()
+        row.locator('.ua-dot[data-level="edit"]').click()
+        self.assertEqual(row.locator('input:checked').count(), 1)
+        row.locator('input[value="edit"]').focus()
+        self.page.keyboard.press('Space')
+        self.assertEqual(row.locator('input:checked').count(), 0)
+        self.page.locator('#ua_save').click()
+        self.page.wait_for_function("document.getElementById('ua_modal').classList.contains('hidden')")
+        with fl.closing(fl.get_conn()) as conn:
+            self.assertEqual(fl._get_user_allowed_folders(conn, 2), [{'folder_path':'uploads/Second','permission':'edit'}])
+        user = self.fixture._authenticated_client(user_id=2)
+        with user:
+            user.get('/api/me')
+            self.assertFalse(fl._is_rel_path_allowed_for_current_user('uploads/Album/a.jpg'))
+            self.assertTrue(fl._is_rel_path_allowed_for_current_user('uploads/Second/b.jpg'))
+
     def test_empty_photo_page_does_not_flash_empty_while_folder_index_is_pending(self):
         self.total = 0
         self.hold_folders = True
