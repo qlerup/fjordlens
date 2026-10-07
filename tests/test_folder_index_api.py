@@ -82,6 +82,45 @@ class FolderIndexApiTests(unittest.TestCase):
         tree=self.viewer.get('/api/folder-index?tree=1').get_json()['folders']
         self.assertNotIn('Family/Private',tree)
 
+    def test_ancestor_covers_use_only_allowed_descendants_without_overwriting_shared_cover(self):
+        # Fill the shared cover entirely from a sibling the viewer cannot see.
+        for i in range(4):
+            self.seed(f'Family/Hidden/{i}', f'hidden-{i}.jpg')
+        self.seed('Family/Shared/Trip', 'shared.jpg')
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("UPDATE folder_previews SET previews_json=? WHERE folder_path='Family'",
+                         ('["/api/thumbs/hidden-0.jpg","/api/thumbs/hidden-1.jpg","/api/thumbs/hidden-2.jpg","/api/thumbs/hidden-3.jpg"]',))
+            fl._set_user_allowed_folders(conn,2,[{'folder_path':'uploads/Family/Shared','permission':'view'}])
+            conn.commit()
+            shared_before = conn.execute("SELECT previews_json FROM folder_previews WHERE folder_path='Family'").fetchone()[0]
+        expected = ['/api/thumbs/shared.jpg']
+        listing = self.viewer.get('/api/folder-index').get_json()
+        self.assertEqual(listing['items'][0]['previews'], expected)
+        preview = self.viewer.get('/api/folder-previews', query_string={'folders_format':'multi','folders':['Family','Family/Hidden']})
+        self.assertEqual(preview.json['items'], {'Family':expected, 'Family/Hidden':[]})
+        self.assertIn('no-store', preview.headers['Cache-Control'])
+        self.assertIn('Cookie', preview.headers['Vary'])
+        with fl.closing(fl.get_conn()) as conn:
+            self.assertEqual(conn.execute("SELECT previews_json FROM folder_previews WHERE folder_path='Family'").fetchone()[0], shared_before)
+            fl._set_user_allowed_folders(conn,2,[{'folder_path':'uploads/Family/Hidden','permission':'view'}])
+            conn.commit()
+        changed = self.viewer.get('/api/folder-index').json
+        self.assertNotIn('shared.jpg', str(changed))
+        self.assertEqual(len(changed['items'][0]['previews']), 4)
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn,2,[])
+            conn.commit()
+        self.assertEqual(self.viewer.get('/api/folder-previews', query_string={'folders':'Family'}).json['items'], {'Family':[]})
+
+    def test_allowed_private_descendants_never_become_parent_covers(self):
+        self.seed('Family/Hidden','private.jpg')
+        self.seed('Family/Shared','shared.jpg')
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn,2,[{'folder_path':'uploads/Family','permission':'view'}])
+            conn.execute("INSERT INTO private_folders VALUES ('Family/Hidden')")
+            conn.commit()
+        self.assertEqual(self.viewer.get('/api/folder-index').json['items'][0]['previews'], ['/api/thumbs/shared.jpg'])
+
     def test_explicit_parent_grants_still_include_children(self):
         self.seed('Family/Private','private.jpg'); self.seed('Family/Shared','shared.jpg')
         with fl.closing(fl.get_conn()) as conn:

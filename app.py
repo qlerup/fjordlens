@@ -7764,6 +7764,22 @@ def api_folder_previews_get():
     # Folder covers use the existing index and thumbnails. Browsing covers must
     # not scan every child folder on the NAS; normal folder sync handles discovery.
     keys = list(dict.fromkeys(keys))
+    # User-specific covers must never be persisted into the shared cover table.
+    if current_user.is_authenticated and not getattr(current_user, 'can_manage_media', False):
+        with closing(get_conn()) as conn:
+            visible = _folder_index_visibility(conn)
+            items = {}
+            for key in keys:
+                if not visible.navigable(key):
+                    items[key] = []
+                    continue
+                row = conn.execute('SELECT previews_json FROM folder_previews WHERE folder_path=?', (key,)).fetchone()
+                urls = folder_index._saved_urls(row[0]) if row else []
+                items[key] = folder_index.authorized_previews(conn, key, urls, visible)
+        response = jsonify(ok=True, items=items)
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.vary.add('Cookie')
+        return response
     placeholders = ",".join(["?"] * len(keys))
     with closing(get_conn()) as conn:
         rows = conn.execute(

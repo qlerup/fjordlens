@@ -10162,6 +10162,7 @@ function renderMapperContext(path = '') {
   }
   if (els.mapperHeaderEditAction) {
     els.mapperHeaderEditAction.disabled = !!state.mapperEditMode && selectedCount > 0 && !mapperSelectionCanDelete();
+    els.mapperHeaderEditAction.classList.toggle('hidden', els.mapperHeaderEditAction.disabled);
     els.mapperHeaderEditAction.textContent = state.mapperEditMode
       ? (selectedCount > 0 ? `${tr('mapper_delete_selected')} (${selectedCount})` : tr('mapper_menu_done'))
       : tr('mapper_menu_edit');
@@ -10226,7 +10227,7 @@ function renderMapperContext(path = '') {
   if (els.mapperDeleteBtn) {
     const show = !!state.mapperEditMode || !!state.mapperDeleteProgress;
     const canDelete = show && selectedCount > 0 && mapperSelectionCanDelete();
-    els.mapperDeleteBtn.classList.toggle('hidden', !show);
+    els.mapperDeleteBtn.classList.toggle('hidden', !canDelete && !state.mapperDeleteProgress);
     els.mapperDeleteBtn.disabled = !canDelete;
     els.mapperDeleteBtn.textContent = canDelete
       ? `${tr('mapper_delete_selected')} (${selectedCount})`
@@ -15052,6 +15053,7 @@ function openMapperContextMenu(x, y, items) {
   if (!menu || !Array.isArray(items) || !items.length) return;
   menu.innerHTML = '';
   items.forEach((item) => {
+    if (item.hidden) return;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'mapper-context-menu-item' + (item.danger ? ' danger' : '');
@@ -15160,7 +15162,7 @@ function mapperContextMenuItemsForFolder(folderPath) {
     {
       label: tr('mapper_ctx_delete'),
       danger: true,
-      disabled: !mapperFolderCanDelete(folderPath),
+      hidden: !mapperFolderCanDelete(folderPath),
       action: () => { selectSingleMapperFolder(folderPath); deleteSelectedMapperFolders(); },
     },
     { label: tr('mapper_ctx_choose_thumbnails'), disabled: !mapperFolderAllows(folderPath), action: () => openMapperThumbnailPickerModal(folderPath) },
@@ -15314,7 +15316,7 @@ function mapperContextMenuItemsForPhoto(photoId) {
     {
       label: tr('mapper_ctx_delete'),
       danger: true,
-      disabled: !mapperPhotoCanDelete(photoId),
+      hidden: !mapperPhotoCanDelete(photoId),
       action: () => { selectSingleMapperPhoto(photoId); deleteSelectedMapperPhotos(); },
     },
     { label: tr('mapper_ctx_upload'), disabled: !mapperFolderAllows(state.mapperPath, 'upload'), action: () => openMapperUploadPicker() },

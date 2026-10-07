@@ -184,6 +184,7 @@ def visibility(conn, uid, prefixes, can_manage=False):
         visible = lambda path: True
         visible.navigable = visible
         visible.scope = 'all:' + str(uid)
+        visible.cover_roots = None
         return visible
     allowed = tuple(prefixes or ())
     owners = dict(conn.execute('SELECT folder_path,user_id FROM folder_owners'))
@@ -192,6 +193,7 @@ def visibility(conn, uid, prefixes, can_manage=False):
         owner = next((owners[p] for p in ancestors(rel) if p in owners), None)
         return (uid > 0 and owner == uid) or any(rel == p or rel.startswith(p+'/') for p in allowed)
     grants = allowed + tuple(path for path, owner in owners.items() if uid > 0 and owner == uid)
+    visible.cover_roots = grants
     # A grant for A/B also permits navigating through A, but not A's photos,
     # other children or their covers. This preserves the old tree navigation.
     visible.navigable = lambda path: visible(path) or any(p.startswith('uploads/'+path+'/') for p in grants)
@@ -243,7 +245,60 @@ def list_folders(conn, parent, visible, *, tree=False):
         folder = item['path']
         item['previews'] = [url for url in item['previews'] if any(
             p == folder or p.startswith(folder+'/') for p in photos.get(_thumb_name(url), ()))]
+    for item in items:
+        item['previews'] = authorized_previews(conn, item['path'], item['previews'], visible)
     return items
+
+
+def authorized_previews(conn, path, urls, visible):
+    """Choose a request-local cover without changing the shared/manual cover.
+
+    Restrict indexed candidate ranges to the user's grants so a hidden sibling
+    cannot crowd out allowed photos. Never read original media or scan the NAS.
+    """
+    if not getattr(visible, 'navigable', visible)(path):
+        return []
+    private = tuple(r[0] for r in conn.execute('SELECT folder_path FROM private_folders')) if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='private_folders'").fetchone() else ()
+    def allowed(rel):
+        folder = folder_from_rel(rel)
+        return folder is not None and (folder == path or folder.startswith(path + '/')) and visible(folder) and not any(
+            folder == p or folder.startswith(p + '/') for p in private)
+    if any(path == p or path.startswith(p + '/') for p in private):
+        return []
+    result = []
+    for url in urls:
+        name = _thumb_name(url)
+        if name and any(allowed(r[0]) for r in conn.execute('SELECT rel_path FROM photos WHERE thumb_name=?', (name,))):
+            if url not in result:
+                result.append(url)
+    roots = getattr(visible, 'cover_roots', None)
+    if roots is None or len(result) == 4:
+        return result
+    # Preserve a valid explicit cover; replace it only when it contains photos
+    # the requesting user cannot see.
+    saved = conn.execute('SELECT previews_json FROM folder_previews WHERE folder_path=?', (path,)).fetchone()
+    if saved and manual_cover(conn, path, saved[0]) and result == _saved_urls(saved[0]):
+        return result
+    candidates = set()
+    for root in roots:
+        root = root.removeprefix('uploads/').strip('/')
+        if root == path or path.startswith(root + '/'):
+            candidates.add(path)
+        elif root.startswith(path + '/'):
+            candidates.add(root)
+    for root in sorted(candidates):
+        for prefix in ('uploads/converted/', 'uploads/originals/', 'uploads/'):
+            base = prefix + root
+            for rel, name in conn.execute('''SELECT rel_path,thumb_name FROM photos
+                WHERE rel_path>=? AND rel_path<? AND thumb_name IS NOT NULL AND thumb_name<>''
+                ORDER BY rel_path''', (base+'/', base+'0')):
+                url = '/api/thumbs/' + quote(name, safe='')
+                if _thumb_name(url) and url not in result and allowed(rel):
+                    result.append(url)
+                    if len(result) == 4:
+                        return result
+    return result[:2] if len(result) == 3 else result
 
 
 def _process_start(pid):

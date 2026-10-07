@@ -252,16 +252,17 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         menu = self.page.locator('#mapperContextMenu')
         for folder, disabled in (('Album', True), ('Second', False)):
             self.page.locator(f'.folder-card[data-folder="{folder}"]').click(button='right')
-            self.assertEqual(menu.get_by_role('button', name='Slet', exact=True).is_disabled(), disabled)
+            self.assertEqual(menu.get_by_role('button', name='Slet', exact=True).count(), 0 if disabled else 1)
             self.assertEqual(menu.get_by_role('button', name='Upload', exact=True).is_disabled(), disabled)
             self.page.evaluate('closeMapperContextMenu()')
         self.page.evaluate("setMapperEditMode(true); state.mapperSelectedFolders = new Set(['Album', 'Second']); renderMapperContext('')")
-        self.assertTrue(self.page.locator('#mapperDeleteBtn').is_disabled())
-        self.assertTrue(self.page.locator('#mapperHeaderEditAction').is_disabled())
+        self.assertTrue(self.page.locator('#mapperDeleteBtn').is_hidden())
+        self.assertTrue(self.page.locator('#mapperHeaderEditAction').is_hidden())
         self.page.evaluate("state.mapperSelectedFolders = new Set(['Second']); renderMapperContext('')")
         self.assertFalse(self.page.locator('#mapperDeleteBtn').is_disabled())
+        self.assertTrue(self.page.locator('#mapperDeleteBtn').is_visible())
         self.page.evaluate("state.items = [{id:101, rel_path:'uploads/originals/Album/a.jpg'}, {id:102, rel_path:'uploads/converted/Second/b.jpg'}]")
-        self.assertEqual(self.page.evaluate("[mapperContextMenuItemsForPhoto(101).find(x=>x.danger).disabled, mapperContextMenuItemsForPhoto(102).find(x=>x.danger).disabled]"), [True, False])
+        self.assertEqual(self.page.evaluate("[mapperContextMenuItemsForPhoto(101).find(x=>x.danger).hidden, mapperContextMenuItemsForPhoto(102).find(x=>x.danger).hidden]"), [True, False])
 
     def test_existing_admin_folder_permissions_still_use_shared_folder_controls(self):
         self.real_permissions = True
