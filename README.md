@@ -251,6 +251,7 @@ require integration into an Xcode app target; they are not a prebuilt mobile app
 
 - Initial setup wizard for first admin account
 - Role-based access (`admin`, `manager`, `user`)
+- Admins and managers can assign folder access from a folder's right-click menu or the three-dot menu in Folders. Choose a FjordLens user, set view/upload/edit access, or open all folder permissions for that user. FjordHub installations list only users with access to FjordLens.
 - Per-user folder access and media-management permissions
 - TOTP 2FA for accounts
 - Per-user UI language and search language (`da`/`en`)

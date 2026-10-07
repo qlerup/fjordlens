@@ -141,6 +141,7 @@
           <button id="mapperEditBtn" class="btn" title="Flere indstillinger" aria-label="Flere indstillinger">⋮</button>
           <div id="mapperHeaderMenu" class="mapper-header-menu" aria-label="Mapper menu">
             <button id="mapperHeaderEditAction" class="mapper-header-menu-item" type="button">Rediger mapper</button>
+            {% if user_role in ('admin', 'manager') %}<button id="mapperHeaderPermissionsAction" class="mapper-header-menu-item" type="button">Mappetilladelser …</button>{% endif %}
             <button id="mapperHeaderShareAction" class="mapper-header-menu-item" type="button">Del</button>
             <button id="mapperHeaderUploadAction" class="mapper-header-menu-item" type="button">Upload</button>
             <button id="mapperHeaderSortNewestAction" class="mapper-header-menu-item" type="button">Nyeste først</button>
@@ -1366,6 +1367,12 @@
     </div>
   </div>
   {% endif %}
+  <dialog id="uploadCompleteDialog" class="upload-complete-dialog" aria-labelledby="uploadCompleteTitle" aria-describedby="uploadCompleteMessage uploadCompleteCloseHint">
+    <h2 id="uploadCompleteTitle">Upload er færdigt</h2>
+    <p id="uploadCompleteMessage">Billederne bliver tilgængelige, når efterbehandlingen er færdig.</p>
+    <p id="uploadCompleteCloseHint">Du kan godt lukke browseren nu. Efterbehandlingen fortsætter på serveren.</p>
+    <form method="dialog" class="actions"><button type="submit" class="btn primary" autofocus>OK</button></form>
+  </dialog>
   <!-- Moments slideshow player -->
   <div id="momentPlayerOverlay" class="moment-player hidden" role="dialog" aria-modal="true" aria-label="Mindeafspiller">
     <div class="moment-player-progress" id="momentPlayerProgress"></div>
@@ -1400,6 +1407,7 @@
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='person-search.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
+  <script src="{{ url_for('static', filename='folder-permissions.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_music.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_player.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_text_editor.js', v=app_build) }}"></script>

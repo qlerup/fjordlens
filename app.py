@@ -27939,15 +27939,79 @@ def api_admin_users_delete(uid: int):
 def api_admin_user_folders(uid: int):
     if not getattr(current_user, "is_admin", False):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
+    return _save_user_folder_access(uid)
+
+
+def _folder_access_users():
+    # FjordHub's app-user API returns only users with access to this app.
+    if _fjordhub_managed():
+        result = _hub_api("/api/hub/apps/users", {}, method="GET")
+        if not result.get("ok") or not isinstance(result.get("items"), list):
+            raise ValueError("Kunne ikke hente brugere fra FjordHub. Prøv igen.")
+        users = [_managed_user_item(user) for user in result["items"]]
+    else:
+        with closing(get_conn()) as conn:
+            users = [dict(row) for row in conn.execute("SELECT id,username,role FROM users ORDER BY username COLLATE NOCASE")]
+    with closing(get_conn()) as conn:
+        acl = _managed_acl_by_user(conn)
+    return [dict(id=user["id"], username=user["username"], role=user["role"],
+                 allowed_folders=acl.get(user["id"], [])) for user in users]
+
+
+@app.route("/api/folder-access/users", methods=["GET"])
+@login_required
+def api_folder_access_users():
+    if not getattr(current_user, "can_manage_media", False):
+        return jsonify(ok=False, error="Forbidden"), 403
+    try:
+        users = _folder_access_users()
+        with closing(get_conn()) as conn:
+            folders = _list_all_photo_folders(conn)
+        return jsonify(ok=True, items=users, available_folders=folders)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 503
+
+
+@app.route("/api/folder-access/users/<int:uid>", methods=["PUT"])
+@login_required
+def api_folder_access_user(uid: int):
+    if not getattr(current_user, "can_manage_media", False):
+        return jsonify(ok=False, error="Forbidden"), 403
+    data = request.get_json(silent=True)
+    grants = data.get('allowed_folders') if isinstance(data, dict) else None
+    if not isinstance(grants, list) or len(grants) > 5000:
+        return jsonify(ok=False, error="Ugyldige mappetilladelser."), 400
+    try:
+        for grant in grants:
+            if (not isinstance(grant, dict) or grant.get('permission') not in {'view', 'upload', 'edit'}
+                    or not isinstance(grant.get('folder_path'), str)
+                    or _normalize_folder_acl_path(grant['folder_path']) in {'', 'uploads'}):
+                raise ValueError()
+    except ValueError:
+        return jsonify(ok=False, error="Ugyldig mappe eller tilladelse."), 400
+    if _fjordhub_managed():
+        try:
+            if not any(user["id"] == uid for user in _folder_access_users()):
+                return jsonify(ok=False, error="Brugeren har ikke længere adgang til FjordLens."), 404
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 503
+    return _save_user_folder_access(uid)
+
+
+def _save_user_folder_access(uid: int):
     data = request.get_json(silent=True) or {}
     raw_allowed = data.get("allowed_folders")
     if not isinstance(raw_allowed, list):
         return jsonify({"ok": False, "error": "invalid_allowed_folders"}), 400
     try:
         with closing(get_conn()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
             if not row:
                 return jsonify({"ok": False, "error": "not_found"}), 404
+            previous = data.get("previous_allowed_folders")
+            if previous is not None and previous != _get_user_allowed_folders(conn, uid):
+                return jsonify(ok=False, error="Tilladelserne er ændret af en anden. Åbn vinduet igen før du gemmer."), 409
             # Ensure permission column exists for legacy DBs
             try:
                 cols = [r[1] for r in conn.execute("PRAGMA table_info(user_folder_access)").fetchall()]  # type: ignore[index]
@@ -27957,6 +28021,7 @@ def api_admin_user_folders(uid: int):
                 pass
             reduced = _set_user_allowed_folders(conn, uid, raw_allowed)
             conn.commit()
+        log_event('folder_access_updated', actor=getattr(current_user, 'username', ''), user_id=uid, folders=len(reduced))
         return jsonify({"ok": True, "allowed_folders": reduced})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400

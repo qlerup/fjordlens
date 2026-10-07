@@ -9527,7 +9527,24 @@ function uploadPostprocessPollDelayMs(statusLike = null) {
   return 900;
 }
 
-async function runUploadPostprocess(onProgress = null) {
+function showUploadCompleteDialog() {
+  if (uploadStopRequested || isUploadRunning() || uploadQueue.length
+      || uploadUiState.failedFiles || uploadSessionSavedTotal <= 0) return false;
+  const dialog = document.getElementById('uploadCompleteDialog');
+  if (!dialog) return false;
+  const english = String(state.uiLanguage || '').startsWith('en');
+  document.getElementById('uploadCompleteTitle').textContent = english ? 'Upload complete' : 'Upload er færdigt';
+  document.getElementById('uploadCompleteMessage').textContent = english
+    ? 'Your photos will be available once postprocessing is complete.'
+    : 'Billederne bliver tilgængelige, når efterbehandlingen er færdig.';
+  document.getElementById('uploadCompleteCloseHint').textContent = english
+    ? 'You can close your browser now. Postprocessing continues on the server.'
+    : 'Du kan godt lukke browseren nu. Efterbehandlingen fortsætter på serveren.';
+  if (!dialog.open) dialog.showModal();
+  return true;
+}
+
+async function runUploadPostprocess(onProgress = null, onStarted = null) {
   const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
   let startData = {};
   try { startData = await startRes.json(); } catch {}
@@ -9535,6 +9552,7 @@ async function runUploadPostprocess(onProgress = null) {
     const msg = (startData && startData.error) ? String(startData.error) : 'Efterbehandling fejlede';
     throw new Error(msg);
   }
+  if (typeof onStarted === 'function') onStarted();
 
   if (!startData.running) {
     return startData.result || {
@@ -9882,6 +9900,7 @@ async function uploadFiles(fileList, options = {}) {
   if (!uploadQueuePumpRunning) {
     const runQueue = async () => {
       let post = null;
+      let notifiedSavedTotal = 0;
       try {
         uploadQueuePumpRunning = true;
         startUploadTransferHeartbeat();
@@ -10034,6 +10053,10 @@ async function uploadFiles(fileList, options = {}) {
               // refresh happens after the upload flow finishes (avoids
               // flicker/scroll jumps).
               renderUploadMonitor();
+            }, () => {
+              if (uploadSessionSavedTotal > notifiedSavedTotal && showUploadCompleteDialog()) {
+                notifiedSavedTotal = uploadSessionSavedTotal;
+              }
             });
           } catch (postErr) {
             console.error(postErr);
@@ -15080,6 +15103,7 @@ function mapperContextMenuItemsForBackground() {
 
 function mapperContextMenuItemsForFolder(folderPath) {
   return [
+    ...(['admin', 'manager'].includes(state.currentUser?.role) ? [{label: 'Mappetilladelser …', action: () => openFolderPermissionsDialog(folderPath)}] : []),
     ...(['admin', 'manager'].includes(state.currentUser?.role) ? [{label: 'Privat mappe …', action: () => openMapperPrivacyDialog(folderPath)}] : []),
     { label: tr('mapper_download_folder'), action: () => openDownloadModal(folderPath) },
     { label: 'Flyt mappe', action: () => openMapperMoveDialog(folderPath) },
@@ -19806,6 +19830,180 @@ async function renderMailSettingsPanel(){
   });
 }
 
+const normalizeAclFolder = (value) => String(value || '')
+  .replace(/\\/g, '/')
+  .replace(/\/+/g, '/')
+  .replace(/^\/+|\/+$/g, '');
+
+const toPerm = (raw) => {
+  const v = String(raw || '').toLowerCase();
+  if (v === 'edit' || v === 'manage' || v === 'delete') return 'edit';
+  if (v === 'upload') return 'upload';
+  if (v === 'view') return 'view';
+  return 'none';
+};
+
+const permRank = (p) => (p === 'edit' ? 3 : p === 'upload' ? 2 : p === 'view' ? 1 : 0);
+
+const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
+  const root = document.getElementById(containerId);
+  if (!root) return;
+  if (Array.isArray(allFolders) && allFolders.length) {
+    // Build a map of folder -> permission from selectedFolders (supports legacy strings)
+    const selectedPerm = new Map();
+    (selectedFolders || []).forEach((it) => {
+      if (typeof it === 'string') {
+        const p = normalizeAclFolder(it);
+        if (p && p !== 'uploads') selectedPerm.set(p, 'view');
+        return;
+      }
+      if (it && typeof it === 'object'){
+        const p = normalizeAclFolder(it.folder_path || it.folder || it.path || '');
+        const perm = toPerm(it.permission || it.perm);
+        if (p && p !== 'uploads' && perm !== 'none') selectedPerm.set(p, perm);
+      }
+    });
+    const seen = new Set();
+    const filteredFolders = allFolders
+      .map((folder) => normalizeAclFolder(folder))
+      .filter((folder) => folder && folder !== 'uploads')
+      .filter((folder) => {
+        if (seen.has(folder)) return false;
+        seen.add(folder);
+        return true;
+      });
+    // Build parent->hasChildren map
+    const hasChildren = new Set();
+    const parentOf = (p) => {
+      const i = String(p||'').lastIndexOf('/');
+      return i === -1 ? '' : String(p).slice(0, i);
+    };
+    filteredFolders.forEach((f)=>{
+      const parent = parentOf(f);
+      if (parent) hasChildren.add(parent);
+    });
+    const rows = filteredFolders.map((folder) => {
+      const depth = String(folder || '').split('/').filter(Boolean).length;
+      const pad = Math.max(0, (depth - 1) * 14);
+      const labelFull = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
+      const label = labelFull.split('/').filter(Boolean).pop() || labelFull;
+      const current = selectedPerm.get(folder) || 'none';
+      const name = `perm:${folder}`;
+      const cell = (val, txt) => `
+        <label class="ua-dot" data-level="${val}" title="${escapeHtml(txt||'')}">
+          <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
+          <span class="dot" aria-hidden="true"></span>
+          <span class="ua-cap">${escapeHtml(txt||'')}</span>
+        </label>`;
+      const caret = hasChildren.has(folder)
+        ? `<button class=\"ua-caret\" type=\"button\" aria-label=\"Fold\"></button>`
+        : `<span class=\"ua-caret ua-caret-placeholder\"></span>`;
+      const parent = parentOf(folder);
+      return `
+        <div class="ua-row" data-folder="${escapeHtml(folder)}" data-parent="${escapeHtml(parent)}" data-depth="${depth}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
+          <div class="ua-label" style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${caret}<span class="ua-name" title="${escapeHtml(labelFull)}">${escapeHtml(label)}</span></div>
+          ${cell('view','Viser')}
+          ${cell('upload','Uploader')}
+          ${cell('edit','Redigere')}
+        </div>`;
+    }).join('');
+    const header = `
+      <div class="ua-head" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-weight:600;">
+        <div>Mappe</div>
+        <div style="text-align:center;">Viser</div>
+        <div style="text-align:center;">Uploader</div>
+        <div style="text-align:center;">Redigere</div>
+      </div>`;
+    root.innerHTML = header + rows;
+
+    // Initialize visual levels so earlier dots fill up
+    const toRank = (v) => (v==='edit'?3:(v==='upload'?2:(v==='view'?1:0)));
+    const updateRowLevel = (row) => {
+      const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+      const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+      const val = sel ? String(sel.value||'') : 'none';
+      row.classList.remove('lvl-view','lvl-upload','lvl-edit');
+      if (val==='view') row.classList.add('lvl-view');
+      else if (val==='upload') row.classList.add('lvl-upload');
+      else if (val==='edit') row.classList.add('lvl-edit');
+    };
+    const rowsAll = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
+    const rowByPath = new Map(rowsAll.map(r => [String(r.getAttribute('data-folder')||''), r]));
+    const updateTreeVisibility = () => {
+      rowsAll.forEach((row)=>{
+        const depth = parseInt(row.getAttribute('data-depth')||'1', 10) || 1;
+        if (depth === 1) { row.style.display = 'grid'; return; }
+        const path = String(row.getAttribute('data-folder')||'');
+        let parent = parentOf(path);
+        let visible = true;
+        while (parent) {
+          const pr = rowByPath.get(parent);
+          if (pr && !pr.classList.contains('open')) { visible = false; break; }
+          parent = parentOf(parent);
+        }
+        row.style.display = visible ? 'grid' : 'none';
+      });
+    };
+
+    rowsAll.forEach((row)=>{
+      const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+      const caretBtn = row.querySelector('.ua-caret');
+      if (caretBtn && !caretBtn.classList.contains('ua-caret-placeholder')){
+        caretBtn.addEventListener('click', ()=>{
+          row.classList.toggle('open');
+          updateTreeVisibility();
+        });
+      }
+    });
+    updateTreeVisibility();
+
+    rowsAll.forEach((row)=>{
+      updateRowLevel(row);
+      const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+      row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`).forEach((r)=>{
+        r.addEventListener('change', ()=> updateRowLevel(row));
+      });
+    });
+  } else if (!root.children.length) {
+    root.innerHTML = `<div class="mini-label muted">${escapeHtml(tr('users_acl_none_found'))}</div>`;
+  }
+  // Pre-selection handled above by radio 'checked' attributes
+};
+
+const getFolderSelection = (containerId) => {
+  const root = document.getElementById(containerId);
+  if (!root) return [];
+  const rows = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
+  const out = [];
+  rows.forEach((row) => {
+    const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
+    if (!folder || folder === 'uploads') return;
+    const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
+    const perm = sel ? toPerm(sel.value) : 'none';
+    if (perm !== 'none') out.push({ folder_path: folder, permission: perm });
+  });
+  return out;
+};
+
+const bindAclHierarchy = (containerId) => {
+  const root = document.getElementById(containerId);
+  if (!root) return;
+  root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
+    el.addEventListener('change', () => {
+      const folder = normalizeAclFolder(el.getAttribute('data-folder') || '');
+      if (!folder) return;
+      if (!el.checked) return;
+      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((other) => {
+        if (other === el) return;
+        const otherFolder = normalizeAclFolder(other.getAttribute('data-folder') || '');
+        if (!otherFolder || !otherFolder.startsWith(folder + '/')) return;
+        other.checked = true;
+      });
+    });
+  });
+};
+
+
 async function renderUsersPanel(){
   const wrap = document.getElementById('usersPanelInner');
   if (!wrap) return;
@@ -20028,179 +20226,6 @@ async function renderUsersPanel(){
     initForgotPasswordToggle();
 
     const byId = new Map(items.map(u => [String(u.id), u]));
-
-    const normalizeAclFolder = (value) => String(value || '')
-      .replace(/\\/g, '/')
-      .replace(/\/+/g, '/')
-      .replace(/^\/+|\/+$/g, '');
-
-    const toPerm = (raw) => {
-      const v = String(raw || '').toLowerCase();
-      if (v === 'edit' || v === 'manage' || v === 'delete') return 'edit';
-      if (v === 'upload') return 'upload';
-      if (v === 'view') return 'view';
-      return 'none';
-    };
-
-    const permRank = (p) => (p === 'edit' ? 3 : p === 'upload' ? 2 : p === 'view' ? 1 : 0);
-
-    const setFolderSelection = (containerId, selectedFolders, allFolders = []) => {
-      const root = document.getElementById(containerId);
-      if (!root) return;
-      if (Array.isArray(allFolders) && allFolders.length) {
-        // Build a map of folder -> permission from selectedFolders (supports legacy strings)
-        const selectedPerm = new Map();
-        (selectedFolders || []).forEach((it) => {
-          if (typeof it === 'string') {
-            const p = normalizeAclFolder(it);
-            if (p && p !== 'uploads') selectedPerm.set(p, 'view');
-            return;
-          }
-          if (it && typeof it === 'object'){
-            const p = normalizeAclFolder(it.folder_path || it.folder || it.path || '');
-            const perm = toPerm(it.permission || it.perm);
-            if (p && p !== 'uploads' && perm !== 'none') selectedPerm.set(p, perm);
-          }
-        });
-        const seen = new Set();
-        const filteredFolders = allFolders
-          .map((folder) => normalizeAclFolder(folder))
-          .filter((folder) => folder && folder !== 'uploads')
-          .filter((folder) => {
-            if (seen.has(folder)) return false;
-            seen.add(folder);
-            return true;
-          });
-        // Build parent->hasChildren map
-        const hasChildren = new Set();
-        const parentOf = (p) => {
-          const i = String(p||'').lastIndexOf('/');
-          return i === -1 ? '' : String(p).slice(0, i);
-        };
-        filteredFolders.forEach((f)=>{
-          const parent = parentOf(f);
-          if (parent) hasChildren.add(parent);
-        });
-        const rows = filteredFolders.map((folder) => {
-          const depth = String(folder || '').split('/').filter(Boolean).length;
-          const pad = Math.max(0, (depth - 1) * 14);
-          const labelFull = String(folder || '').startsWith('uploads/') ? String(folder || '').slice(8) : String(folder || '');
-          const label = labelFull.split('/').filter(Boolean).pop() || labelFull;
-          const current = selectedPerm.get(folder) || 'none';
-          const name = `perm:${folder}`;
-          const cell = (val, txt) => `
-            <label class="ua-dot" data-level="${val}" title="${escapeHtml(txt||'')}">
-              <input type="radio" name="${escapeHtml(name)}" value="${val}" ${current===val?'checked':''} />
-              <span class="dot" aria-hidden="true"></span>
-              <span class="ua-cap">${escapeHtml(txt||'')}</span>
-            </label>`;
-          const caret = hasChildren.has(folder)
-            ? `<button class=\"ua-caret\" type=\"button\" aria-label=\"Fold\"></button>`
-            : `<span class=\"ua-caret ua-caret-placeholder\"></span>`;
-          const parent = parentOf(folder);
-          return `
-            <div class="ua-row" data-folder="${escapeHtml(folder)}" data-parent="${escapeHtml(parent)}" data-depth="${depth}" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft);">
-              <div class="ua-label" style="padding-left:${pad}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${caret}<span class="ua-name" title="${escapeHtml(labelFull)}">${escapeHtml(label)}</span></div>
-              ${cell('view','Viser')}
-              ${cell('upload','Uploader')}
-              ${cell('edit','Redigere')}
-            </div>`;
-        }).join('');
-        const header = `
-          <div class="ua-head" style="display:grid;grid-template-columns:auto 96px 110px 110px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-weight:600;">
-            <div>Mappe</div>
-            <div style="text-align:center;">Viser</div>
-            <div style="text-align:center;">Uploader</div>
-            <div style="text-align:center;">Redigere</div>
-          </div>`;
-        root.innerHTML = header + rows;
-
-        // Initialize visual levels so earlier dots fill up
-        const toRank = (v) => (v==='edit'?3:(v==='upload'?2:(v==='view'?1:0)));
-        const updateRowLevel = (row) => {
-          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-          const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
-          const val = sel ? String(sel.value||'') : 'none';
-          row.classList.remove('lvl-view','lvl-upload','lvl-edit');
-          if (val==='view') row.classList.add('lvl-view');
-          else if (val==='upload') row.classList.add('lvl-upload');
-          else if (val==='edit') row.classList.add('lvl-edit');
-        };
-        const rowsAll = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
-        const rowByPath = new Map(rowsAll.map(r => [String(r.getAttribute('data-folder')||''), r]));
-        const updateTreeVisibility = () => {
-          rowsAll.forEach((row)=>{
-            const depth = parseInt(row.getAttribute('data-depth')||'1', 10) || 1;
-            if (depth === 1) { row.style.display = 'grid'; return; }
-            const path = String(row.getAttribute('data-folder')||'');
-            let parent = parentOf(path);
-            let visible = true;
-            while (parent) {
-              const pr = rowByPath.get(parent);
-              if (pr && !pr.classList.contains('open')) { visible = false; break; }
-              parent = parentOf(parent);
-            }
-            row.style.display = visible ? 'grid' : 'none';
-          });
-        };
-
-        rowsAll.forEach((row)=>{
-          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-          const caretBtn = row.querySelector('.ua-caret');
-          if (caretBtn && !caretBtn.classList.contains('ua-caret-placeholder')){
-            caretBtn.addEventListener('click', ()=>{
-              row.classList.toggle('open');
-              updateTreeVisibility();
-            });
-          }
-        });
-        updateTreeVisibility();
-
-        rowsAll.forEach((row)=>{
-          updateRowLevel(row);
-          const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-          row.querySelectorAll(`input[type="radio"][name="perm:${CSS.escape(folder)}"]`).forEach((r)=>{
-            r.addEventListener('change', ()=> updateRowLevel(row));
-          });
-        });
-      } else if (!root.children.length) {
-        root.innerHTML = `<div class="mini-label muted">${escapeHtml(tr('users_acl_none_found'))}</div>`;
-      }
-      // Pre-selection handled above by radio 'checked' attributes
-    };
-
-    const getFolderSelection = (containerId) => {
-      const root = document.getElementById(containerId);
-      if (!root) return [];
-      const rows = Array.from(root.querySelectorAll('.ua-row[data-folder]'));
-      const out = [];
-      rows.forEach((row) => {
-        const folder = normalizeAclFolder(row.getAttribute('data-folder') || '');
-        if (!folder || folder === 'uploads') return;
-        const sel = row.querySelector(`input[type="radio"][name="perm:${CSS.escape(folder)}"]:checked`);
-        const perm = sel ? toPerm(sel.value) : 'none';
-        if (perm !== 'none') out.push({ folder_path: folder, permission: perm });
-      });
-      return out;
-    };
-
-    const bindAclHierarchy = (containerId) => {
-      const root = document.getElementById(containerId);
-      if (!root) return;
-      root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((el) => {
-        el.addEventListener('change', () => {
-          const folder = normalizeAclFolder(el.getAttribute('data-folder') || '');
-          if (!folder) return;
-          if (!el.checked) return;
-          root.querySelectorAll('input[type="checkbox"][data-folder]').forEach((other) => {
-            if (other === el) return;
-            const otherFolder = normalizeAclFolder(other.getAttribute('data-folder') || '');
-            if (!otherFolder || !otherFolder.startsWith(folder + '/')) return;
-            other.checked = true;
-          });
-        });
-      });
-    };
 
     const aclModal = document.getElementById('ua_modal');
     const aclCloseBtn = document.getElementById('ua_close');

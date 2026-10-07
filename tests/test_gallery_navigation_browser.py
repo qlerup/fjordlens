@@ -91,6 +91,14 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         if url.hostname != 'fjordlens.test':
             route.abort(); return
         self.requests.append(url.path + '?' + url.query)
+        if getattr(self, 'real_permissions', False) and (url.path.startswith('/api/folder-access/users') or url.path.startswith('/api/admin/users')):
+            response = self.client.open(url.path, method=route.request.method, json=route.request.post_data_json if route.request.method == 'PUT' else None)
+            data = response.get_json()
+            if route.request.method == 'GET' and response.status_code == 200:
+                data['available_folders'] = ['uploads/Album', 'uploads/Second']
+            route.fulfill(status=response.status_code, json=data)
+            response.close()
+            return
         if getattr(self, 'real_access_checks', False) and url.path in (
                 '/api/me', '/api/photos', '/api/ai/describe/external/settings'):
             response = self.client.get(url.path + ('?' + url.query if url.query else ''))
@@ -156,6 +164,88 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#galleryGrid .mapper-ghost-card').count(), 0)
         self.assertIn('Du har endnu ikke adgang', self.page.evaluate('els.empty.textContent'))
         self.assertEqual(self.page.evaluate('els.photoCount.textContent'), '0')
+
+    def test_upload_completion_dialog_fits_mobile_and_desktop_and_closes(self):
+        for width, height in ((390, 844), (1440, 900)):
+            with self.subTest(width=width):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.evaluate('uploadSessionSavedTotal = 2; showUploadCompleteDialog()')
+                dialog = self.page.locator('#uploadCompleteDialog')
+                self.assertTrue(dialog.is_visible())
+                self.assertIn('lukke browseren nu', dialog.inner_text())
+                box = dialog.bounding_box()
+                self.assertGreaterEqual(box['x'], 0)
+                self.assertLessEqual(box['x'] + box['width'], width)
+                self.assertLessEqual(box['y'] + box['height'], height)
+                self.assertEqual(self.page.evaluate('document.activeElement.textContent'), 'OK')
+                dialog.get_by_role('button', name='OK', exact=True).click()
+                self.assertFalse(dialog.is_visible())
+        self.page.evaluate('showUploadCompleteDialog()')
+        self.page.keyboard.press('Escape')
+        self.assertFalse(self.page.locator('#uploadCompleteDialog').is_visible())
+
+    def test_folder_permissions_from_context_and_header_for_admin_and_manager(self):
+        fl = fixtures.fjordlens
+        with fl.closing(fl.get_conn()) as conn:
+            conn.execute("UPDATE users SET role='manager' WHERE id=2")
+            conn.execute("INSERT INTO users(username,password_hash,is_admin,role,created_at) SELECT 'permissions-viewer',password_hash,0,'user',created_at FROM users WHERE id=1")
+            conn.commit()
+        self.real_permissions = True
+        for actor, width in ((1, 1440), (2, 390)):
+            with self.subTest(actor=actor):
+                with fl.closing(fl.get_conn()) as conn:
+                    fl._set_user_allowed_folders(conn, 3, [{'folder_path':'uploads/Second', 'permission':'view'}])
+                    conn.commit()
+                self.client = self.fixture._authenticated_client(user_id=actor)
+                self.page.set_viewport_size({'width':width, 'height':900})
+                self.page.reload(wait_until='networkidle')
+                if self.page.locator('#uiDesignIntroModal').is_visible():
+                    self.page.locator('#uiDesignIntroLater').click()
+                self.page.evaluate("void setView('mapper')")
+                folder = self.page.locator('.folder-card[data-folder="Album"]')
+                folder.wait_for()
+                folder.click(button='right')
+                self.page.locator('#mapperContextMenu').get_by_role('button', name='Mappetilladelser …', exact=True).click()
+                select = self.page.locator('#folderPermissionsUser')
+                self.page.wait_for_function("!document.getElementById('folderPermissionsUser').disabled")
+                select.select_option('3')
+                self.page.locator('#folderPermissionsLevel').select_option('upload')
+                self.page.locator('.permissions-general').click()
+                self.assertTrue(self.page.locator('#folderPermissionsTree .ua-row[data-folder="uploads/Album"] input[value="upload"]').is_checked())
+                self.page.locator('.permissions-general').click()
+                self.assertEqual(self.page.locator('#folderPermissionsLevel').input_value(), 'upload')
+                self.page.locator('.permissions-save').click()
+                self.page.wait_for_function("!document.querySelector('.folder-permissions-dialog')")
+                with fl.closing(fl.get_conn()) as conn:
+                    grants = fl._get_user_allowed_folders(conn, 3)
+                self.assertEqual(grants, [{'folder_path':'uploads/Album','permission':'upload'}, {'folder_path':'uploads/Second','permission':'view'}])
+                self.page.locator('#mapperEditBtn').click()
+                self.page.locator('#mapperHeaderPermissionsAction').click()
+                self.page.wait_for_function("!document.getElementById('folderPermissionsUser').disabled")
+                self.page.locator('#folderPermissionsUser').select_option('3')
+                row = self.page.locator('#folderPermissionsTree .ua-row[data-folder="uploads/Second"]')
+                row.locator('.ua-dot[data-level="edit"]').click()
+                box = self.page.locator('.folder-permissions-dialog').bounding_box()
+                self.assertLessEqual(box['x'] + box['width'], width)
+                self.page.locator('.permissions-save').click()
+                self.page.wait_for_function("!document.querySelector('.folder-permissions-dialog')")
+                with fl.closing(fl.get_conn()) as conn:
+                    grants = fl._get_user_allowed_folders(conn, 3)
+                self.assertEqual(grants[-1]['permission'], 'edit')
+
+    def test_existing_admin_folder_permissions_still_use_shared_folder_controls(self):
+        self.real_permissions = True
+        self.page.evaluate("void setView('settings')")
+        self.page.locator('#settingsPanel .tab-btn[data-tab="users"]').click()
+        self.page.locator('#usersPanelInner button[data-edit="2"]').click()
+        self.page.locator('#eu_acl').click()
+        row = self.page.locator('#ua_folder_access .ua-row[data-folder="uploads/Album"]')
+        row.locator('.ua-dot[data-level="upload"]').click()
+        self.page.locator('#ua_save').click()
+        self.page.wait_for_function("document.getElementById('ua_modal').classList.contains('hidden')")
+        with fixtures.fjordlens.closing(fixtures.fjordlens.get_conn()) as conn:
+            grants = fixtures.fjordlens._get_user_allowed_folders(conn, 2)
+        self.assertEqual(grants, [{'folder_path':'uploads/Album', 'permission':'upload'}])
 
     def test_empty_photo_page_does_not_flash_empty_while_folder_index_is_pending(self):
         self.total = 0
