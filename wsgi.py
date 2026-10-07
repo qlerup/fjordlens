@@ -19,6 +19,7 @@ from people_section import init_people_section
 from privacy import init_privacy_page
 from safe_airplay_assets import init_safe_airplay_assets
 from share_link_defaults import init_share_link_defaults
+from thumbnail_cache import init_thumbnail_cache
 
 # Register public/support pages and optional integrations without touching filesystem or DB at startup.
 init_privacy_page(application)
@@ -54,5 +55,8 @@ init_airplay_seek_fix(application)
 
 # Safe mobile clients: no global MutationObserver and no monkey-patching window.fetch.
 init_safe_airplay_assets(application)
+
+# Reuse authenticated thumbnails from the device/browser cache between views.
+init_thumbnail_cache(application)
 
 # Gunicorn expects a module-level 'application' or a named app; we expose 'application'.
