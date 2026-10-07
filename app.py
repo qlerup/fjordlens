@@ -24133,8 +24133,12 @@ def api_settings_upload_folder_delete():
     # read-only child grant must also prevent deletion through its parent.
     with closing(get_conn()) as conn:
         grants = _get_user_allowed_folders(conn, current_user.id)
+        grant_paths = [g['folder_path'] if g['folder_path'].startswith('uploads/') else 'uploads/' + g['folder_path'] for g in grants]
         for subdir in selected:
             base_rel = f"uploads/{subdir}"
+            if not getattr(current_user, 'can_manage_media', False) and any(
+                    path == base_rel or path.startswith(base_rel + '/') for path in grant_paths):
+                return jsonify(ok=False, error="Selve mappen med tildelt adgang kan ikke slettes. Kun indholdet kan slettes."), 403
             paths = [base_rel] + [grant['folder_path'] for grant in grants
                                    if grant['folder_path'].startswith(base_rel + '/')]
             if any(not _perm_allows(_current_user_folder_permission_for_rel(path, conn), 'edit') for path in paths):

@@ -15134,7 +15134,14 @@ function mapperFolderAllows(folder, required = 'edit') {
 
 function mapperFolderCanDelete(folder) {
   if (!mapperFolderAllows(folder)) return false;
+  if (['admin', 'manager'].includes(state.currentUser?.role)) return true;
   const rel = 'uploads/' + String(folder || '').replace(/^uploads\//, '').replace(/^\/+|\/+$/g, '');
+  // Explicit access grants protect their entry folder; edit applies to contents.
+  if ((state.currentUser?.allowed_folders || []).some(grant => {
+    const path = String(grant.folder_path || '').replace(/^uploads\//, '');
+    const grantedRel = 'uploads/' + path;
+    return grantedRel === rel || grantedRel.startsWith(rel + '/');
+  })) return false;
   return (state.currentUser?.allowed_folders || []).every(grant =>
     !grant.folder_path.startsWith(rel + '/') || mediaPathPermission(grant.folder_path) === 'edit');
 }

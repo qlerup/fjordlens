@@ -34,12 +34,23 @@ class FolderAccessTests(unittest.TestCase):
         self.assertEqual(result.json['deleted_ids'], [3])
         self.assertTrue((fl.UPLOAD_DIR / 'originals/private/a.jpg').exists())
 
-    def test_edit_folder_can_be_deleted_but_upload_folder_cannot(self):
+    def test_edit_grant_protects_entry_folder_but_allows_deleting_contents(self):
         self.mixed_grants()
         user = self.client(3)
         result = user.post('/api/settings/upload-folder-delete', json={'paths':['Editable']})
+        self.assertEqual(result.status_code, 403, result.json)
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
+        child = fl.UPLOAD_DIR / 'originals/Editable/Child'
+        child.mkdir()
+        (child / 'c.jpg').write_bytes(b'test')
+        result = user.post('/api/settings/upload-folder-delete', json={'paths':['Editable/Child']})
         self.assertEqual(result.status_code, 200, result.json)
-        self.assertFalse((fl.UPLOAD_DIR / 'originals/Editable').exists())
+        self.assertFalse(child.exists())
+        result = user.post('/api/photos/delete', json={'photo_ids':[3]})
+        self.assertEqual(result.status_code, 200, result.json)
+        self.assertFalse((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
+        self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable').exists())
+        self.assertEqual(user.post('/api/settings/upload-folder-delete', json={'paths':['Editable']}).status_code, 403)
         with fl.closing(fl.get_conn()) as conn:
             fl._set_user_allowed_folders(conn, 3, [{'folder_path':'uploads/private','permission':'upload'}])
             conn.commit()
@@ -50,9 +61,9 @@ class FolderAccessTests(unittest.TestCase):
         with fl.closing(fl.get_conn()) as conn:
             fl._set_user_allowed_folders(conn, 3, [
                 {'folder_path':'uploads/Editable','permission':'edit'},
-                {'folder_path':'uploads/Editable/Protected','permission':'view'}])
+                {'folder_path':'uploads/Editable/Content/Protected','permission':'view'}])
             conn.commit()
-        result = self.client(3).post('/api/settings/upload-folder-delete', json={'paths':['Editable']})
+        result = self.client(3).post('/api/settings/upload-folder-delete', json={'paths':['Editable/Content']})
         self.assertEqual(result.status_code, 403, result.json)
         self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
 
