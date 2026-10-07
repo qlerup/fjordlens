@@ -91,7 +91,7 @@ Google Home controls the device assignment. FjordLens controls the album content
 
 ## 4. Add or remove photos from FjordLens
 
-From the Google card, choose **Vælg billeder**. FjordLens opens the normal folder/photo view. Long-press a photo to start selection, select the desired photos, then use **Google Frame** in the selection toolbar.
+From the Google card, choose **Vælg billeder**. FjordLens opens the normal folder/photo view. Double-tap a photo to start selection, select the desired photos, then use **Google Frame** in the selection toolbar.
 
 Choose:
 

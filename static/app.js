@@ -7032,6 +7032,7 @@ function appendCardTo(item, container) {
     return true;
   };
   const startMapperLongPress = (ev) => {
+    if (isMobileSelectionGestureDevice()) return;
     if (state.view !== 'mapper' || state.mapperEditMode) return;
     if (ev && ev.type === 'mousedown' && Number(ev.button) !== 0) return;
     if (ev && ev.target && ev.target.closest && ev.target.closest('.info-icon-overlay, .btn, a')) return;
@@ -7061,7 +7062,7 @@ function appendCardTo(item, container) {
       ev.preventDefault();
       ev.stopPropagation();
       cancelMapperLongPress();
-      activateMapperLongPress();
+      if (!isMobileSelectionGestureDevice()) activateMapperLongPress();
       return;
     }
     if (isDesktopContextMenuDevice()) {
@@ -7074,6 +7075,28 @@ function appendCardTo(item, container) {
   card.addEventListener('pointerdown', (ev) => {
     _startMapperDragSelect(ev, card);
   });
+  if (state.view === 'mapper') {
+    bindMobileDoubleTapSelection(card, {
+      ignoreTarget: (target) => !!(target && target.closest && target.closest('.info-icon-overlay, .btn, a')),
+      onDoubleTap: () => {
+        const photoId = Number(item && item.id || 0);
+        if (state.view !== 'mapper' || state.mapperEditMode || photoId <= 0) return;
+        if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+        state.mapperSelectedPhotoIds.add(photoId);
+        setMapperEditMode(true);
+      },
+      onSingleTap: () => {
+        if (state.view !== 'mapper' || state.mapperEditMode) return;
+        try { document.body.classList.remove('detail-open'); } catch {}
+        state.selectedId = item.id;
+        const idx = state.items.findIndex(i => i.id === item.id);
+        if (idx >= 0) {
+          state.viewerItems = null;
+          openViewer(idx);
+        }
+      },
+    });
+  }
   // Single-click opens viewer directly (unless clicking info icon or in select/edit mode)
   card.addEventListener("click", (ev) => {
     if (mapperLongPressActivated) {
@@ -7302,11 +7325,12 @@ function appendFolderCard(folder, arr, opts = {}) {
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
-  // --- Hold-to-select (long press) for Mapper ---
+  // Desktop can still use the old hold gesture; phones use double tap below.
   let _lpTimer = null;
   let _lpActivated = false;
   const _lpTriggerMs = 550;
   const _lpStart = () => {
+    if (isMobileSelectionGestureDevice()) return;
     if (state.mapperEditMode) return; // already selecting
     _lpActivated = false;
     _lpTimer = window.setTimeout(() => {
@@ -7320,11 +7344,39 @@ function appendFolderCard(folder, arr, opts = {}) {
   card.addEventListener('touchstart', _lpStart, { passive: true });
   ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev => card.addEventListener(ev, _lpCancel));
   card.addEventListener('contextmenu', (ev) => {
-    if (state.view !== 'mapper' || !isDesktopContextMenuDevice()) return;
+    if (state.view !== 'mapper') return;
+    if (shouldReplaceNativeMediaContextMenu()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _lpCancel();
+      return;
+    }
+    if (!isDesktopContextMenuDevice()) return;
     ev.preventDefault();
     ev.stopPropagation();
     _lpCancel();
     openMapperContextMenu(ev.clientX, ev.clientY, mapperContextMenuItemsForFolder(folder));
+  });
+  bindMobileDoubleTapSelection(card, {
+    onDoubleTap: () => {
+      if (state.view !== 'mapper' || state.mapperEditMode) return;
+      try { setMapperEditMode(true); } catch {}
+      toggleMapperFolderSelection(folder);
+    },
+    onSingleTap: () => {
+      if (state.view !== 'mapper' || state.mapperEditMode) return;
+      if (typeof opts.onOpen === 'function') {
+        Promise.resolve(opts.onOpen()).catch((e) => {
+          const errMsg = String((e && e.message) || e || '').trim();
+          if (errMsg) showStatus(`Kunne ikke åbne mappe: ${errMsg}`, 'err');
+        });
+        return;
+      }
+      state.view = "timeline";
+      state.folder = folder === "(root)" ? "" : folder;
+      document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
+      loadPhotos(false, false, true);
+    },
   });
   card.addEventListener("click", (ev) => {
     if (_lpActivated) { _lpActivated = false; return; }
@@ -14893,9 +14945,49 @@ function toggleMapperHeaderMenu() {
   else openMapperHeaderMenu();
 }
 
+const MOBILE_SELECT_DOUBLE_TAP_MS = 300;
+
+function isMobileSelectionGestureDevice() {
+  try {
+    const compact = !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+    const coarse = !!(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+    const touch = Number(navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+    return compact && (coarse || touch);
+  } catch {
+    return false;
+  }
+}
+
+function bindMobileDoubleTapSelection(element, { onSingleTap, onDoubleTap, ignoreTarget } = {}) {
+  if (!element) return;
+  let pendingSingleTapTimer = null;
+  try { element.style.touchAction = 'manipulation'; } catch {}
+  element.addEventListener('click', (event) => {
+    if (!isMobileSelectionGestureDevice()) return;
+    if (state && state.mapperEditMode) return;
+    if (typeof ignoreTarget === 'function' && ignoreTarget(event.target)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (pendingSingleTapTimer) {
+      window.clearTimeout(pendingSingleTapTimer);
+      pendingSingleTapTimer = null;
+      if (typeof onDoubleTap === 'function') onDoubleTap();
+      return;
+    }
+
+    pendingSingleTapTimer = window.setTimeout(() => {
+      pendingSingleTapTimer = null;
+      if (state && state.mapperEditMode) return;
+      if (typeof onSingleTap === 'function') onSingleTap();
+    }, MOBILE_SELECT_DOUBLE_TAP_MS);
+  }, true);
+}
+
 // --- Desktop right-click context menu for Mapper (background / folder / photo) ---
-// Only shown on pointer devices with real hover (mouse/trackpad). Touch keeps its
-// existing long-press-to-select behavior untouched — see shouldReplaceNativeMediaContextMenu().
+// Mouse/trackpad keeps the normal context menu. On phones, selection starts with
+// a double tap instead of a long press.
 function isDesktopContextMenuDevice() {
   try {
     return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
@@ -17647,6 +17739,9 @@ let viewerLongPressTimer = null;
 let viewerLongPressActivated = false;
 let viewerLongPressMouseX = null;
 let viewerLongPressMouseY = null;
+let viewerLastSelectionTapAt = 0;
+let viewerLastSelectionTapX = null;
+let viewerLastSelectionTapY = null;
 
 function cancelViewerLongPress() {
   if (viewerLongPressTimer) window.clearTimeout(viewerLongPressTimer);
@@ -17670,9 +17765,22 @@ function activateViewerLongPressSelection() {
 }
 
 function scheduleViewerLongPressSelection() {
+  if (isMobileSelectionGestureDevice()) return;
   if (state.view !== 'mapper' || state.mapperEditMode) return;
   cancelViewerLongPress();
   viewerLongPressTimer = window.setTimeout(activateViewerLongPressSelection, 550);
+}
+
+function activateViewerDoubleTapSelection() {
+  const items = getViewerItems();
+  const item = items[state.selectedIndex] || null;
+  const photoId = Number(item && item.id || 0);
+  if (!isMobileSelectionGestureDevice() || state.view !== 'mapper' || state.mapperEditMode || photoId <= 0) return false;
+  if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
+  state.mapperSelectedPhotoIds.add(photoId);
+  closeViewer();
+  setMapperEditMode(true);
+  return true;
 }
 
 function getViewerTargetIndex(step) {
@@ -18026,6 +18134,24 @@ if (els.viewer) {
     } else if (viewerDragActive) {
       animateViewerDragReset();
     } else if (absX < 10 && absY < 10 && dt < 500) {
+      const now = Date.now();
+      const lastDx = viewerLastSelectionTapX === null ? Infinity : Math.abs(changed.clientX - viewerLastSelectionTapX);
+      const lastDy = viewerLastSelectionTapY === null ? Infinity : Math.abs(changed.clientY - viewerLastSelectionTapY);
+      const isDoubleTap = isMobileSelectionGestureDevice()
+        && viewerLastSelectionTapAt > 0
+        && (now - viewerLastSelectionTapAt) <= MOBILE_SELECT_DOUBLE_TAP_MS
+        && lastDx <= 24
+        && lastDy <= 24;
+      if (isDoubleTap && activateViewerDoubleTapSelection()) {
+        viewerLastSelectionTapAt = 0;
+        viewerLastSelectionTapX = null;
+        viewerLastSelectionTapY = null;
+        resetViewerTouchState();
+        return;
+      }
+      viewerLastSelectionTapAt = now;
+      viewerLastSelectionTapX = changed.clientX;
+      viewerLastSelectionTapY = changed.clientY;
       toggleViewerControls();
     }
     resetViewerTouchState();
@@ -18058,7 +18184,7 @@ if (els.viewer) {
     e.preventDefault();
     e.stopPropagation();
     cancelViewerLongPress();
-    activateViewerLongPressSelection();
+    if (!isMobileSelectionGestureDevice()) activateViewerLongPressSelection();
   });
   els.viewer.addEventListener('click', (e) => {
     if (!viewerLongPressActivated) return;
