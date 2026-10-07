@@ -9683,8 +9683,18 @@ function uploadSingleFileTus(file, options = {}, onProgress = null) {
       lastModified: String(Number(file && file.lastModified ? file.lastModified : 0)),
     };
 
+    // tus-js-client's default resume fingerprint does not include metadata.
+    // Scope the endpoint by account + destination + folder so an interrupted
+    // upload can never be resumed under another user or into the wrong folder.
+    const resumeScope = new URLSearchParams();
+    const resumeUser = String((APP_PROFILE && (APP_PROFILE.id || APP_PROFILE.username)) || 'session');
+    resumeScope.set('user', resumeUser);
+    resumeScope.set('destination', destination || 'default');
+    resumeScope.set('subdir', subdir || '');
+    const tusEndpoint = `/api/upload/tus?${resumeScope.toString()}`;
+
     const upload = new window.tus.Upload(file, {
-      endpoint: '/api/upload/tus',
+      endpoint: tusEndpoint,
       metadata,
       uploadDataDuringCreation: false,
       overridePatchMethod: true,
