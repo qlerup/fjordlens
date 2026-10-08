@@ -13,6 +13,7 @@ function fixture(fetcher) {
   const context = vm.createContext({
     state:{uiLanguage:'da'}, uploadStopRequested:false, uploadQueue:[],
     uploadUiState:{failedFiles:0}, uploadSessionSavedTotal:2, isUploadRunning:()=>false,
+    isMobileSelectionGestureDevice:()=>true,
     document:{getElementById:id=>elements[id]}, fetch:fetcher,
     Date, window:{setTimeout:fn=>fn()}, uploadPostprocessPollDelayMs:()=>0,
   });
@@ -53,4 +54,11 @@ test('opening an already visible completion dialog is harmless', () => {
   const f=fixture();
   f.context.showUploadCompleteDialog(); f.context.showUploadCompleteDialog();
   assert.equal(f.dialog.shows,1);
+});
+
+test('desktop uploads never open the completion popup', () => {
+  const f = fixture();
+  f.context.isMobileSelectionGestureDevice = () => false;
+  assert.equal(f.context.showUploadCompleteDialog(), false);
+  assert.equal(f.dialog.shows, 0);
 });

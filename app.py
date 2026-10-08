@@ -6223,6 +6223,7 @@ def enforce_login_for_app():
         "hub_login",
         "api_health",
         "api_auth_session",
+        "api_hub_access",
         "api_ui_design",
         "apple_touch_icon",
         "apple_touch_icon_180",
@@ -28463,6 +28464,13 @@ log_retries = LogRetries(processing_failures, _retry_log_lookup,
                          _retry_logged_failure, log_event, _processing_retry_busy, _retry_log_snapshot)
 log_retries.register(app)
 
+
+
+
+from hub_session_guard import install as install_hub_session_guard
+app.extensions['hub_session_call'] = lambda *args, **kwargs: _hub_api(*args, **kwargs)
+install_hub_session_guard(app, managed=lambda: bool(_FJORDHUB_URL and _FJORDHUB_API_KEY),
+    subject=lambda: ({'id': getattr(current_user, 'hub_user_id', None), 'username': current_user.username} if current_user.is_authenticated else None), revoke=logout_user)
 
 if __name__ == "__main__":
     app.config["FOLDER_INDEX_WORKERS"] = True

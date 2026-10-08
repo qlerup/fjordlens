@@ -9528,6 +9528,7 @@ function uploadPostprocessPollDelayMs(statusLike = null) {
 }
 
 function showUploadCompleteDialog() {
+  if (!isMobileSelectionGestureDevice()) return false;
   if (uploadStopRequested || isUploadRunning() || uploadQueue.length
       || uploadUiState.failedFiles || uploadSessionSavedTotal <= 0) return false;
   const dialog = document.getElementById('uploadCompleteDialog');
@@ -14155,6 +14156,8 @@ async function setView(view, opts = {}) {
     const desiredTab = _normalizeSettingsTab(state.settingsTab) || activeTab || 'logs';
     if (desiredTab && desiredTab !== activeTab) {
       activateSettingsTab(desiredTab);
+    } else if (desiredTab === 'users' && state.currentUser?.role === 'admin') {
+      await renderUsersPanel();
     }
     state.settingsTab = _activeSettingsTabFromUi() || desiredTab;
     if (syncUrl) _syncRouteStateToUrl();
@@ -20076,7 +20079,7 @@ async function renderUsersPanel(){
   if (!wrap) return;
   wrap.textContent = 'Indlæser…';
   try{
-    const r = await fetch('/api/admin/users');
+    const r = await fetch('/api/admin/users', {cache: 'no-store'});
     const raw = await r.text();
     let js;
     try { js = JSON.parse(raw); }

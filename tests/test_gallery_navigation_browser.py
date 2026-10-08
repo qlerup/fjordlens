@@ -165,12 +165,21 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         self.assertIn('Du har endnu ikke adgang', self.page.evaluate('els.empty.textContent'))
         self.assertEqual(self.page.evaluate('els.photoCount.textContent'), '0')
 
-    def test_upload_completion_dialog_fits_mobile_and_desktop_and_closes(self):
+    def test_upload_completion_dialog_is_phone_only_and_closes(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
+        self.page = self.context.new_page()
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.page.route('**/*', self.route)
+        self.page.goto('https://fjordlens.test/', wait_until='networkidle')
         for width, height in ((390, 844), (1440, 900)):
             with self.subTest(width=width):
                 self.page.set_viewport_size({'width': width, 'height': height})
                 self.page.evaluate('uploadSessionSavedTotal = 2; showUploadCompleteDialog()')
                 dialog = self.page.locator('#uploadCompleteDialog')
+                if width > 760:
+                    self.assertFalse(dialog.is_visible())
+                    continue
                 self.assertTrue(dialog.is_visible())
                 self.assertIn('lukke browseren nu', dialog.inner_text())
                 box = dialog.bounding_box()
@@ -180,9 +189,20 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
                 self.assertEqual(self.page.evaluate('document.activeElement.textContent'), 'OK')
                 dialog.get_by_role('button', name='OK', exact=True).click()
                 self.assertFalse(dialog.is_visible())
+        self.page.set_viewport_size({'width':390, 'height':844})
         self.page.evaluate('showUploadCompleteDialog()')
         self.page.keyboard.press('Escape')
         self.assertFalse(self.page.locator('#uploadCompleteDialog').is_visible())
+        # A narrow desktop window is still a desktop, not a phone.
+        desktop = self.browser.new_context(viewport={'width':390, 'height':844})
+        try:
+            page = desktop.new_page()
+            page.route('**/*', self.route)
+            page.goto('https://fjordlens.test/', wait_until='networkidle')
+            self.assertFalse(page.evaluate('uploadSessionSavedTotal = 2; showUploadCompleteDialog()'))
+            self.assertFalse(page.locator('#uploadCompleteDialog').is_visible())
+        finally:
+            desktop.close()
 
     def test_folder_permissions_from_context_and_header_for_admin_and_manager(self):
         fl = fixtures.fjordlens
@@ -279,6 +299,42 @@ class GalleryNavigationBrowserTests(unittest.TestCase):
         with fixtures.fjordlens.closing(fixtures.fjordlens.get_conn()) as conn:
             grants = fixtures.fjordlens._get_user_allowed_folders(conn, 2)
         self.assertEqual(grants, [{'folder_path':'uploads/Album', 'permission':'upload'}])
+
+    def test_returning_to_active_users_tab_refreshes_folder_menu_permission_changes(self):
+        self.real_permissions = True
+        self.page.evaluate("void setView('settings')")
+        self.page.locator('#settingsPanel .tab-btn[data-tab="users"]').click()
+        self.page.locator('#usersPanelInner button[data-edit="2"]').wait_for()
+        # Leave the already-selected users tab, then change permissions elsewhere.
+        self.page.evaluate("void setView('mapper')")
+        self.page.locator('.folder-card[data-folder="Album"]').wait_for()
+        self.page.locator('.folder-card[data-folder="Album"]').click(button='right')
+        self.page.locator('#mapperContextMenu').get_by_role('button', name='Mappetilladelser …', exact=True).click()
+        self.page.wait_for_function("!document.getElementById('folderPermissionsUser').disabled")
+        self.page.locator('#folderPermissionsUser').select_option('2')
+        self.page.locator('#folderPermissionsLevel').select_option('upload')
+        self.page.locator('.permissions-save').click()
+        self.page.wait_for_function("!document.querySelector('.folder-permissions-dialog')")
+        self.page.evaluate("async () => { await setView('settings'); }")
+        self.page.locator('#usersPanelInner button[data-edit="2"]').click()
+        self.page.locator('#eu_acl').click()
+        row = self.page.locator('#ua_folder_access .ua-row[data-folder="uploads/Album"]')
+        self.assertTrue(row.locator('input[value="upload"]').is_checked())
+        # A later removal must also refresh, without clicking the users tab again.
+        self.page.locator('#ua_cancel').click()
+        self.page.locator('#eu_cancel').click()
+        self.page.evaluate("void setView('mapper')")
+        self.page.locator('.folder-card[data-folder="Album"]').wait_for()
+        self.page.evaluate("void openFolderPermissionsDialog('Album')")
+        self.page.wait_for_function("!document.getElementById('folderPermissionsUser').disabled")
+        self.page.locator('#folderPermissionsUser').select_option('2')
+        self.page.locator('#folderPermissionsLevel').select_option('none')
+        self.page.locator('.permissions-save').click()
+        self.page.wait_for_function("!document.querySelector('.folder-permissions-dialog')")
+        self.page.evaluate("async () => { await setView('settings'); }")
+        self.page.locator('#usersPanelInner button[data-edit="2"]').click()
+        self.page.locator('#eu_acl').click()
+        self.assertEqual(self.page.locator('#ua_folder_access input:checked').count(), 0)
 
     def test_folder_permission_can_be_unchecked_and_saved_without_removing_other_grants(self):
         fl = fixtures.fjordlens
