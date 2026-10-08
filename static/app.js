@@ -8975,10 +8975,7 @@ async function pollDirectUploadPostprocessStatus(forceShow = false) {
     let sawRunning = false;
     const deadline = Date.now() + (24 * 60 * 60 * 1000);
     while (Date.now() < deadline) {
-      const res = await fetch('/api/upload/direct-postprocess/status');
-      let status = {};
-      try { status = await res.json(); } catch {}
-      if (!res.ok || !status || !status.ok) return;
+      const status = await readUploadPostprocessStatus('/api/upload/direct-postprocess/status', deadline);
 
       const pending = _syncCount(status.pending);
       if (status.running || pending > 0) {
@@ -9545,6 +9542,26 @@ function showUploadCompleteDialog() {
   return true;
 }
 
+async function readUploadPostprocessStatus(url, deadline) {
+  // Losing a status response does not mean the server stopped processing.
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout(10000)});
+      if (response.status === 401 || response.status === 403) {
+        const error = new Error('Adgang til uploadstatus er ophørt');
+        error.accessDenied = true;
+        throw error;
+      }
+      const status = await response.json();
+      if (response.ok && status?.ok === true && typeof status.running === 'boolean') return status;
+    } catch (error) {
+      if (error.accessDenied) throw error;
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 2500));
+  }
+  throw new Error('Efterbehandling status timeout');
+}
+
 async function runUploadPostprocess(onProgress = null, onStarted = null) {
   const startRes = await fetch('/api/upload/postprocess', { method: 'POST' });
   let startData = {};
@@ -9575,13 +9592,7 @@ async function runUploadPostprocess(onProgress = null, onStarted = null) {
 
   const deadline = Date.now() + (24 * 60 * 60 * 1000);
   while (Date.now() < deadline) {
-    const statusRes = await fetch('/api/upload/postprocess/status');
-    let statusData = {};
-    try { statusData = await statusRes.json(); } catch {}
-    if (!statusRes.ok || !statusData.ok) {
-      const msg = (statusData && statusData.error) ? String(statusData.error) : 'Efterbehandling status fejlede';
-      throw new Error(msg);
-    }
+    const statusData = await readUploadPostprocessStatus('/api/upload/postprocess/status', deadline);
     if (statusData.running && typeof onProgress === 'function') {
       onProgress(statusData);
     }
@@ -9673,13 +9684,8 @@ async function resumeUploadPostprocessAfterRefresh() {
   if (uploadQueuePumpRunning || isUploadRunning()) return;
   uploadPostprocessResumeActive = true;
   try {
-    const readStatus = async () => {
-      const res = await fetch('/api/upload/postprocess/status');
-      let data = {};
-      try { data = await res.json(); } catch {}
-      if (!res.ok || !data || !data.ok) return null;
-      return data;
-    };
+    const deadline = Date.now() + (24 * 60 * 60 * 1000);
+    const readStatus = () => readUploadPostprocessStatus('/api/upload/postprocess/status', deadline);
 
     let status = await readStatus();
     if (!status) return;

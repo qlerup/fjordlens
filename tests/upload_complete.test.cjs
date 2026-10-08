@@ -15,7 +15,7 @@ function fixture(fetcher) {
     uploadUiState:{failedFiles:0}, uploadSessionSavedTotal:2, isUploadRunning:()=>false,
     isMobileSelectionGestureDevice:()=>true,
     document:{getElementById:id=>elements[id]}, fetch:fetcher,
-    Date, window:{setTimeout:fn=>fn()}, uploadPostprocessPollDelayMs:()=>0,
+    Date, AbortSignal, window:{setTimeout:fn=>fn()}, uploadPostprocessPollDelayMs:()=>0,
   });
   vm.runInContext(completion, context);
   return {context, dialog, elements};
@@ -61,4 +61,60 @@ test('desktop uploads never open the completion popup', () => {
   f.context.isMobileSelectionGestureDevice = () => false;
   assert.equal(f.context.showUploadCompleteDialog(), false);
   assert.equal(f.dialog.shows, 0);
+});
+
+test('upload processing survives network, HTTP, JSON and incomplete status responses', async () => {
+  const replies = [
+    response({ok:true,running:true}),
+    response({ok:true,running:true,phase:'faces',stage_processed:4,stage_total:20}),
+    new Error('offline'),
+    {ok:false,status:502,json:async()=>({error:'Bad gateway'})},
+    {ok:true,json:async()=>{throw new Error('invalid JSON');}},
+    response({ok:true}),
+    response({ok:true,running:true,phase:'faces',stage_processed:10,stage_total:20}),
+    response({ok:true,running:false,result:{ok:true,faces_done:20}}),
+  ];
+  const f = fixture(async () => {
+    assert.ok(replies.length, 'must not read beyond confirmed completion');
+    const next = replies.shift();
+    if (next instanceof Error) throw next;
+    return next;
+  });
+  const progress = [];
+  const result = await f.context.runUploadPostprocess(s=>progress.push(s.stage_processed));
+  assert.deepEqual(progress, [4,10]);
+  assert.equal(result.faces_done,20);
+});
+
+test('resumed upload retains phase during lost status and clears only on confirmed completion', async () => {
+  let calls = 0, finish;
+  const f = fixture(async () => {
+    calls++;
+    if (calls === 1) return response({ok:true,running:true,phase:'faces',stage_processed:4,stage_total:20});
+    if (calls === 2) throw new Error('offline');
+    return new Promise(resolve=>{finish=resolve;});
+  });
+  Object.assign(f.context, {
+    uploadQueuePumpRunning:false, postprocessPhaseLabel:key=>key, shortRelName:()=>'',
+    renderUploadMonitor:()=>{}, maybeRefreshPhotosDuringPostprocess:async()=>{},
+  });
+  f.context.state.view = 'timeline';
+  f.context.uploadUiState.totalFiles = 0;
+  f.context.uploadUiState.processedFiles = 0;
+  vm.runInContext(source.slice(source.indexOf('let uploadPostprocessResumeActive = false;'),
+    source.indexOf('function uploadSingleFileTus(')), f.context);
+  const polling = f.context.resumeUploadPostprocessAfterRefresh();
+  await new Promise(setImmediate);
+  assert.equal(f.context.uploadUiState.currentPhaseLabel,'faces');
+  assert.equal(f.context.uploadUiState.currentLoaded,4);
+  finish(response({ok:true,running:false}));
+  await polling;
+  assert.equal(f.context.uploadUiState.currentPhaseLabel,'');
+});
+
+test('revoked access is not retried forever', async () => {
+  let calls=0;
+  const f=fixture(async()=>{calls++;return {status:401,ok:false};});
+  await assert.rejects(f.context.readUploadPostprocessStatus('/status',Date.now()+10000), /Adgang/);
+  assert.equal(calls,1);
 });
