@@ -17,7 +17,7 @@ INTERVAL_SECONDS = 60
 def _load_trim():
     try:
         trim = ctypes.CDLL(None).malloc_trim
-    except (AttributeError, OSError):
+    except (AttributeError, OSError, TypeError):
         LOG.info("Automatic heap cleanup unavailable: libc has no malloc_trim")
         return None
     trim.argtypes = [ctypes.c_size_t]

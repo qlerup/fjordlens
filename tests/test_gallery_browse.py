@@ -12,6 +12,38 @@ class GalleryBrowseTests(unittest.TestCase):
     tearDown = fixtures.VideoAutoplaySettingsTests.tearDown
     _authenticated_client = fixtures.VideoAutoplaySettingsTests._authenticated_client
 
+    def test_deep_page_loads_metadata_only_for_selected_ids(self):
+        self.seed(350, mirrors=True)
+        statements = []
+        original = fl.get_conn
+
+        def connect():
+            conn = original()
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        with patch.object(fl, 'get_conn', side_effect=connect):
+            data = self.page(self._authenticated_client(), offset=200)
+        self.assertEqual(len(data['items']), 20)
+        full_reads = [sql for sql in statements if 'photos.*,' in sql]
+        self.assertTrue(full_reads)
+        self.assertTrue(all('AND photos.id IN (' in sql for sql in full_reads))
+        self.assertTrue(all('SELECT id FROM discovery_photos' in sql for sql in full_reads))
+
+    def test_acl_batch_uses_one_connection_and_fresh_grants(self):
+        items = [{'rel_path': 'uploads/Allowed/a.jpg'}, {'rel_path': 'uploads/Other/b.jpg'}] * 100
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 2, [{'folder_path': 'Allowed', 'permission': 'view'}])
+            conn.commit()
+        with fl.app.test_request_context(), patch.object(fl, 'current_user', fl.User(2, 'viewer', role='user')):
+            with patch.object(fl, 'get_conn', wraps=fl.get_conn) as connect:
+                self.assertEqual(len(fl._filter_public_items_by_current_user_acl(items)), 100)
+                self.assertEqual(connect.call_count, 1)
+            with fl.closing(fl.get_conn()) as conn:
+                fl._set_user_allowed_folders(conn, 2, [])
+                conn.commit()
+            self.assertEqual(fl._filter_public_items_by_current_user_acl(items), [])
+
     def test_no_folder_grants_return_empty_without_reading_library(self):
         self.seed(350)
         client = self._authenticated_client(2)

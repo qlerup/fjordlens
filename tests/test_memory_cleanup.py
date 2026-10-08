@@ -47,6 +47,10 @@ class HeapCleanupTests(unittest.TestCase):
             cleanup.start()
             thread.assert_not_called()
 
+    def test_windows_loader_rejects_null_library_name(self):
+        with patch.object(memory_cleanup.ctypes, "CDLL", side_effect=TypeError("library name required")):
+            self.assertIsNone(memory_cleanup._load_trim())
+
     def test_child_resets_inherited_worker_state(self):
         cleanup = memory_cleanup.HeapCleanup()
         old_lock = cleanup._lock

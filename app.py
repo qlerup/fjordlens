@@ -6107,12 +6107,19 @@ def _filter_public_items_by_current_user_acl(items: list[Dict[str, Any]]) -> lis
     if not items:
         return items
     out: list[Dict[str, Any]] = []
-    for item in items:
-        rel = _normalize_rel_path_for_acl(item.get("rel_path"))
-        if not rel:
-            continue
-        if _is_rel_visible_for_current_user(rel):
-            out.append(item)
+    # A gallery total can contain the entire library. Load grants once for this
+    # batch, not via two new SQLite connections for every single photo.
+    with closing(get_conn()) as conn:
+        prefixes = _current_user_acl_prefixes(conn)
+        uid = int(getattr(current_user, "id", 0) or 0)
+        for item in items:
+            rel = _normalize_rel_path_for_acl(item.get("rel_path"))
+            if not rel:
+                continue
+            if (prefixes is None
+                    or any(rel == p or rel.startswith(p + "/") for p in prefixes)
+                    or _folder_owner_user_id_for_rel(rel, conn) == uid):
+                out.append(item)
     return out
 
 
@@ -16884,23 +16891,36 @@ def query_photos(
         ORDER BY {order_by}, photos.id DESC
     """
     dedupe_paged_uploads = bool(isinstance(limit, int) and limit > 0)
+    candidate_sql = None
     if isinstance(limit, int) and limit > 0:
         raw_limit = int(limit)
         if dedupe_paged_uploads:
             raw_limit = (max(0, int(offset or 0)) + int(limit)) * 6
-        sql += f"\n    LIMIT {raw_limit}"
-        if (not dedupe_paged_uploads) and isinstance(offset, int) and offset > 0:
-            sql += f" OFFSET {int(offset)}"
+        # Select the logical page using only IDs/paths. Loading photos.* and
+        # face names for all preceding pages multiplies metadata reads on scroll.
+        candidate_sql = f"SELECT id, rel_path FROM photos {where_sql} ORDER BY {order_by}, photos.id DESC LIMIT {raw_limit}"
 
     with closing(get_conn()) as conn:
         if filename_term:
             conn.create_function("filename_search_key", 1, _filename_search_key, deterministic=True)
-        rows = conn.execute(sql, params).fetchall()
-        rows = _dedupe_upload_storage_rows(rows)
         if dedupe_paged_uploads:
+            rows = _dedupe_upload_storage_rows(conn.execute(candidate_sql, params).fetchall())
             start = max(0, int(offset or 0))
             end = start + int(limit)
             rows = rows[start:end]
+            ids = [int(row["id"]) for row in rows]
+            if not ids:
+                return []
+            records = {}
+            # Keep below SQLite's legacy bound-parameter limit.
+            for i in range(0, len(ids), 500):
+                batch = ids[i:i + 500]
+                page_where = where_sql + " AND photos.id IN (" + ",".join("?" for _ in batch) + ")"
+                page_sql = sql.replace(where_sql, page_where)
+                records.update((int(row["id"]), row) for row in conn.execute(page_sql, params + batch))
+            rows = [records[pid] for pid in ids if pid in records]
+        else:
+            rows = _dedupe_upload_storage_rows(conn.execute(sql, params).fetchall())
         return [row_to_public(r) for r in rows]
 
 
