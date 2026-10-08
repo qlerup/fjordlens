@@ -28488,6 +28488,8 @@ log_retries.register(app)
 
 
 from hub_session_guard import install as install_hub_session_guard
+from memory_cleanup import install as install_memory_cleanup
+install_memory_cleanup(app)
 app.extensions['hub_session_call'] = lambda *args, **kwargs: _hub_api(*args, **kwargs)
 install_hub_session_guard(app, managed=lambda: bool(_FJORDHUB_URL and _FJORDHUB_API_KEY),
     subject=lambda: ({'id': getattr(current_user, 'hub_user_id', None), 'username': current_user.username} if current_user.is_authenticated else None), revoke=logout_user)
