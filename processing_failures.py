@@ -54,6 +54,19 @@ class FailureTracker:
         with self.lock, closing(self.connection()) as conn:
             return [dict(row) for row in conn.execute('SELECT * FROM processing_failures ORDER BY id')]
 
+    def dismiss_file(self, rel):
+        """Forget acknowledged errors without reporting a successful processing run."""
+        from log_retries import canonical_log_rel
+        if not rel:
+            return 0
+        target = canonical_log_rel(rel)
+        with self.lock, closing(self.connection()) as conn:
+            ids = [row['id'] for row in conn.execute('SELECT id,rel_path FROM processing_failures')
+                   if canonical_log_rel(row['rel_path']) == target]
+            conn.executemany('DELETE FROM processing_failures WHERE id=?', [(i,) for i in ids])
+            conn.commit()
+        return len(ids)
+
     def relocate(self, old, new):
         if not old or not new or old == new:
             return

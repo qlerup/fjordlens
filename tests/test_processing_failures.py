@@ -33,6 +33,21 @@ class ProcessingFailureTests(unittest.TestCase):
         self.assertEqual({(r['rel_path'], r['stage']) for r in self.tracker.items()},
                          {('a.jpg', 'embeddings'), ('b.jpg', 'faces')})
 
+    def test_dismiss_file_clears_all_alias_stages_without_claiming_success(self):
+        callback = Mock()
+        self.tracker.on_success = callback
+        for rel, stage in [('uploads/originals/family/a.jpg', 'faces'),
+                           ('/data/uploads/originals/family/a.jpg', 'metadata'),
+                           ('/data/conversion_work/pending/originals/family/a.jpg', 'conversion'),
+                           ('uploads/originals/other/a.jpg', 'faces')]:
+            self.tracker.fail(rel, stage, 'missing')
+        self.assertEqual(self.tracker.dismiss_file('uploads/originals/family/a.jpg'), 3)
+        callback.assert_not_called()
+        restarted = FailureTracker(self.connect)
+        self.assertEqual(len(restarted.items()), 1)
+        restarted.fail('uploads/originals/family/a.jpg', 'faces', 'new error')
+        self.assertEqual(len(restarted.items()), 2)
+
     def test_success_notifies_log_resolution_only_after_committed_clear(self):
         def resolved(rel, stage):
             self.assertEqual((rel, stage), ('a.jpg', 'faces'))

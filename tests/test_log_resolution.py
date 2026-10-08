@@ -1,12 +1,14 @@
 import ast
 from collections import deque
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import threading
 import unittest
 from flask import Flask, jsonify, request
 from types import SimpleNamespace
+from processing_failures import FailureTracker
 
 from log_retries import resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids
 
@@ -63,6 +65,15 @@ class LogResolutionTests(unittest.TestCase):
             env, path = self.persistence_fixture(directory, logs)
             env.update(_forbid_user_role_for_maintenance=lambda: None,
                        jsonify=jsonify, file_error_log_ids=file_error_log_ids)
+            def connect():
+                conn = sqlite3.connect(Path(directory) / 'failures.db')
+                conn.row_factory = sqlite3.Row
+                return conn
+            tracker = FailureTracker(connect)
+            for rel in ['a.jpg', 'b.jpg']:
+                tracker.fail(rel, 'faces', 'failed')
+            tracker.fail('a.jpg', 'conversion', 'failed')
+            env['processing_failures'] = tracker
             exec(compile(ast.unparse(node), str(source), 'exec'), env)
             app = Flask(__name__)
             app.add_url_rule('/api/logs/<int:log_id>/clear', view_func=env['api_log_file_clear'], methods=['POST'])
@@ -75,11 +86,30 @@ class LogResolutionTests(unittest.TestCase):
             path.with_suffix('.tmp').mkdir()
             self.assertEqual(client.post('/api/logs/1/clear').status_code, 500)
             self.assertEqual(list(env['LOG_BUFFER']), logs)
+            self.assertEqual(len(tracker.items()), 3)
             path.with_suffix('.tmp').rmdir()
             response = client.post('/api/logs/1/clear', json={'rel_path': 'b.jpg', 'remove_ids': [3]})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json['removed_ids'], [1, 2])
             self.assertEqual([item['id'] for item in unresolved_error_logs(list(env['LOG_BUFFER']))], [3])
+            self.assertEqual([item['rel_path'] for item in tracker.items()], ['b.jpg'])
+            # Old orphaned failures can be dismissed even without a remaining log.
+            node = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'api_processing_failure_clear')
+            node.decorator_list = []
+            exec(compile(ast.unparse(node), str(source), 'exec'), env)
+            orphan_app = Flask('orphan')
+            orphan_app.add_url_rule('/clear/<int:failure_id>', view_func=env['api_processing_failure_clear'], methods=['POST'])
+            orphan_client = orphan_app.test_client()
+            tracker.fail('orphan.jpg', 'metadata', 'missing')
+            orphan_id = next(row['id'] for row in tracker.items() if row['rel_path'] == 'orphan.jpg')
+            env['_forbid_user_role_for_maintenance'] = lambda: ({'ok': False}, 403)
+            self.assertEqual(orphan_client.post(f'/clear/{orphan_id}').status_code, 403)
+            env['_forbid_user_role_for_maintenance'] = lambda: None
+            response = orphan_client.post(f'/clear/{orphan_id}', json={'rel_path': 'b.jpg'})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json['cleared_steps'], 1)
+            self.assertEqual([item['rel_path'] for item in tracker.items()], ['b.jpg'])
 
     def test_success_removes_only_older_errors_for_exact_file_and_stage(self):
         logs = [error(1), error(2, stage='weather'), error(3, rel='b.jpg'),

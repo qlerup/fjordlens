@@ -9,8 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
     descriptions: 'AI-beskrivelse', embeddings: 'AI-embedding'};
   let timer;
   let loading = false;
+  let reloadRequested = false;
   async function load() {
-    if (loading) return;
+    if (loading) { reloadRequested = true; return; }
     loading = true;
     clearTimeout(timer);
     refresh.disabled = true;
@@ -37,7 +38,21 @@ document.addEventListener('DOMContentLoaded', () => {
         button.textContent = 'Prøv igen';
         button.disabled = data.running;
         button.onclick = () => start([item.id]);
-        row.append(title, error, button);
+        const clear = document.createElement('button');
+        clear.className = 'btn small';
+        clear.textContent = 'Ryd';
+        clear.title = 'Ryd fejl for denne fil fra begge lister. Filen slettes ikke.';
+        clear.onclick = async () => {
+          clear.disabled = true;
+          try {
+            const response = await fetch(`/api/processing-failures/${item.id}/clear`, {method: 'POST'});
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke rydde fejl');
+            document.dispatchEvent(new Event('fjordlens:errors-cleared'));
+            if (typeof refreshResolvedLogs === 'function') await refreshResolvedLogs();
+          } catch (error) { status.textContent = error.message; clear.disabled = false; }
+        };
+        row.append(title, error, button, clear);
         list.append(row);
       }
       retry.disabled = data.running || !items.length;
@@ -48,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       loading = false;
       refresh.disabled = false;
+      if (reloadRequested) { reloadRequested = false; queueMicrotask(load); }
     }
   }
   async function start(ids) {
@@ -65,4 +81,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   refresh.onclick = load;
   retry.onclick = () => start();
+  document.addEventListener('fjordlens:errors-cleared', load);
 });

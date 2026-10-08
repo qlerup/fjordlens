@@ -26283,7 +26283,7 @@ def api_log_file_clear(log_id):
     fb = _forbid_user_role_for_maintenance()
     if fb:
         return jsonify(fb[0]), fb[1]
-    with LOG_LOCK:
+    with processing_failures.lock, LOG_LOCK:
         snapshot = list(LOG_BUFFER)
         selected = next((item for item in snapshot if item['id'] == log_id), None)
         removed = file_error_log_ids(snapshot, selected)
@@ -26293,7 +26293,27 @@ def api_log_file_clear(log_id):
             _clear_persistent_logs(remove_ids=set(removed))
         except OSError:
             return jsonify(ok=False, error="Kunne ikke gemme ændringen i logfilen."), 500
+        processing_failures.dismiss_file(selected.get('rel_path'))
     return jsonify(ok=True, removed_ids=removed)
+
+
+@app.route('/api/processing-failures/<int:failure_id>/clear', methods=['POST'])
+def api_processing_failure_clear(failure_id):
+    fb = _forbid_user_role_for_maintenance()
+    if fb:
+        return jsonify(fb[0]), fb[1]
+    with processing_failures.lock, LOG_LOCK:
+        selected = next((row for row in processing_failures.items() if row['id'] == failure_id), None)
+        if selected is None:
+            return jsonify(ok=False, error='Fejlen findes ikke længere.'), 404
+        removed = file_error_log_ids(list(LOG_BUFFER), {**selected, 'event': 'error'})
+        try:
+            if removed:
+                _clear_persistent_logs(remove_ids=set(removed))
+        except OSError:
+            return jsonify(ok=False, error='Kunne ikke gemme ændringen i logfilen.'), 500
+        cleared = processing_failures.dismiss_file(selected['rel_path'])
+    return jsonify(ok=True, removed_ids=removed, cleared_steps=cleared)
 
 
 # --- Authentication routes ---

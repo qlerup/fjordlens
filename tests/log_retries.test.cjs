@@ -21,7 +21,8 @@ function fixture() {
     state: {uiLanguage: 'da', logItems: items, logCategory: 'all', logPage: 1},
     els: {mainLogsBox: box}, LOG_CATEGORIES: ['all'], LOG_PAGE_SIZE: 50,
     logCategoryLabels: () => ({}), classifySeverity: () => 'err', fmtLogTime: () => '20:48',
-    document: {createElement: () => new Element()},
+    Event: class { constructor(type) {this.type = type;} },
+    document: {createElement: () => new Element(), dispatchEvent(event) {calls.push({event:event.type});}},
     window: {setTimeout(fn) { timers.push(fn); }},
     fetch: async (url, options) => {
       calls.push({url, options});
@@ -113,6 +114,7 @@ test('clear file action removes all server-selected errors with polling stopped'
   assert.equal(button.textContent, 'Ryd filens fejl');
   await button.click();
   assert.equal(f.ctx.state.logItems.length, 0);
+  assert.equal(f.calls.at(-1).event, 'fjordlens:errors-cleared');
 });
 
 test('failed file clear keeps errors visible and allows another attempt', async () => {

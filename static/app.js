@@ -21356,6 +21356,7 @@ async function clearFileLogErrors(item) {
     ++logViewRevision;
     const removed = new Set(data.removed_ids || []);
     state.logItems = state.logItems.filter(entry => !removed.has(entry.id));
+    document.dispatchEvent(new Event('fjordlens:errors-cleared'));
   } catch (error) {
     item.clearError = error.message;
   } finally {
