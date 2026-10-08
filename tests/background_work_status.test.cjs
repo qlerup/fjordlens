@@ -14,7 +14,7 @@ function fixture() {
     fetch: async (url, options) => {
       calls++;
       assert.equal(options.method, undefined, 'monitor must never start or stop work');
-      const response = responses.get(url) || {ok: true, running: false};
+      const response = await (responses.get(url) || {ok: true, running: false});
       if (response instanceof Error) throw response;
       return {ok: true, json: async () => response};
     }, window: {setInterval(fn) { tick = fn; timerCount++; return 1; }}
@@ -63,4 +63,27 @@ test('polling is single flight and independent jobs remain visible', async () =>
   assert.equal(f.calls, 5);
   assert.match(f.panel.textContent, /metadata/);
   assert.match(f.panel.textContent, /upload_proc_embeddings 3\/10/);
+});
+
+test('face progress renders without waiting for another slow status source', async () => {
+  const f = fixture();
+  let release;
+  f.responses.set('/api/ai/status', new Promise(resolve => { release = resolve; }));
+  f.responses.set('/api/faces/status', {ok: true, running: true, processed: 7, total: 20});
+  const polling = f.ctx.pollBackgroundWorkStatus();
+  await new Promise(setImmediate);
+  assert.equal(f.panel.hidden, false);
+  assert.match(f.panel.textContent, /upload_proc_faces 7\/20/);
+  release({ok: true, running: false});
+  await polling;
+});
+
+test('real page includes the background monitor outside view-specific header controls', () => {
+  const html = fs.readFileSync('templates/index.html', 'utf8');
+  const main = html.indexOf('<main class="main">');
+  const topbar = html.indexOf('<header id="topbar"');
+  const monitor = html.slice(main, topbar);
+  assert.match(monitor, /id="backgroundWorkStatus"/);
+  assert.match(monitor, /role="status"/);
+  assert.match(monitor, /aria-live="polite"/);
 });

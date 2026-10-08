@@ -9634,9 +9634,11 @@ async function pollBackgroundWorkStatus() {
       } catch {
         const previous = backgroundWorkSnapshots.get(key);
         if (previous) previous.stale = true;
+      } finally {
+        // A slow service must not delay progress from the other workers.
+        renderBackgroundWorkStatus();
       }
     }));
-    renderBackgroundWorkStatus();
   } finally {
     backgroundWorkPolling = false;
   }
