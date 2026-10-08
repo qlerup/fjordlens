@@ -1694,16 +1694,6 @@ body.view-kameraer .timeline-header-actions {
     content-visibility: visible;
     contain-intrinsic-size: auto;
   }
-  body.view-mapper .mapper-ghost-thumb {
-    animation: none;
-    background: color-mix(in srgb, var(--panel-2) 82%, var(--border));
-  }
-}
-@media (max-width: 760px) {
-  .share-page .mapper-ghost-thumb {
-    animation: none;
-    background: color-mix(in srgb, var(--panel-2) 82%, var(--border));
-  }
 }
 body.view-mapper .photo-card,
 body.view-mapper .photo-card img {
@@ -1829,9 +1819,13 @@ body.view-mapper .photo-card img {
 }
 .mapper-ghost-card:hover { transform: none; border-color: var(--border); box-shadow: none; }
 .mapper-ghost-thumb {
-  background: linear-gradient(100deg, var(--panel) 20%, var(--bg-soft) 42%, var(--panel) 64%);
+  background-color: var(--panel-2);
+  background-image: linear-gradient(100deg,
+    var(--panel-2) 20%,
+    color-mix(in srgb, var(--panel-2) 78%, var(--accent)) 42%,
+    var(--panel-2) 64%);
   background-size: 240% 100%;
-  animation: mapperGhostShimmer 1.25s ease-in-out infinite;
+  animation: mapperGhostShimmer 1.8s linear infinite;
 }
 .mapper-load-sentinel {
   grid-column: 1 / -1;
