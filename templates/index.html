@@ -72,7 +72,11 @@
     </aside>
 
     <main class="main">
-      <div id="backgroundWorkStatus" class="upload-top-status background-work-status hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="uploadTopStatus" class="upload-top-status global-work-progress hidden" role="status" aria-live="polite" aria-atomic="true">
+        <div id="uploadTopStatusLabel" class="upload-top-status-label">Upload: Klar</div>
+        <div class="upload-top-status-progress"><span id="uploadTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
+        <div id="uploadTopProcessRow" class="upload-top-process-row hidden"></div>
+      </div>
       <header id="topbar" class="topbar">
         <button id="menuBtn" class="btn menu-btn" aria-label="Menu" title="Menu">☰</button>
         <div id="searchShell" class="search-shell" aria-label="Søgning">
@@ -120,11 +124,6 @@
         </div>
         <div id="timelineHeaderActions" class="timeline-header-actions" aria-label="Tidslinje handlinger"></div>
         <div id="mapperHeaderActions" class="mapper-header-actions" aria-label="Mapper handlinger">
-          <div id="uploadTopStatus" class="upload-top-status hidden" aria-live="polite">
-            <div id="uploadTopStatusLabel" class="upload-top-status-label">Upload: Klar</div>
-            <div class="upload-top-status-progress"><span id="uploadTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
-            <div id="uploadTopProcessRow" class="upload-top-process-row hidden"></div>
-          </div>
           <div id="downloadTopStatus" class="upload-top-status download-top-status hidden" aria-live="polite">
             <button id="downloadTopStatusCancel" class="download-top-status-cancel" type="button" aria-label="Annuller download" title="Annuller">&times;</button>
             <div id="downloadTopStatusLabel" class="upload-top-status-label">Download: Klar</div>

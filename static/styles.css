@@ -892,7 +892,7 @@ body.view-kameraer .timeline-header-actions {
 .upload-top-status.hidden {
   display: none !important;
 }
-.background-work-status {
+.global-work-progress {
   white-space: pre-line;
   min-width: 0;
   width: fit-content;

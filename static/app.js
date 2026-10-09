@@ -9268,6 +9268,7 @@ function renderUploadMonitor() {
   if (els.uploadTopStatus) {
     const hasTopStatus = isUploadRunning() || isPostprocess || !!String(uploadUiState.currentFileName || '').trim();
     if (hasTopStatus) {
+      if (els.uploadTopStatusBar) els.uploadTopStatusBar.classList.remove('indeterminate');
       if (useMultiTopStatus && renderUploadTopProcessStatus(uploadUiState.processStatus)) {
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = '';
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
@@ -9285,7 +9286,7 @@ function renderUploadMonitor() {
         if (els.uploadTopStatusLabel) els.uploadTopStatusLabel.textContent = topLabel;
         if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = `${activePct}%`;
       }
-    } else {
+    } else if (!renderBackgroundWorkStatus()) {
       clearUploadTopProcessStatus();
       els.uploadTopStatus.classList.add('hidden');
       if (els.uploadTopStatusBar) els.uploadTopStatusBar.style.width = '0%';
@@ -9661,21 +9662,41 @@ async function pollBackgroundWorkStatus() {
   }
 }
 
+let backgroundWorkVisible = false;
 function renderBackgroundWorkStatus() {
-  const panel = document.getElementById('backgroundWorkStatus');
-  if (!panel) return;
-  const lines = [];
+  ensureUploadTopStatusRefs();
+  // Browser transfers own the same progress bar while they are active.
+  if (isUploadRunning() || isUploadPostprocessPhase()) {backgroundWorkVisible=false;return false;}
+  const jobs = [];
   for (const { data, label, stale } of backgroundWorkSnapshots.values()) {
     if (!data.running) continue;
     const name = data.phase ? postprocessPhaseLabel(data.phase) : tr(label);
-    const total = Number(data.stage_total ?? data.total ?? 0);
-    const done = Number(data.stage_processed ?? data.processed ?? 0);
-    const progress = total > 0 ? ` ${done}/${total}` : '';
-    const detail = stale ? tr('background_status_reconnecting') : (data.waiting || tr('status_running'));
-    lines.push(`${name}${progress} · ${detail}`);
+    const total = Math.max(0, Number(data.stage_total ?? data.total ?? 0) || 0);
+    const done = Math.max(0, Number(data.stage_processed ?? data.processed ?? 0) || 0);
+    const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(done / total * 100))) : null;
+    const detail = stale ? tr('background_status_reconnecting') : data.waiting;
+    const text = `${name}${total > 0 ? ` · ${done}/${total} · ${pct}%` : ''}${detail ? ` · ${detail}` : ''}`;
+    jobs.push({text, pct});
   }
-  panel.textContent = lines.join('\n');
-  panel.classList.toggle('hidden', lines.length === 0);
+  if (!jobs.length) {
+    if (backgroundWorkVisible) hideTopStatusMessage();
+    backgroundWorkVisible=false;
+    return false;
+  }
+  backgroundWorkVisible=true;
+  if (jobs.length === 1 || !els.uploadTopProcessRow) {
+    showTopStatusMessage(jobs[0].text, jobs[0].pct);
+    if (jobs[0].pct === null) setTopStatusIndeterminate(true);
+  } else {
+    showTopStatusMessage('', 0);
+    els.uploadTopStatus.classList.add('multi');
+    els.uploadTopProcessRow.innerHTML = jobs.map(job =>
+      `<div class="upload-top-proc run"><div class="upload-top-proc-name">${escapeHtml(job.text)}</div>` +
+      `<div class="upload-top-status-progress"><span class="upload-top-status-bar${job.pct === null ? ' indeterminate' : ''}" style="width:${job.pct ?? 0}%"></span></div></div>`
+    ).join('');
+    els.uploadTopProcessRow.classList.remove('hidden');
+  }
+  return true;
 }
 
 function startBackgroundWorkStatus() {
