@@ -10096,7 +10096,7 @@ async function uploadFiles(fileList, options = {}) {
         // Ensure the monitor auto-hides after uploads are fully done
         scheduleUploadMonitorAutoHide(10000);
 
-        if (post) {
+        if (post && (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.thumb_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0) || Number(post.ai_desc_errors || 0))) {
           const thumbsDone = Math.max(0, Number(post.indexed || 0) - Number(post.thumb_errors || 0));
           const postParts = [
             `thumbs: ${thumbsDone}${Number(post.thumb_errors || 0) ? ` (fejl: ${Number(post.thumb_errors || 0)})` : ''}`,
@@ -10107,12 +10107,12 @@ async function uploadFiles(fileList, options = {}) {
           ];
           showStatus(
             `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''} · ${postParts.filter(Boolean).join(' · ')}`,
-            (uploadUiState.failedFiles || Number(post.index_errors || 0) || Number(post.faces_errors || 0) || Number(post.ai_errors || 0) || Number(post.ai_desc_errors || 0)) ? 'err' : 'ok'
+            'err'
           );
-        } else {
+        } else if (uploadUiState.failedFiles) {
           showStatus(
             `${uploadWasStopped ? 'Upload stoppet' : 'Upload færdig'}: ${uploadSessionSavedTotal} fil(er)${uploadUiState.failedFiles ? `, fejl: ${uploadUiState.failedFiles}` : ''}`,
-            uploadUiState.failedFiles ? 'err' : 'ok'
+            'err'
           );
         }
 
