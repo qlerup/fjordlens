@@ -50,6 +50,14 @@ def private_for_response(get_conn, path):
     return any(logical == p or logical.startswith(p + '/') for p in paths)
 
 
+def inside_folder(path, folder):
+    """A thumbnail browsing context must explicitly contain the photo."""
+    folder = logical_path(folder)
+    if not folder or any(part in ('', '.', '..') for part in folder.split('/')):
+        return False
+    return logical_path(path).startswith(folder + '/')
+
+
 def blurred_thumbnail(path):
     # Deliberately discard identifying detail before resizing; originals stay intact.
     with Image.open(path) as source:

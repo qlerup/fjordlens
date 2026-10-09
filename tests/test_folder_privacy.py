@@ -110,6 +110,37 @@ class FolderPrivacyTests(unittest.TestCase):
             self.toggle(value=False)
             self.assertTrue(moments_service.can_view(vars(fl),moment))
 
+    def test_folder_browsing_is_clear_but_cover_and_wrong_context_stay_blurred(self):
+        self.seed()
+        path=fl.THUMB_DIR/'private.jpg'
+        Image.new('RGB',(64,64),'blue').save(path)
+        original=path.read_bytes()
+        self.toggle()
+        for folder,clear in [('Secret',True),('uploads/originals/Secret',True),('',False),
+                             ('SecretSibling',False),('Secret/Child',False),('Secret/../Secret',False)]:
+            with self.subTest(folder=folder), fl.app.test_request_context('/api/thumbs/private.jpg',query_string={'folder':folder}), \
+                 patch.object(fl,'_is_rel_visible_for_current_user',return_value=True):
+                response=fl.api_thumb_file('private.jpg')
+                response.direct_passthrough=False
+                self.assertEqual(response.get_data()==original,clear)
+                response.close()
+        self.assertEqual(path.read_bytes(),original)
+        with fl.app.test_request_context('/api/thumbs/private.jpg?folder=Secret'), \
+             patch.object(fl,'_is_rel_visible_for_current_user',return_value=False):
+            self.assertEqual(fl.api_thumb_file('private.jpg')[1],404)
+
+    def test_private_subfolder_thumbnails_clear_when_browsing_its_private_parent(self):
+        self.seed()
+        self.toggle()
+        original=(fl.THUMB_DIR/'child.jpg').read_bytes()
+        for folder in ('Secret','Secret/Child'):
+            with fl.app.test_request_context('/api/thumbs/child.jpg',query_string={'folder':folder}), \
+                 patch.object(fl,'_is_rel_visible_for_current_user',return_value=True):
+                response=fl.api_thumb_file('child.jpg')
+                response.direct_passthrough=False
+                self.assertEqual(response.get_data(),original)
+                response.close()
+
     def test_literal_paths_and_storage_mirrors(self):
         with fl.closing(fl.get_conn()) as conn:
             for rel in ['uploads/A_%/a.jpg','uploads/converted/A_%/b.jpg','uploads/originals/A_%/c.jpg','uploads/A_XX/d.jpg']:

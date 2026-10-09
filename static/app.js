@@ -5758,7 +5758,7 @@ function setDetail(item) {
   els.detailContent.classList.remove("hidden");
 
   if (item.thumb_url) {
-    els.detailThumb.src = item.thumb_url;
+    els.detailThumb.src = photoThumbnailUrl(item);
     els.detailThumb.style.display = "block";
   } else {
     els.detailThumb.removeAttribute("src");
@@ -5841,12 +5841,18 @@ function getSizeLabel(w, h) {
   return "XS";
 }
 
+function photoThumbnailUrl(item) {
+  const url = String(item?.thumb_url || '');
+  if (!item?.private || state.view !== 'mapper' || !state.mapperPath || !url.startsWith('/api/thumbs/')) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'folder=' + encodeURIComponent(state.mapperPath);
+}
+
 function cardHTML(item) {
   const extRaw = String((item && (item.ext || item.filename || item.rel_path)) || '').toLowerCase();
   const isGif = extRaw.endsWith('.gif');
   const selectBadge = `<span class="photo-select-badge">✓</span>`;
   const thumb = item.thumb_url
-    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${item.thumb_url}" alt="">${selectBadge}</div>`
+    ? `<div class="card-thumb"><img loading="lazy" decoding="async" src="${photoThumbnailUrl(item)}" alt="">${selectBadge}</div>`
     : `<div class="card-thumb placeholder">${item.is_video ? '🎬 Video' : (isGif ? 'GIF' : escapeHtml(tr('no_thumb')))}${selectBadge}</div>`;
   const videoOverlay = item.is_video
     ? `<div class="video-badge" aria-label="Video" title="Video"><span class="video-badge-icon" aria-hidden="true"></span></div>`

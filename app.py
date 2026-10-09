@@ -23295,10 +23295,18 @@ def api_thumb_file(thumb_name: str):
         if any(folder_privacy.private_parent(conn, r['rel_path']) for r in rows):
             if face:
                 return ('Not found', 404)
-            path = THUMB_DIR / thumb_name
-            if not path.is_file():
-                return ('Not found', 404)
-            return folder_privacy.blurred_thumbnail(path)
+            # Folder covers keep the default blurred URL. Explicit browsing
+            # inside a private folder can show the original thumbnail, while
+            # retaining ACL checks and protecting shared thumbnail filenames.
+            folder = request.args.get('folder')
+            reveal = (folder_privacy.private_parent(conn, folder) is not None
+                      and all(folder_privacy.inside_folder(r['rel_path'], folder)
+                              and _is_rel_visible_for_current_user(r['rel_path'], conn) for r in rows))
+            if not reveal:
+                path = THUMB_DIR / thumb_name
+                if not path.is_file():
+                    return ('Not found', 404)
+                return folder_privacy.blurred_thumbnail(path)
     resp = send_from_directory(str(THUMB_DIR), thumb_name)
     resp.headers["Cache-Control"] = "private, no-store"
     return resp
