@@ -557,6 +557,29 @@
                   <button id="aiDescExternalChooseBtn" class="btn small hidden" type="button">Vælg ekstern behandling</button>
                 </div>
                 <div id="aiDescExternalInfo" class="mini-label hidden">Ekstern behandling: —</div>
+                <div id="chatgptConnectionPanel" class="chatgpt-connection-panel">
+                  <div class="mini-label" style="font-weight:700;">Ekstern AI · ChatGPT</div>
+                  <p class="hint">Tilslut din ChatGPT-konto. Billedbeskrivelser med ChatGPT kommer i næste trin.</p>
+                  <div id="chatgptConnectionStatus" class="mini-label" role="status" aria-live="polite">Henter kontostatus …</div>
+                  <div class="chatgpt-connection-actions">
+                    <button id="chatgptConnectBtn" class="btn small" type="button" disabled>Fortsæt med ChatGPT</button>
+                    <button id="chatgptDisconnectBtn" class="btn small hidden" type="button">Log ud af ChatGPT</button>
+                    <button id="chatgptRetryBtn" class="btn small hidden" type="button">Prøv igen</button>
+                    <a class="mini-link" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Administrér adgang hos ChatGPT</a>
+                  </div>
+                  <div id="chatgptLoginSteps" class="hidden">
+                    <p class="hint">FjordLens kører på en server, så login skal åbnes på din computer. Kræver Python 3.10 eller nyere.</p>
+                    <ol class="hint">
+                      <li><a href="/api/ai/chatgpt/login-helper">Hent loginprogrammet</a>, og pak ZIP-filen ud.</li>
+                      <li>Følg README-filen i mappen. Programmet åbner OpenAI-login i din browser.</li>
+                      <li>Åbn FjordLens via HTTPS, og vælg forbindelsesfilen, som programmet gemmer.</li>
+                    </ol>
+                    <label class="mini-label" for="chatgptConnectionFile">Forbindelsesfil fra loginprogrammet</label>
+                    <input id="chatgptConnectionFile" type="file" accept=".json,application/json">
+                    <p class="hint">Filen indeholder loginoplysninger. Slet den efter overførslen, og del den ikke.</p>
+                  </div>
+                  <div id="chatgptConnectionError" class="hint hidden" role="alert"></div>
+                </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0 6px;">
                   <button id="aiDescribeClearBtn" class="btn danger small" type="button">Slet AI tags og beskrivelser</button>
                 </div>
@@ -1410,6 +1433,7 @@
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='person-search.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
+  {% if user_role == 'admin' %}<script src="{{ url_for('static', filename='chatgpt-connection.js', v=app_build) }}"></script>{% endif %}
   <script src="{{ url_for('static', filename='folder-permissions.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_music.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_player.js', v=app_build) }}"></script>

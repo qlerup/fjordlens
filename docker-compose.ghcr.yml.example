@@ -8,6 +8,7 @@ services:
     environment:
       PHOTO_DIR: /photos
       DATA_DIR: /data
+      CHATGPT_TRUST_PROXY_HTTPS: ${CHATGPT_TRUST_PROXY_HTTPS:-0}
       TZ: ${TZ:-Europe/Copenhagen}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOMENT_POI_LOOKUP: ${MOMENT_POI_LOOKUP:-1}

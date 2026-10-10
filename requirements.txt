@@ -13,3 +13,4 @@ gunicorn>=21.2,<22.0
 numpy>=1.26,<2.0
 rawpy>=0.24,<0.25
 cryptography>=42,<43
+PyJWT[crypto]>=2.8,<3

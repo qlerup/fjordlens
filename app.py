@@ -8319,6 +8319,8 @@ def api_moment_delete(moment_id: int):
 
 moments_service.register_routes(app, globals())
 folder_privacy.register(app, globals())
+import chatgpt_connection
+chatgpt_connection.register(app, DATA_DIR)
 
 
 # --- Moments: on-demand MP4 export (ffmpeg) ---
