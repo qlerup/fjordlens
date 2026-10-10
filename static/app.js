@@ -513,6 +513,14 @@ function ensureTimelineHeaderActions() {
 }
 
 function placeGlobalSearchSortForView() {
+  const progress = els.uploadTopStatus || document.getElementById("uploadTopStatus");
+  const mapperActions = els.mapperHeaderActions || document.getElementById("mapperHeaderActions");
+  const main = document.querySelector(".main");
+  if (progress && state.view === "mapper" && mapperActions) {
+    if (progress.parentElement !== mapperActions) mapperActions.insertBefore(progress, els.mapperSearchShell);
+  } else if (progress && main && progress.parentElement !== main) {
+    main.insertBefore(progress, main.firstChild);
+  }
   const topbar = els.topbar || document.getElementById("topbar") || document.querySelector(".topbar");
   if (!topbar || !els.searchShell || !els.sort) return;
   const timelineActions = ensureTimelineHeaderActions();

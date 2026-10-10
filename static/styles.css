@@ -905,6 +905,10 @@ body.view-kameraer .timeline-header-actions {
   min-width: 0;
   width: fit-content;
 }
+.mapper-header-actions > .global-work-progress {
+  margin: 0;
+  flex: 0 1 auto;
+}
 .upload-top-status.multi .upload-top-status-label,
 .upload-top-status.multi .upload-top-status-progress {
   display: none;
