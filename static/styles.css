@@ -1433,7 +1433,20 @@ body.view-kameraer .timeline-header-actions {
   gap: 10px;
   margin-top: 8px;
 }
-#chatgptConnectionFile { max-width: 100%; margin-top: 6px; }
+#chatgptDeviceCode {
+  display: block;
+  max-width: 100%;
+  width: 180px;
+  margin: 6px 0 10px;
+  padding: 10px;
+  box-sizing: border-box;
+  font: 700 1.1rem monospace;
+  letter-spacing: .1em;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
 #chatgptConnectionError { color: var(--danger, #ff8585); }
 @media (max-width: 760px) {
   .content-header:has(.view-title-row > .global-work-progress:not(.hidden)) {

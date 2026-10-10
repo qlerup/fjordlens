@@ -5,23 +5,51 @@
   const error = document.getElementById('chatgptConnectionError');
   const connect = document.getElementById('chatgptConnectBtn');
   const disconnect = document.getElementById('chatgptDisconnectBtn');
+  const cancel = document.getElementById('chatgptCancelBtn');
   const retry = document.getElementById('chatgptRetryBtn');
   const steps = document.getElementById('chatgptLoginSteps');
-  const file = document.getElementById('chatgptConnectionFile');
-  let csrf = '', busy = false;
+  const code = document.getElementById('chatgptDeviceCode');
+  const link = document.getElementById('chatgptVerifyLink');
+  let csrf = '', busy = false, pending = false, timer = null;
   function showError(message) {
     error.textContent = message;
     error.classList.toggle('hidden', !message);
   }
-  function render(data) {
-    status.textContent = data.connected
-      ? `ChatGPT tilsluttet${data.email ? ` · ${data.email}` : ''} · Billedbehandling er endnu ikke aktiveret`
-      : 'ChatGPT er ikke tilsluttet';
-    disconnect.classList.toggle('hidden', !data.connected);
-    connect.textContent = data.connected ? 'Tilslut en anden ChatGPT-konto' : 'Fortsæt med ChatGPT';
+  function buttons() {
+    connect.disabled = busy || pending || !csrf;
+    disconnect.disabled = busy;
+    cancel.disabled = busy;
+    retry.disabled = busy;
   }
-  async function call(options = {}) {
-    const response = await fetch('/api/ai/chatgpt/connection', {
+  function render(data) {
+    clearTimeout(timer);
+    const login = data.login || {};
+    pending = ['starting', 'waiting', 'busy'].includes(login.state);
+    status.textContent = data.connected
+      ? `ChatGPT tilsluttet${data.email ? ` · ${data.email}` : ''}${data.plan ? ` · ${data.plan}` : ''} · Billedbehandling kommer i næste trin`
+      : 'ChatGPT er ikke tilsluttet';
+    if (login.state === 'starting') status.textContent += ' · Opretter login …';
+    if (login.state === 'waiting') status.textContent += ' · Venter på din godkendelse hos OpenAI';
+    if (login.state === 'busy') status.textContent += ' · En anden administrator er ved at logge ind';
+    disconnect.classList.toggle('hidden', !data.connected);
+    cancel.classList.toggle('hidden', !['starting', 'waiting'].includes(login.state));
+    connect.textContent = data.connected ? 'Tilslut en anden ChatGPT-konto' : 'Fortsæt med ChatGPT';
+    steps.classList.add('hidden'); code.value = ''; link.removeAttribute('href');
+    if (login.state === 'waiting') {
+      const url = new URL(login.verification_url);
+      if (url.protocol !== 'https:' || url.hostname !== 'auth.openai.com' || url.username || url.password) {
+        throw new Error('OpenAI-loginadressen kunne ikke bekræftes.');
+      }
+      code.value = login.user_code;
+      link.href = url.href;
+      steps.classList.remove('hidden');
+    }
+    showError(login.state === 'failed' ? login.error : login.state === 'expired' ? 'Login udløb. Tryk Fortsæt med ChatGPT for at prøve igen.' : '');
+    if (pending && document.body.classList.contains('view-settings')) timer = setTimeout(load, 2000);
+    buttons();
+  }
+  async function call(path = 'connection', options = {}) {
+    const response = await fetch(`/api/ai/chatgpt/${path}`, {
       ...options, cache: 'no-store', headers: {'X-ChatGPT-CSRF': csrf},
       signal: AbortSignal.timeout(30000),
     });
@@ -31,37 +59,33 @@
   }
   async function load() {
     if (busy) return;
-    busy = true;
+    busy = true; buttons();
     try {
       const data = await call();
-      csrf = data.csrf; render(data); showError(''); retry.classList.add('hidden');
+      csrf = data.csrf; render(data); retry.classList.add('hidden');
     } catch (err) {
-      status.textContent = 'Kontostatus kunne ikke hentes'; showError(err.message); retry.classList.remove('hidden');
-    } finally { busy = false; connect.disabled = !csrf; }
+      showError(err.message); retry.classList.remove('hidden');
+      // Retain the current code/account while reconnecting to the server.
+      if (pending && document.body.classList.contains('view-settings')) timer = setTimeout(load, 5000);
+    } finally { busy = false; buttons(); }
   }
-  connect.addEventListener('click', () => { steps.classList.remove('hidden'); showError(''); });
-  retry.addEventListener('click', load);
-  file.addEventListener('change', async () => {
-    if (!file.files[0] || busy) return;
-    if (file.files[0].size > 65536) { showError('Forbindelsesfilen er for stor.'); file.value = ''; return; }
-    busy = true; file.disabled = true; disconnect.disabled = true; connect.disabled = true;
-    try {
-      const body = new FormData(); body.set('connection', file.files[0]);
-      render(await call({method: 'POST', body})); steps.classList.add('hidden'); showError('');
-    } catch (err) { showError(err.message); }
-    finally { file.value = ''; file.disabled = false; disconnect.disabled = false; connect.disabled = false; busy = false; }
-  });
-  disconnect.addEventListener('click', async () => {
+  async function mutate(path, method) {
     if (busy) return;
-    busy = true; disconnect.disabled = true; connect.disabled = true;
-    try { render(await call({method: 'DELETE'})); steps.classList.add('hidden'); showError(''); }
-    catch (err) { showError(err.message); }
-    finally { busy = false; disconnect.disabled = false; connect.disabled = false; }
-  });
+    clearTimeout(timer); busy = true; buttons();
+    try { render(await call(path, {method})); retry.classList.add('hidden'); }
+    catch (err) { showError(err.message); retry.classList.remove('hidden'); }
+    finally { busy = false; buttons(); }
+  }
+  connect.addEventListener('click', () => mutate('login', 'POST'));
+  cancel.addEventListener('click', () => mutate('login', 'DELETE'));
+  disconnect.addEventListener('click', () => mutate('connection', 'DELETE'));
+  retry.addEventListener('click', load);
+  code.addEventListener('click', () => code.select());
   let inSettings = document.body.classList.contains('view-settings');
   new MutationObserver(() => {
     const now = document.body.classList.contains('view-settings');
     if (now && !inSettings) load();
+    if (!now) { clearTimeout(timer); code.value = ''; link.removeAttribute('href'); steps.classList.add('hidden'); }
     inSettings = now;
   }).observe(document.body, {attributes: true, attributeFilter: ['class']});
   if (inSettings) load();

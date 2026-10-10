@@ -1,154 +1,164 @@
-import io
 import json
+import queue
 import time
-from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
-from urllib.parse import parse_qs, urlsplit
 
-import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 from flask import Flask
 from flask_login import LoginManager, UserMixin
 
 import chatgpt_connection as connection
-from scripts import chatgpt_login as helper
+
+ACCOUNT = {'type': 'chatgpt', 'email': 'test@example.com', 'planType': 'plus'}
+AUTH = {'auth_mode': 'chatgpt', 'tokens': {'access_token': 'secret-access', 'refresh_token': 'secret-refresh'}}
 
 
 @pytest.fixture
-def credentials(monkeypatch):
-    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public = private.public_key()
-    keys = SimpleNamespace(get_signing_key_from_jwt=lambda token: SimpleNamespace(key=public))
-    monkeypatch.setattr(connection, 'KEYS', keys)
-    monkeypatch.setattr(helper.jwt, 'PyJWKClient', lambda *a, **k: keys)
-    claims = dict(iss=connection.ISSUER, aud='oaiapp_test', sub='account-1',
-                  exp=int(time.time()) + 3600, iat=int(time.time()), nonce='nonce', email='test@example.com')
-    record = dict(client_id='oaiapp_test', issuer=connection.ISSUER, subject='account-1',
-                  id_token=jwt.encode(claims, private, algorithm='RS256'),
-                  access_token='secret-access', refresh_token='secret-refresh', scopes=helper.SCOPES.split())
-    return record, claims, private
+def store(tmp_path):
+    return connection.ConnectionStore(tmp_path, 'test-secret')
 
 
-def test_official_authorization_parameters_and_pkce():
-    url = helper.authorization_url('urn:uuid:host', 'http://127.0.0.1:1455/auth/callback', 'state', 'nonce', 'verifier')
-    params = parse_qs(urlsplit(url).query)
-    assert params['client_id'] == ['dynamic_agent_client']
-    assert params['agent_name_hint'] == ['FjordLens']
-    assert params['code_challenge_method'] == ['S256']
-    assert params['code_challenge'] != ['verifier']
-    assert 'chatgpt.tokens.use.direct' in params['scope'][0]
-    assert 'agent_name_hint' not in parse_qs(urlsplit(helper.authorization_url('host', 'uri', 's', 'n', 'v', 'oaiapp_existing')).query)
-
-
-def test_exchange_rejects_state_denial_and_changed_registration_before_network(monkeypatch):
-    post = Mock()
-    monkeypatch.setattr(helper.requests, 'post', post)
-    for params, expected in [({'state': ['wrong']}, None),
-                             ({'state': ['s'], 'error': ['access_denied']}, None),
-                             ({'state': ['s'], 'client_id': ['oaiapp_other'], 'code': ['c']}, 'oaiapp_selected'),
-                             ({'state': ['s'], 'code': ['c']}, None)]:
-        with pytest.raises(ValueError):
-            helper.exchange(params, 's', 'n', 'v', 'uri', expected)
-    post.assert_not_called()
-
-
-def test_exchange_uses_issued_client_and_checks_nonce_and_scope(credentials, monkeypatch):
-    record, claims, private = credentials
-    tokens = dict(record, scope=helper.SCOPES)
-    post = Mock(return_value=SimpleNamespace(status_code=200, json=lambda: tokens))
-    monkeypatch.setattr(helper.requests, 'post', post)
-    params = {'state': ['s'], 'client_id': ['oaiapp_test'], 'code': ['code']}
-    result = helper.exchange(params, 's', 'nonce', 'verifier', 'http://127.0.0.1:1455/auth/callback')
-    assert result['subject'] == 'account-1'
-    body = post.call_args.kwargs['data']
-    assert body['client_id'] == 'oaiapp_test' and body['code_verifier'] == 'verifier'
-    with pytest.raises(ValueError):
-        helper.exchange(params, 's', 'different-nonce', 'v', 'uri')
-    tokens['scope'] = 'openid email'
-    with pytest.raises(ValueError):
-        helper.exchange(params, 's', 'nonce', 'v', 'uri')
-
-
-@pytest.mark.parametrize('field,value', [('iss', 'https://evil.example'), ('aud', 'wrong-client'), ('exp', 1)])
-def test_import_rejects_invalid_signed_claims(credentials, field, value):
-    record, claims, private = credentials
-    claims[field] = value
-    record['id_token'] = jwt.encode(claims, private, algorithm='RS256')
-    with pytest.raises(jwt.PyJWTError):
-        connection.verify_identity(record)
-
-
-def test_import_rejects_bad_signature_and_subject(credentials):
-    record, claims, _ = credentials
-    record['subject'] = 'different-account'
-    with pytest.raises(ValueError):
-        connection.verify_identity(record)
-    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    record['id_token'] = jwt.encode(claims, other, algorithm='RS256')
-    with pytest.raises(jwt.PyJWTError):
-        connection.verify_identity(record)
-
-
-def test_encrypted_persistence_host_id_and_disconnect(tmp_path, credentials):
-    record, _, _ = credentials
-    store = connection.ConnectionStore(tmp_path, 'local-secret')
-    identity = connection.verify_identity(record)
-    record['ext_agent_host_id'] = 'laptop-host'
-    store.save(record, identity)
+def test_persistence_is_encrypted_and_excludes_tokens_from_status(store):
+    attempt = store.start('1')
+    assert store.complete(attempt, ACCOUNT, AUTH)
     assert b'secret-access' not in store.path.read_bytes()
     assert b'secret-refresh' not in store.path.read_bytes()
-    assert connection.ConnectionStore(tmp_path, 'local-secret').status()['email'] == 'test@example.com'
-    with store.db() as db:
-        host = db.execute('SELECT value FROM host').fetchone()[0]
-        encrypted = db.execute('SELECT value FROM connection').fetchone()[0]
-    assert json.loads(store.cipher.decrypt(encrypted))['ext_agent_host_id'] == host
-    assert host != 'laptop-host'
-    store.disconnect()
-    assert store.status() == {'connected': False}
-    with store.db() as db:
-        assert db.execute('SELECT value FROM host').fetchone()[0] == host
+    reopened = connection.ConnectionStore(store.path.parent, 'test-secret')
+    status = reopened.status('1')
+    assert status['connected'] and status['email'] == 'test@example.com'
+    assert not status['inference_enabled']
+    assert 'secret-access' not in json.dumps(status)
+    reopened.cancel('1', disconnect=True)
+    assert not reopened.status('1')['connected']
 
 
-def test_routes_require_admin_csrf_secure_transport_and_return_no_tokens(tmp_path, credentials):
+def test_concurrent_workers_can_only_start_one_login(store):
+    def start():
+        try:
+            return store.start('1')
+        except ValueError:
+            return None
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: start(), range(4)))
+    assert sum(bool(x) for x in results) == 1
+
+
+def test_codes_are_only_visible_to_initiating_admin_and_clear_on_cancel(store):
+    attempt = store.start('1')
+    store.update(attempt, state='waiting', user_code='ABCD-1234', verification_url='https://auth.openai.com/codex/device')
+    assert store.status('1')['login']['user_code'] == 'ABCD-1234'
+    assert store.status('2')['login'] == {'state': 'busy'}
+    store.cancel('2')
+    assert store.active(attempt)
+    store.cancel('1')
+    assert not store.active(attempt)
+    assert not store.complete(attempt, ACCOUNT, AUTH)
+    assert not store.status('1')['connected']
+
+
+def test_failed_or_expired_replacement_preserves_connected_account(store):
+    first = store.start('1')
+    store.complete(first, ACCOUNT, AUTH)
+    second = store.start('1')
+    store.update(second, state='failed')
+    assert store.status('1')['connected']
+    third = store.start('1')
+    store.update(third, expires_at=time.time() - 1, user_code='EXPIRED')
+    assert store.status('1')['login']['state'] == 'expired'
+    assert 'user_code' not in store.status('1')['login']
+    assert not store.complete(third, ACCOUNT, AUTH)
+    assert store.status('1')['email'] == ACCOUNT['email']
+
+
+def fake_rpc(monkeypatch, url='https://auth.openai.com/codex/device', success=True, cancel=None):
+    calls = []
+    class FakeRPC:
+        def __init__(self, home, executable):
+            self.home = home
+            self.notifications = []
+            self.messages = queue.Queue()
+        def request(self, method, params=None, timeout=20):
+            calls.append((method, params))
+            if method == 'initialize':
+                return {}
+            if method == 'account/login/start':
+                self.messages.put({'method': 'account/login/completed', 'params': {'loginId': 'login-1', 'success': success}})
+                return {'loginId': 'login-1', 'userCode': 'ABCD-1234', 'verificationUrl': url}
+            if method == 'account/read':
+                (self.home / 'auth.json').write_text(json.dumps(AUTH))
+                if cancel:
+                    cancel()
+                return {'account': ACCOUNT}
+            return {}
+        def send(self, message):
+            calls.append((message['method'], message.get('params')))
+        def close(self):
+            calls.append(('close', None))
+    monkeypatch.setattr(connection, 'CodexRPC', FakeRPC)
+    return calls
+
+
+def test_worker_uses_official_device_protocol_and_saves_only_after_completion(store, monkeypatch):
+    calls = fake_rpc(monkeypatch)
+    attempt = store.start('1')
+    connection.run_login(store, attempt, 'codex')
+    assert store.status('1')['connected']
+    assert ('account/login/start', {'type': 'chatgptDeviceCode'}) in calls
+    assert ('account/read', {'refreshToken': False}) in calls
+    assert not any(name.startswith('thread/') or name.startswith('turn/') for name, _ in calls)
+    assert calls[-1][0] == 'close'
+
+
+@pytest.mark.parametrize('url,success', [('https://evil.example/device', True),
+                                         ('http://auth.openai.com/device', True),
+                                         ('https://auth.openai.com/codex/device', False)])
+def test_worker_rejects_bad_url_or_failed_login(store, monkeypatch, url, success):
+    fake_rpc(monkeypatch, url, success)
+    attempt = store.start('1')
+    connection.run_login(store, attempt, 'codex')
+    assert not store.status('1')['connected']
+    assert store.status('1')['login']['state'] == 'failed'
+    assert 'user_code' not in store.status('1')['login']
+
+
+def test_cancel_racing_success_cannot_restore_credentials(store, monkeypatch):
+    fake_rpc(monkeypatch, cancel=lambda: store.cancel('1', disconnect=True))
+    connection.run_login(store, store.start('1'), 'codex')
+    assert not store.status('1')['connected']
+
+
+def test_routes_roles_csrf_start_cancel_logout_and_no_file_import(tmp_path, monkeypatch):
     app = Flask(__name__)
     app.secret_key = 'test-secret'
-    app.config['SERVER_NAME'] = 'server.example'
     login = LoginManager(app)
-
     class User(UserMixin):
-        def __init__(self, role):
-            self.id = role
-            self.role = role
-
-    login.user_loader(lambda role: User(role))
+        def __init__(self, ident):
+            self.id = ident
+            self.role = ident
+    login.user_loader(lambda ident: User(ident))
     connection.register(app, tmp_path)
+    launch = Mock()
+    monkeypatch.setattr(connection, 'launch_login', launch)
+    monkeypatch.setattr(connection.shutil, 'which', lambda _: '/bin/codex')
     client = app.test_client()
     assert client.get('/api/ai/chatgpt/connection').status_code == 401
-    for role in ['user', 'manager']:
-        with client.session_transaction() as sess:
-            sess['_user_id'] = role
-        assert client.get('/api/ai/chatgpt/connection').status_code == 403
-        assert client.get('/api/ai/chatgpt/login-helper').status_code == 403
-    with client.session_transaction() as sess:
-        sess['_user_id'] = 'admin'
+    for role in ['user', 'manager', 'admin']:
+        with client.session_transaction() as session:
+            session['_user_id'] = role
+        status = client.get('/api/ai/chatgpt/connection')
+        assert status.status_code == (200 if role == 'admin' else 403)
+        assert client.post('/api/ai/chatgpt/login').status_code == 403
     csrf = client.get('/api/ai/chatgpt/connection').json['csrf']
-    assert client.delete('/api/ai/chatgpt/connection').status_code == 403
     headers = {'X-ChatGPT-CSRF': csrf}
-    data = lambda: {'connection': (io.BytesIO(json.dumps(credentials[0]).encode()), 'connection.json')}
-    assert client.post('/api/ai/chatgpt/connection', headers=headers, data=data(), base_url='http://server.example').status_code == 400
-    result = client.post('/api/ai/chatgpt/connection', headers=headers, data=data(), base_url='https://server.example')
-    assert result.status_code == 200
-    assert result.json['connected'] and not result.json['inference_enabled']
-    invalid = dict(credentials[0], subject='different-account')
-    rejected = client.post('/api/ai/chatgpt/connection', headers=headers,
-                           data={'connection': (io.BytesIO(json.dumps(invalid).encode()), 'bad.json')},
-                           base_url='https://server.example')
-    assert rejected.status_code == 400
-    assert client.get('/api/ai/chatgpt/connection').json['email'] == 'test@example.com'
-    status = client.get('/api/ai/chatgpt/connection')
-    assert 'secret-access' not in status.get_data(as_text=True)
-    assert 'secret-refresh' not in status.get_data(as_text=True)
-    assert status.headers['Cache-Control'] == 'no-store'
-    assert client.get('/api/ai/chatgpt/login-helper').mimetype == 'application/zip'
+    result = client.post('/api/ai/chatgpt/login', headers=headers)
+    assert result.status_code == 202 and result.json['login']['state'] == 'starting'
+    launch.assert_called_once()
+    assert client.post('/api/ai/chatgpt/login', headers=headers).status_code == 409
+    assert client.delete('/api/ai/chatgpt/login', headers=headers).status_code == 200
     assert client.delete('/api/ai/chatgpt/connection', headers=headers).json['connected'] is False
+    assert client.get('/api/ai/chatgpt/login-helper').status_code == 404
+    assert client.post('/api/ai/chatgpt/connection', headers=headers).status_code == 405
+    assert client.get('/api/ai/chatgpt/connection').headers['Cache-Control'] == 'no-store'
+    monkeypatch.setattr(connection.shutil, 'which', lambda _: None)
+    assert client.post('/api/ai/chatgpt/login', headers=headers).status_code == 503

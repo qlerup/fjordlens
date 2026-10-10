@@ -25,7 +25,6 @@ services:
       FJORDLENS_MEMORY_SERVICE: fjordlens
       PHOTO_DIR: /photos
       DATA_DIR: /data
-      CHATGPT_TRUST_PROXY_HTTPS: ${CHATGPT_TRUST_PROXY_HTTPS:-0}
       UPLOAD_DIR: /uploads
       THUMB_DIR: /thumbs
       CONVERSION_WORK_DIR: /data/conversion_work

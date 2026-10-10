@@ -1,4 +1,13 @@
+FROM node:22-bookworm-slim AS chatgpt-login-runtime
+ARG CODEX_VERSION=0.162.1
+RUN npm install --global @openai/codex@${CODEX_VERSION}
+
 FROM python:3.11-slim
+
+# Official OpenAI login runs inside FjordLens, never on the user's computer.
+COPY --from=chatgpt-login-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=chatgpt-login-runtime /usr/local/lib/node_modules/@openai /opt/openai
+RUN ln -s /opt/openai/codex/bin/codex.js /usr/local/bin/codex
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

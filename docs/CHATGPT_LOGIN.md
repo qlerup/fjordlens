@@ -1,45 +1,48 @@
-# ChatGPT-forbindelse
+# ChatGPT-login i FjordLens
 
-Første trin til ekstern AI under Indstillinger → AI beskrivelser. Denne ændring
-tilslutter en ChatGPT-konto og gemmer forbindelsen. Den aktiverer ingen
-billedbehandling og sender ingen billeder til OpenAI.
+Login foregår under Indstillinger → AI beskrivelser → Ekstern AI · ChatGPT.
+Runtime og loginoplysninger håndteres på FjordLens-serveren.
 
-Login følger OpenAI's offentlige flow for open source-apps og ChatGPT plan usage:
-https://developers.openai.com/siwc/token-sharing-open-source/sign-in
+1. Opdatér FjordLens-containeren til denne version.
+2. Tryk **Fortsæt med ChatGPT** i panelet.
+3. Panelet viser en engangskode og **Åbn ChatGPT-login**.
+4. Åbn linket, log ind hos OpenAI og indtast koden.
+5. Vend tilbage til FjordLens. Kontostatus opdateres automatisk.
 
-FjordLens er self-hosted. OpenAI kræver et loopback-callback på computeren med
-browseren, så login gennemføres med det downloadbare lokale Python-program.
-https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms
+Hvis OpenAI afviser device-login, skal det aktiveres i ChatGPT-kontoens
+sikkerhedsindstillinger eller tillades af workspace-administratoren.
 
-1. Åbn Indstillinger → AI beskrivelser → Ekstern AI · ChatGPT.
-2. Tryk Fortsæt med ChatGPT, hent ZIP-filen og pak den ud på din computer.
-3. Med Python 3.10+ installeret: `python -m pip install -r requirements.txt`,
-   derefter `python chatgpt_login.py`.
-4. Log ind hos OpenAI og godkend adgang til abonnementet.
-5. Vælg den genererede forbindelsesfil i FjordLens via HTTPS. Slet filen efter
-   overførslen. Filen indeholder adgangs- og fornyelsestokens.
+Dette bruger OpenAI's officielle Codex app-server og device-code-login.
+Forbindelsen er ChatGPT-kontoens Codex-adgang. Billedbeskrivelser og kontrol af
+modeladgang tilføjes i næste trin.
 
-For en anden konto eller et andet workspace: `python chatgpt_login.py --new-account`.
-Et almindeligt nyt login genbruger det gemte klient-ID og værts-ID.
+Officielle kilder:
 
-Ved TLS-terminering i en reverse proxy skal `CHATGPT_TRUST_PROXY_HTTPS=1` sættes
-i FjordLens-miljøet. Aktivér kun dette, hvis proxyen overskriver
-`X-Forwarded-Proto`, og applikationsporten er beskyttet mod direkte adgang fra
-utroværdige klienter. Ellers kræves direkte HTTPS eller en SSH-tunnel til
-`http://127.0.0.1:PORT`. Almindelig HTTP til serverens LAN-adresse afvises ved import.
+- https://learn.chatgpt.com/docs/auth#login-on-headless-devices
+- https://learn.chatgpt.com/docs/app-server#authentication
 
-Kun administratorer kan læse og ændre forbindelsen. Kontoen er fælles for
-installationen. Tokens gemmes krypteret i `DATA_DIR/chatgpt-connection.sqlite3`
-med en nøgle afledt af appens eksisterende hemmelige nøgle. Bevar `secret.key`
-sammen med data ved backup. Klientens host-ID erstatter ikke serverens eget ID.
-Status-API'et returnerer kun kontoens email og forbindelsestidspunkt.
+Docker-imaget indeholder den officielle Codex CLI, fastlåst til version 0.162.1.
+Runtime starter kun login/account-metoder over privat stdio. Der startes ingen
+agenttråde, prompts, kommandoer eller billedoverførsler.
 
-Log ud fjerner forbindelsen fra FjordLens. Tilbagekald selve OpenAI-tilladelsen
-i ChatGPT Settings → Usage. Import af en ny konto sker først efter kontrol af
-ID-tokenets signatur, issuer, audience, udløb og identitet, så et mislykket
-login bevarer den eksisterende konto.
+En tidsbegrænset loginproces kører på serveren. Loginstatus ligger i SQLite, så
+navigation, browseropdatering og flere web-workers virker. Koden vises kun til
+den administrator, der startede login. Mislykket login bevarer eksisterende
+kontotilslutning. Genstart af server/container kan afbryde et ventende login;
+prøv igen, når det er udløbet.
 
-Der er endnu ingen automatisk tokenfornyelse eller modelvalg. De tilføjes med
-billedbehandlingen. Et gemt login er ikke en verificering af modeladgang,
-abonnementsgrænser eller senere tilbagekaldelse. Et virkeligt OAuth-login kræver
-brugerens godkendelse i browseren og er ikke del af de automatiske tests.
+Codex bruger en isoleret midlertidig credential-mappe på serveren under login.
+Efter godkendelse gemmes dens auth-record krypteret i
+`DATA_DIR/chatgpt-connection.sqlite3`, og den midlertidige mappe fjernes.
+Krypteringsnøglen afledes af appens eksisterende hemmelige nøgle. Bevar
+`secret.key` sammen med data ved backup. Tokens returneres aldrig til browseren.
+
+Log ud fjerner forbindelsen og annullerer et eventuelt ventende login.
+Tilbagekald den overordnede OpenAI-tilladelse i din ChatGPT-konto, hvis nødvendigt.
+HTTPS anbefales som for resten af administratorpanelet. OAuth-tokens overføres
+udelukkende mellem OpenAI og serveren.
+
+Login er første trin. Automatisk fornyelse under billedbehandling og faktisk
+kontrol af abonnements-/modeladgang implementeres sammen med næste trin.
+Et virkeligt OAuth-login kræver brugerens godkendelse hos OpenAI; automatiske
+tests simulerer loginresultatet og udfører ingen modelkald.

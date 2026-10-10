@@ -1,4 +1,4 @@
-"""Exercise the actual settings panel with mocked account responses."""
+"""Actual login panel with device-code and account responses simulated."""
 import json
 import unittest
 from pathlib import Path
@@ -9,24 +9,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ChatGPTConnectionBrowserTests(unittest.TestCase):
-    def test_connect_disconnect_error_and_mobile_layout(self):
+    def test_device_login_auto_completion_cancel_retry_and_mobile(self):
         template = (ROOT / 'templates/index.html').read_text(encoding='utf-8')
         start = template.index('<div id="chatgptConnectionPanel"')
-        end = template.index('<div style=', start)
-        panel = template[start:end]
+        panel = template[start:template.index('<div style=', start)]
         data = {'ok': True, 'connected': False, 'csrf': 'csrf-test'}
-        imports = []
         errors = []
+        started = []
 
         def route_request(route):
             method = route.request.method
+            login = route.request.url.endswith('/login')
             if method in {'POST', 'DELETE'}:
                 assert route.request.headers['x-chatgpt-csrf'] == 'csrf-test'
-            if method == 'POST':
-                imports.append(route.request.post_data_buffer)
-                data.update(connected=True, email='my-account@example.com')
+            if login and method == 'POST':
+                started.append(True)
+                data['login'] = {'state': 'waiting', 'user_code': 'ABCD-1234',
+                                 'verification_url': 'https://auth.openai.com/codex/device'}
             if method == 'DELETE':
-                data.update(connected=False)
+                data.pop('login', None)
+                if not login:
+                    data.update(connected=False)
             route.fulfill(content_type='application/json', body=json.dumps(data))
 
         with sync_playwright() as runtime:
@@ -36,24 +39,31 @@ class ChatGPTConnectionBrowserTests(unittest.TestCase):
             page.route('https://fjordlens.test/', lambda route: route.fulfill(
                 content_type='text/html', body='<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<body class="view-settings" style="padding:16px;margin:0"><div class="mini-label">AI beskrivelser</div>' + panel))
-            page.route('**/api/ai/chatgpt/connection', route_request)
+            page.route('**/api/ai/chatgpt/*', route_request)
             page.goto('https://fjordlens.test/')
             for css in ['styles.css', 'redesign.css']:
                 page.add_style_tag(path=str(ROOT / 'static' / css))
             page.add_script_tag(path=str(ROOT / 'static/chatgpt-connection.js'))
             expect(page.locator('#chatgptConnectionStatus')).to_contain_text('ikke tilsluttet')
+            page.locator('#chatgptConnectBtn').click()
+            expect(page.locator('#chatgptDeviceCode')).to_have_value('ABCD-1234')
+            expect(page.locator('#chatgptVerifyLink')).to_have_attribute('href', 'https://auth.openai.com/codex/device')
+            expect(page.locator('#chatgptConnectBtn')).to_be_disabled()
             for width in [1440, 390, 320]:
                 page.set_viewport_size({'width': width, 'height': 900})
-                page.locator('#chatgptConnectBtn').click()
                 expect(page.locator('#chatgptLoginSteps')).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-                box = page.locator('#chatgptConnectBtn').bounding_box()
-                assert box['width'] > 100 and box['height'] > 20
-            page.locator('#chatgptConnectionFile').set_input_files({
-                'name': 'connection.json', 'mimeType': 'application/json', 'buffer': b'{"fixture":true}'})
+            # No file inputs, download helpers, or desktop installs.
+            assert page.locator('input[type="file"]').count() == 0
+            page.locator('#chatgptCancelBtn').click()
+            expect(page.locator('#chatgptLoginSteps')).not_to_be_visible()
+            expect(page.locator('#chatgptConnectBtn')).to_be_enabled()
+            page.locator('#chatgptConnectBtn').click()
+            expect(page.locator('#chatgptDeviceCode')).to_have_value('ABCD-1234')
+            data.update(connected=True, email='my-account@example.com', plan='plus', login={'state': 'completed'})
             expect(page.locator('#chatgptConnectionStatus')).to_contain_text('my-account@example.com')
             expect(page.locator('#chatgptLoginSteps')).not_to_be_visible()
-            assert imports and page.locator('#chatgptConnectionFile').input_value() == ''
+            expect(page.locator('#chatgptDeviceCode')).to_have_value('')
             page.locator('#chatgptDisconnectBtn').click()
             expect(page.locator('#chatgptConnectionStatus')).to_contain_text('ikke tilsluttet')
             expect(page.locator('#chatgptDisconnectBtn')).not_to_be_visible()
@@ -65,7 +75,7 @@ class ChatGPTConnectionBrowserTests(unittest.TestCase):
             page.locator('#chatgptRetryBtn').click()
             expect(page.locator('#chatgptConnectionError')).not_to_be_visible()
             expect(page.locator('#chatgptConnectBtn')).to_be_enabled()
-            assert errors == []
+            assert errors == [] and len(started) == 2
             browser.close()
 
 

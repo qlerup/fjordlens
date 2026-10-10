@@ -564,19 +564,16 @@
                   <div class="chatgpt-connection-actions">
                     <button id="chatgptConnectBtn" class="btn small" type="button" disabled>Fortsæt med ChatGPT</button>
                     <button id="chatgptDisconnectBtn" class="btn small hidden" type="button">Log ud af ChatGPT</button>
+                    <button id="chatgptCancelBtn" class="btn small hidden" type="button">Annuller login</button>
                     <button id="chatgptRetryBtn" class="btn small hidden" type="button">Prøv igen</button>
                     <a class="mini-link" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Administrér adgang hos ChatGPT</a>
                   </div>
                   <div id="chatgptLoginSteps" class="hidden">
-                    <p class="hint">FjordLens kører på en server, så login skal åbnes på din computer. Kræver Python 3.10 eller nyere.</p>
-                    <ol class="hint">
-                      <li><a href="/api/ai/chatgpt/login-helper">Hent loginprogrammet</a>, og pak ZIP-filen ud.</li>
-                      <li>Følg README-filen i mappen. Programmet åbner OpenAI-login i din browser.</li>
-                      <li>Åbn FjordLens via HTTPS, og vælg forbindelsesfilen, som programmet gemmer.</li>
-                    </ol>
-                    <label class="mini-label" for="chatgptConnectionFile">Forbindelsesfil fra loginprogrammet</label>
-                    <input id="chatgptConnectionFile" type="file" accept=".json,application/json">
-                    <p class="hint">Filen indeholder loginoplysninger. Slet den efter overførslen, og del den ikke.</p>
+                    <p class="hint">Åbn OpenAI-login, og indtast engangskoden. FjordLens tilslutter automatisk kontoen, når du har godkendt.</p>
+                    <label class="mini-label" for="chatgptDeviceCode">Engangskode</label>
+                    <input id="chatgptDeviceCode" type="text" readonly autocomplete="off" aria-label="Engangskode til ChatGPT-login">
+                    <a id="chatgptVerifyLink" class="btn small" target="_blank" rel="noopener noreferrer">Åbn ChatGPT-login</a>
+                    <p class="hint">Hvis OpenAI afviser device-login, skal du aktivere det i din ChatGPT-kontos sikkerhedsindstillinger.</p>
                   </div>
                   <div id="chatgptConnectionError" class="hint hidden" role="alert"></div>
                 </div>
