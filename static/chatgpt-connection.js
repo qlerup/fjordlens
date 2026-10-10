@@ -11,6 +11,8 @@
   const code = document.getElementById('chatgptDeviceCode');
   const link = document.getElementById('chatgptVerifyLink');
   let csrf = '', busy = false, pending = false, timer = null;
+  let connected = false;
+  const test = document.getElementById('chatgptTestBtn');
   function showError(message) {
     error.textContent = message;
     error.classList.toggle('hidden', !message);
@@ -20,13 +22,16 @@
     disconnect.disabled = busy;
     cancel.disabled = busy;
     retry.disabled = busy;
+    if (test) test.disabled = busy || pending || !csrf || !connected;
   }
   function render(data) {
     clearTimeout(timer);
     const login = data.login || {};
     pending = ['starting', 'waiting', 'busy'].includes(login.state);
+    connected = data.connected;
+    if (test) test.dataset.csrf = csrf;
     status.textContent = data.connected
-      ? `ChatGPT tilsluttet${data.email ? ` · ${data.email}` : ''}${data.plan ? ` · ${data.plan}` : ''} · Billedbehandling kommer i næste trin`
+      ? `ChatGPT tilsluttet${data.email ? ` · ${data.email}` : ''}${data.plan ? ` · ${data.plan}` : ''}`
       : 'ChatGPT er ikke tilsluttet';
     if (login.state === 'starting') status.textContent += ' · Opretter login …';
     if (login.state === 'waiting') status.textContent += ' · Venter på din godkendelse hos OpenAI';

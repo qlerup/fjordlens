@@ -53,8 +53,9 @@ class ChatGPTConnectionBrowserTests(unittest.TestCase):
                 page.set_viewport_size({'width': width, 'height': 900})
                 expect(page.locator('#chatgptLoginSteps')).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-            # No file inputs, download helpers, or desktop installs.
-            assert page.locator('input[type="file"]').count() == 0
+            # Only the temporary photo test accepts a file; login has no auth-file import.
+            assert page.locator('input[type="file"]').count() == 1
+            assert page.locator('input[type="file"]').get_attribute('id') == 'chatgptTestImage'
             page.locator('#chatgptCancelBtn').click()
             expect(page.locator('#chatgptLoginSteps')).not_to_be_visible()
             expect(page.locator('#chatgptConnectBtn')).to_be_enabled()

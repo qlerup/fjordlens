@@ -10,6 +10,16 @@ music, public links and MP4 export.
 
 ---
 
+## ChatGPT photo analysis test
+
+Administrators can open **Settings → AI descriptions → External AI · ChatGPT → Test billedanalyse** after connecting an account. Choose a temporary JPG, PNG or WebP image (maximum 20 MB / 40 megapixels), an image-capable model from the account's catalog, and a usage threshold (default 80%). The modal shows a Danish description, observations, objects, search concepts, and the complete validated JSON with model/prompt/schema metadata.
+
+The image is decoded and re-encoded without EXIF/GPS, at up to 2048 pixels on its longest side, and sent through the existing ChatGPT connection and Codex app-server 0.162.1. Each attempt uses a fresh ephemeral thread, an empty working directory, disabled shell/web/plugin capabilities, and rejected tool requests. The analysis prompt and schema are versioned in `chatgpt_analysis_schema.py`. Images are held in memory for the attempt and never added to the library. Native credentials and transient app-server files are removed with the temporary directory. The browser retains its local preview until the modal closes. Results are encrypted in the connection database, removed on closing a completed test, and expire after 15 minutes (expired records are purged on the next test/status access).
+
+Before every analysis, all returned Codex/model pools and their primary/secondary windows are checked separately. Missing/invalid usage, unknown included-capacity permission, a backend capacity/spend block, or any window reaching the chosen threshold minus **2 percentage points** prevents image inference. These measurements cover the reported pools, including other activity in those pools; they are not a measurement of the entire ChatGPT subscription. No reset-credit or paid-capacity action is called. Delayed accounting and an in-flight answer can still exceed the threshold. A SQLite lease serializes test attempts across web workers and a separate lease protects credential rotation. There are no automatic inference retries. Interrupted workers time out and can be retried manually.
+
+This feature is the manual experiment requested for evaluating the analysis prompt. Persistent library analysis, the daily capacity-check queue, and content search integration remain separate future work. Rebuild/redeploy the web container for the new dependencies and assets. Validation: `python -m pytest tests/test_chatgpt_connection.py tests/test_chatgpt_analysis.py tests/test_chatgpt_connection_browser.py tests/test_chatgpt_analysis_browser.py -q` from the project directory. Model answers and quota values are simulated in tests; a real account inference must be checked through the modal after deployment. The actual pinned app-server was also started without credentials to verify its configuration, and generated 0.162.1 protocol schemas validated the thread/image/output-schema requests.
+
 ## Feature Matrix
 
 | Feature | Requires Ollama | Requires Photoframe | Requires External Worker | External account/service |

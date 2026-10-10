@@ -559,11 +559,12 @@
                 <div id="aiDescExternalInfo" class="mini-label hidden">Ekstern behandling: —</div>
                 <div id="chatgptConnectionPanel" class="chatgpt-connection-panel">
                   <div class="mini-label" style="font-weight:700;">Ekstern AI · ChatGPT</div>
-                  <p class="hint">Tilslut din ChatGPT-konto. Billedbeskrivelser med ChatGPT kommer i næste trin.</p>
+                  <p class="hint">Tilslut din ChatGPT-konto, og prøv billedanalysen med et midlertidigt billede.</p>
                   <div id="chatgptConnectionStatus" class="mini-label" role="status" aria-live="polite">Henter kontostatus …</div>
                   <div class="chatgpt-connection-actions">
                     <button id="chatgptConnectBtn" class="btn small" type="button" disabled>Fortsæt med ChatGPT</button>
                     <button id="chatgptDisconnectBtn" class="btn small hidden" type="button">Log ud af ChatGPT</button>
+                    <button id="chatgptTestBtn" class="btn small" type="button" disabled>Test billedanalyse</button>
                     <button id="chatgptCancelBtn" class="btn small hidden" type="button">Annuller login</button>
                     <button id="chatgptRetryBtn" class="btn small hidden" type="button">Prøv igen</button>
                     <a class="mini-link" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Administrér adgang hos ChatGPT</a>
@@ -576,6 +577,28 @@
                     <p class="hint">Hvis OpenAI afviser device-login, skal du aktivere det i din ChatGPT-kontos sikkerhedsindstillinger.</p>
                   </div>
                   <div id="chatgptConnectionError" class="hint hidden" role="alert"></div>
+                  <dialog id="chatgptTestDialog" class="chatgpt-test-dialog" aria-labelledby="chatgptTestTitle">
+                    <header><div><h2 id="chatgptTestTitle">Test billedanalyse</h2><p class="hint">Prøv FjordLens’ analyse med ét billede.</p></div><button id="chatgptTestClose" class="btn small" type="button" aria-label="Luk testanalyse">Luk</button></header>
+                    <p class="hint">Billedet sendes til OpenAI via din tilsluttede konto og bruger kontoens kapacitet. Det tilføjes ikke til fotosamlingen og slettes fra FjordLens efter forsøget.</p>
+                    <form id="chatgptTestForm">
+                      <label for="chatgptTestImage">Midlertidigt billede</label>
+                      <input id="chatgptTestImage" type="file" accept="image/jpeg,image/png,image/webp" required>
+                      <p class="hint">JPG, PNG eller WebP · højst 20 MB / 40 megapixel. Analyseversionen er højst 2048 pixels på længste side.</p>
+                      <img id="chatgptTestPreview" class="hidden" alt="Forhåndsvisning af testbilledet">
+                      <div class="chatgpt-test-fields"><div><label for="chatgptTestModel">ChatGPT-model</label><select id="chatgptTestModel" required disabled><option value="">Henter modeller …</option></select></div><div><label for="chatgptTestThreshold">Stop ved brugt forbrug (%)</label><input id="chatgptTestThreshold" type="number" min="5" max="100" step="1" value="80" required></div></div>
+                      <p class="hint">Alle oplyste Codex-/modelpuljer kontrolleres hver for sig. Testen starter under grænsen med 2 procentpoints sikkerhedsmargin. Et igangværende svar kan overskride den. Ukendt kapacitet stopper testen.</p>
+                      <button id="chatgptTestRun" class="btn" type="submit" disabled>Analysér billede</button>
+                      <button id="chatgptTestModelsRetry" class="btn small hidden" type="button">Hent modeller igen</button>
+                    </form>
+                    <p id="chatgptTestStatus" class="hint" role="status" aria-live="polite"></p>
+                    <p id="chatgptTestError" class="hint hidden" role="alert"></p>
+                    <section id="chatgptTestResult" class="hidden" aria-label="Analyseresultat">
+                      <h3>Billedbeskrivelse</h3><p id="chatgptTestSummary"></p>
+                      <div id="chatgptTestSections"></div>
+                      <p id="chatgptTestMetadata" class="hint"></p>
+                      <details><summary>Se hele det strukturerede svar (JSON)</summary><pre id="chatgptTestJSON"></pre></details>
+                    </section>
+                  </dialog>
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0 6px;">
                   <button id="aiDescribeClearBtn" class="btn danger small" type="button">Slet AI tags og beskrivelser</button>
@@ -1430,7 +1453,7 @@
   <script src="{{ url_for('static', filename='gallery_cache.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='person-search.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
-  {% if user_role == 'admin' %}<script src="{{ url_for('static', filename='chatgpt-connection.js', v=app_build) }}"></script>{% endif %}
+  {% if user_role == 'admin' %}<script src="{{ url_for('static', filename='chatgpt-connection.js', v=app_build) }}"></script><script src="{{ url_for('static', filename='chatgpt-analysis.js', v=app_build) }}"></script>{% endif %}
   <script src="{{ url_for('static', filename='folder-permissions.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_music.js', v=app_build) }}"></script>
   <script src="{{ url_for('static', filename='moment_player.js', v=app_build) }}"></script>

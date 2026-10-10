@@ -39,6 +39,8 @@ class ConnectionStore:
             self.path.chmod(0o600)
             conn.execute('CREATE TABLE IF NOT EXISTS connection (id INTEGER PRIMARY KEY, value BLOB)')
             conn.execute('CREATE TABLE IF NOT EXISTS device_login (id INTEGER PRIMARY KEY, value BLOB)')
+            conn.execute('CREATE TABLE IF NOT EXISTS test_analysis (id INTEGER PRIMARY KEY, value BLOB)')
+            conn.execute('CREATE TABLE IF NOT EXISTS account_operation (id INTEGER PRIMARY KEY, value BLOB)')
             conn.commit()
             with conn:
                 yield conn
@@ -123,7 +125,7 @@ class ConnectionStore:
 
 
 class CodexRPC:
-    """Private stdio transport; no models, prompts, shell tools or inference."""
+    """Private stdio transport; server tool/approval requests are always rejected."""
     def __init__(self, home, executable):
         env = os.environ.copy()
         env['CODEX_HOME'] = str(home)
@@ -133,6 +135,7 @@ class CodexRPC:
                                          '-c', 'cli_auth_credentials_store="file"'],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, text=True, encoding='utf-8', env=env,
+                                        cwd=str(home),
                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         self.messages = queue.Queue()
         self.notifications = []
@@ -154,6 +157,10 @@ class CodexRPC:
         self.process.stdin.flush()
 
     def request(self, method, params=None, timeout=20):
+        if hasattr(self, 'deadline'):
+            timeout = min(timeout, self.deadline - time.monotonic())
+            if timeout <= 0:
+                raise TimeoutError(LOGIN_ERROR)
         self.sequence += 1
         ident = self.sequence
         self.send(dict(id=ident, method=method, params=params or {}))
@@ -302,6 +309,8 @@ def register(app, data_dir):
         return jsonify(ok=True, connected=False)
 
     app.register_blueprint(bp)
+    from chatgpt_analysis import register as register_analysis
+    register_analysis(app=app, store=store, protect=protect, no_cache=no_cache)
 
 
 if __name__ == '__main__' and len(sys.argv) == 5 and sys.argv[1] == '--worker':
