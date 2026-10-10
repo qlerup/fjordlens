@@ -516,7 +516,10 @@ function placeGlobalSearchSortForView() {
   const progress = els.uploadTopStatus || document.getElementById("uploadTopStatus");
   const mapperActions = els.mapperHeaderActions || document.getElementById("mapperHeaderActions");
   const main = document.querySelector(".main");
-  if (progress && state.view === "mapper" && mapperActions) {
+  const titleRow = document.getElementById("viewTitleRow");
+  if (progress && isSmallMobile() && titleRow) {
+    if (progress.parentElement !== titleRow) titleRow.appendChild(progress);
+  } else if (progress && state.view === "mapper" && mapperActions) {
     if (progress.parentElement !== mapperActions) mapperActions.insertBefore(progress, els.mapperSearchShell);
   } else if (progress && main && progress.parentElement !== main) {
     main.insertBefore(progress, main.firstChild);
@@ -9641,6 +9644,7 @@ let backgroundWorkTimer = null;
 let backgroundWorkPolling = false;
 const backgroundWorkSnapshots = new Map();
 async function pollBackgroundWorkStatus() {
+  if (!['admin', 'manager'].includes(state.currentUser?.role)) return;
   if (backgroundWorkPolling) return;
   backgroundWorkPolling = true;
   const sources = [
@@ -9673,6 +9677,7 @@ async function pollBackgroundWorkStatus() {
 let backgroundWorkVisible = false;
 function renderBackgroundWorkStatus() {
   ensureUploadTopStatusRefs();
+  if (!els.uploadTopStatus) return false;
   // Browser transfers own the same progress bar while they are active.
   if (isUploadRunning() || isUploadPostprocessPhase()) {backgroundWorkVisible=false;return false;}
   const jobs = [];
@@ -9708,6 +9713,7 @@ function renderBackgroundWorkStatus() {
 }
 
 function startBackgroundWorkStatus() {
+  if (!['admin', 'manager'].includes(state.currentUser?.role)) return;
   if (backgroundWorkTimer !== null) return;
   pollBackgroundWorkStatus();
   backgroundWorkTimer = window.setInterval(pollBackgroundWorkStatus, 5000);
@@ -18346,6 +18352,7 @@ window.addEventListener("keydown", (e) => {
 
 // Keep compact-settings class in sync on resize
 window.addEventListener('resize', () => {
+  placeGlobalSearchSortForView();
   try {
     const isSmall = window.matchMedia('(max-width: 760px)').matches;
     if (document.body.classList.contains('view-settings')) {

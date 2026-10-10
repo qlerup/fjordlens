@@ -72,11 +72,13 @@
     </aside>
 
     <main class="main">
+      {% if user_role in ('admin', 'manager') %}
       <div id="uploadTopStatus" class="upload-top-status global-work-progress hidden" role="status" aria-live="polite" aria-atomic="true">
         <div id="uploadTopStatusLabel" class="upload-top-status-label">Upload: Klar</div>
         <div class="upload-top-status-progress"><span id="uploadTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
         <div id="uploadTopProcessRow" class="upload-top-process-row hidden"></div>
       </div>
+      {% endif %}
       <header id="topbar" class="topbar">
         <button id="menuBtn" class="btn menu-btn" aria-label="Menu" title="Menu">☰</button>
         <div id="searchShell" class="search-shell" aria-label="Søgning">
@@ -97,7 +99,7 @@
 
       <section class="content-header">
         <div>
-          <h1 id="viewTitle">Bibliotek</h1>
+          <div id="viewTitleRow" class="view-title-row"><h1 id="viewTitle">Bibliotek</h1></div>
           <p id="viewSubtitle">Scan din fotomappe og søg/sortér i metadata</p>
         </div>
         <div class="stats">

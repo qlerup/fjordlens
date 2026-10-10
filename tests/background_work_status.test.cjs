@@ -9,7 +9,8 @@ function fixture() {
   const panel = {textContent: '', hidden: true, classList: {toggle(name, on) { panel.hidden = on; }}};
   let calls = 0, tick, timerCount = 0;
   const ctx = vm.createContext({Map, AbortSignal,
-    els: {uploadTopProcessRow: null}, tr: key => key,
+    state: {currentUser: {role: 'admin'}},
+    els: {uploadTopStatus: panel, uploadTopProcessRow: null}, tr: key => key,
     localUpload: false, localPostprocess: false,
     isUploadRunning: () => ctx.localUpload,
     isUploadPostprocessPhase: () => ctx.localPostprocess,
@@ -29,6 +30,23 @@ function fixture() {
   vm.runInContext(code, ctx);
   return {ctx, panel, responses, get calls() {return calls;}, get timerCount() {return timerCount;}, tick: () => tick()};
 }
+test('only managers and admins poll background status', async () => {
+  for (const role of ['user', 'viewer', '', 'manager', 'admin']) {
+    const f = fixture();
+    f.ctx.state.currentUser.role = role;
+    f.ctx.startBackgroundWorkStatus();
+    await new Promise(setImmediate);
+    assert.equal(f.timerCount, ['manager', 'admin'].includes(role) ? 1 : 0);
+    assert.equal(f.calls, ['manager', 'admin'].includes(role) ? 5 : 0);
+  }
+});
+
+test('missing status component is safe for ordinary users', () => {
+  const f = fixture();
+  f.ctx.els.uploadTopStatus = null;
+  assert.equal(f.ctx.renderBackgroundWorkStatus(), false);
+});
+
 test('discovers a job after idle and keeps monitoring after completion', async () => {
   const f = fixture();
   f.ctx.startBackgroundWorkStatus(); f.ctx.startBackgroundWorkStatus();

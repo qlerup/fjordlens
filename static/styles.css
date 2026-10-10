@@ -909,8 +909,8 @@ body.view-kameraer .timeline-header-actions {
   margin: 0;
   flex: 0 1 auto;
 }
-.upload-top-status.multi .upload-top-status-label,
-.upload-top-status.multi .upload-top-status-progress {
+.upload-top-status.multi > .upload-top-status-label,
+.upload-top-status.multi > .upload-top-status-progress {
   display: none;
 }
 .upload-top-process-row {
@@ -945,6 +945,9 @@ body.view-kameraer .timeline-header-actions {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.upload-top-proc > .upload-top-status-progress {
+  grid-area: bar;
 }
 .upload-top-proc-meta {
   grid-area: meta;
@@ -1409,6 +1412,36 @@ body.view-kameraer .timeline-header-actions {
 .content-header h1 {
   margin: 0;
   font-size: 1.35rem;
+}
+.view-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .content-header:has(.view-title-row > .global-work-progress:not(.hidden)) {
+    flex-wrap: wrap;
+  }
+  .content-header > div:first-child:has(.global-work-progress:not(.hidden)) {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .view-title-row > h1 { flex: 0 1 auto; }
+  .view-title-row > .global-work-progress {
+    flex: 0 1 auto;
+    margin: 0 0 0 auto;
+    max-width: 65%;
+    box-sizing: border-box;
+  }
+  .view-title-row .upload-top-status-label,
+  .view-title-row .upload-top-proc-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .view-title-row .upload-top-process-row { flex-wrap: wrap; }
+  .view-title-row .upload-top-proc { min-width: 0; width: 100%; }
 }
 .content-header p {
   margin: 6px 0 0;
@@ -4700,7 +4733,6 @@ body.moment-player-open .mobile-bottom-nav { display: none !important; }
   body.view-mapper #mapperHeaderActions { display: flex !important; }
   body.view-mapper #mapperSearchShell { display: flex !important; }
   body.view-mapper #mapperEditBtn { display: inline-flex !important; }
-  body.view-mapper #uploadTopStatus { display: none !important; }
   /* Hide drag-and-drop zone on mobile (no DnD support) */
   #mapperDropZone { display: none !important; }
   body.view-mapper #mapperSearchShell { order: 1; }
