@@ -1501,6 +1501,10 @@ const I18N = {
     mapper_delete_confirm: 'Slet {count} mappe(r) inkl. alt indhold? Dette kan ikke fortrydes.',
     mapper_delete_pending: 'Sletter...',
     mapper_delete_progress: 'Sletter {kind}: {done} af {total} · {remaining} tilbage',
+    mapper_delete_counting: 'Tæller filer…',
+    mapper_delete_file_progress: 'Slettet {done} af {total} filer · {percent} %',
+    mapper_delete_cleanup: 'Slettet {done} filer · rydder op i indeks…',
+    mapper_delete_file_refreshing: 'Slettet {done} filer · opdaterer visning…',
     mapper_delete_folders: 'mapper',
     mapper_delete_photos: 'billeder',
     mapper_delete_refreshing: 'Slettet {total} af {total} · opdaterer visning…',
@@ -2393,6 +2397,10 @@ const I18N = {
     mapper_delete_confirm: 'Delete {count} folder(s) including all content? This cannot be undone.',
     mapper_delete_pending: 'Deleting...',
     mapper_delete_progress: 'Deleting {kind}: {done} of {total} · {remaining} remaining',
+    mapper_delete_counting: 'Counting files…',
+    mapper_delete_file_progress: 'Deleted {done} of {total} files · {percent} %',
+    mapper_delete_cleanup: 'Deleted {done} files · cleaning up index…',
+    mapper_delete_file_refreshing: 'Deleted {done} files · refreshing view…',
     mapper_delete_folders: 'folders',
     mapper_delete_photos: 'photos',
     mapper_delete_refreshing: 'Deleted {total} of {total} · refreshing view…',
@@ -13038,27 +13046,38 @@ function renderMapperDeleteProgress() {
   button.classList.remove('hidden');
   button.classList.add('loading');
   button.setAttribute('aria-busy', 'true');
-  button.textContent = tr(progress.done === progress.total ? 'mapper_delete_refreshing' : 'mapper_delete_progress')
-    .replace('{kind}', tr(progress.kind === 'folders' ? 'mapper_delete_folders' : 'mapper_delete_photos'))
+  if (progress.kind === 'folders') {
+    const key = progress.done === progress.total ? 'mapper_delete_file_refreshing'
+      : progress.phase === 'cleanup' ? 'mapper_delete_cleanup'
+      : progress.fileTotal === null ? 'mapper_delete_counting' : 'mapper_delete_file_progress';
+    button.textContent = tr(key)
+      .replaceAll('{done}', String(progress.fileDone))
+      .replaceAll('{total}', String(progress.fileTotal || 0))
+      .replace('{percent}', String(progress.fileTotal > 0 ? Math.floor(100 * progress.fileDone / progress.fileTotal) : 0));
+    button.title = progress.current || '';
+    button.setAttribute('aria-live', 'polite');
+    return;
+  }
+  button.textContent = tr(progress.done === progress.total ? 'mapper_delete_refreshing' : 'mapper_delete_file_progress')
     .replaceAll('{done}', String(progress.done))
     .replaceAll('{total}', String(progress.total))
-    .replace('{remaining}', String(progress.total - progress.done));
+    .replace('{percent}', String(Math.floor(100 * progress.done / progress.total)));
   button.title = progress.current || '';
 }
 
 async function runMapperDeleteBatches(items, kind, send, accept) {
   if (state.mapperDeleteProgress) return false;
-  const progress = {kind, total: items.length, done: 0, current: ''};
+  const progress = {kind, total: items.length, done: 0, current: '', fileTotal: null, fileDone: 0, phase: 'counting'};
   state.mapperDeleteProgress = progress;
   try {
-    // Folders remain whole operations (including originals, converted and index cleanup).
-    // Photo batches keep database/preview overhead bounded while exposing real progress.
-    const size = kind === 'folders' ? 1 : 25;
+    // A streamed folder operation counts the entire selection before deleting.
+    const size = kind === 'folders' ? items.length : 25;
     for (let offset = 0; offset < items.length; offset += size) {
       const batch = items.slice(offset, offset + size);
       progress.current = kind === 'folders' ? batch[0] : '';
       renderMapperDeleteProgress();
       const data = await send(batch);
+      if (kind === 'folders') progress.fileDone = Number(data.removed_files ?? data.removed_photos ?? progress.fileDone);
       const accepted = accept(data, batch) ?? batch.length;
       progress.done += accepted;
       renderMapperDeleteProgress();
@@ -13066,8 +13085,10 @@ async function runMapperDeleteBatches(items, kind, send, accept) {
     }
     return true;
   } catch (error) {
-    showStatus(tr('mapper_delete_partial').replace('{done}', String(progress.done))
-      .replace('{total}', String(progress.total)).replace('{error}', error.message || tr('mapper_delete_error')), 'err');
+    const done = kind === 'folders' ? progress.fileDone : progress.done;
+    const total = kind === 'folders' ? progress.fileTotal ?? '?' : progress.total;
+    showStatus(tr('mapper_delete_partial').replace('{done}', String(done))
+      .replace('{total}', String(total)).replace('{error}', error.message || tr('mapper_delete_error')), 'err');
     return false;
   }
 }
@@ -13077,13 +13098,42 @@ function finishMapperDeleteProgress() {
   if (els.mapperDeleteBtn) {
     els.mapperDeleteBtn.classList.remove('loading');
     els.mapperDeleteBtn.removeAttribute('aria-busy');
+    els.mapperDeleteBtn.removeAttribute('aria-live');
     els.mapperDeleteBtn.removeAttribute('title');
   }
   renderMapperContext(state.mapperPath || '');
 }
 
 async function requestMapperDeletion(url, payload) {
+  if (url === '/api/settings/upload-folder-delete') payload = {...payload, progress: true};
   const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+  if (res.ok && res.headers?.get('content-type')?.includes('application/x-ndjson') && res.body) {
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let buffer = '', result;
+    const handle = line => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line);
+      if (event.type === 'progress' && state.mapperDeleteProgress) {
+        Object.assign(state.mapperDeleteProgress, {fileDone:event.done, fileTotal:event.phase === 'counting' ? null : event.total, phase:event.phase});
+        renderMapperDeleteProgress();
+      } else if (event.type === 'result') {
+        if (event.status >= 400 || !event.data?.ok) throw new Error(event.data?.error || tr('mapper_delete_failed'));
+        result = event.data;
+      }
+    };
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value, {stream:!done});
+        let index;
+        while ((index = buffer.indexOf('\n')) >= 0) { handle(buffer.slice(0, index)); buffer = buffer.slice(index + 1); }
+        if (done) break;
+      }
+      handle(buffer);
+      if (!result) throw new Error(tr('mapper_delete_error'));
+      return result;
+    } finally { reader.releaseLock(); }
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.error || tr('mapper_delete_failed'));
   return data;

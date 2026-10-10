@@ -36,6 +36,7 @@ import numpy as np
 import conversion_client
 from mov_timing import probe_slow_motion, timing_args
 from conversion_jobs import ConversionJob
+import deletion_progress
 from pending_uploads import PendingUploads
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
 from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids, StageRetryError
@@ -24097,6 +24098,14 @@ def api_settings_upload_folder():
 def api_settings_upload_folder_delete():
     if not current_user.is_authenticated:
         return jsonify(ok=False, error="Forbidden"), 403
+    if (request.get_json(silent=True) or {}).get('progress') is True:
+        return deletion_progress.stream_delete(_delete_upload_folders)
+    return _delete_upload_folders()
+
+
+def _delete_upload_folders(report=None):
+    if not current_user.is_authenticated:
+        return jsonify(ok=False, error="Forbidden"), 403
 
     body = request.get_json(silent=True) or {}
     destination = str(body.get("destination") or "uploads").strip().lower()
@@ -24175,6 +24184,46 @@ def api_settings_upload_folder_delete():
             if any(not _perm_allows(_current_user_folder_permission_for_rel(path, conn), 'edit') for path in paths):
                 return jsonify(ok=False, error=f"Ingen slette-adgang til '{subdir}'"), 403
 
+    file_progress = {'phase': 'counting', 'done': 0, 'total': 0}
+    if report:
+        report(file_progress)
+        # Count actual directory contents, including converted copies and legacy files.
+        # The same containment checks are repeated by the deletion loop below.
+        seen = set()
+        for subdir in selected:
+            for root, boundary in ((target_root, base), (mirror_root, mirror_base), (legacy_root, legacy_base)):
+                if root is None or boundary is None:
+                    continue
+                target = (root / subdir).resolve()
+                try:
+                    target.relative_to(boundary)
+                except ValueError:
+                    return jsonify(ok=False, error="Ugyldig mappe-sti"), 400
+                if target not in seen and target.is_dir():
+                    file_progress['total'] += deletion_progress.count_files(target)
+                    seen.add(target)
+        file_progress['phase'] = 'deleting'
+        report(file_progress)
+    last_report = 0
+
+    def removed_file():
+        nonlocal last_report
+        file_progress['done'] += 1
+        file_progress['total'] = max(file_progress['total'], file_progress['done'])
+        now = time.monotonic()
+        if report and (now - last_report >= .1 or file_progress['done'] == file_progress['total']):
+            report(file_progress)
+            last_report = now
+
+    def remove_folder(target):
+        if report:
+            try:
+                deletion_progress.remove_tree(target, removed_file)
+            finally:
+                report(file_progress)
+        else:
+            shutil.rmtree(target)
+
     deleted: list[str] = []
     missing: list[str] = []
     for subdir in selected:
@@ -24192,7 +24241,7 @@ def api_settings_upload_folder_delete():
 
         if target.exists() and target.is_dir():
             try:
-                shutil.rmtree(target)
+                remove_folder(target)
                 deleted_any = True
             except Exception as e:
                 return jsonify({"ok": False, "error": f"Kunne ikke slette mappe '{subdir}': {e}"}), 400
@@ -24205,7 +24254,7 @@ def api_settings_upload_folder_delete():
                 return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
             if mirror_target.exists() and mirror_target.is_dir():
                 try:
-                    shutil.rmtree(mirror_target)
+                    remove_folder(mirror_target)
                     deleted_any = True
                 except Exception as e:
                     return jsonify({"ok": False, "error": f"Kunne ikke slette konverteret mappe '{subdir}': {e}"}), 400
@@ -24218,7 +24267,7 @@ def api_settings_upload_folder_delete():
                 return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
             if legacy_target.exists() and legacy_target.is_dir():
                 try:
-                    shutil.rmtree(legacy_target)
+                    remove_folder(legacy_target)
                     deleted_any = True
                 except Exception as e:
                     return jsonify({"ok": False, "error": f"Kunne ikke slette legacy mappe '{subdir}': {e}"}), 400
@@ -24228,6 +24277,9 @@ def api_settings_upload_folder_delete():
         else:
             missing.append(subdir)
 
+    if report:
+        file_progress['phase'] = 'cleanup'
+        report(file_progress)
     # Clean stale selected subdir setting if deleted
     current_subdir = get_upload_subdir(destination)
     if current_subdir and any(current_subdir == d or current_subdir.startswith(d + "/") for d in deleted):
@@ -24254,6 +24306,8 @@ def api_settings_upload_folder_delete():
     payload["deleted"] = deleted
     payload["missing"] = missing
     payload["removed_photos"] = removed.get("photos", 0)
+    if report:
+        payload["removed_files"] = file_progress['done']
     payload["removed_faces"] = removed.get("faces", 0)
     payload["removed_thumbs"] = removed.get("thumbs", 0)
     payload["removed_staged_files"] = staged_cleanup.get("files", 0)
