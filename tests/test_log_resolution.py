@@ -183,7 +183,7 @@ class LogResolutionTests(unittest.TestCase):
         tree = ast.parse(source.read_text(encoding='utf-8-sig'))
         node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'api_logs')
         node.decorator_list = []
-        logs = [error(1)] + [success(i) for i in range(2, 201)] + [error(201, rel='b.jpg')]
+        logs = [error(1)] + [success(i) for i in range(2, 5001)] + [error(5001, rel='b.jpg')]
         env = dict(_forbid_user_role_for_maintenance=lambda: None, request=request, jsonify=jsonify,
                    LOG_LOCK=threading.RLock(), LOG_BUFFER=logs, resolved_log_ids=resolved_log_ids,
                    hidden_error_log_ids=hidden_error_log_ids,
@@ -193,12 +193,17 @@ class LogResolutionTests(unittest.TestCase):
         with app.test_request_context('/api/logs?after=0'):
             result = env['api_logs']().get_json()
         self.assertEqual(result['items'], [])
-        self.assertEqual(result['next'], 200)
+        self.assertEqual(result['next'], 5000)
         self.assertEqual(result['resolved_ids'], [1])
-        with app.test_request_context('/api/logs?after=200'):
+        with app.test_request_context('/api/logs?after=5000'):
             result = env['api_logs']().get_json()
-        self.assertEqual([item['id'] for item in result['items']], [201])
+        self.assertEqual([item['id'] for item in result['items']], [5001])
+        self.assertEqual(result['next'], 5001)
         self.assertEqual(result['resolved_ids'], [1])
+        with app.test_request_context('/api/logs?after=5001'):
+            result = env['api_logs']().get_json()
+        self.assertEqual(result['items'], [])
+        self.assertEqual(result['next'], 5001)
 
     def test_repeated_errors_and_retry_summary_do_not_inflate_open_issue_count(self):
         logs = [error(1), error(2), error(3, stage='thumbnails'),

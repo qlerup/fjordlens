@@ -23932,7 +23932,7 @@ def api_logs():
     with LOG_LOCK:
         snapshot = list(LOG_BUFFER)
     resolved = set(hidden_error_log_ids(snapshot))
-    pending_items = [itm for itm in snapshot if int(itm.get("id", 0)) > after][:200]
+    pending_items = [itm for itm in snapshot if int(itm.get("id", 0)) > after][:5000]
     items = [log_retries.describe(item) for item in pending_items
              if item["id"] not in resolved and item.get("event") not in {"processing_stage_done", "log_checkpoint"}]
     next_id = pending_items[-1]["id"] if pending_items else after
