@@ -6,18 +6,47 @@
   const model = byId('Model'), run = byId('Run'), preview = byId('Preview');
   const status = byId('Status'), error = byId('Error'), result = byId('Result');
   let running = false, loading = false, job = null, previewURL = null, timer = null, pollDeadline = 0;
+  let budgetBlocked = true, budgetLoading = false, budgetTimer = null;
   const setError = message => { error.textContent = message; error.classList.toggle('hidden', !message); };
   function controls() {
     file.disabled = running;
     model.disabled = running || loading || !model.options.length || !model.value;
-    byId('Threshold').disabled = running;
-    run.disabled = running || loading || !file.files.length || !model.value;
-    run.textContent = running ? 'Analyserer …' : 'Analysér billede';
+    byId('Threshold').disabled = running || loading || budgetLoading;
+    run.disabled = running || loading || budgetLoading || budgetBlocked || !file.files.length || !model.value;
+    run.textContent = running ? 'Analyserer …' : budgetBlocked ? 'Afventer kapacitet' : 'Analysér billede';
     form.setAttribute('aria-busy', String(running || loading));
+  }
+  function showBudget(budget) {
+    budgetBlocked = !budget?.fresh || budget.waiting;
+    if (budget) byId('Threshold').value = budget.remaining_percent;
+    const windows = budget?.usage?.windows || [];
+    const parts = windows.map(window => {
+      const duration = window.duration_minutes === 10080 ? 'uge' : window.duration_minutes === 300 ? '5 timer'
+        : window.duration_minutes ? `${window.duration_minutes} minutter` : window.window;
+      return `${window.label} (${duration}): ${Math.round(window.remaining_percent)} % tilbage`;
+    });
+    if (!budget?.fresh) {
+      if (windows.length) parts.unshift('Senest hentede status');
+      parts.push(budget?.error || 'Afventer aktuel kapacitetsstatus.');
+    }
+    else if (budget.waiting) parts.push('Afventer reset' + (budget.reset_at ? ` · ${new Date(budget.reset_at*1000).toLocaleString('da-DK')}` : ' · nulstillingen er endnu ikke bekræftet') + '. Vælg testbilledet igen efter reset.');
+    byId('Capacity').textContent = parts.join(' · ');
+    controls();
+  }
+  async function refreshBudget(save = false) {
+    clearTimeout(budgetTimer);
+    budgetBlocked = true; budgetLoading = true; controls();
+    try {
+      const options = save ? {method:'PUT', body:JSON.stringify({remaining_percent:Number(byId('Threshold').value)}),
+        headers:{'Content-Type':'application/json'}} : {};
+      showBudget((await api('analysis-budget', options)).budget);
+    } catch (err) { byId('Capacity').textContent = err.message; }
+    finally { budgetLoading = false; controls(); }
+    if (dialog.open) budgetTimer = setTimeout(refreshBudget, 60000);
   }
   async function api(path, options = {}) {
     const response = await fetch(`/api/ai/chatgpt/${path}`, {...options, cache: 'no-store',
-      headers: {'X-ChatGPT-CSRF': open.dataset.csrf || ''}, signal: AbortSignal.timeout(45000)});
+      headers: {...options.headers, 'X-ChatGPT-CSRF': open.dataset.csrf || ''}, signal: AbortSignal.timeout(45000)});
     let data;
     try { data = await response.json(); }
     catch (_) { throw new Error('Serveren kunne ikke svare. Genindlæs indstillingerne og prøv igen.'); }
@@ -32,6 +61,9 @@
     byId('ModelsRetry').classList.add('hidden');
     try {
       const data = await api('test-models');
+      showBudget(data.budget);
+      clearTimeout(budgetTimer);
+      if (dialog.open) budgetTimer = setTimeout(refreshBudget, 60000);
       model.replaceChildren(...data.models.map(m => new Option(m.label, m.id, m.default, m.default)));
       if (!data.models.length) throw new Error('Kontoen har ingen tilgængelige modeller med billedinput.');
     } catch (err) {
@@ -42,7 +74,11 @@
   function clearPreview() {
     if (previewURL) URL.revokeObjectURL(previewURL);
     previewURL = null; preview.removeAttribute('src'); preview.classList.add('hidden');
+    byId('PreviewHint').classList.add('hidden');
   }
+  preview.addEventListener('error', () => {
+    preview.classList.add('hidden'); byId('PreviewHint').classList.remove('hidden');
+  });
   function display(data) {
     byId('Summary').textContent = data.result.summary;
     const sections = byId('Sections'); sections.replaceChildren();
@@ -107,6 +143,7 @@
       running = false; controls();
       if (data.state === 'completed') { display(data); status.textContent = 'Analysen er færdig. Testbilledet er slettet fra FjordLens.'; }
       else { status.textContent = ''; setError(data.error || 'Analysen blev afbrudt.'); }
+      if (data.state === 'waiting') refreshBudget();
       if (!dialog.open) { clearPreview(); file.value = ''; controls(); await discard(); }
     } catch (err) {
       if (err.status === 404 || Date.now() >= pollDeadline) {
@@ -123,6 +160,7 @@
   });
   byId('Close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', () => {
+    clearTimeout(budgetTimer);
     clearPreview(); file.value = ''; controls();
     if (!running) { discard(); result.classList.add('hidden'); byId('JSON').textContent = ''; }
   });
@@ -130,21 +168,25 @@
     clearPreview(); setError(''); result.classList.add('hidden');
     const selected = file.files[0];
     if (selected) {
-      if (selected.size > 20 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(selected.type)) {
-        setError('Vælg et JPG-, PNG- eller WebP-billede på højst 20 MB.'); file.value = '';
-      } else { previewURL = URL.createObjectURL(selected); preview.src = previewURL; preview.classList.remove('hidden'); }
+      const extension = selected.name.split('.').pop().toLowerCase();
+      const converted = ['heic','heif','dng','cr2','cr3','nef','arw','rw2','raf','orf','srw','pef','raw'].includes(extension);
+      if (selected.size > 20 * 1024 * 1024 || !(converted || ['jpg','jpeg','png','webp'].includes(extension))) {
+        setError('Vælg et JPG-, PNG-, WebP-, HEIC- eller RAW-billede på højst 20 MB.'); file.value = '';
+      } else if (converted) { byId('PreviewHint').classList.remove('hidden'); }
+      else { previewURL = URL.createObjectURL(selected); preview.src = previewURL; preview.classList.remove('hidden'); }
     }
     controls();
   });
   model.addEventListener('change', controls);
+  byId('Threshold').addEventListener('change', () => { if (byId('Threshold').reportValidity()) refreshBudget(true); });
   byId('ModelsRetry').addEventListener('click', models);
   form.addEventListener('submit', async event => {
-    event.preventDefault(); if (running || !form.reportValidity()) return;
+    event.preventDefault(); if (running || budgetBlocked || !form.reportValidity()) return;
     await discard();
     running = true; controls(); setError(''); result.classList.add('hidden');
     status.textContent = 'Uploader testbilledet og kontrollerer kontoens forbrug …';
     const body = new FormData(); body.append('image', file.files[0]);
-    body.append('model', model.value); body.append('threshold', byId('Threshold').value);
+    body.append('model', model.value); body.append('remaining_percent', byId('Threshold').value);
     try { const data = await api('test-analysis', {method: 'POST', body}); job = data.id; pollDeadline = Date.now() + 240000; poll(); }
     catch (err) { running = false; controls(); status.textContent = ''; setError(err.message); }
   });

@@ -41,6 +41,7 @@ class ConnectionStore:
             conn.execute('CREATE TABLE IF NOT EXISTS device_login (id INTEGER PRIMARY KEY, value BLOB)')
             conn.execute('CREATE TABLE IF NOT EXISTS test_analysis (id INTEGER PRIMARY KEY, value BLOB)')
             conn.execute('CREATE TABLE IF NOT EXISTS account_operation (id INTEGER PRIMARY KEY, value BLOB)')
+            conn.execute('CREATE TABLE IF NOT EXISTS analysis_budget (id INTEGER PRIMARY KEY, value BLOB)')
             conn.commit()
             with conn:
                 yield conn

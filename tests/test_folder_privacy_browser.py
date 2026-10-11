@@ -23,6 +23,7 @@ class FolderPrivacyBrowserTests(unittest.TestCase):
         self.page.evaluate("""() => {
           window.state={currentUser:{role:'manager'}};
           window.tr=x=>x;window.showStatus=(text)=>{window.error=text};
+          window.mapperFolderAllows=window.mapperFolderCanDelete=()=>true;
           window.info={private:false,inherited:false};window.saved=null;
           window.fetch=async(url,options)=>{
             if(options?.method==='POST'){window.saved=JSON.parse(options.body);return new Promise(()=>{});}
@@ -50,7 +51,9 @@ class FolderPrivacyBrowserTests(unittest.TestCase):
         self.page.locator('.privacy-save').click()
         self.page.wait_for_function('window.saved!==null')
         self.assertEqual(self.page.evaluate('window.saved.private'),False)
-        self.page.locator('.privacy-cancel').click()
+        # The simulated POST intentionally never resolves; dismiss the fixture
+        # directly rather than clicking the correctly disabled busy-state button.
+        self.page.locator('dialog').evaluate('(dialog)=>dialog.close()')
         expect(self.page.locator('dialog')).to_have_count(0)
         self.page.evaluate("info={private:true,inherited:true,private_parent:'Family'};openMapperPrivacyDialog('Family/Child')")
         expect(self.page.locator('.privacy-save')).to_be_disabled()

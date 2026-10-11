@@ -165,6 +165,7 @@
           <button id="mapperDownloadBtn" class="btn hidden" disabled>Download</button>
           <button id="mapperSelectAllBtn" class="btn hidden">Vælg alle</button>
           <button id="mapperClearBtn" class="btn hidden" disabled>Fjern valgte</button>
+          <button id="mapperMovePhotosBtn" class="btn hidden" disabled>Flyt valgte</button>
           <button id="mapperDeleteBtn" class="btn danger hidden" aria-live="polite" aria-atomic="true" disabled>Slet valgte</button>
         </div>
         <div id="mapperDropZone" class="mapper-dropzone">Slip filer eller mapper her for at uploade direkte til valgt mappe</div>
@@ -582,11 +583,13 @@
                     <p class="hint">Billedet sendes til OpenAI via din tilsluttede konto og bruger kontoens kapacitet. Det tilføjes ikke til fotosamlingen og slettes fra FjordLens efter forsøget.</p>
                     <form id="chatgptTestForm">
                       <label for="chatgptTestImage">Midlertidigt billede</label>
-                      <input id="chatgptTestImage" type="file" accept="image/jpeg,image/png,image/webp" required>
-                      <p class="hint">JPG, PNG eller WebP · højst 20 MB / 40 megapixel. Analyseversionen er højst 2048 pixels på længste side.</p>
+                      <input id="chatgptTestImage" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.raf,.orf,.srw,.pef,.raw" required>
+                      <p class="hint">JPG, PNG, WebP, HEIC eller RAW · højst 20 MB / 40 megapixel. HEIC og understøttede RAW-billeder konverteres automatisk til JPEG. Analyseversionen er højst 2048 pixels på længste side.</p>
+                      <p id="chatgptTestPreviewHint" class="hint hidden">Forhåndsvisning er ikke tilgængelig for dette format. Billedet konverteres på serveren, inden det sendes til analyse.</p>
                       <img id="chatgptTestPreview" class="hidden" alt="Forhåndsvisning af testbilledet">
-                      <div class="chatgpt-test-fields"><div><label for="chatgptTestModel">ChatGPT-model</label><select id="chatgptTestModel" required disabled><option value="">Henter modeller …</option></select></div><div><label for="chatgptTestThreshold">Stop ved brugt forbrug (%)</label><input id="chatgptTestThreshold" type="number" min="5" max="100" step="1" value="80" required></div></div>
-                      <p class="hint">Alle oplyste Codex-/modelpuljer kontrolleres hver for sig. Testen starter under grænsen med 2 procentpoints sikkerhedsmargin. Et igangværende svar kan overskride den. Ukendt kapacitet stopper testen.</p>
+                      <div class="chatgpt-test-fields"><div><label for="chatgptTestModel">ChatGPT-model</label><select id="chatgptTestModel" required disabled><option value="">Henter modeller …</option></select></div><div><label for="chatgptTestThreshold">Stop ved procent tilbage (%)</label><input id="chatgptTestThreshold" type="number" min="0" max="99" step="1" value="50" required></div></div>
+                      <p class="hint">Ved fx 50 % tilbage venter nye analyser på kontoens reset. Grænsen og pausen gemmes også efter genstart og opdatering. Alle oplyste Codex-/modelpuljer kontrolleres før hver analyse. Et igangværende svar og forsinket forbrugsstatus kan overskride grænsen. Testbilledet gemmes ikke til senere.</p>
+                      <p id="chatgptTestCapacity" class="hint" role="status" aria-live="polite">Henter kontoens aktuelle kapacitet…</p>
                       <button id="chatgptTestRun" class="btn" type="submit" disabled>Analysér billede</button>
                       <button id="chatgptTestModelsRetry" class="btn small hidden" type="button">Hent modeller igen</button>
                     </form>

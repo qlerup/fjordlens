@@ -38,6 +38,11 @@ for (const mobile of [false, true]) {
           photo_ids: [], folders: ['Album/Family'], mode, date_mode: dateMode,
         } }]);
         context.closeDownloadModal();
+        context.openDownloadModal(null, [42]);
+        assert.deepEqual(Array.from(vm.runInContext('_mapperDownloadFolders', context)), []);
+        assert.deepEqual(Array.from(vm.runInContext('_mapperDownloadPhotoIds', context)), [42]);
+        assert.deepEqual(Array.from(context.state.mapperSelectedPhotoIds), [999]);
+        context.closeDownloadModal();
         context.openDownloadModal();
         assert.deepEqual(Array.from(vm.runInContext('_mapperDownloadFolders', context)), ['Other']);
         assert.deepEqual(Array.from(vm.runInContext('_mapperDownloadPhotoIds', context)), [999]);

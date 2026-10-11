@@ -93,27 +93,27 @@ def fake_rpc(monkeypatch, quota=None, text=None, status='completed', logout=None
     return calls, homes
 
 
-@pytest.mark.parametrize('used,secondary', [(78, 10), (10, 90), (80, 80)])
-def test_any_window_blocks_with_safety_margin(used, secondary):
+@pytest.mark.parametrize('used,secondary', [(80, 10), (10, 90), (80, 80)])
+def test_any_window_blocks_at_remaining_threshold(used, secondary):
     with pytest.raises(analysis.AnalysisError, match='forbrugsgrænsen'):
-        analysis.usage_status(capacity(used, secondary), 80)
+        analysis.usage_status(capacity(used, secondary), 20)
 
 
 @pytest.mark.parametrize('value', [None, True, -1, 101, float('nan'), '0'])
 def test_invalid_usage_never_means_free_capacity(value):
     with pytest.raises(analysis.AnalysisError, match='ukendt'):
-        analysis.usage_status(capacity(value), 80)
+        analysis.usage_status(capacity(value), 20)
 
 
 def test_missing_ordinary_capacity_is_blocked_even_with_low_percent():
     data = capacity()
     data['ordinaryUsageAllowed'] = None
     with pytest.raises(analysis.AnalysisError, match='inkluderet kapacitet'):
-        analysis.usage_status(data, 80)
+        analysis.usage_status(data, 20)
     data['ordinaryUsageAllowed'] = False
     with pytest.raises(analysis.AnalysisError):
-        analysis.usage_status(data, 80)
-    assert analysis.usage_status(capacity(), 80)['windows'][1]['duration_minutes'] == 10080
+        analysis.usage_status(data, 20)
+    assert analysis.usage_status(capacity(), 20)['windows'][1]['duration_minutes'] == 10080
 
 
 def test_invalid_json_and_schema_are_rejected():
@@ -131,10 +131,54 @@ def test_image_is_reencoded_and_not_written_to_library():
         analysis.prepare_image(io.BytesIO(b'<svg>not an image</svg>'))
 
 
+def test_heic_is_decoded_to_metadata_free_jpeg():
+    import pillow_heif
+    original = Image.new('RGB', (80, 50), 'blue')
+    exif = Image.Exif(); exif[270] = 'private image description'
+    output = io.BytesIO()
+    pillow_heif.from_pillow(original).save(output, exif=exif.tobytes())
+    prepared = analysis.prepare_image(io.BytesIO(output.getvalue()), 'photo.HEIC')
+    with Image.open(io.BytesIO(prepared)) as image:
+        assert image.format == 'JPEG' and image.size == (80, 50)
+        assert not image.getexif()
+    assert b'private image description' not in prepared
+
+
+def test_raw_sensor_limits_checked_before_postprocess(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    calls = []
+    class Sensor:
+        sizes = SimpleNamespace(width=6000, height=4000)
+        def __enter__(self): return self
+        def __exit__(self, *args): calls.append('closed')
+        def open_buffer(self, stream): assert stream.read() == b'raw sensor data'
+        def postprocess(self, **kwargs):
+            calls.append('processed')
+            assert kwargs['output_bps'] == 8 and kwargs['use_camera_wb']
+            return np.zeros((400, 600, 3), dtype=np.uint8)
+    monkeypatch.setattr(analysis.rawpy, 'RawPy', Sensor)
+    prepared = analysis.prepare_image(io.BytesIO(b'raw sensor data'), 'photo.NEF')
+    with Image.open(io.BytesIO(prepared)) as image:
+        assert image.format == 'JPEG' and image.size == (600, 400)
+        assert not image.getexif()
+    assert calls == ['processed', 'closed']
+    calls.clear(); Sensor.sizes = SimpleNamespace(width=10000, height=6000)
+    with pytest.raises(analysis.AnalysisError, match='40 megapixel'):
+        analysis.prepare_image(io.BytesIO(b'raw sensor data'), 'photo.dng')
+    assert calls == ['closed']
+
+
+@pytest.mark.parametrize('name', ['photo.heic', 'photo.dng', 'photo.cr3', 'photo.nef'])
+def test_corrupt_camera_image_rejected(name):
+    with pytest.raises(analysis.AnalysisError, match='kunne ikke læses'):
+        analysis.prepare_image(io.BytesIO(b'corrupt camera file'), name)
+
+
 def test_success_has_isolated_image_turn_schema_and_temp_cleanup(store, monkeypatch):
     calls, homes = fake_rpc(monkeypatch)
     running_job(store)
-    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 80, 'codex')
+    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 'codex')
     with store.db() as db:
         job = store.read(db, 'test_analysis')
     assert job['state'] == 'completed'
@@ -155,10 +199,10 @@ def test_success_has_isolated_image_turn_schema_and_temp_cleanup(store, monkeypa
 def test_blocked_and_failed_runs_are_never_success(store, monkeypatch, quota, text, status):
     calls, homes = fake_rpc(monkeypatch, quota, text, status)
     running_job(store)
-    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 80, 'codex')
+    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 'codex')
     with store.db() as db:
         job = store.read(db, 'test_analysis')
-    assert job['state'] == 'failed' and 'result' not in job
+    assert job['state'] == ('waiting' if quota == capacity(90) else 'failed') and 'result' not in job
     if not quota or quota == capacity(90):
         assert not any(c['method'] == 'turn/start' for c in calls)
     assert not any(h.exists() for h in homes)
@@ -167,7 +211,7 @@ def test_blocked_and_failed_runs_are_never_success(store, monkeypatch, quota, te
 def test_tool_requests_are_rejected(store, monkeypatch):
     calls, _ = fake_rpc(monkeypatch, tools=True)
     running_job(store)
-    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 80, 'codex')
+    analysis.run_analysis(store, 'test', image_bytes(), 'image-model', 'codex')
     assert any(c.get('error', {}).get('code') == -32601 for c in calls)
     with store.db() as db:
         assert store.read(db, 'test_analysis')['state'] == 'failed'

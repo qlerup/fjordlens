@@ -21,12 +21,16 @@ def test_modal_upload_result_error_keyboard_and_mobile(tmp_path):
                 'metadata': dict(model='test-vision', analyzed_at=1791633600, prompt_version='fjordlens-photo-1', schema_version='1'),
                 'usage': {'windows': []}}
     posts, errors = [], []
+    budget = dict(remaining_percent=50, waiting=False, fresh=True, usage={'windows':[
+        dict(label='Codex', remaining_percent=62, duration_minutes=10080)]})
     def handle(route):
         url, method = route.request.url, route.request.method
         if url.endswith('/connection'):
             data = dict(ok=True, csrf='csrf-test', connected=True, email='test@example.com', plan='plus')
         elif url.endswith('/test-models'):
-            data = dict(ok=True, models=[dict(id='test-vision', label='Test billedmodel', default=True)])
+            data = dict(ok=True, models=[dict(id='test-vision', label='Test billedmodel', default=True)], budget=budget)
+        elif url.endswith('/analysis-budget'):
+            data = dict(ok=True, budget=budget)
         elif method == 'POST':
             assert route.request.headers['x-chatgpt-csrf'] == 'csrf-test'
             posts.append(route.request.post_data_buffer)
@@ -57,6 +61,12 @@ def test_modal_upload_result_error_keyboard_and_mobile(tmp_path):
         # Invalid file is rejected before any request.
         page.locator('#chatgptTestImage').set_input_files(dict(name='bad.svg', mimeType='image/svg+xml', buffer=b'<svg/>'))
         expect(page.locator('#chatgptTestError')).to_contain_text('JPG')
+        # Camera formats commonly have no browser MIME type or decoder.
+        for name in ['photo.HEIC', 'photo.NEF', 'photo.dng']:
+            page.locator('#chatgptTestImage').set_input_files(dict(name=name, mimeType='', buffer=b'camera bytes'))
+            expect(page.locator('#chatgptTestRun')).to_be_enabled()
+            expect(page.locator('#chatgptTestPreviewHint')).to_be_visible()
+            expect(page.locator('#chatgptTestError')).not_to_be_visible()
         for width in [1440, 390, 320]:
             page.set_viewport_size({'width': width, 'height': 950})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
@@ -70,7 +80,8 @@ def test_modal_upload_result_error_keyboard_and_mobile(tmp_path):
         assert page.locator('#chatgptTestSummary script').count() == 0
         expect(page.locator('#chatgptTestSections')).to_contain_text('bold · antal: 1 · rød')
         expect(page.locator('#chatgptTestPreview')).to_be_visible()
-        assert len(posts) == 1 and b'test-vision' in posts[0] and b'80' in posts[0]
+        assert len(posts) == 1 and b'test-vision' in posts[0] and b'50' in posts[0] and b'remaining_percent' in posts[0]
+        expect(page.locator('#chatgptTestCapacity')).to_contain_text('62 % tilbage')
         for width in [1440, 390]:
             page.set_viewport_size({'width': width, 'height': 950})
             page.screenshot(path=str(tmp_path / f'chatgpt-analysis-{width}.png'))
@@ -85,5 +96,17 @@ def test_modal_upload_result_error_keyboard_and_mobile(tmp_path):
         page.locator('#chatgptTestRun').click()
         expect(page.locator('#chatgptTestError')).to_contain_text('Forbrugsgrænsen')
         expect(page.locator('#chatgptTestResult')).not_to_be_visible()
+        page.keyboard.press('Escape')
+        budget.update(remaining_percent=35, waiting=True, reset_at=1900000000)
+        page.locator('#chatgptTestBtn').click()
+        expect(page.locator('#chatgptTestThreshold')).to_have_value('35')
+        expect(page.locator('#chatgptTestCapacity')).to_contain_text('Afventer reset')
+        expect(page.locator('#chatgptTestRun')).to_be_disabled()
+        expect(page.locator('#chatgptTestImage')).to_have_value('')
+        page.keyboard.press('Escape')
+        budget.update(waiting=False)
+        page.locator('#chatgptTestBtn').click()
+        page.locator('#chatgptTestImage').set_input_files(dict(name='test.png', mimeType='image/png', buffer=image_bytes()))
+        expect(page.locator('#chatgptTestRun')).to_be_enabled()
         assert errors == []
         browser.close()

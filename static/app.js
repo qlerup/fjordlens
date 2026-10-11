@@ -189,6 +189,7 @@ const els = {
   momentPlayerVideoBtn: document.getElementById("momentPlayerVideoBtn"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
+  mapperMovePhotosBtn: document.getElementById("mapperMovePhotosBtn"),
   mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
   mapperSelectAllBtn: document.getElementById("mapperSelectAllBtn"),
   mapperClearBtn: document.getElementById("mapperClearBtn"),
@@ -7215,49 +7216,6 @@ function openPersonPhotoReassignDialog(item) {
 
 function appendCard(item){ return appendCardTo(item, els.grid); }
 
-function bindFolderNameMarquee(card, fullText) {
-  try {
-    if (!card || !window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
-    const nameEl = card.querySelector('.folder-name');
-    const inner = nameEl ? nameEl.querySelector('.scroll') : null;
-    if (!nameEl || !inner) return;
-    const full = String(fullText || inner.textContent || '');
-    nameEl.setAttribute('title', full);
-
-    const stop = () => {
-      try {
-        nameEl.classList.remove('marquee-run');
-        nameEl.classList.remove('marquee');
-        nameEl.style.removeProperty('--fl-shift');
-        inner.style.transform = '';
-      } catch {}
-    };
-    const start = () => {
-      try {
-        const prev = inner.style.display;
-        inner.style.display = 'inline-block';
-        const delta = Math.max(0, inner.scrollWidth - nameEl.clientWidth);
-        inner.style.display = prev;
-        if (delta <= 4) {
-          stop();
-          return;
-        }
-        nameEl.style.setProperty('--fl-shift', `-${Math.ceil(delta)}px`);
-        nameEl.classList.add('marquee');
-        // Restart animation cleanly each hover.
-        nameEl.classList.remove('marquee-run');
-        void nameEl.offsetWidth;
-        nameEl.classList.add('marquee-run');
-      } catch {
-        stop();
-      }
-    };
-
-    card.addEventListener('mouseenter', start);
-    card.addEventListener('mouseleave', stop);
-  } catch {}
-}
-
 const FOLDER_PREVIEW_STORE_KEY = 'fl_folder_previews_v1';
 
 const loadMapperFolderPreview = window.FjordLensFolderPreviews.createBatchLoader(async folders => {
@@ -7345,7 +7303,7 @@ function appendFolderCard(folder, arr, opts = {}) {
   const hasExplicitCount = (opts && Object.prototype.hasOwnProperty.call(opts, 'count'));
   const countVal = hasExplicitCount ? Number(opts.count || 0) : (Array.isArray(arr) ? arr.length : 0);
   const countLabel = countVal > 0 ? `${countVal} ${countVal === 1 ? 'element' : 'elementer'}` : '';
-  const overlay = `<div class="folder-name-overlay"><span class="folder-name"><span class="scroll">${folderTitle}</span></span>${countLabel ? `<span class="folder-count">${escapeHtml(countLabel)}</span>` : ''}</div>`;
+  const overlay = `<div class="folder-name-overlay"><span class="folder-name">${folderTitle}</span>${countLabel ? `<span class="folder-count">${escapeHtml(countLabel)}</span>` : ''}</div>`;
   const thumbHtml = `<div class="card-thumb folder-mosaic"><div class="folder-grid v1"></div>${selBadge}${overlay}</div>`;
   card.innerHTML = `
     ${thumbHtml}
@@ -7357,7 +7315,7 @@ function appendFolderCard(folder, arr, opts = {}) {
       </div>
       </div>`;
   updateFolderPrivacyBadge(card, folder);
-  bindFolderNameMarquee(card, title || folder || '');
+  card.querySelector('.folder-name').title = title || folder || '';
   card.querySelectorAll('img').forEach((img) => {
     img.setAttribute('draggable', 'false');
   });
@@ -10282,6 +10240,12 @@ function renderMapperContext(path = '') {
       ? tr('mapper_menu_refresh_previews')
       : tr('mapper_refresh_previews_select_one');
   }
+  if (els.mapperMovePhotosBtn) {
+    const visible = !!state.mapperEditMode && selPhotos > 0 && selFolders === 0;
+    els.mapperMovePhotosBtn.classList.toggle('hidden', !visible);
+    els.mapperMovePhotosBtn.disabled = !visible || !mapperSelectionCanDelete() || !!state.mapperDeleteProgress;
+    els.mapperMovePhotosBtn.textContent = `Flyt valgte (${selPhotos})`;
+  }
   if (els.mapperDeleteBtn) {
     const show = !!state.mapperEditMode || !!state.mapperDeleteProgress;
     const canDelete = show && selectedCount > 0 && mapperSelectionCanDelete();
@@ -10389,10 +10353,10 @@ function _setMapperDownloadControlsBusy(busy) {
 
 let _mapperDownloadFolders = [];
 let _mapperDownloadPhotoIds = [];
-function openDownloadModal(folderPath){
+function openDownloadModal(folderPath, photoIds = null){
   if (!els.mapperDownloadModal) return;
-  _mapperDownloadFolders = typeof folderPath === 'string' ? [folderPath] : Array.from(state.mapperSelectedFolders || []);
-  _mapperDownloadPhotoIds = typeof folderPath === 'string' ? [] : Array.from(state.mapperSelectedPhotoIds || []);
+  _mapperDownloadFolders = photoIds ? [] : typeof folderPath === 'string' ? [folderPath] : Array.from(state.mapperSelectedFolders || []);
+  _mapperDownloadPhotoIds = photoIds ? [...photoIds] : typeof folderPath === 'string' ? [] : Array.from(state.mapperSelectedPhotoIds || []);
   _clearPreparedMobileDownloads();
   updateMapperDownloadHint();
   els.mapperDownloadModal.classList.remove('hidden');
@@ -15340,24 +15304,34 @@ async function openMapperPrivacyDialog(folder) {
   } catch (error) {showStatus(error.message, 'err');}
 }
 
-async function openMapperMoveDialog(source) {
+async function openMapperMoveDialog(source, photoIds = null) {
+  const movingPhotos = Array.isArray(photoIds);
   source = _normalizeMapperPath(source || '');
-  if (!source) {showStatus('Vælg én mappe, der skal flyttes.', 'err'); return;}
+  if (!movingPhotos && !source) {showStatus('Vælg én mappe, der skal flyttes.', 'err'); return;}
+  if (movingPhotos && !photoIds.length) return;
   let allFolders;
   try {allFolders = await loadMapperTreeIndex(true);} catch (error) {showStatus(error.message, 'err'); return;}
   const currentParent = source.includes('/') ? source.slice(0, source.lastIndexOf('/')) : '';
   const dialog = document.createElement('dialog');
   dialog.className = 'mapper-move-dialog'; dialog.setAttribute('aria-labelledby','mapper-move-title');
-  dialog.innerHTML = `<h3 id="mapper-move-title">Flyt mappe</h3><p class="move-source"></p>
-    <p>Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:</p>
+  dialog.innerHTML = `<h3 id="mapper-move-title">${movingPhotos ? 'Flyt valgte billeder' : 'Flyt mappe'}</h3><p class="move-source"></p>
+    <p>${movingPhotos ? 'Vælg en eksisterende mappe, eller vælg en placering og angiv et navn på en ny undermappe. Billeder med samme navn omdøbes automatisk.' : 'Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:'}</p>
     <input type="search" class="move-search" placeholder="Søg efter destinationsmappe" aria-label="Søg efter destinationsmappe">
-    <div class="move-destinations"></div><p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
+    <div class="move-destinations"></div>${movingPhotos ? '<label>Ny undermappe (valgfrit)<input class="move-new-name move-search" placeholder="Lad feltet være tomt for at bruge den valgte mappe" maxlength="100"></label>' : ''}<p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
     <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>Flyt hertil</button></div>`;
-  dialog.querySelector('.move-source').textContent = 'Mappe: uploads/' + source;
+  dialog.querySelector('.move-source').textContent = movingPhotos ? `${photoIds.length} valgte billeder` : 'Mappe: uploads/' + source;
   let destination = null, busy = false;
   const list = dialog.querySelector('.move-destinations'), search = dialog.querySelector('input'), save = dialog.querySelector('[data-save]');
   const paths = ['', ...allFolders].filter((path, index, all) => all.indexOf(path) === index
-    && path !== source && !path.startsWith(source + '/') && path !== currentParent);
+    && (movingPhotos || path !== source && !path.startsWith(source + '/') && path !== currentParent))
+    .filter(path => !movingPhotos || mapperFolderAllows(path));
+  const newName = dialog.querySelector('.move-new-name');
+  function updatePreview() {
+    if (destination === null) return;
+    const leaf = movingPhotos ? (newName.value.trim() ? '/' + newName.value.trim() : '') : '/' + source.split('/').pop();
+    dialog.querySelector('.move-preview').textContent = 'Ny placering: uploads' + (destination ? '/' + destination : '') + leaf;
+  }
+  if (newName) newName.oninput = updatePreview;
   function render() {
     list.replaceChildren();
     paths.filter(path => path.toLocaleLowerCase('da').includes(search.value.trim().toLocaleLowerCase('da'))).forEach(path => {
@@ -15366,7 +15340,7 @@ async function openMapperMoveDialog(source) {
       button.setAttribute('aria-pressed', String(destination === path)); button.disabled = busy;
       button.onclick = () => {
         destination = path; save.disabled = false;
-        dialog.querySelector('.move-preview').textContent = 'Ny placering: uploads/' + (path ? path + '/' : '') + source.split('/').pop();
+        updatePreview();
         list.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
       };
       list.append(button);
@@ -15380,22 +15354,22 @@ async function openMapperMoveDialog(source) {
   save.onclick = async () => {
     if (busy || destination === null) return;
     busy = true; dialog.querySelectorAll('button,input').forEach(el => el.disabled = true);
-    save.textContent = 'Flytter…'; save.classList.add('loading'); save.setAttribute('aria-busy','true');
+    save.textContent = movingPhotos ? `Flytter ${photoIds.length} billeder …` : 'Flytter…'; save.classList.add('loading'); save.setAttribute('aria-busy','true');
     let moved = false;
     try {
-      const response = await fetch('/api/settings/upload-folder-move', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:source,parent:destination})});
+      const response = await fetch(movingPhotos ? '/api/photos/move' : '/api/settings/upload-folder-move', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(movingPhotos ? {photo_ids:photoIds,parent:destination,new_name:newName.value.trim()} : {path:source,parent:destination})});
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || 'Mappen kunne ikke flyttes.');
       moved = true;
       galleryDataCache.clear(); mapperViews.clear();
       state.mapperSelectedFolders?.clear(); state.mapperSelectedPhotoIds?.clear();
-      state.mapperPath = _replaceMapperPathPrefix(state.mapperPath, data.old_path, data.new_path);
+      if (!movingPhotos) state.mapperPath = _replaceMapperPathPrefix(state.mapperPath, data.old_path, data.new_path);
       state.folder = state.mapperPath || null;
       dialog.close();
       if (state.view === 'mapper') {await loadMapperTools(state.mapperPath); await loadPhotos(false, true);}
-      showStatus('Mappen er flyttet til uploads/' + data.new_path, 'ok');
+      showStatus(movingPhotos ? `${data.moved} billeder er flyttet til uploads/${data.destination}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}` : 'Mappen er flyttet til uploads/' + data.new_path, 'ok');
     } catch (error) {
-      const message = moved ? 'Mappen er flyttet. Genindlæs siden for at opdatere visningen.' : error.message;
+      const message = moved ? 'Flytningen er færdig. Genindlæs siden for at opdatere visningen.' : error.message;
       dialog.querySelector('.move-error').textContent = message; showStatus(message, 'err');
     } finally {
       busy = false; dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
@@ -15414,6 +15388,8 @@ document.getElementById('mapperHeaderMoveAction')?.addEventListener('click', () 
 
 function mapperContextMenuItemsForPhoto(photoId) {
   return [
+    {label: 'Download billede', action: () => openDownloadModal(null, [photoId])},
+    {label: 'Flyt billede …', disabled: !mapperPhotoCanDelete(photoId), action: () => openMapperMoveDialog('', [photoId])},
     {
       label: tr('mapper_ctx_select'),
       action: () => {
@@ -17782,6 +17758,7 @@ if (els.sharedLinksList) {
 }
 
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedInMapper);
+els.mapperMovePhotosBtn?.addEventListener('click', () => openMapperMoveDialog('', Array.from(state.mapperSelectedPhotoIds || [])));
 els.mapperSelectAllBtn && els.mapperSelectAllBtn.addEventListener('click', mapperSelectAll);
 els.mapperClearBtn && els.mapperClearBtn.addEventListener('click', mapperClearSelection);
 els.mapperDownloadBtn && els.mapperDownloadBtn.addEventListener('click', openDownloadModal);

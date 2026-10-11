@@ -1,5 +1,5 @@
 :root {
-  --folder-overlay-h: 44px; /* fixed title bar height for folder tiles */
+  --folder-overlay-h: 56px; /* room for two title lines on every folder tile */
   --folder-tile: 230px;     /* fixed width/height for folder thumbnails */
   /* Let native controls adapt when theme switches */
   color-scheme: dark light;
@@ -1980,17 +1980,18 @@ body.view-mapper .photo-card img {
 .folder-name-overlay .folder-name {
   font-weight: 700;
   font-size: 0.95rem;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   position: relative;
   min-width: 0;
   flex: 1 1 auto;
 }
-.folder-name-overlay .folder-name .scroll { display: inline; white-space: nowrap; }
-/* When marquee is active, we switch to inline-block so transform works, and remove ellipsis */
-.folder-name-overlay .folder-name.marquee { text-overflow: clip; }
-.folder-name-overlay .folder-name.marquee .scroll { display: inline-block; will-change: transform; }
-.folder-name-overlay .folder-name.marquee-run .scroll { display:inline-block; animation: fl-foldername-marquee 6s linear infinite; will-change: transform; }
-@keyframes fl-foldername-marquee { from { transform: translateX(0); } to { transform: translateX(var(--fl-shift, -80px)); } }
 .folder-name-overlay .folder-count { flex: 0 0 auto; white-space: nowrap; margin-left: 8px; }
 .folder-name-overlay .folder-count {
   font-size: 0.78rem;

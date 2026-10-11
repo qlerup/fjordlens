@@ -24567,6 +24567,15 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str, *, reject_c
 _UPLOAD_FOLDER_CHANGE_LOCK = threading.Lock()
 
 
+@app.route('/api/photos/move', methods=['POST'])
+@login_required
+def api_move_photos():
+    import photo_move
+    import sys
+    with _UPLOAD_FOLDER_CHANGE_LOCK:
+        return photo_move.move_selected(sys.modules[__name__])
+
+
 @app.route("/api/settings/upload-folder-move", methods=["POST"])
 @app.route("/api/settings/upload-folder-rename", methods=["POST"])
 def api_settings_upload_folder_rename():
