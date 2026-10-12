@@ -440,8 +440,35 @@ ls -la /mnt/pve/synology-fjordlens
 3. Bind-mount share into the LXC (example CTID `1001`):
 
 ```bash
-pct set 1001 -mp0 /mnt/pve/synology-fjordlens,mp=/mnt/fjordlens-nfs
-pct reboot 1001
+bash <<'FJORDHUB_NFS_LXC'
+set -euo pipefail
+ctid='1001'
+target='/mnt/fjordlens-nfs'
+mount_source='/mnt/pve/synology-fjordlens'
+config=$(pct config "$ctid")
+slot=''
+for i in $(seq 0 255); do
+  line=$(printf '%s\n' "$config" | grep "^mp$i:" || true)
+  [ -n "$line" ] || continue
+  existing=$(printf '%s\n' "$line" | sed -n 's/.*,mp=\([^,]*\).*/\1/p')
+  if [ "$existing" = "$target" ]; then
+    source=$(printf '%s\n' "$line" | cut -d ' ' -f 2- | cut -d ',' -f 1)
+    if [ "$source" = "$mount_source" ]; then
+      echo "Mount findes allerede paa mp$i; eksisterende indstillinger bevares."
+      exit 0
+    fi
+    echo "Mappen $target bruges allerede af et andet lager paa mp$i. Vaelg en anden mappesti."
+    exit 1
+  fi
+done
+for i in $(seq 0 255); do
+  if ! printf '%s\n' "$config" | grep -q "^mp$i:"; then slot="mp$i"; break; fi
+done
+[ -n "$slot" ] || { echo 'Ingen ledige mountpladser i LXC.'; exit 1; }
+echo "Tilfoejer mount paa $slot"
+pct set "$ctid" "-$slot" "$mount_source,mp=$target"
+pct reboot "$ctid"
+FJORDHUB_NFS_LXC
 ```
 
 4. Enter container and verify:
