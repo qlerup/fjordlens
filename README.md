@@ -441,7 +441,7 @@ ls -la /mnt/pve/synology-fjordlens
 
 ```bash
 pct set 1001 -mp0 /mnt/pve/synology-fjordlens,mp=/mnt/fjordlens-nfs
-pct restart 1001
+pct reboot 1001
 ```
 
 4. Enter container and verify:
