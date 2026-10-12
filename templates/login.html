@@ -47,6 +47,8 @@
     </form>
     {% else %}
     <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}">
+{% if email_required %}<div class="auth-field"><label for="first-login-email">Email til din FjordHub-konto</label><input id="first-login-email" name="first_login_email" type="email" autocomplete="email" required autofocus value="{{ request.form.get('first_login_email', '') }}"></div>{% endif %}
+
       <div class="login-title">
         <span>{{ 'Sign in to FjordLens' if en else 'Log ind på FjordLens' }}</span>
       </div>
