@@ -4,7 +4,7 @@ FjordLens is a self-hosted photo and video library for Synology NAS and Docker h
 
 This repository contains the FjordLens web app/API, AI service, updater, external Windows AI worker and native iOS AirPlay integration files. Raspberry Pi frames connect as separate clients; their installation files are not included in this checkout.
 
-See [Minder](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
+See [Moments](MOMENTS.md) for automatic trip/day-event discovery, home-area settings,
 photo selection, editing, splitting and merging moments, cinematic slideshows,
 music, public links and MP4 export.
 
@@ -12,17 +12,19 @@ music, public links and MP4 export.
 
 ## ChatGPT photo analysis test
 
-Administrators can open **Settings → AI descriptions → External AI · ChatGPT → Test billedanalyse** after connecting an account. Choose a temporary JPG, PNG, WebP, HEIC/HEIF or supported camera RAW image (maximum 20 MB / 40 megapixels), an image-capable model from the account's catalog, and a minimum remaining-capacity percentage (default 50%). HEIC and RAW are decoded in memory and converted to a metadata-free JPEG, at most 2048 pixels on the longest side, before transmission. RAW support depends on LibRaw camera support; unsupported or damaged files fail before any image is sent. The modal shows a Danish description, observations, objects, search concepts, and the complete validated JSON with model/prompt/schema metadata.
+Administrators connect the ChatGPT account from AI description settings using the in-app device-login flow. Verification/status polling is handled in FjordLens, rather than requiring a terminal login. The connection enables the manual test below; it does not enqueue automatic analysis of the permanent library.
+
+Administrators can open **Settings → AI descriptions → External AI · ChatGPT → Test image analysis** after connecting an account. Choose a temporary JPG, PNG, WebP, HEIC/HEIF or supported camera RAW image (maximum 20 MB / 40 megapixels), an image-capable model from the account's catalog, and a minimum remaining-capacity percentage (default 50%). HEIC and RAW are decoded in memory and converted to a metadata-free JPEG, at most 2048 pixels on the longest side, before transmission. RAW support depends on LibRaw camera support; unsupported or damaged files fail before any image is sent. The modal shows a Danish description, observations, objects, search concepts, and the complete validated JSON with model/prompt/schema metadata.
 
 The image is decoded and re-encoded without EXIF/GPS, at up to 2048 pixels on its longest side, and sent through the existing ChatGPT connection and Codex app-server 0.162.1. Each attempt uses a fresh ephemeral thread, an empty working directory, disabled shell/web/plugin capabilities, and rejected tool requests. The analysis prompt and schema are versioned in `chatgpt_analysis_schema.py`. Images are held in memory for the attempt and never added to the library. Native credentials and transient app-server files are removed with the temporary directory. The browser retains its local preview until the modal closes. Results are encrypted in the connection database, removed on closing a completed test, and expire after 15 minutes (expired records are purged on the next test/status access).
 
-The modal retrieves the account's actual reported usage and displays remaining capacity separately for every Codex/model pool and primary/secondary window. The admin setting **Stop ved procent tilbage** defaults to 50%; at or below that remaining percentage, new analyses wait for reset. Preferences and blocked-window snapshots are encrypted in a separate SQLite record and survive closing the modal, result expiry, server restarts and updates. A fresh snapshot must confirm reset of every blocked window before the pause clears; passing a timestamp alone or lowering the stop setting does not clear it. Capacity is refreshed when opening the test and every minute while it is open, and checked again immediately before every inference. No test image is saved for later, and no inference runs automatically after reset: select the image again. Unknown usage or included-capacity permission prevents inference. These measurements cover the reported pools, including other activity in those pools; they are not a measurement of the entire ChatGPT subscription. No reset-credit or paid-capacity action is called. Delayed accounting and an in-flight answer can cross the threshold. A SQLite lease serializes test attempts across web workers and a separate lease protects credential rotation. There are no automatic inference retries. Interrupted workers time out and can be retried manually.
+The modal retrieves the account's actual reported usage and displays remaining capacity separately for every Codex/model pool and primary/secondary window. The admin setting **Stop at remaining percentage** defaults to 50%; at or below that remaining percentage, new analyses wait for reset. Preferences and blocked-window snapshots are encrypted in a separate SQLite record and survive closing the modal, result expiry, server restarts and updates. A fresh snapshot must confirm reset of every blocked window before the pause clears; passing a timestamp alone or lowering the stop setting does not clear it. Capacity is refreshed when opening the test and every minute while it is open, and checked again immediately before every inference. No test image is saved for later, and no inference runs automatically after reset: select the image again. Unknown usage or included-capacity permission prevents inference. These measurements cover the reported pools, including other activity in those pools; they are not a measurement of the entire ChatGPT subscription. No reset-credit or paid-capacity action is called. Delayed accounting and an in-flight answer can cross the threshold. A SQLite lease serializes test attempts across web workers and a separate lease protects credential rotation. There are no automatic inference retries. Interrupted workers time out and can be retried manually.
 
 This feature is the manual experiment requested for evaluating the analysis prompt. Persistent library analysis, the daily capacity-check queue, and content search integration remain separate future work. Rebuild/redeploy the web container for the new dependencies and assets. Validation: `python -m pytest tests/test_chatgpt_connection.py tests/test_chatgpt_analysis.py tests/test_chatgpt_budget.py tests/test_chatgpt_connection_browser.py tests/test_chatgpt_analysis_browser.py -q` from the project directory. Model answers and quota values are simulated in tests; a real account inference must be checked through the modal after deployment. The actual pinned app-server was also started without credentials to verify its configuration, and generated 0.162.1 protocol schemas validated the thread/image/output-schema requests.
 
 ## Feature Matrix
 
-In the folder gallery, select upload media and choose **Flyt valgte** to move them to an existing folder or a new subfolder. The right-click menu also offers **Flyt billede …** and **Download billede**; download operates on the clicked image without changing the selection. Moves preserve photo IDs, tags, descriptions and conversion links, require edit access at both ends, and automatically add a shared numeric suffix to colliding originals/conversions. Existing files are never overwritten. Up to 500 selected items can be moved per request; wait until uploads and folder processing have finished. Private media must have a private destination. A failed move attempts to restore both disk files and database paths.
+In the folder gallery, select upload media and choose **Move selected** to move them to an existing folder or a new subfolder. The right-click menu also offers **Move image …** and **Download image**; download operates on the clicked image without changing the selection. Moves preserve photo IDs, tags, descriptions and conversion links, require edit access at both ends, and automatically add a shared numeric suffix to colliding originals/conversions. Existing files are never overwritten. Up to 500 selected items can be moved per request; wait until uploads and folder processing have finished. Private media must have a private destination. A failed move attempts to restore both disk files and database paths.
 
 | Feature | Requires Ollama | Requires Photoframe | Requires External Worker | External account/service |
 |---|:---:|:---:|:---:|:---:|
@@ -94,22 +96,22 @@ NVIDIA GPU override.
 - Full-resolution media, animated typography, gentle motion, weather when available and occasional paired portrait photos
 - Video slides play to the end of the clip, independently of the photo duration
 - One **16:9 widescreen player** hides navigation and preserves the same layout on phones, computers and TVs
-- Shared moments wait for **Afspil**; phones show a three-second rotation hint before slides and music start. The player requests fullscreen/landscape where supported and otherwise rotates its canvas sideways in an upright phone viewport
-- **Rediger diasshow** opens a saved timeline: reorder slides, adjust photo duration, edit/add text and media, pair photos, drag text in the preview, undo/redo and reset placement
+- Shared moments wait for **Play**; phones show a three-second rotation hint before slides and music start. The player requests fullscreen/landscape where supported and otherwise rotates its canvas sideways in an upright phone viewport
+- **Edit slideshow** opens a saved timeline: reorder slides, adjust photo duration, edit/add text and media, pair photos, drag text in the preview, undo/redo and reset placement
 - Move the heading, location, date and weather independently. Edge handles resize one dimension; corner handles preserve proportions. Optional snap guides align each text with the slide's center/edges or other texts' centers/edges; hold Alt to bypass snapping. Positions and sizes persist in playback, shared links and MP4 exports
-- **Lav video** exports **1920×1080 (16:9)** MP4 with the saved timeline and music; phones use the same video, viewed sideways
+- **Create video** exports **1920×1080 (16:9)** MP4 with the saved timeline and music; phones use the same video, viewed sideways
 
 ### Background music
 
 The bundled [music library](music/README.md) contains **16 tracks in eight moods**.
 FjordLens selects an initial track from the moment title. In the slideshow editor,
-choose a track, preview it, set the volume or select **Ingen musik**. Music continues
+choose a track, preview it, set the volume or select **No music**. Music continues
 across slides and loops with a six-second equal-power crossfade. MP4 export uses
 the same loop structure, with a fade at the beginning and end. Original video
 clips remain muted in the moment presentation.
 
 Music is served by your FjordLens server without a streaming-service account.
-Browsers may require a tap on **Slå musik til**, especially on public links and
+Browsers may require a tap on **Enable music**, especially on public links and
 phones. Playback also includes a mute control. A new sharing link snapshots the
 track and volume along with the timeline; later editor changes do not alter it.
 Older links without a music setting receive a default track based on their stored
@@ -188,7 +190,7 @@ prefers NVDEC + NVENC, falls back to CPU decode + NVENC, then full CPU.
 ### Sharing and permissions
 
 - Public share links for folders
-- Public **moment links** open a start page with an **Afspil** button, then the widescreen player with music and fullscreen controls
+- Public **moment links** open a start page with an **Play** button, then the widescreen player with music and fullscreen controls
 - Choose a moment link's lifetime when sharing; Settings → Shared lists it alongside other links with copy, QR, edit, extend, deactivate/reactivate and delete actions
 - Moment links contain a snapshot of the timeline and only allow access to its media and selected soundtrack; revoked/expired links stop working
 - Share permissions (`view`, `download`, `upload`, `manage`)
@@ -243,7 +245,7 @@ AirPlay uses a server-generated HLS slideshow rather than screen mirroring:
 - Default image duration is **5 seconds** and the last choice is remembered on the phone
 - The controller shows current item / total items
 - A seek slider is available for the part of the slideshow that has been prepared
-- **Forrige** and **Næste** jump between media items
+- **Previous** and **Next** jump between media items
 - Safari-specific seek handling retries around HLS discontinuities so previous/next and manual seeking remain reliable
 - The web player exposes Apple's AirPlay picker through the HLS video element
 
@@ -268,20 +270,26 @@ require integration into an Xcode app target; they are not a prebuilt mobile app
 - TOTP 2FA for accounts
 - Per-user UI language and search language (`da`/`en`)
 - Profile and password management
-- **Glemt adgangskode** sends an email verification code before allowing a password reset; admins configure/test SMTP and can disable the feature
+- **Forgot password** sends an email verification code before allowing a password reset; admins configure/test SMTP and can disable the feature
 - Optional FjordHub login and user-management integration
-- Shared Klassisk/Fjord design with personal light/dark/system preference (see [Shared appearance](#shared-appearance))
+- Shared Classic/Fjord design with personal light/dark/system preference (see [Shared appearance](#shared-appearance))
 
 ### Maintenance and diagnostics
 
 - Metadata rescans, thumbnail rebuilds and a dedicated repair action for missing thumbnails
 - Administrators can queue post-processing again for an individual photo and follow its status
 - Rebuild an individual thumbnail or refresh a photo's weather information
-- Background task progress and stop controls, including **Stop alle processer**
+- Background task progress and stop controls, including **Stop all processes**
 - Persistent event logs in `DATA_DIR/fjordlens-events.jsonl`, available in the Logs panel after restarts
-- AI runtime/device status and a **Frigiv GPU (Qwen)** action to unload Qwen; the model loads again when needed
+- AI runtime/device status and a **Release GPU (Qwen)** action to unload Qwen; the model loads again when needed
 - In-app update checks, progress/log output and optional Docker cleanup (see [Updating](#updating))
 - Index reset and factory-reset tools for administrators
+
+Background work is combined into a persistent progress display, including conversion status beside folder search. Operational work status is visible to managers/administrators rather than ordinary gallery viewers. Folder deletion reports live file counts and percentage, and log retrieval supports batches of up to 5,000 entries. Progress should be checked before moving folders or selected media so uploads/processing do not conflict.
+
+### Shared FjordHub account requirements
+
+Managed users can confirm email and replace a temporary password directly in the app at first login. Current Hub access is checked during existing sessions; removal blocks protected requests and revokes the session, while outages do not grant stale access. Hub administrators can require an email update on next opening. Opening or returning to Lens presents a mandatory form even with an existing login; saving a valid, unique address clears the shared requirement across updated apps. Update Hub and Lens together. The manual ChatGPT connection/test remains administrator-only and does not start automatic library analysis.
 
 ## Quick Start
 
@@ -454,18 +462,18 @@ for i in $(seq 0 255); do
   if [ "$existing" = "$target" ]; then
     source=$(printf '%s\n' "$line" | cut -d ' ' -f 2- | cut -d ',' -f 1)
     if [ "$source" = "$mount_source" ]; then
-      echo "Mount findes allerede paa mp$i; eksisterende indstillinger bevares."
+      echo "Mount already exists on mp$i; preserving existing settings."
       exit 0
     fi
-    echo "Mappen $target bruges allerede af et andet lager paa mp$i. Vaelg en anden mappesti."
+    echo "Directory $target is already used by another storage on mp$i. Choose a different target."
     exit 1
   fi
 done
 for i in $(seq 0 255); do
   if ! printf '%s\n' "$config" | grep -q "^mp$i:"; then slot="mp$i"; break; fi
 done
-[ -n "$slot" ] || { echo 'Ingen ledige mountpladser i LXC.'; exit 1; }
-echo "Tilfoejer mount paa $slot"
+[ -n "$slot" ] || { echo 'No unused mount slots in the LXC.'; exit 1; }
+echo "Adding mount on $slot"
 pct set "$ctid" "-$slot" "$mount_source,mp=$target"
 pct reboot "$ctid"
 FJORDHUB_NFS_LXC
@@ -522,8 +530,8 @@ On iPhone/iPad:
 4. Choose the desired **Tid pr. billede** if images are included.
 5. Press **AirPlay**.
 6. FjordLens prepares the first HLS segments and opens the slideshow controller.
-7. Press **Vælg AirPlay** and choose the TV/Apple TV.
-8. Use **Forrige**, **Næste** or the seek slider from the phone while the slideshow continues.
+7. Press **Choose AirPlay** and choose the TV/Apple TV.
+8. Use **Previous**, **Next** or the seek slider from the phone while the slideshow continues.
 
 AirPlay HLS conversion runs in the dedicated `fjordlens-convert` container. FFmpeg and NVENC/CPU fallback support are installed in that worker image.
 
@@ -575,7 +583,7 @@ Worker files are included in:
 
 Quick flow:
 
-1. In FjordLens, open `Indstillinger` -> `AI` and enable external AI descriptions.
+1. In FjordLens, open `Settings` -> `AI` and enable external AI descriptions.
 2. Copy the generated connection link.
 3. On Windows, open `external_worker/windows/README.md` and run the setup steps.
 4. Start the GUI, paste the link, and start the external queue.
@@ -606,7 +614,7 @@ If Cloudflare challenge pages are returned instead of media/JSON/HLS, frames, TV
 
 ## Shared appearance
 
-Administrators choose **Klassisk** or **Fjord** under `Indstillinger` → `Andet`.
+Administrators choose **Classic** or **Fjord** under `Settings` → `Other`.
 The choice applies to every account, device, login page and page using the shared
 base template. Old per-user settings, cookies and local storage cannot override it.
 Existing installations migrate the original administrator's saved design once.
@@ -622,18 +630,18 @@ pages retain the last confirmed design until they reconnect.
 
 Admins can also update from the web UI:
 
-- Open `Indstillinger` -> `Opdatering`
-- Click `Tjek` to fetch the latest `origin/<branch>` revision
-- Click `Opdater`
-- Choose `Ryd plads og opdater` or `Hurtig opdatering`
+- Open `Settings` -> `Updates`
+- Click `Check` to fetch the latest `origin/<branch>` revision
+- Click `Update`
+- Choose `Clean up and update` or `Quick update`
 
-The in-app updater runs the same update flow as `scripts/update.sh`. `Ryd plads og opdater` runs the script with `--cleanup`; `Hurtig opdatering` runs it with `--no-cleanup`.
+The in-app updater runs the same update flow as `scripts/update.sh`. `Clean up and update` runs the script with `--cleanup`; `Quick update` runs it with `--no-cleanup`.
 
 After pulling new code, the update script also appends missing active variables from `.env.example` to `.env`. Existing `.env` values are never overwritten, and commented optional examples stay commented in `.env.example`.
 
 Note: the in-app updater uses an internal `fjordlens-updater` container with access to the Docker socket so it can rebuild/restart the FjordLens services. Keep the update UI admin-only.
 
-The updater can automatically check for new commits in the background. The default is enabled every 30 minutes, and admins can change or disable it under `Indstillinger` -> `Opdatering`.
+The updater can automatically check for new commits in the background. The default is enabled every 30 minutes, and admins can change or disable it under `Settings` -> `Updates`.
 
 ```bash
 cd fjordlens
@@ -744,7 +752,7 @@ Common advanced settings in code/env:
 
 ## Troubleshooting
 
-### AirPlay opens but Forrige/Næste or seek does not move
+### AirPlay opens but Previous/Next or seek does not move
 
 FjordLens includes Safari-specific HLS seek handling because WebKit can ignore a direct `currentTime` update around HLS `EXT-X-DISCONTINUITY` boundaries. Make sure you are running the latest FjordLens build, then create a fresh AirPlay session.
 

@@ -1,31 +1,22 @@
-# Musik til Fjordlens
+# Music for FjordLens
 
-16 MP3-numre fordelt på otte stemninger, med to varianter af hver:
+Sixteen bundled MP3 tracks in eight moods, with two variations each:
 
-| Stemning | Anvendelse | Filnavne |
-|---|---|---|
-| Vores dag | Bryllup og konfirmation | `wedding-1.mp3`, `wedding-2.mp3` |
-| Sommerminder | Ferie og strand | `summer-1.mp3`, `summer-2.mp3` |
-| På eventyr | Rejser og oplevelser | `adventure-1.mp3`, `adventure-2.mp3` |
-| Små store øjeblikke | Børn og udflugter | `playful-1.mp3`, `playful-2.mp3` |
-| Året der gik | Nostalgiske årsoversigter | `year-1.mp3`, `year-2.mp3` |
-| Vinterlys | Jul og vinter | `winter-1.mp3`, `winter-2.mp3` |
-| Stille stunder | Natur og rolige minder | `quiet-1.mp3`, `quiet-2.mp3` |
-| Minder om dig | Eftertænksomme og personlige minder | `memory-1.mp3`, `memory-2.mp3` |
+| Mood | Use | Files |
+| --- | --- | --- |
+| Our day | Weddings and confirmations | `wedding-1.mp3`, `wedding-2.mp3` |
+| Summer memories | Holidays and beaches | `summer-1.mp3`, `summer-2.mp3` |
+| On an adventure | Travel and experiences | `adventure-1.mp3`, `adventure-2.mp3` |
+| Little big moments | Children and outings | `playful-1.mp3`, `playful-2.mp3` |
+| The year in review | Nostalgic annual highlights | `year-1.mp3`, `year-2.mp3` |
+| Winter light | Christmas and winter | `winter-1.mp3`, `winter-2.mp3` |
+| Quiet moments | Nature and calm memories | `quiet-1.mp3`, `quiet-2.mp3` |
+| Memories of you | Reflective personal memories | `memory-1.mp3`, `memory-2.mp3` |
 
-Fjordlens vælger et startnummer ud fra mindets titel. I **Rediger diasshow**
-kan du lytte, vælge et andet nummer, ændre lydstyrken eller vælge **Ingen musik**.
-Musikken fortsætter mellem slides og gentages med et seks sekunders krydsfade.
-MP4-eksporten bruger samme overgang og toner musikken ud ved filmens slutning.
-På telefoner og delingslinks kan browseren kræve et tryk på **Slå musik til**.
+An initial track is selected from the moment title. In Edit slideshow, preview/change the track, adjust volume or choose No music. Music continues across slides and loops with a six-second equal-power crossfade. MP4 export uses matching transitions and start/end fades; source-video audio is muted in the presentation. Phones/public links may require tapping Enable music.
 
-`catalog.json` indeholder stabile ID'er, oprindelige titler, varigheder og
-grænser for indledende/afsluttende stilhed. MP3-filerne er kopier af de leverede
-originaler; beskæring foretages kun under afspilning/eksport. Numrene hentes
-lokalt fra Fjordlens-serveren, ikke fra Suno eller en musiktjeneste.
+`catalog.json` stores stable IDs, original titles, duration and leading/trailing-silence bounds. MP3s retain supplied originals; trimming happens during playback/export. Tracks are served by your Lens server, without a Suno/streaming-service connection.
 
-Musikvalget gemmes på tidslinjen. Nye delingslinks gemmer deres egen version;
-senere ændringer af nummer eller lydstyrke ændrer ikke eksisterende links.
-Ældre links uden musikvalg får et fast startnummer ud fra deres gemte titel.
+Track/volume settings persist with the editable timeline. New sharing links snapshot them; later changes do not alter old links. Earlier links without a music choice receive a deterministic default from their stored title. Previously silent exports must be regenerated to include music.
 
-Se [COPYRIGHT.md](COPYRIGHT.md) for rettigheder og tilladt brug.
+The recordings were supplied under their own rights notice. See [COPYRIGHT.md](COPYRIGHT.md) for permission/restrictions; these files are not offered as unrestricted stock music.

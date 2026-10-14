@@ -1,52 +1,30 @@
-# External AI Image Worker (Windows)
+# External AI image worker for Windows
 
-This folder contains the standalone Windows client for FjordLens external AI image descriptions.
+The standalone FjordLens client for local Ollama image descriptions. This worker is separate from built-in AI containers and the manual ChatGPT account-analysis experiment.
 
 ## Files
 
-- `ai_billedbeskriver.py`: core image analysis script (CLI)
-- `ai_billedbeskriver_gui.pyw`: GUI client that can process one image or run the external queue
-- `Start AI Billedbeskriver.vbs`: helper launcher that starts the GUI without a console window
-- `requirements.txt`: Python dependencies for this worker
-
+- `ai_billedbeskriver.py`: single-image CLI analysis.
+- `ai_billedbeskriver_gui.pyw`: GUI for a single image or the server's external queue.
+- `Start AI Billedbeskriver.vbs`: GUI launcher without a console window.
+- `requirements.txt`: worker Python dependencies.
 
 ## Prerequisites
 
-1. Windows med Python 3.10+ installeret
-2. [Ollama](https://ollama.com/download) installeret og kørende lokalt
-3. Qwen vision-model installeret i Ollama (`qwen2.5vl:7b`)
-4. Ekstern AI-beskrivelse aktiveret i FjordLens-indstillinger
+Windows with Python 3.10+, a running local [Ollama](https://ollama.com/download), the `qwen2.5vl:7b` vision model, and external descriptions enabled in FjordLens.
 
-### Sådan installerer du Ollama og Qwen-modellen
+Install Ollama, open PowerShell and pull the model:
 
-1. **Installer Ollama**
-	- Download og installer Ollama fra: [https://ollama.com/download](https://ollama.com/download)
-	- Start Ollama (genstart evt. computeren efter installation)
+```powershell
+ollama pull qwen2.5vl:7b
+ollama list
+```
 
-2. **Installer Qwen-modellen**
-	- Åbn PowerShell og kør:
-	  ```powershell
-	  ollama pull qwen2.5vl:7b
-	  ```
-	- Se flere modeller her: [https://ollama.com/library](https://ollama.com/library)
-
-3. **Start Ollama** (hvis ikke allerede kørende):
-	- Kør i PowerShell:
-	  ```powershell
-	  ollama serve
-	  ```
-
-4. **Test at Ollama virker**
-	- Kør f.eks.:
-	  ```powershell
-	  ollama list
-	  ```
-	- Du bør se `qwen2.5vl:7b` på listen.
-
+Start it with `ollama serve` if it is not already running. See the [model catalog](https://ollama.com/library) for available models.
 
 ## Setup
 
-Åbn PowerShell i denne mappe og kør:
+Open PowerShell in this directory:
 
 ```powershell
 python -m venv .venv
@@ -55,36 +33,22 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+## Run
 
-## Brug
+Double-click `Start AI Billedbeskriver.vbs`, or run `pythonw.exe .\ai_billedbeskriver_gui.pyw`. Paste the generated FjordLens connection link, select Run external queue and leave the program open while jobs run. The worker uses local Ollama and posts captions/tags through scoped external APIs; do not share the connection secret.
 
-### GUI-tilstand
-
-- Dobbeltklik på `Start AI Billedbeskriver.vbs`, eller
-- Kør `pythonw.exe .\ai_billedbeskriver_gui.pyw`
-
-I GUI'en:
-
-1. Indsæt dit FjordLens-forbindelseslink
-2. Klik på `Kør ekstern kø`
-3. Lad programmet være åbent, mens den behandler køen
-
-### CLI-tilstand (enkelt billede)
+For a single image:
 
 ```powershell
-python .\ai_billedbeskriver.py "C:\sti\til\billede.jpg"
+python .\ai_billedbeskriver.py "C:\path\to\image.jpg"
 ```
 
-
-## Miljøvariabler
-
-- `OLLAMA_HOST` (default: `http://localhost:11434`)
-- `OLLAMA_VISION_MODEL` (default: `qwen2.5vl:7b`)
-
-Eksempel:
+Optional environment overrides:
 
 ```powershell
 $env:OLLAMA_HOST = "http://127.0.0.1:11434"
 $env:OLLAMA_VISION_MODEL = "qwen2.5vl:7b"
 pythonw.exe .\ai_billedbeskriver_gui.pyw
 ```
+
+Defaults are `http://localhost:11434` and `qwen2.5vl:7b`. Configure server-side concurrency/device settings separately in FjordLens; installing this client does not change browser/media settings.
