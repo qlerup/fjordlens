@@ -7797,6 +7797,8 @@ function appendPersonCard(p) {
 
 // Viewer controls
 let viewerTransitionRunning = false;
+// Keep async image loads from moving overlay anchors during a slide.
+let viewerInfoPositionLocked = false;
 let viewerPendingStep = 0;
 let viewerVideoManualPlayRequired = false;
 let viewerVideoSourceGeneration = 0;
@@ -7892,6 +7894,7 @@ function prepareViewerVideoPlayback() {
 }
 
 function cleanupViewerMediaAnimation() {
+  viewerInfoPositionLocked = false;
   if (viewerZoom.isActive()) return;
   [els.viewerImg, els.viewerVideo].forEach((node) => {
     if (!node) return;
@@ -7998,7 +8001,7 @@ function viewerInfoOpenTransform(offsetX = 0) {
 function beginViewerInfoSlideOut(offsetX, duration) {
   if (!viPanel || !isViewerInfoPanelOpen() || isMobileViewerLayout()) return false;
   try {
-    positionViewerInfoPanel();
+    positionViewerInfoPanel(true);
     viPanel.style.willChange = 'transform, opacity';
     viPanel.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
     viPanel.style.transform = viewerInfoOpenTransform(offsetX);
@@ -8046,7 +8049,7 @@ function finishViewerInfoSlideAnimation() {
 function beginViewerInfoButtonSlideOut(offsetX, duration) {
   if (!viMediaBtn || !els.viewer || els.viewer.classList.contains('hidden')) return false;
   try {
-    positionViewerInfoTrigger();
+    positionViewerInfoTrigger(true);
     viMediaBtn.style.willChange = 'transform, opacity';
     viMediaBtn.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
     viMediaBtn.style.transform = `translateX(${Math.round(Number(offsetX) || 0)}px)`;
@@ -8107,6 +8110,7 @@ function animateViewerSlideTransition(step, applyUpdate) {
   const inStartX = step > 0 ? distance : -distance;
   const animateInfoPanel = beginViewerInfoSlideOut(outX, duration);
   const animateInfoButton = beginViewerInfoButtonSlideOut(outX, duration);
+  viewerInfoPositionLocked = true;
 
   fromEl.style.willChange = 'transform, opacity';
   fromEl.style.transition = `transform ${duration}ms ease, opacity ${duration}ms ease`;
@@ -8141,21 +8145,21 @@ function animateViewerSlideTransition(step, applyUpdate) {
       toEl.style.opacity = '1';
       if (infoPanelIn) runViewerInfoSlideIn(duration);
       if (infoButtonIn) runViewerInfoButtonSlideIn(duration);
+      // Start cleanup timing only after the incoming frame actually starts.
+      window.setTimeout(() => {
+        if (targetGeneration !== viewerVideoSourceGeneration) return;
+        cleanupViewerMediaAnimation();
+        finishViewerInfoSlideAnimation();
+        finishViewerInfoButtonSlideAnimation();
+        scheduleViewerInfoPosition();
+        viewerTransitionRunning = false;
+        if (viewerPendingStep !== 0) {
+          const pending = viewerPendingStep;
+          viewerPendingStep = 0;
+          nextViewer(pending);
+        }
+      }, duration + 30);
     });
-
-    window.setTimeout(() => {
-      if (targetGeneration !== viewerVideoSourceGeneration) return;
-      cleanupViewerMediaAnimation();
-      finishViewerInfoSlideAnimation();
-      finishViewerInfoButtonSlideAnimation();
-      scheduleViewerInfoPosition();
-      viewerTransitionRunning = false;
-      if (viewerPendingStep !== 0) {
-        const pending = viewerPendingStep;
-        viewerPendingStep = 0;
-        nextViewer(pending);
-      }
-    }, duration + 30);
   }, duration);
 }
 
@@ -18539,8 +18543,8 @@ function setViewerInfoOpenLayout(open) {
   els.viewer.classList.toggle('viewer-info-open', !!open && !isMobileViewerLayout());
 }
 
-function positionViewerInfoPanel() {
-  if (!viPanel) return;
+function positionViewerInfoPanel(force = false) {
+  if (!viPanel || (viewerInfoPositionLocked && !force)) return;
   if (isMobileViewerLayout()) {
     viPanel.style.left = '';
     viPanel.style.right = '';
@@ -18569,8 +18573,8 @@ function positionViewerInfoPanel() {
   } catch {}
 }
 
-function positionViewerInfoTrigger() {
-  if (!viMediaBtn) return;
+function positionViewerInfoTrigger(force = false) {
+  if (!viMediaBtn || (viewerInfoPositionLocked && !force)) return;
   if (!els.viewer || els.viewer.classList.contains('hidden')) return;
   try {
     const r = getViewerMediaAnchorRect();
