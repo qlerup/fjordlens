@@ -15388,7 +15388,7 @@ async function openMapperMoveDialog(source, photoIds = null) {
     <input type="search" class="move-search" placeholder="Søg efter destinationsmappe" aria-label="Søg efter destinationsmappe">
     <div class="move-destinations"></div>${movingPhotos ? '<label>Ny undermappe (valgfrit)<input class="move-new-name move-search" placeholder="Lad feltet være tomt for at bruge den valgte mappe" maxlength="100"></label>' : ''}<p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
     <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>Flyt hertil</button></div>`;
-  dialog.querySelector('.move-source').textContent = movingPhotos ? `${photoIds.length} valgte billeder` : 'Mappe: uploads/' + source;
+  dialog.querySelector('.move-source').textContent = movingPhotos ? `${photoIds.length} valgte billeder` : 'Mappe: ' + source;
   let destination = null, busy = false;
   const list = dialog.querySelector('.move-destinations'), search = dialog.querySelector('input'), save = dialog.querySelector('[data-save]');
   const paths = ['', ...allFolders].filter((path, index, all) => all.indexOf(path) === index
@@ -15398,22 +15398,80 @@ async function openMapperMoveDialog(source, photoIds = null) {
   function updatePreview() {
     if (destination === null) return;
     const leaf = movingPhotos ? (newName.value.trim() ? '/' + newName.value.trim() : '') : '/' + source.split('/').pop();
-    dialog.querySelector('.move-preview').textContent = 'Ny placering: uploads' + (destination ? '/' + destination : '') + leaf;
+    dialog.querySelector('.move-preview').textContent = 'Ny placering: ' + ((destination + leaf).replace(/^\//, '') || 'Rodmappe');
   }
   if (newName) newName.oninput = updatePreview;
+  const expandedFolders = new Set();
+  const selectablePaths = new Set(paths);
+  const nodes = new Map([['', {path: '', children: new Map()}]]);
+  // Build structural parents too, including parents without write permission.
+  // Those can be expanded but cannot be selected as a destination.
+  for (const path of paths.filter(Boolean)) {
+    let parent = nodes.get(''), prefix = '';
+    for (const name of path.split('/')) {
+      prefix = prefix ? prefix + '/' + name : name;
+      if (!nodes.has(prefix)) nodes.set(prefix, {path: prefix, name, children: new Map()});
+      parent.children.set(prefix, nodes.get(prefix));
+      parent = nodes.get(prefix);
+    }
+  }
   function render() {
     list.replaceChildren();
-    paths.filter(path => path.toLocaleLowerCase('da').includes(search.value.trim().toLocaleLowerCase('da'))).forEach(path => {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn';
-      button.textContent = path ? 'uploads/' + path : 'uploads (rodmappe)';
-      button.setAttribute('aria-pressed', String(destination === path)); button.disabled = busy;
+    const query = search.value.trim().toLocaleLowerCase('da');
+    const visible = new Set();
+    for (const path of paths) {
+      if (!path.toLocaleLowerCase('da').includes(query)) continue;
+      let current = path;
+      while (current) {
+        visible.add(current);
+        current = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
+      }
+      visible.add('');
+    }
+    function option(path, label) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'btn move-destination-option';
+      button.textContent = label; button.title = path || 'Rodmappe';
+      button.setAttribute('aria-pressed', String(destination === path));
+      button.disabled = busy || !selectablePaths.has(path);
       button.onclick = () => {
         destination = path; save.disabled = false;
         updatePreview();
-        list.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        list.querySelectorAll('.move-destination-option').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
       };
-      list.append(button);
-    });
+      return button;
+    }
+    function appendBranch(node, parent) {
+      if (!visible.has(node.path)) return;
+      const branch = document.createElement('li');
+      const row = document.createElement('div'); row.className = 'move-tree-row';
+      const children = [...node.children.values()].filter(child => visible.has(child.path))
+        .sort((a, b) => a.name.localeCompare(b.name, 'da', {numeric: true}));
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'move-tree-toggle';
+      row.append(toggle, option(node.path, node.name)); branch.append(row);
+      if (children.length) {
+        const nested = document.createElement('ul'); nested.className = 'move-tree-children';
+        const open = !!query || expandedFolders.has(node.path);
+        nested.hidden = !open; toggle.textContent = open ? '▾' : '▸';
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', 'Undermapper i ' + node.name); toggle.disabled = busy;
+        toggle.onclick = () => {
+          const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+          if (expanded) expandedFolders.add(node.path); else expandedFolders.delete(node.path);
+          nested.hidden = !expanded; toggle.textContent = expanded ? '▾' : '▸';
+          toggle.setAttribute('aria-expanded', String(expanded));
+        };
+        for (const child of children) appendBranch(child, nested);
+        branch.append(nested);
+      } else {
+        toggle.disabled = true; toggle.classList.add('move-tree-spacer'); toggle.setAttribute('aria-hidden', 'true');
+      }
+      parent.append(branch);
+    }
+    if (!query && selectablePaths.has('')) list.append(option('', 'Rodmappe'));
+    const tree = document.createElement('ul'); tree.className = 'move-tree';
+    for (const node of [...nodes.get('').children.values()].sort((a,b) => a.name.localeCompare(b.name, 'da', {numeric:true}))) appendBranch(node, tree);
+    if (tree.children.length) list.append(tree);
     if (!list.children.length) list.textContent = 'Ingen andre mapper fundet.';
   }
   search.oninput = render;
@@ -15432,16 +15490,18 @@ async function openMapperMoveDialog(source, photoIds = null) {
       moved = true;
       galleryDataCache.clear(); mapperViews.clear();
       state.mapperSelectedFolders?.clear(); state.mapperSelectedPhotoIds?.clear();
+      if (state.view === 'mapper') setMapperEditMode(false);
       if (!movingPhotos) state.mapperPath = _replaceMapperPathPrefix(state.mapperPath, data.old_path, data.new_path);
       state.folder = state.mapperPath || null;
       dialog.close();
       if (state.view === 'mapper') {await loadMapperTools(state.mapperPath); await loadPhotos(false, true);}
-      showStatus(movingPhotos ? `${data.moved} billeder er flyttet til uploads/${data.destination}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}` : 'Mappen er flyttet til uploads/' + data.new_path, 'ok');
+      showStatus(movingPhotos ? `${data.moved} billeder er flyttet til ${data.destination || 'Rodmappe'}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}` : 'Mappen er flyttet til ' + data.new_path, 'ok');
     } catch (error) {
       const message = moved ? 'Flytningen er færdig. Genindlæs siden for at opdatere visningen.' : error.message;
       dialog.querySelector('.move-error').textContent = message; showStatus(message, 'err');
     } finally {
       busy = false; dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
+      render(); save.disabled = destination === null;
       save.textContent = 'Flyt hertil'; save.classList.remove('loading'); save.removeAttribute('aria-busy');
     }
   };

@@ -5543,3 +5543,13 @@ dialog.person-edit-dialog::backdrop { background:rgba(0,0,0,.65); }
 .mapper-move-dialog .move-search{width:100%;box-sizing:border-box;padding:10px;background:#162e36;color:inherit;border:1px solid #45636d;border-radius:8px}
 .move-destinations{display:grid;gap:6px;max-height:35dvh;overflow:auto;margin:16px 0}.move-destinations button{text-align:left;overflow-wrap:anywhere;white-space:normal}
 .move-destinations button[aria-pressed=true]{background:#167a62;color:white;border-color:#25c995}.move-actions{display:flex;justify-content:flex-end;gap:10px}.move-error{color:#ff9191}
+
+/* Hierarchical destination picker; folder selection and expansion are separate. */
+.move-tree, .move-tree-children { list-style: none; padding: 0; margin: 0; min-width: 0; }
+.move-tree-children { margin-left: 16px; border-left: 1px solid #36515b; padding-left: 6px; }
+.move-tree-children[hidden] { display: none; }
+.move-tree-row { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; min-width: 0; }
+.move-tree-row .move-destination-option { flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; }
+.move-tree-toggle { flex: 0 0 38px; min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.move-tree-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.move-tree-spacer { visibility: hidden; }

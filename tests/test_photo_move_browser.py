@@ -16,10 +16,11 @@ def test_photo_move_picker_and_context_download(tmp_path):
         page.add_style_tag(path='static/styles.css')
         page.add_style_tag(path='static/redesign.css')
         page.evaluate("""() => {
-          window.state={view:'mapper',mapperPath:'Old',mapperSelectedPhotoIds:new Set([99]),mapperSelectedFolders:new Set()};
+          window.state={view:'mapper',mapperPath:'Old',mapperSelectedPhotoIds:new Set([99]),mapperSelectedFolders:new Set(),mapperEditMode:true};
           window._normalizeMapperPath=p=>p; window.mapperFolderAllows=p=>p!=='Read only';
           window.mapperPhotoCanDelete=()=>true; window.tr=x=>x;
-          window.loadMapperTreeIndex=async()=>['Old','New','Read only'];
+          window.loadMapperTreeIndex=async()=>['Old','New','Read only','Read only/Allowed','Bette','Bette/Nakkefoldscanning','Bette/Videoer'];
+          window.setMapperEditMode=value=>{state.mapperEditMode=value};
           window.galleryDataCache=new Map();window.mapperViews=new Map();
           window.loadMapperTools=window.loadPhotos=async()=>{};
           window.openDownloadModal=(folder,ids)=>{window.downloadIds=ids};
@@ -37,10 +38,20 @@ def test_photo_move_picker_and_context_download(tmp_path):
         page.evaluate("openMapperMoveDialog('',[1,2])")
         expect(page.locator('dialog')).to_be_visible()
         expect(page.locator('[data-save]')).to_be_disabled()
-        expect(page.locator('.move-destinations')).not_to_contain_text('Read only')
-        page.get_by_role('button', name='uploads/New', exact=True).click()
+        expect(page.get_by_role('button',name='Read only',exact=True)).to_be_disabled()
+        expect(page.get_by_role('button',name='Nakkefoldscanning',exact=True)).to_be_hidden()
+        page.get_by_role('button',name='Undermapper i Bette',exact=True).click()
+        expect(page.get_by_role('button',name='Nakkefoldscanning',exact=True)).to_be_visible()
+        page.get_by_role('button',name='Nakkefoldscanning',exact=True).click()
+        expect(page.locator('.move-preview')).to_have_text('Ny placering: Bette/Nakkefoldscanning')
+        page.locator('.move-search').first.fill('Videoer')
+        expect(page.get_by_role('button',name='Videoer',exact=True)).to_be_visible()
+        expect(page.get_by_role('button',name='New',exact=True)).to_have_count(0)
+        page.locator('.move-search').first.fill('')
+        expect(page.locator('dialog')).not_to_contain_text('uploads')
+        page.get_by_role('button', name='New', exact=True).click()
         page.get_by_label('Ny undermappe (valgfrit)').fill('Holiday')
-        expect(page.locator('.move-preview')).to_contain_text('uploads/New/Holiday')
+        expect(page.locator('.move-preview')).to_contain_text('New/Holiday')
         for width in [1280,390,320]:
             page.set_viewport_size({'width':width,'height':850})
             assert page.locator('dialog').evaluate('(el)=>el.scrollWidth<=el.clientWidth')
@@ -49,10 +60,13 @@ def test_photo_move_picker_and_context_download(tmp_path):
         page.locator('[data-save]').click()
         expect(page.locator('.move-error')).to_contain_text('Ingen adgang')
         expect(page.locator('[data-save]')).to_be_enabled()
+        assert page.evaluate('state.mapperEditMode') is True
+        expect(page.get_by_role('button',name='Read only',exact=True)).to_be_disabled()
         page.evaluate('window.fail=false')
         page.locator('[data-save]').click()
         expect(page.locator('dialog')).to_have_count(0)
         assert page.evaluate('window.payload') == dict(url='/api/photos/move',photo_ids=[1,2],parent='New',new_name='Holiday')
         assert '2 billeder' in page.evaluate('statusMessage') and '1 omdøbt' in page.evaluate('statusMessage')
+        assert page.evaluate('state.mapperEditMode') is False
         assert not errors
         browser.close()
