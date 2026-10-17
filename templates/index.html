@@ -48,13 +48,13 @@
 
       <nav class="nav">
         <button class="nav-item active" data-view="timeline">📅 Tidlinje</button>
-        <button class="nav-item" data-view="favorites">⭐ Favoritter</button>
-        <button class="nav-item" data-view="steder">📍 Steder</button>
-        <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
         <button class="nav-item" data-view="mapper">🗂️ Mapper</button>
         <div id="mapperNavMenu" class="mapper-nav-menu hidden">
           <div id="mapperTreeNav" class="mapper-tree hidden" aria-label="Mappe-navigation"></div>
         </div>
+        <button class="nav-item" data-view="favorites">⭐ Favoritter</button>
+        <button class="nav-item" data-view="steder">📍 Steder</button>
+        <button class="nav-item" data-view="kameraer">📸 Kameraer</button>
         <button class="nav-item" data-view="momenter">🧳 Minder</button>
         <button class="nav-item" data-view="photoframe">🖼️ Photoframe</button>
         <button class="nav-item" data-view="personer">🙂 Personer</button>
@@ -101,6 +101,13 @@
         <div>
           <div id="viewTitleRow" class="view-title-row"><h1 id="viewTitle">Bibliotek</h1></div>
           <p id="viewSubtitle">Scan din fotomappe og søg/sortér i metadata</p>
+          <label id="galleryViewChoice" class="gallery-view-choice hidden">
+            <span id="galleryViewChoiceLabel">Startvisning</span>
+            <select id="galleryViewSelect" class="select" title="Gemmes som din personlige startvisning">
+              <option value="timeline">Tidslinje</option>
+              <option value="mapper">Mapper</option>
+            </select>
+          </label>
         </div>
         <div class="stats">
           <div class="stat-card" id="statPhotos">

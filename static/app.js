@@ -2861,7 +2861,7 @@ function navLabels() {
 let state = {
   selectedId: null,
   items: [],
-  view: "timeline",
+  view: APP_PROFILE.start_view === 'mapper' ? 'mapper' : 'timeline',
   sort: "date_desc",
   q: "",
   scanning: false,
@@ -14169,6 +14169,23 @@ async function toggleFavorite() {
   setDetail(selected);
 }
 
+document.getElementById('galleryViewSelect')?.addEventListener('change', async (event) => {
+  const select = event.target;
+  const view = select.value;
+  select.disabled = true;
+  try {
+    const response = await fetch('/api/me/start-view', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({start_view: view})});
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Kunne ikke gemme visningen.');
+    APP_PROFILE.start_view = view;
+    if (state.currentUser) state.currentUser.start_view = view;
+    await setView(view);
+  } catch (error) {
+    select.value = APP_PROFILE.start_view === 'mapper' ? 'mapper' : 'timeline';
+    showStatus(error.message, 'err');
+  } finally { select.disabled = false; }
+});
+
 async function setView(view, opts = {}) {
   // Input feedback must not depend on API latency or gallery rendering.
   document.body.classList.remove('drawer-open');
@@ -14192,6 +14209,17 @@ async function setView(view, opts = {}) {
     if (nextView === 'settings' && role !== 'admin') nextView = 'timeline';
   } catch {}
   state.view = nextView;
+  const galleryChoice = document.getElementById('galleryViewChoice');
+  galleryChoice?.classList.toggle('hidden', !['timeline', 'mapper'].includes(nextView));
+  const gallerySelect = document.getElementById('galleryViewSelect');
+  if (gallerySelect && ['timeline', 'mapper'].includes(nextView)) {
+    gallerySelect.value = APP_PROFILE.start_view === 'mapper' ? 'mapper' : 'timeline';
+    const english = state.uiLanguage === 'en';
+    document.getElementById('galleryViewChoiceLabel').textContent = english ? 'Start view' : 'Startvisning';
+    gallerySelect.options[0].textContent = english ? 'Timeline' : 'Tidslinje';
+    gallerySelect.options[1].textContent = english ? 'Folders' : 'Mapper';
+    gallerySelect.title = english ? 'Saved as your personal start view' : 'Gemmes som din personlige startvisning';
+  }
   if (nextView === 'kameraer') state.cameraModel = opts.cameraModel || null;
   if (nextView === 'mapper') {
     state.mapperSort = _normalizeMapperSort(state.mapperSort);

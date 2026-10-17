@@ -5511,6 +5511,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN theme_mode TEXT DEFAULT 'system'")
         except Exception:
             pass
+        if 'start_view' not in {row[1] for row in conn.execute('PRAGMA table_info(users)')}:
+            conn.execute("ALTER TABLE users ADD COLUMN start_view TEXT NOT NULL DEFAULT 'timeline'")
         try:
             conn.execute("ALTER TABLE users ADD COLUMN ui_design TEXT DEFAULT 'classic'")
         except Exception:
@@ -17581,7 +17583,7 @@ def index():
     try:
         with closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, username, role, ui_language, search_language, theme_mode, ui_design FROM users WHERE id=?",
+                "SELECT id, username, role, ui_language, search_language, theme_mode, ui_design, start_view FROM users WHERE id=?",
                 (current_user.id,),
             ).fetchone()
         role = row["role"] if row and row["role"] else getattr(current_user, "role", None)
@@ -17593,6 +17595,7 @@ def index():
             "search_language": _normalize_language((row["search_language"] if row else None), DEFAULT_SEARCH_LANGUAGE),
             "theme_mode": (str((row["theme_mode"] if row else "system") or "system").lower() if row else "system"),
             "ui_design": _site_ui_design(),
+            "start_view": row["start_view"] if row and row["start_view"] in {"timeline", "mapper"} else "timeline",
             "video_autoplay": video_autoplay_enabled(),
             "ui_design_intro_seen": _get_setting_bool("ui_design_intro_seen", False),
         }
@@ -28274,7 +28277,7 @@ def api_me():
         with closing(get_conn()) as conn:
             try:
                 row = conn.execute(
-                    "SELECT id, username, role, is_admin, ui_language, search_language, theme_mode, ui_design FROM users WHERE id=?",
+                    "SELECT id, username, role, is_admin, ui_language, search_language, theme_mode, ui_design, start_view FROM users WHERE id=?",
                     (current_user.id,),
                 ).fetchone()
             except sqlite3.OperationalError as e:
@@ -28309,6 +28312,7 @@ def api_me():
                     "search_language": _normalize_language(row["search_language"], DEFAULT_SEARCH_LANGUAGE),
                     "theme_mode": (str(((row["theme_mode"] if "theme_mode" in row.keys() else "system") or "system")).lower()),
                     "ui_design": _site_ui_design(),
+                    "start_view": row["start_view"] if "start_view" in row.keys() and row["start_view"] in {"timeline", "mapper"} else "timeline",
                 },
             }
         )
@@ -28350,6 +28354,18 @@ def api_ui_design_intro_seen():
     # nobody should see it again on any account or device.
     _set_setting("ui_design_intro_seen", "1")
     return jsonify({"ok": True})
+
+
+@app.route("/api/me/start-view", methods=["POST"])
+@login_required
+def api_me_start_view():
+    view = (request.get_json(silent=True) or {}).get("start_view")
+    if view not in ("timeline", "mapper"):
+        return jsonify(ok=False, error="Ugyldig startvisning"), 400
+    with closing(get_conn()) as conn:
+        conn.execute("UPDATE users SET start_view=? WHERE id=?", (view, current_user.id))
+        conn.commit()
+    return jsonify(ok=True, start_view=view)
 
 
 @app.route("/api/me/profile", methods=["POST"])
