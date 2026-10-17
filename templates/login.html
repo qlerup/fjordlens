@@ -168,12 +168,23 @@
       });
       return response.json();
     }
+    function safeAuthRedirect(raw){
+      try{
+        const url=new URL(String(raw||homeUrl),window.location.origin);
+        if(url.origin===window.location.origin && url.protocol===window.location.protocol){
+          return url.pathname+url.search+url.hash;
+        }
+      }catch(_){}
+      return homeUrl;
+    }
     const handleResult=(data,credentials)=>{
       if(data.ok && data.redirect){
         verifiedCredentials=null;
         navigatingAway=true;
         document.documentElement.classList.add('auth-session-checking');
-        window.location.assign(safeLocalTarget(data.redirect));
+        // The server may redirect a verified user to required two-factor setup
+        // or verification. Do not strip those destinations as a login-loop guard.
+        window.location.assign(safeAuthRedirect(data.redirect));
         return;
       }
       if(data.first_login_required){
