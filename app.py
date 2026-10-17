@@ -26472,27 +26472,43 @@ def login():
         if current_user.is_authenticated:
             return _no_store_response(redirect(_safe_auth_next_url(request.args.get("next"))))
         if request.method == "POST":
+            # Browseren holder de allerede verificerede loginoplysninger i hukommelsen
+            # under første opsætning - aldrig i en skjult input, URL eller cookie.
+            async_login = request.headers.get("X-FjordLens-Login") == "1"
             username = (request.form.get("username") or "").strip()
             password = request.form.get("password") or ""
             if _password_login_rate_limited():
-                return _no_store_response(make_response(
-                    render_template("login.html", error="For mange mislykkede forsøg. Vent fem minutter."), 429
-                ))
+                error = "For mange mislykkede forsøg. Vent fem minutter."
+                if async_login:
+                    return _no_store_response(make_response(jsonify(ok=False, error=error), 429))
+                return _no_store_response(make_response(render_template("login.html", error=error, managed_login=True), 429))
             hub_user = _hub_authenticate(username, password)
             if hub_user:
                 if hub_user.get("email_required") or hub_user.get("must_change_password"):
-                    return render_template("login.html", email_required=hub_user.get("email_required"), password_required=hub_user.get("must_change_password"), error=hub_user.get("email_error") or "Første login: Udfyld oplysningerne og vælg din egen adgangskode.")
-                if hub_user.get("must_change_password"):
-                    # Første login efter oprettelse: brugeren skal selv vælge en ny adgangskode
-                    _log_login_attempt(username, None, None, True, "login_password", "password_change_required")
+                    if async_login:
+                        return _no_store_response(jsonify(
+                            ok=False, first_login_required=True,
+                            email_required=bool(hub_user.get("email_required")),
+                            password_required=bool(hub_user.get("must_change_password")),
+                            error=str(hub_user.get("email_error") or ""),
+                        ))
+                    # Ingen adgangskoder må sendes tilbage som skjulte HTML-felter.
                     return _no_store_response(make_response(render_template(
-                        "login.html", force_password_change=True, fpc_username=username, fpc_current=password)))
+                        "login.html", managed_login=True,
+                        error="Første login kræver JavaScript. Aktivér JavaScript og log ind igen."
+                    ), 400))
                 local_user = _ensure_managed_local_user(hub_user)
-                return _complete_managed_login(local_user, username, "fjordhub_ok", request.args.get("next"))
+                response = _complete_managed_login(local_user, username, "fjordhub_ok", request.args.get("next"))
+                if async_login:
+                    return _no_store_response(jsonify(ok=True, redirect=response.location or url_for("index")))
+                return response
             _log_login_attempt(username, None, None, False, "login_failed", "fjordhub_invalid")
-            return _no_store_response(make_response(render_template("login.html", error=_ui_text("login_invalid_credentials"))))
+            error = _ui_text("login_invalid_credentials")
+            if async_login:
+                return _no_store_response(make_response(jsonify(ok=False, error=error), 401))
+            return _no_store_response(make_response(render_template("login.html", error=error, managed_login=True)))
         created = True if (request.args.get("created") in ("1", "true", "True")) else False
-        return _no_store_response(make_response(render_template("login.html", created=created)))
+        return _no_store_response(make_response(render_template("login.html", created=created, managed_login=True)))
     if users_count() == 0:
         if _install_state_exists():
             return _setup_locked_response()
