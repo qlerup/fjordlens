@@ -144,8 +144,8 @@
     const emailRow=document.getElementById('firstLoginEmailRow');
     const passwordRow=document.getElementById('firstLoginPasswordRow');
     const confirmRow=document.getElementById('firstLoginConfirmRow');
-    const mismatchText={{ ('The new passwords do not match' if en else 'De nye adgangskoder matcher ikke')|tojson }};
-    const networkError={{ ('Could not reach FjordHub. Please try again.' if en else 'Kunne ikke kontakte FjordHub. Prøv igen.')|tojson }};
+    const mismatchText={{ ('The new passwords do not match' if ui_lang == 'en' else 'De nye adgangskoder matcher ikke')|tojson }};
+    const networkError={{ ('Could not reach FjordHub. Please try again.' if ui_lang == 'en' else 'Kunne ikke kontakte FjordHub. Prøv igen.')|tojson }};
     let verifiedCredentials=null;
     let busy=false;
     const showError=(node,message)=>{
