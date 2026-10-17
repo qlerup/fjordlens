@@ -6,6 +6,9 @@
 <meta http-equiv="Expires" content="0">
 <style>
   html.auth-session-checking body { visibility: hidden; }
+  .login-card[hidden], .form-row[hidden] { display: none !important; }
+  .first-login-intro { color: var(--muted); margin: 0 0 22px; line-height: 1.5; }
+  .first-login-actions { justify-content: flex-end; }
 </style>
 <script>
   document.documentElement.classList.add('auth-session-checking');
@@ -47,16 +50,14 @@
     </form>
     {% else %}
     <form id="loginForm" class="login-card small" method="post" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}">
-{% if email_required %}<div class="auth-field"><label for="first-login-email">Email til din FjordHub-konto</label><input id="first-login-email" name="first_login_email" type="email" autocomplete="email" required autofocus value="{{ request.form.get('first_login_email', '') }}"></div>{% endif %}{% if password_required %}<div class="auth-field"><label for="first-login-password">Ny personlig adgangskode</label><input id="first-login-password" name="first_login_password" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></div><div class="auth-field"><label for="first-login-password-confirm">Gentag ny adgangskode</label><input id="first-login-password-confirm" name="first_login_password_confirm" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></div>{% endif %}
-
       <div class="login-title">
         <span>{{ 'Sign in to FjordLens' if en else 'Log ind på FjordLens' }}</span>
       </div>
-      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <div id="loginError" class="err" role="alert" {% if not error %}hidden{% endif %}>{{ error or '' }}</div>
       {% if created %}<div class="ok">{{ 'User created. Sign in below.' if en else 'Bruger oprettet. Log ind herunder.' }}</div>{% endif %}
       <div class="form-row">
-        <label for="username">{{ 'Username' if en else 'Brugernavn' }}</label>
-        <input id="username" name="username" type="text" autocomplete="username" required>
+        <label for="username">{{ 'Username or email' if en else 'Brugernavn eller e-mail' }}</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
       </div>
       <div class="form-row reveal-wrap">
         <label for="password">{{ 'Password' if en else 'Adgangskode' }}</label>
@@ -70,6 +71,30 @@
         <button class="btn primary" type="submit">{{ 'Sign in' if en else 'Log ind' }}</button>
       </div>
     </form>
+    {% if managed_login %}
+    <form id="firstLoginSetupForm" class="login-card small" method="post" action="{{ url_for('login', next=request.args.get('next')) if request.args.get('next') else url_for('login') }}" hidden>
+      <div class="login-title">
+        <span>{{ 'Finish setting up your account' if en else 'Færdiggør din konto' }}</span>
+      </div>
+      <p class="first-login-intro">{{ 'You are verified. Enter your email and choose a personal password to continue.' if en else 'Du er godkendt. Indtast din e-mail og vælg din personlige adgangskode for at fortsætte.' }}</p>
+      <div id="firstLoginError" class="err" role="alert" hidden></div>
+      <div class="form-row" id="firstLoginEmailRow">
+        <label for="first-login-email">{{ 'Email for your FjordHub account' if en else 'E-mail til din FjordHub-konto' }}</label>
+        <input id="first-login-email" name="first_login_email" type="email" autocomplete="email" required>
+      </div>
+      <div class="form-row" id="firstLoginPasswordRow">
+        <label for="first-login-password">{{ 'New personal password' if en else 'Ny personlig adgangskode' }}</label>
+        <input id="first-login-password" name="first_login_password" type="password" autocomplete="new-password" minlength="6" maxlength="128" required>
+      </div>
+      <div class="form-row" id="firstLoginConfirmRow">
+        <label for="first-login-password-confirm">{{ 'Repeat new password' if en else 'Gentag ny adgangskode' }}</label>
+        <input id="first-login-password-confirm" name="first_login_password_confirm" type="password" autocomplete="new-password" minlength="6" maxlength="128" required>
+      </div>
+      <div class="actions first-login-actions">
+        <button class="btn primary" type="submit">{{ 'Save and continue' if en else 'Gem og fortsæt' }}</button>
+      </div>
+    </form>
+    {% endif %}
     {% endif %}
   </div>
 {% endblock %}
@@ -79,6 +104,8 @@
   const pw=document.getElementById('password')||document.getElementById('newPassword');
   const btn=document.getElementById('loginReveal');
   const form=document.getElementById('loginForm');
+  const setupForm=document.getElementById('firstLoginSetupForm');
+  const managedLogin={{ (managed_login or false)|tojson }};
   if(btn){ btn.addEventListener('click',()=>{ if(!pw) return; pw.type = (pw.type==='password')?'text':'password'; pw.focus({preventScroll:true}); }); }
   const np=document.getElementById('newPassword');
   const np2=document.getElementById('newPassword2');
@@ -88,7 +115,7 @@
     np.addEventListener('input',sync);
     np2.addEventListener('input',sync);
   }
-  if(form){ form.addEventListener('submit',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} }); }
+  if(form && !managedLogin){ form.addEventListener('submit',()=>{ try{ document.documentElement.classList.add('auth-session-checking'); }catch(_){} }); }
   const homeUrl={{ url_for('index')|tojson }};
   const sessionUrl={{ url_for('api_auth_session')|tojson }};
   let navigatingAway=false;
@@ -107,6 +134,106 @@
     }catch(_){
       return homeUrl;
     }
+  }
+  if(managedLogin && form && setupForm){
+    const loginError=document.getElementById('loginError');
+    const setupError=document.getElementById('firstLoginError');
+    const emailInput=document.getElementById('first-login-email');
+    const passwordInput=document.getElementById('first-login-password');
+    const confirmInput=document.getElementById('first-login-password-confirm');
+    const emailRow=document.getElementById('firstLoginEmailRow');
+    const passwordRow=document.getElementById('firstLoginPasswordRow');
+    const confirmRow=document.getElementById('firstLoginConfirmRow');
+    const mismatchText={{ ('The new passwords do not match' if en else 'De nye adgangskoder matcher ikke')|tojson }};
+    const networkError={{ ('Could not reach FjordHub. Please try again.' if en else 'Kunne ikke kontakte FjordHub. Prøv igen.')|tojson }};
+    let verifiedCredentials=null;
+    let busy=false;
+    const showError=(node,message)=>{
+      node.textContent=message||'';
+      node.hidden=!message;
+    };
+    const setBusy=(activeForm,active)=>{
+      const button=activeForm.querySelector('button[type="submit"]');
+      if(button) button.disabled=active;
+    };
+    const setupMismatch=()=>{
+      confirmInput.setCustomValidity(passwordInput.value===confirmInput.value ? '' : mismatchText);
+    };
+    passwordInput.addEventListener('input',setupMismatch);
+    confirmInput.addEventListener('input',setupMismatch);
+    async function submitCredentials(payload){
+      const response=await fetch(form.action,{
+        method:'POST',body:payload,credentials:'same-origin',cache:'no-store',
+        headers:{'Accept':'application/json','X-FjordLens-Login':'1'}
+      });
+      return response.json();
+    }
+    const handleResult=(data,credentials)=>{
+      if(data.ok && data.redirect){
+        verifiedCredentials=null;
+        navigatingAway=true;
+        document.documentElement.classList.add('auth-session-checking');
+        window.location.assign(safeLocalTarget(data.redirect));
+        return;
+      }
+      if(data.first_login_required){
+        verifiedCredentials=credentials;
+        form.reset();
+        form.hidden=true;
+        setupForm.hidden=false;
+        emailRow.hidden=!data.email_required;
+        passwordRow.hidden=!data.password_required;
+        confirmRow.hidden=!data.password_required;
+        emailInput.required=!!data.email_required;
+        passwordInput.required=!!data.password_required;
+        confirmInput.required=!!data.password_required;
+        showError(loginError,'');
+        showError(setupError,data.error||'');
+        const focusTarget=data.email_required ? emailInput : passwordInput;
+        focusTarget.focus({preventScroll:true});
+        return;
+      }
+      showError(setupForm.hidden ? loginError : setupError,data.error||networkError);
+    };
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(busy)return;
+      busy=true;
+      setBusy(form,true);
+      showError(loginError,'');
+      const credentials={
+        username:form.elements.namedItem('username').value.trim(),
+        password:form.elements.namedItem('password').value
+      };
+      try{
+        handleResult(await submitCredentials(new FormData(form)),credentials);
+      }catch(_){
+        showError(loginError,networkError);
+      }finally{
+        busy=false;
+        setBusy(form,false);
+      }
+    });
+    setupForm.addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(busy||!verifiedCredentials)return;
+      setupMismatch();
+      if(!setupForm.reportValidity())return;
+      busy=true;
+      setBusy(setupForm,true);
+      showError(setupError,'');
+      const payload=new FormData(setupForm);
+      payload.set('username',verifiedCredentials.username);
+      payload.set('password',verifiedCredentials.password);
+      try{
+        handleResult(await submitCredentials(payload),verifiedCredentials);
+      }catch(_){
+        showError(setupError,networkError);
+      }finally{
+        busy=false;
+        setBusy(setupForm,false);
+      }
+    });
   }
   async function leaveLoginIfSessionIsAlive(){
     if(navigatingAway || checkInFlight) return;
