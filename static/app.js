@@ -12936,6 +12936,8 @@ function _handleMapperDragPointerMove(ev) {
 }
 
 function _handleMapperDragPointerStart(ev, card) {
+  // Touch/pen movement is native scrolling. Range selection is a mouse gesture.
+  if (ev && ev.pointerType && ev.pointerType !== 'mouse') return;
   if (!_isMapperSelectablePhotoCard(card)) return;
   if (!ev) return;
   if (ev.button != null && Number(ev.button) !== 0) return;
@@ -15074,8 +15076,44 @@ function isMobileSelectionGestureDevice() {
 function bindMobileDoubleTapSelection(element, { onSingleTap, onDoubleTap, ignoreTarget } = {}) {
   if (!element) return;
   let pendingSingleTapTimer = null;
+  let touchStart = null;
+  let touchMoved = false;
+  const cancelPendingTap = () => {
+    if (pendingSingleTapTimer) window.clearTimeout(pendingSingleTapTimer);
+    pendingSingleTapTimer = null;
+  };
+  const trackTouchMovement = (event) => {
+    const point = event.touches?.[0] || event.changedTouches?.[0];
+    if (touchStart && point && (Math.hypot(point.clientX - touchStart.x, point.clientY - touchStart.y) > 10
+        || window.scrollX !== touchStart.scrollX || window.scrollY !== touchStart.scrollY)) {
+      touchMoved = true;
+    }
+    if (touchMoved) cancelPendingTap();
+  };
+  element.addEventListener('touchstart', (event) => {
+    const point = event.touches?.[0];
+    touchStart = point ? {x: point.clientX, y: point.clientY, scrollX: window.scrollX, scrollY: window.scrollY} : null;
+    touchMoved = event.touches?.length !== 1;
+    if (touchMoved) cancelPendingTap();
+  }, {passive: true});
+  element.addEventListener('touchmove', trackTouchMovement, {passive: true});
+  element.addEventListener('touchend', trackTouchMovement, {passive: true});
+  element.addEventListener('touchcancel', () => {
+    touchMoved = true;
+    cancelPendingTap();
+  }, {passive: true});
+  element.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse') touchMoved = false;
+  }, {passive: true});
   try { element.style.touchAction = 'manipulation'; } catch {}
   element.addEventListener('click', (event) => {
+    // Capture before selection-mode click handlers, including Safari's synthetic click.
+    if (touchMoved && event.detail !== 0) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cancelPendingTap();
+      return;
+    }
     if (!isMobileSelectionGestureDevice()) return;
     if (state && state.mapperEditMode) return;
     if (typeof ignoreTarget === 'function' && ignoreTarget(event.target)) return;
