@@ -2077,6 +2077,23 @@ body.view-mapper .photo-card img {
   opacity: 0;
   animation: selectRing .5s ease-out .06s both;
 }
+/* Mapper refreshes and selection changes should stay visually still. */
+body.view-mapper .photo-card,
+body.view-mapper .photo-card:hover {
+  transform: none;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+body.view-mapper .photo-select-badge,
+body.view-mapper .folder-select-badge {
+  transition: background .18s ease, border-color .18s ease, color .18s ease, opacity .12s ease;
+}
+body.view-mapper .photo-card.selected .photo-select-badge,
+body.view-mapper .photo-card.selected .photo-select-badge::after,
+body.view-mapper .folder-card.selected .folder-select-badge,
+body.view-mapper .folder-card.selected .folder-select-badge::after {
+  animation: none;
+}
+
 @keyframes selectPop {
   0%   { transform: scale(0.6); opacity: .25; }
   60%  { transform: scale(1.18); opacity: 1; }

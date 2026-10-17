@@ -6978,9 +6978,10 @@ function appendCardTo(item, container) {
       ev.stopPropagation();
       openPersonPhotoReassignDialog(item);
     });
-  } else if (thumb && allowInfoOverlay) {
+  } else if (thumb) {
     const infoIcon = document.createElement('div');
     infoIcon.className = 'info-icon-overlay';
+    infoIcon.style.display = allowInfoOverlay ? '' : 'none';
     infoIcon.title = 'Info';
     infoIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="10" fill="#fff"/><text x="10" y="15" text-anchor="middle" font-size="13" fill="#333" font-family="Arial" font-weight="bold">i</text></svg>';
     infoIcon.style.position = 'absolute';
@@ -12717,7 +12718,33 @@ function setMapperEditMode(enabled) {
     state.mapperSelectedPhotoIds = new Set();
   }
   renderMapperContext(state.mapperPath || '');
-  if (state.view === 'mapper') renderGrid();
+  if (state.view === 'mapper' && els.grid) {
+    // Changing selection mode only changes controls. Keep the cards and decoded
+    // thumbnails mounted so the gallery does not collapse/reappear on refresh.
+    const itemsById = new Map(state.items.map(item => [Number(item.id), item]));
+    for (const card of els.grid.querySelectorAll('.photo-card:not(.upload-card):not(.mapper-ghost-card)')) {
+      const isFolder = card.classList.contains('folder-card');
+      const id = Number(card.dataset.photoId || 0);
+      const selected = state.mapperEditMode && (isFolder
+        ? state.mapperSelectedFolders?.has(card.dataset.folder)
+        : state.mapperSelectedPhotoIds?.has(id));
+      card.classList.toggle('selected', !!selected);
+      if (isFolder) {
+        let badge = card.querySelector('.folder-select-badge');
+        if (state.mapperEditMode) {
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'folder-select-badge';
+            card.querySelector('.card-thumb')?.appendChild(badge);
+          }
+          badge.textContent = selected ? '✓' : '';
+        } else badge?.remove();
+      } else {
+        const item = itemsById.get(id);
+        if (item) mapperCardItemJson.set(card, JSON.stringify([state.mapperEditMode ? 1 : 0, state.uiLanguage || '', item]));
+      }
+    }
+  }
   // Hide or show any existing info overlays depending on mode
   try {
     document.querySelectorAll('.info-icon-overlay').forEach(el=>{
@@ -13137,7 +13164,7 @@ async function deleteSelectedMapperFolders() {
       });
     if (completed) setMapperEditMode(false);
     await loadMapperTools(state.mapperPath || '');
-    await loadPhotos();
+    await loadPhotos(false, true);
     if (completed) showStatus(tr('mapper_delete_success').replace('{count}', String(deletedCount)).replace('{removed}', String(removedPhotos)), 'ok');
   } catch {
     showStatus(tr('mapper_delete_error'), 'err');
@@ -13166,7 +13193,7 @@ async function deleteSelectedMapperPhotos() {
         return batch.filter(id => (data.deleted_ids || batch).includes(id)).length;
       });
     if (completed) setMapperEditMode(false);
-    await loadPhotos();
+    await loadPhotos(false, true);
     if (completed) showStatus(tr('mapper_delete_success').replace('{count}', String(removed)).replace('{removed}', String(removed)), 'ok');
   } catch {
     showStatus(tr('mapper_delete_error'), 'err');
