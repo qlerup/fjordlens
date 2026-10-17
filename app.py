@@ -39,6 +39,7 @@ from mov_timing import probe_slow_motion, timing_args
 from conversion_jobs import ConversionJob
 import deletion_progress
 from pending_uploads import PendingUploads
+from upload_notifications import UploadNotifications, summary_event
 from processing_failures import FailureTracker, ServiceUnavailable, FaceIndexSkipped
 from log_retries import LogRetries, missing_stages, resolved_log_ids, hidden_error_log_ids, unresolved_error_logs, file_error_log_ids, StageRetryError
 from face_retry import FaceRetryGate, retry_video_frame, is_database_busy
@@ -4247,6 +4248,7 @@ def _postprocess_uploaded_rels(
     thumb_errors = 0
     faces_done = 0
     faces_found = 0
+    face_count = 0
     faces_errors = 0
     ai_done = 0
     ai_errors = 0
@@ -4399,7 +4401,7 @@ def _postprocess_uploaded_rels(
             _emit_parallel()
 
         def _faces_worker() -> None:
-            nonlocal faces_done, faces_found, faces_errors
+            nonlocal faces_done, faces_found, faces_errors, face_count
             batch_size = max(1, int(face_batch_size_enabled()))
             try:
                 log_event(
@@ -4412,12 +4414,14 @@ def _postprocess_uploaded_rels(
                 pass
 
             def completed(rel: str, count: int, error: Optional[Exception]) -> None:
-                nonlocal faces_done, faces_found, faces_errors
+                nonlocal faces_done, faces_found, faces_errors, face_count
                 err_inc = 1 if error is not None else 0
                 found_inc = 1 if (error is None and int(count or 0) > 0) else 0
                 with faces_metric_lock:
                     faces_done += 1
                     faces_found += found_inc
+                    if error is None:
+                        face_count += max(0, int(count or 0))
                     faces_errors += err_inc
                 if error is not None:
                     try:
@@ -4610,7 +4614,7 @@ def _postprocess_uploaded_rels(
             gentle_face_processed = 0
 
             def gentle_completed(rel: str, count: int, error: Optional[Exception]) -> None:
-                nonlocal faces_done, faces_found, faces_errors, gentle_face_processed
+                nonlocal faces_done, faces_found, faces_errors, face_count, gentle_face_processed
                 gentle_face_processed += 1
                 if error is not None:
                     faces_errors += 1
@@ -4620,6 +4624,7 @@ def _postprocess_uploaded_rels(
                         pass
                 else:
                     faces_done += 1
+                    face_count += max(0, int(count or 0))
                     if int(count or 0) > 0:
                         faces_found += 1
                 _emit_progress(
@@ -4735,6 +4740,7 @@ def _postprocess_uploaded_rels(
         "faces_enabled": faces_enabled,
         "faces_done": faces_done,
         "faces_found": faces_found,
+        "face_count": face_count,
         "faces_errors": faces_errors,
         "ai_enabled": ai_enabled,
         "ai_done": ai_done,
@@ -4795,6 +4801,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "faces_enabled": faces_auto_index_enabled(),
         "faces_done": 0,
         "faces_found": 0,
+        "face_count": 0,
+        "thumb_errors": 0,
         "faces_errors": 0,
         "ai_enabled": ai_auto_ingest_enabled(),
         "ai_done": 0,
@@ -4805,10 +4813,12 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         "process_status": None,
     }
 
+    all_rels = list(initial_rels or [])
+    fatal_error = False
     batch = list(initial_rels or [])
-    if aggregate.get("faces_enabled") and batch:
-        _ai_face_runtime_warmup()
     try:
+        if aggregate.get("faces_enabled") and batch:
+            _ai_face_runtime_warmup()
         while batch:
             if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
                 break
@@ -4821,6 +4831,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                     if not more:
                         continue
                     batch.extend(more)
+                    all_rels.extend(more)
                     gather_deadline = time.time() + 0.35
 
             try:
@@ -4838,6 +4849,8 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 workflow_mode=workflow_mode,
                 stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
             )
+            aggregate["face_count"] += int(result.get("face_count") or 0)
+            aggregate["thumb_errors"] += int(result.get("thumb_errors") or 0)
             aggregate["received"] += int(result["received"] if "received" in result and result["received"] is not None else 0)
             aggregate["indexed"] += int(result["indexed"] if "indexed" in result and result["indexed"] is not None else 0)
             aggregate["index_errors"] += int(result["index_errors"] if "index_errors" in result and result["index_errors"] is not None else 0)
@@ -4881,6 +4894,11 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
                 batch = []
             else:
                 batch = _pop_uploaded_rels(user)
+                # The browser may still be uploading later files in this flow.
+                while not batch and _is_upload_transfer_active(user) and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                    time.sleep(0.5)
+                    batch = _pop_uploaded_rels(user)
+                all_rels.extend(batch)
 
         _set_upload_postprocess_state(
             user,
@@ -4917,6 +4935,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         except Exception:
             pass
     except Exception as e:
+        fatal_error = True
         _set_upload_postprocess_state(
             user,
             {
@@ -4937,6 +4956,7 @@ def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> Non
         except Exception:
             pass
     finally:
+        _notify_upload_summary(user, all_rels, aggregate, failed=fatal_error, stopped=UPLOAD_POSTPROCESS_STOP_EVENT.is_set())
         if aggregate.get("faces_enabled"):
             _ai_face_runtime_release()
 
@@ -15014,6 +15034,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         "faces_enabled": faces_auto_index_enabled(),
         "faces_done": 0,
         "faces_found": 0,
+        "face_count": 0,
+        "thumb_errors": 0,
         "faces_errors": 0,
         "ai_enabled": ai_auto_ingest_enabled(),
         "ai_done": 0,
@@ -15032,6 +15054,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             "heic_converted",
             "faces_done",
             "faces_found",
+            "face_count",
+            "thumb_errors",
             "faces_errors",
             "ai_done",
             "ai_errors",
@@ -15047,12 +15071,12 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
 
     @media_activity.track(lambda: rels, consume_queue=True)
     def run() -> None:
+        all_rels = list(rels)
+        fatal_error = False
         processed_total = 0
         known_total = len(rels)
         deferred_face_writes = []
         additional_flow_tokens = []
-        if aggregate.get("faces_enabled") and rels:
-            _ai_face_runtime_warmup()
 
         def set_direct_progress(progress: Dict[str, Any]) -> None:
             stage_processed = int(progress.get("stage_processed") or 0)
@@ -15072,6 +15096,8 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             )
 
         try:
+            if aggregate.get("faces_enabled") and rels:
+                _ai_face_runtime_warmup()
             batch = list(rels)
             while batch:
                 if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
@@ -15115,6 +15141,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     # face-write phase as well, not just their individual chunk.
                     additional_flow_tokens.append(media_activity.acquire('processing', more))
                     batch.extend(more)
+                    all_rels.extend(more)
                     known_total += len(more)
                 state_patch = {
                     "workflow_mode": workflow_mode,
@@ -15140,6 +15167,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                     else:
                         aggregate['faces_done'] += 1
                         aggregate['faces_found'] += int(count > 0)
+                        aggregate['face_count'] += max(0, int(count or 0))
                         processing_failures.clear(rel, 'faces')
                     _set_upload_postprocess_state(state_user, {
                         'phase': 'faces', 'current_rel': rel, 'process_status': None,
@@ -15172,6 +15200,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 },
             )
         except Exception as e:
+            fatal_error = True
             _set_upload_postprocess_state(
                 state_user,
                 {
@@ -15188,6 +15217,7 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             except Exception:
                 pass
         finally:
+            _notify_upload_summary("Direkte import", all_rels, aggregate, failed=fatal_error, stopped=UPLOAD_POSTPROCESS_STOP_EVENT.is_set())
             for flow_token in additional_flow_tokens:
                 if flow_token:
                     media_activity.release(flow_token)
@@ -27287,6 +27317,18 @@ def _hub_api(path: str, payload: Optional[dict] = None, method: str = "POST") ->
         return body
     except Exception as exc:
         return {"ok": False, "error": f"Kunne ikke kontakte FjordHub: {exc}"}
+
+
+_upload_notifications = UploadNotifications(DATA_DIR, _hub_api, _fjordhub_managed)
+
+
+def _notify_upload_summary(user, rels, result, *, failed=False, stopped=False):
+    try:
+        if rels:
+            _upload_notifications.enqueue(summary_event(user, rels, result, VIDEO_EXTS,
+                                                         failed=failed, stopped=stopped))
+    except Exception:
+        app.logger.warning('Could not queue upload summary')
 
 
 def _hub_authenticate(username: str, password: str) -> Optional[dict]:

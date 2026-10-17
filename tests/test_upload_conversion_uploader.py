@@ -513,6 +513,27 @@ class UploadConversionUploaderTests(unittest.TestCase):
 
         self.assertEqual(merged, [second_rel, first_rel])
 
+    def test_actual_face_count_is_separate_from_files_with_faces(self):
+        source = fjordlens.UPLOAD_DIR / 'originals' / 'group.jpg'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (32, 24), color='teal').save(source)
+        rel = 'uploads/originals/group.jpg'
+        def fake_faces(paths, concurrency, **kw):
+            for path in paths:
+                kw['on_complete'](path, 7, None)
+            return {}
+        for mode in ('gentle', 'aggressive'):
+            with (
+                patch.object(fjordlens, 'faces_auto_index_enabled', return_value=True),
+                patch.object(fjordlens, 'ai_auto_ingest_enabled', return_value=False),
+                patch.object(fjordlens, 'ai_desc_auto_ingest_enabled', return_value=False),
+                patch.object(fjordlens, 'make_thumb', return_value='group.webp'),
+                patch.object(fjordlens, '_run_face_slot_queue', side_effect=fake_faces),
+            ):
+                result = fjordlens._postprocess_uploaded_rels('Owner', [rel], workflow_mode=mode)
+            self.assertEqual(result['face_count'], 7)
+            self.assertEqual(result['faces_found'], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
