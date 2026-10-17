@@ -112,5 +112,84 @@ class DeviceLoginTests(unittest.TestCase):
             self.assertGreater(session['login_expires_at'], time.time())
 
 
+    def test_managed_first_login_only_asks_for_email_and_new_password(self):
+        from unittest.mock import patch
+
+        def hub_login(username, password):
+            self.assertEqual(username, 'demo')
+            self.assertEqual(password, 'test-password')
+            if not fjordlens.request.form.get('first_login_password'):
+                return {'username': 'demo', 'email_required': True, 'must_change_password': True}
+            self.assertEqual(fjordlens.request.form['first_login_email'], 'demo@example.com')
+            self.assertEqual(fjordlens.request.form['first_login_password'], 'new-private-password')
+            self.assertEqual(fjordlens.request.form['first_login_password_confirm'], 'new-private-password')
+            return {'username': 'demo', 'email_required': False, 'must_change_password': False}
+
+        headers = {'X-FjordLens-Login': '1', 'Accept': 'application/json'}
+        with patch.object(fjordlens, '_fjordhub_managed', return_value=True), \
+                patch.object(fjordlens, '_hub_authenticate', side_effect=hub_login), \
+                patch.object(fjordlens, '_ensure_managed_local_user') as ensure_user:
+            with fjordlens.closing(fjordlens.get_conn()) as conn:
+                ensure_user.return_value = fjordlens._row_to_user(conn.execute('SELECT * FROM users').fetchone())
+
+            html = self.client.get('/login').get_data(as_text=True)
+            self.assertIn('id="firstLoginSetupForm"', html)
+            self.assertIn('id="firstLoginSetupForm" class="login-card small" method="post"', html)
+            self.assertIn('hidden>', html)
+            self.assertIn('name="first_login_email"', html)
+            self.assertIn('name="first_login_password_confirm"', html)
+
+            initial = self.client.post('/login', headers=headers, data={
+                'username': 'demo', 'password': 'test-password',
+            })
+            self.assertEqual(initial.status_code, 200)
+            self.assertTrue(initial.json['first_login_required'])
+            self.assertTrue(initial.json['email_required'])
+            self.assertTrue(initial.json['password_required'])
+            self.assertFalse(self.client.get('/api/auth/session').json['authenticated'])
+            ensure_user.assert_not_called()
+            # Only the three new onboarding fields are added. The original credentials
+            # are kept in browser memory and sent with the final request.
+            completed = self.client.post('/login?next=%2Ftimeline', headers=headers, data={
+                'username': 'demo', 'password': 'test-password',
+                'first_login_email': 'demo@example.com',
+                'first_login_password': 'new-private-password',
+                'first_login_password_confirm': 'new-private-password',
+            })
+            self.assertEqual(completed.status_code, 200)
+            self.assertTrue(completed.json['ok'])
+            self.assertEqual(completed.json['redirect'], '/timeline')
+            self.assertTrue(self.client.get('/api/auth/session').json['authenticated'])
+            ensure_user.assert_called_once()
+
+    def test_managed_first_login_error_stays_in_setup_without_signing_in(self):
+        with patch.object(fjordlens, '_fjordhub_managed', return_value=True), \
+                patch.object(fjordlens, '_hub_authenticate', return_value={
+                    'username': 'demo', 'email_required': True, 'must_change_password': True,
+                    'email_error': 'De nye adgangskoder matcher ikke.',
+                }), patch.object(fjordlens, '_ensure_managed_local_user') as ensure_user:
+            response = self.client.post('/login', headers={'X-FjordLens-Login': '1'},
+                                        data={'username': 'demo', 'password': 'test-password',
+                                              'first_login_email': 'demo@example.com',
+                                              'first_login_password': 'new-private-password',
+                                              'first_login_password_confirm': 'different-password'})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json['first_login_required'])
+            self.assertIn('matcher ikke', response.json['error'])
+            self.assertFalse(self.client.get('/api/auth/session').json['authenticated'])
+            ensure_user.assert_not_called()
+
+    def test_managed_first_login_never_renders_old_password_into_html(self):
+        with patch.object(fjordlens, '_fjordhub_managed', return_value=True), \
+                patch.object(fjordlens, '_hub_authenticate', return_value={
+                    'username': 'demo', 'email_required': True, 'must_change_password': True,
+                }):
+            response = self.client.post('/login', data={
+                'username': 'demo', 'password': 'unique-temporary-secret',
+            })
+            self.assertEqual(response.status_code, 400)
+            self.assertNotIn('unique-temporary-secret', response.get_data(as_text=True))
+
+
 if __name__ == '__main__':
     unittest.main()
