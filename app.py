@@ -16,6 +16,7 @@ import zipfile
 import unicodedata
 import math
 from contextlib import closing
+from functools import wraps
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timedelta, timezone
 import time
@@ -8587,17 +8588,16 @@ def _delete_face_thumb_files(face_ids: Iterable[Any]) -> int:
     """Remove face crop thumbnails (current and legacy naming) for deleted faces."""
     removed = 0
     for fid in sorted({int(f) for f in (face_ids or []) if str(f).isdigit()}):
-        candidates: list[Path] = [THUMB_DIR / f"face_{fid}.jpg"]
-        try:
-            candidates.extend(THUMB_DIR.glob(f"face_{fid}_v*.jpg"))
-        except Exception:
-            pass
+        # Every historical version has a predictable name; do not scan the
+        # entire thumbnail directory once per face (especially costly on NFS).
+        candidates = [THUMB_DIR / f"face_{fid}.jpg"]
+        candidates.extend(THUMB_DIR / f"face_{fid}_v{version}.jpg"
+                          for version in range(1, int(FACE_THUMB_VERSION) + 1))
         for p in candidates:
             try:
-                if p.exists() and p.is_file():
-                    p.unlink()
-                    removed += 1
-            except Exception:
+                p.unlink()
+                removed += 1
+            except OSError:
                 continue
     return removed
 
@@ -8838,10 +8838,11 @@ def _related_photo_rel_paths_for_delete(rel_path: str, metadata_json_raw: Any = 
     rels: set[str] = {rel}
 
     # Prefer exact conversion links when present.
-    rels.update(_conversion_related_upload_rels(metadata_json_raw))
+    conversion_rels = _conversion_related_upload_rels(metadata_json_raw)
+    rels.update(conversion_rels)
 
     # Fallback for legacy rows without conversion metadata.
-    if rel.startswith("uploads/"):
+    if rel.startswith("uploads/") and not conversion_rels:
         conv_exts = (".mp4",) if Path(rel).suffix.lower() == ".mov" else None
         conv_path = _find_existing_converted_for_upload_rel(rel, extensions=conv_exts)
         if conv_path is not None:
@@ -8880,6 +8881,54 @@ def _delete_photo_disk_variants(rel_path: str, metadata_json_raw: Any = None, al
         except Exception:
             continue
     return removed
+
+
+def _media_deletion_guard(operation):
+    """Never wait behind a processing batch or delete its inputs mid-flow.
+
+    Hold the same process-owned slots as conversion/postprocessing through the
+    entire deletion. Nonblocking acquisition also works across Gunicorn workers.
+    """
+    @wraps(operation)
+    def guarded(*args, **kwargs):
+        locks = []
+        try:
+            for kind in ('postprocess', 'heic', 'raw', 'mov', 'upload-recovery'):
+                lock = _bulk_conversion_job(kind).acquire()
+                if lock is None:
+                    return jsonify(ok=False, code="media_processing",
+                                   error="Behandlingen kører stadig. Vent til hele flowet er færdigt, før du sletter billeder, videoer eller mapper."), 409
+                locks.append(lock)
+            with UPLOAD_POSTPROCESS_LOCK:
+                running = any(state.get('running') for state in UPLOAD_POSTPROCESS_BY_USER.values())
+            with PHOTO_REPROCESS_LOCK:
+                running = running or bool(PHOTO_REPROCESS_QUEUED)
+            with processing_failures.lock:
+                running = running or processing_failures.retrying
+            running = running or _faces_running.is_set() or ai_running or ai_desc_running
+            with closing(get_conn()) as conn:
+                running = running or folder_index.covers_busy(conn)
+                conn.commit()
+            if running or _pending_upload_rels_snapshot() or _direct_upload_active_rels_snapshot():
+                return jsonify(ok=False, code="media_processing",
+                               error="Der er billeder eller videoer i behandlingskøen. Vent til hele flowet er færdigt, før du sletter."), 409
+            return operation(*args, **kwargs)
+        finally:
+            for lock in reversed(locks):
+                lock.close()
+    return guarded
+
+
+def _invalidate_deleted_photo_previews(rel_paths):
+    # Photo triggers already mark the folder catalogue dirty. Let its existing
+    # worker rebuild covers instead of doing random sampling on the delete request.
+    keys = _folder_preview_affected_keys_for_rels(rel_paths)
+    with closing(get_conn()) as conn:
+        for key in keys:
+            folder_index.mark_dirty(conn, key)
+            conn.execute("DELETE FROM folder_previews WHERE folder_path=?", (key,))
+        conn.commit()
+    return keys
 
 
 def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
@@ -8925,7 +8974,7 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
     for rel, metadata_json_raw in photo_file_refs:
         files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
         files_removed += _delete_photoframe_prepared_copy(rel)
-    preview_folders = _refresh_folder_previews_for_rel_paths([rel for rel, _ in photo_file_refs])
+    preview_folders = _invalidate_deleted_photo_previews([rel for rel, _ in photo_file_refs])
 
     return {
         "photos": len(resolved_ids),
@@ -18503,6 +18552,7 @@ def api_share_upload_postprocess_status(token: str):
 
 
 @app.route("/api/share/<token>/delete", methods=["POST"])
+@_media_deletion_guard
 def api_share_delete(token: str):
     share = _load_share_from_token(token, touch=True)
     if not share:
@@ -23214,6 +23264,7 @@ def api_toggle_favorite(photo_id: int):
 
 @app.route("/api/photos/delete", methods=["POST"])
 @login_required
+@_media_deletion_guard
 def api_delete_photos():
     try:
         data = request.get_json(silent=True) or {}
@@ -24103,6 +24154,7 @@ def api_settings_upload_folder_delete():
     return _delete_upload_folders()
 
 
+@_media_deletion_guard
 def _delete_upload_folders(report=None):
     if not current_user.is_authenticated:
         return jsonify(ok=False, error="Forbidden"), 403

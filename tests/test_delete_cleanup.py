@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from PIL import Image
@@ -66,6 +67,53 @@ class DeleteCleanupTests(unittest.TestCase):
             face_id = int(cur.lastrowid)
             conn.commit()
         return photo_id, face_id, src, thumb_path
+
+    def test_deletion_rejects_processing_slot_without_waiting(self):
+        from conversion_jobs import ConversionJob
+        directory = Path(self.tempdir.name) / "jobs"
+        jobs = lambda kind: ConversionJob(directory, kind)
+        with jobs('postprocess').acquire():
+            with patch.object(fjordlens, '_bulk_conversion_job', side_effect=jobs):
+                with fjordlens.app.test_request_context():
+                    operation = unittest.mock.Mock()
+                    response, status = fjordlens._media_deletion_guard(operation)()
+                    self.assertEqual(status, 409)
+                    self.assertEqual(response.get_json()['code'], 'media_processing')
+                    operation.assert_not_called()
+        # All acquired slots are released after either rejection or success.
+        with patch.object(fjordlens, '_bulk_conversion_job', side_effect=jobs), \
+             patch.object(fjordlens, '_pending_upload_rels_snapshot', return_value=set()), \
+             patch.object(fjordlens, '_direct_upload_active_rels_snapshot', return_value=set()), \
+             patch.object(fjordlens, 'UPLOAD_POSTPROCESS_BY_USER', {}), \
+             patch.object(fjordlens, 'PHOTO_REPROCESS_QUEUED', set()):
+            self.assertEqual(fjordlens._media_deletion_guard(lambda: 'deleted')(), 'deleted')
+            for kind in ('postprocess', 'heic', 'raw', 'mov', 'upload-recovery'):
+                lock = jobs(kind).acquire()
+                self.assertIsNotNone(lock)
+                lock.close()
+
+    def test_deletion_rejects_pending_uploads(self):
+        from conversion_jobs import ConversionJob
+        with patch.object(fjordlens, '_bulk_conversion_job',
+                          side_effect=lambda kind: ConversionJob(Path(self.tempdir.name) / 'jobs', kind)), \
+             patch.object(fjordlens, '_pending_upload_rels_snapshot', return_value={'uploads/a.jpg'}):
+            with fjordlens.app.test_request_context():
+                operation = unittest.mock.Mock()
+                _, status = fjordlens._media_deletion_guard(operation)()
+                self.assertEqual(status, 409)
+                operation.assert_not_called()
+
+    def test_delete_does_not_scan_thumbnails_or_compute_covers(self):
+        photo_id, face_id, src, thumb = self._insert_photo_with_face('uploads/originals/trip/a.jpg')
+        with patch.object(Path, 'glob', side_effect=AssertionError('directory scan')), \
+             patch.object(fjordlens, '_compute_and_store_folder_previews', side_effect=AssertionError('cover rebuild')), \
+             patch.object(fjordlens, '_find_existing_converted_for_upload_rel', return_value=None):
+            removed = fjordlens._delete_indexed_photos_by_ids([photo_id])
+        self.assertEqual(removed['photos'], 1)
+        self.assertIn('trip', removed['preview_folders'])
+        self.assertFalse(src.exists())
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM folder_index_dirty WHERE path='trip'").fetchone())
 
     def test_delete_photo_removes_face_thumbs_and_photoframe_copy(self):
         rel = "uploads/originals/video.mp4"
