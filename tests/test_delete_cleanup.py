@@ -68,40 +68,56 @@ class DeleteCleanupTests(unittest.TestCase):
             conn.commit()
         return photo_id, face_id, src, thumb_path
 
-    def test_deletion_rejects_processing_slot_without_waiting(self):
-        from conversion_jobs import ConversionJob
-        directory = Path(self.tempdir.name) / "jobs"
-        jobs = lambda kind: ConversionJob(directory, kind)
-        with jobs('postprocess').acquire():
-            with patch.object(fjordlens, '_bulk_conversion_job', side_effect=jobs):
-                with fjordlens.app.test_request_context():
-                    operation = unittest.mock.Mock()
-                    response, status = fjordlens._media_deletion_guard(operation)()
-                    self.assertEqual(status, 409)
-                    self.assertEqual(response.get_json()['code'], 'media_processing')
-                    operation.assert_not_called()
-        # All acquired slots are released after either rejection or success.
-        with patch.object(fjordlens, '_bulk_conversion_job', side_effect=jobs), \
-             patch.object(fjordlens, '_pending_upload_rels_snapshot', return_value=set()), \
-             patch.object(fjordlens, '_direct_upload_active_rels_snapshot', return_value=set()), \
-             patch.object(fjordlens, 'UPLOAD_POSTPROCESS_BY_USER', {}), \
-             patch.object(fjordlens, 'PHOTO_REPROCESS_QUEUED', set()):
-            self.assertEqual(fjordlens._media_deletion_guard(lambda: 'deleted')(), 'deleted')
-            for kind in ('postprocess', 'heic', 'raw', 'mov', 'upload-recovery'):
-                lock = jobs(kind).acquire()
-                self.assertIsNotNone(lock)
-                lock.close()
+    def _guard(self, body, operation):
+        with fjordlens.app.test_request_context(json=body):
+            return fjordlens._media_deletion_guard(operation)()
 
-    def test_deletion_rejects_pending_uploads(self):
-        from conversion_jobs import ConversionJob
-        with patch.object(fjordlens, '_bulk_conversion_job',
-                          side_effect=lambda kind: ConversionJob(Path(self.tempdir.name) / 'jobs', kind)), \
-             patch.object(fjordlens, '_pending_upload_rels_snapshot', return_value={'uploads/a.jpg'}):
-            with fjordlens.app.test_request_context():
+    def test_unrelated_photos_and_folders_can_be_deleted_during_flow(self):
+        busy, _, _, _ = self._insert_photo_with_face('uploads/originals/trip/busy.jpg')
+        free, _, src, _ = self._insert_photo_with_face('uploads/originals/other/free.jpg')
+        with fjordlens.media_activity.processing(['uploads/originals/trip/busy.jpg']):
+            self.assertEqual(self._guard({'photo_ids': [free]}, lambda: 'deleted'), 'deleted')
+            self.assertEqual(self._guard({'paths': ['other']}, lambda: 'deleted'), 'deleted')
+            # A different file in the same folder is independent too.
+            sibling, _, _, _ = self._insert_photo_with_face('uploads/originals/trip/free.jpg')
+            self.assertEqual(self._guard({'photo_ids': [sibling]}, lambda: 'deleted'), 'deleted')
+            for body in ({'photo_ids': [busy]}, {'paths': ['trip']}, {'paths': ['originals/trip']}):
                 operation = unittest.mock.Mock()
-                _, status = fjordlens._media_deletion_guard(operation)()
+                response, status = self._guard(body, operation)
                 self.assertEqual(status, 409)
+                self.assertEqual(response.get_json()['code'], 'media_processing')
                 operation.assert_not_called()
+        self.assertEqual(self._guard({'photo_ids': [busy]}, lambda: 'deleted'), 'deleted')
+
+    def test_deletion_rejects_only_overlapping_pending_uploads(self):
+        busy, _, _, _ = self._insert_photo_with_face('uploads/originals/trip/busy.jpg')
+        free, _, _, _ = self._insert_photo_with_face('uploads/originals/other/free.jpg')
+        with patch.object(fjordlens, '_pending_upload_rels_snapshot', return_value={'uploads/originals/trip/busy.jpg'}):
+            _, status = self._guard({'photo_ids': [busy]}, lambda: 'deleted')
+            self.assertEqual(status, 409)
+            self.assertEqual(self._guard({'photo_ids': [free]}, lambda: 'deleted'), 'deleted')
+
+    def test_converted_photo_is_protected_by_original_flow(self):
+        photo, _, _, _ = self._insert_photo_with_face('uploads/converted/trip/a_1.jpg')
+        import json
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            conn.execute('UPDATE photos SET metadata_json=? WHERE id=?',
+                         (json.dumps({'conversion': {'from_rel_path': 'uploads/originals/trip/a.heic',
+                                                     'to_rel_path': 'uploads/converted/trip/a_1.jpg'}}), photo))
+            conn.commit()
+        with fjordlens.media_activity.processing(['uploads/originals/trip/a.heic']):
+            _, status = self._guard({'photo_ids': [photo]}, lambda: 'deleted')
+            self.assertEqual(status, 409)
+
+    def test_deleting_selection_excludes_new_processing_until_release(self):
+        token = fjordlens.media_activity.acquire('deleting', [], ['uploads/trip'])
+        try:
+            self.assertIsNone(fjordlens.media_activity.acquire('processing', ['uploads/originals/trip/a.jpg']))
+            unrelated = fjordlens.media_activity.acquire('processing', ['uploads/originals/trip2/a.jpg'])
+            self.assertIsNotNone(unrelated)
+            fjordlens.media_activity.release(unrelated)
+        finally:
+            fjordlens.media_activity.release(token)
 
     def test_delete_does_not_scan_thumbnails_or_compute_covers(self):
         photo_id, face_id, src, thumb = self._insert_photo_with_face('uploads/originals/trip/a.jpg')

@@ -50,6 +50,8 @@ processing_failures = FailureTracker(
 )
 WEB_MEMORY = MemoryBudget("fjordlens")
 import folder_index
+from media_activity import MediaActivity, canonical as _media_canonical, overlaps as _media_overlaps
+media_activity = MediaActivity(lambda: get_conn(), folder_index._process_start)
 import reverse_geocoder as rg
 import place_names
 import pycountry
@@ -770,6 +772,7 @@ def _mov_to_mp4(src: Path, dst: Path) -> None:
             pass
 
 @processing_failures.track("conversion", lambda src, dst, converter, **kw: _processing_rel_from_disk(src))
+@media_activity.track(lambda src, dst, converter, **kw: [_processing_rel_from_disk(src), _processing_rel_from_disk(dst)])
 def _convert_on_local_storage(
     src: Path,
     dst: Path,
@@ -2754,6 +2757,7 @@ def _store_faces_for_photo(
     return int(summary.get("count") or 0)
 
 
+@media_activity.track(lambda rel_path, *args, **kw: [rel_path])
 def index_faces_for_photo(
     rel_path: str,
     detected_faces: Optional[list[Dict[str, Any]]] = None,
@@ -3118,6 +3122,7 @@ def _queue_uploaded_rel(uploaded_by: str, rel_path: str) -> None:
     rel = str(rel_path or "").strip()
     if not rel:
         return
+    media_activity.queue(rel)
     with UPLOAD_PENDING_LOCK:
         bucket = UPLOAD_PENDING_BY_USER.setdefault(user, [])
         if rel in bucket:
@@ -3791,6 +3796,7 @@ def _queued_upload_conversion(
 
 
 @folder_index.defer_covers(lambda: get_conn())
+@media_activity.track(lambda uploaded_by, rel_paths, **kw: rel_paths, consume_queue=True)
 def _postprocess_uploaded_rels(
     uploaded_by: str,
     rel_paths: list[str],
@@ -4743,6 +4749,7 @@ def _postprocess_uploaded_rels(
     return result
 
 
+@media_activity.track(lambda uploaded_by, rel_paths, **kw: rel_paths, consume_queue=True)
 def _run_postprocess_serialized(*args: Any, **kwargs: Any) -> Dict[str, Any]:
     """Run every upload/manual post-process through one shared pipeline slot."""
     with POSTPROCESS_PIPELINE_LOCK:
@@ -4755,6 +4762,7 @@ def _run_postprocess_serialized(*args: Any, **kwargs: Any) -> Dict[str, Any]:
 
 
 @folder_index.defer_covers(lambda: get_conn())
+@media_activity.track(lambda uploaded_by, initial_rels: initial_rels, consume_queue=True)
 def _upload_postprocess_worker(uploaded_by: str, initial_rels: list[str]) -> None:
     user = str(uploaded_by or "").strip() or "__unknown__"
     workflow_mode = upload_workflow_mode()
@@ -8884,38 +8892,43 @@ def _delete_photo_disk_variants(rel_path: str, metadata_json_raw: Any = None, al
 
 
 def _media_deletion_guard(operation):
-    """Never wait behind a processing batch or delete its inputs mid-flow.
-
-    Hold the same process-owned slots as conversion/postprocessing through the
-    entire deletion. Nonblocking acquisition also works across Gunicorn workers.
-    """
+    """Block only selections overlapping queued or active processing files."""
     @wraps(operation)
     def guarded(*args, **kwargs):
-        locks = []
-        try:
-            for kind in ('postprocess', 'heic', 'raw', 'mov', 'upload-recovery'):
-                lock = _bulk_conversion_job(kind).acquire()
-                if lock is None:
-                    return jsonify(ok=False, code="media_processing",
-                                   error="Behandlingen kører stadig. Vent til hele flowet er færdigt, før du sletter billeder, videoer eller mapper."), 409
-                locks.append(lock)
-            with UPLOAD_POSTPROCESS_LOCK:
-                running = any(state.get('running') for state in UPLOAD_POSTPROCESS_BY_USER.values())
-            with PHOTO_REPROCESS_LOCK:
-                running = running or bool(PHOTO_REPROCESS_QUEUED)
-            with processing_failures.lock:
-                running = running or processing_failures.retrying
-            running = running or _faces_running.is_set() or ai_running or ai_desc_running
+        body = request.get_json(silent=True) or {}
+        rels = set()
+        folders = set()
+        ids = [int(value) for value in body.get('photo_ids', []) if str(value).isdigit()] if isinstance(body.get('photo_ids'), list) else []
+        if ids:
             with closing(get_conn()) as conn:
-                running = running or folder_index.covers_busy(conn)
-                conn.commit()
-            if running or _pending_upload_rels_snapshot() or _direct_upload_active_rels_snapshot():
-                return jsonify(ok=False, code="media_processing",
-                               error="Der er billeder eller videoer i behandlingskøen. Vent til hele flowet er færdigt, før du sletter."), 409
+                for offset in range(0, len(ids), 500):
+                    batch = ids[offset:offset + 500]
+                    placeholders = ','.join('?' for _ in batch)
+                    for row in conn.execute(f'SELECT rel_path, metadata_json FROM photos WHERE id IN ({placeholders})', batch):
+                        rels.add(_media_canonical(row['rel_path']))
+                        rels.update(map(_media_canonical, _conversion_related_upload_rels(row['metadata_json'])))
+        paths = body.get('paths', [])
+        if isinstance(paths, str):
+            paths = [paths]
+        if isinstance(paths, list):
+            for path in paths:
+                try:
+                    folder = _normalize_upload_subdir(str(path or ''))
+                except Exception:
+                    continue
+                folders.add(_media_canonical('uploads/' + folder))
+        pending = _pending_upload_rels_snapshot() | _direct_upload_active_rels_snapshot()
+        with PHOTO_REPROCESS_LOCK:
+            pending.update(str(state.get('current_rel') or '') for state in PHOTO_REPROCESS_BY_ID.values() if state.get('running'))
+        if _media_overlaps((rels, folders), (set(map(_media_canonical, pending)), set())):
+            return jsonify(ok=False, code="media_processing", error="De valgte filer eller mapper er en del af et igangværende behandlingsflow. Vent til flowet er færdigt."), 409
+        token = media_activity.acquire('deleting', rels, folders)
+        if token is None:
+            return jsonify(ok=False, code="media_processing", error="De valgte filer eller mapper er en del af et igangværende behandlingsflow. Vent til flowet er færdigt."), 409
+        try:
             return operation(*args, **kwargs)
         finally:
-            for lock in reversed(locks):
-                lock.close()
+            media_activity.release(token)
     return guarded
 
 
@@ -15030,10 +15043,12 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         if "process_status" in result:
             aggregate["process_status"] = result["process_status"]
 
+    @media_activity.track(lambda: rels, consume_queue=True)
     def run() -> None:
         processed_total = 0
         known_total = len(rels)
         deferred_face_writes = []
+        additional_flow_tokens = []
         if aggregate.get("faces_enabled") and rels:
             _ai_face_runtime_warmup()
 
@@ -15094,6 +15109,9 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
                 else:
                     more = _pop_uploaded_rels(state_user)
                 if more:
+                    # Keep later arrivals protected through the final deferred
+                    # face-write phase as well, not just their individual chunk.
+                    additional_flow_tokens.append(media_activity.acquire('processing', more))
                     batch.extend(more)
                     known_total += len(more)
                 state_patch = {
@@ -15168,6 +15186,9 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             except Exception:
                 pass
         finally:
+            for flow_token in additional_flow_tokens:
+                if flow_token:
+                    media_activity.release(flow_token)
             if aggregate.get("faces_enabled"):
                 _ai_face_runtime_release()
             with DIRECT_UPLOAD_POSTPROCESS_ACTIVE_LOCK:
@@ -21222,6 +21243,7 @@ def api_stop_all_processes():
     with UPLOAD_PENDING_LOCK:
         pending_uploads = sum(len(v or []) for v in UPLOAD_PENDING_BY_USER.values())
         UPLOAD_PENDING_BY_USER.clear()
+    media_activity.dequeue()
     with UPLOAD_TRANSFER_LOCK:
         active_transfers = len(UPLOAD_TRANSFER_ACTIVE_BY_USER)
         UPLOAD_TRANSFER_ACTIVE_BY_USER.clear()
@@ -21370,6 +21392,7 @@ def _ai_embedding_coverage_for_source_folder(conn: sqlite3.Connection, source_re
 
 
 @processing_failures.track("embeddings", lambda photo_id, rel_path: rel_path, false_failure=True, enabled=lambda rel: _is_ai_embedding_supported_rel(rel))
+@media_activity.track(lambda photo_id, rel_path: [rel_path])
 def _embed_one_photo(photo_id: int, rel_path: str) -> bool:
     if not _is_ai_embedding_supported_rel(rel_path):
         log_event("ai_embed_skip_unsupported", rel_path=rel_path)
@@ -21520,6 +21543,7 @@ def _describe_one_photo_qwen(photo_id: int, rel_path: str) -> bool:
 
 
 @processing_failures.track("descriptions", lambda photo_id, rel_path: rel_path, false_failure=True)
+@media_activity.track(lambda photo_id, rel_path: [rel_path])
 def _describe_one_photo(photo_id: int, rel_path: str) -> bool:
     model = ai_desc_model_enabled()
     if model == "qwen":
@@ -22883,6 +22907,7 @@ def api_photo_detail(photo_id: int):
     return jsonify({"ok": True, "item": row_to_public(row)})
 
 
+@media_activity.track(lambda photo_id, rel_path, uploaded_by: [rel_path], consume_queue=True)
 def _photo_reprocess_worker(photo_id: int, rel_path: str, uploaded_by: str) -> None:
     def progress(payload: Dict[str, Any]) -> None:
         with PHOTO_REPROCESS_LOCK:
@@ -23003,6 +23028,7 @@ def api_photo_reprocess(photo_id: int):
         current = dict(PHOTO_REPROCESS_BY_ID.get(photo_id) or {})
         if current.get("running") or photo_id in PHOTO_REPROCESS_QUEUED:
             return jsonify({"ok": True, "started": False, **current})
+        media_activity.queue(rel_path)
         queue_position = PHOTO_REPROCESS_QUEUE.qsize() + 1
         PHOTO_REPROCESS_QUEUED.add(photo_id)
         PHOTO_REPROCESS_BY_ID[photo_id] = {
@@ -28574,6 +28600,7 @@ def _retry_processing_failure(rel: str, stage: str) -> None:
         raise ValueError("Ukendt behandlingstrin")
 
 
+@media_activity.track(lambda rel, stage: [rel])
 def _retry_logged_failure(rel: str, stage: str) -> None:
     if stage == "conversion" or _upload_extension_needs_conversion(Path(rel).suffix):
         # The shared upload pipeline owns prerequisites and follows the resulting
