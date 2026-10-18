@@ -6190,7 +6190,8 @@ def _filter_folders_by_current_user_acl(folders: list[str], conn: Optional[sqlit
 def _current_user_folder_permission_for_rel(rel_path: Optional[str], conn: Optional[sqlite3.Connection] = None) -> Optional[str]:
     """Return the effective permission for the current user on a rel path under uploads.
     Values: 'edit' > 'upload' > 'view'. None if no access.
-    Admins, managers and owners receive 'edit'.
+    Admins and managers receive 'edit'. Owners default to 'edit' unless an
+    explicit folder grant overrides it.
     """
     rel = _normalize_rel_path_for_acl(rel_path)
     if not rel:
@@ -6201,11 +6202,6 @@ def _current_user_folder_permission_for_rel(rel_path: Optional[str], conn: Optio
     except Exception:
         pass
     owner_uid = _folder_owner_user_id_for_rel(rel, conn)
-    try:
-        if owner_uid is not None and int(getattr(current_user, "id", 0) or 0) == int(owner_uid):
-            return "edit"
-    except Exception:
-        pass
     # Load ACL rows and find the most specific match
     try:
         if conn is None:
@@ -6222,12 +6218,20 @@ def _current_user_folder_permission_for_rel(rel_path: Optional[str], conn: Optio
             perm = str(r.get("permission") or "view").strip().lower()
         except Exception:
             continue
-        if not p or perm not in {"view", "upload", "edit"}:
+        if not p or p == "uploads" or perm not in {"view", "upload", "edit"}:
             continue
+        p = _normalize_rel_path_for_acl(p if p.startswith("uploads/") else f"uploads/{p}")
         if rel == p or rel.startswith(p + "/"):
             if best is None or len(p) > len(best[0]):
                 best = (p, perm)
-    return best[1] if best else None
+    if best:
+        return best[1]
+    try:
+        if owner_uid is not None and int(getattr(current_user, "id", 0) or 0) == int(owner_uid):
+            return "edit"
+    except Exception:
+        pass
+    return None
 
 
 def _perm_allows(perm: Optional[str], required: str) -> bool:
@@ -24103,9 +24107,8 @@ def api_settings_upload_destination():
 
 @app.route("/api/settings/upload-folder", methods=["POST"])
 def api_settings_upload_folder():
-    fb = _forbid_media_management()
-    if fb:
-        return jsonify(fb[0]), fb[1]
+    if not current_user.is_authenticated:
+        return jsonify(ok=False, error="Forbidden"), 403
 
     body = request.get_json(silent=True) or {}
     destination_raw = body.get("destination")
@@ -24118,12 +24121,15 @@ def api_settings_upload_folder():
     except Exception:
         return jsonify({"ok": False, "error": "Ugyldig overmappe"}), 400
 
-    # Permission check: creating under uploads requires 'edit' on parent, or admin
+    if destination != UPLOAD_DEST_UPLOADS and not getattr(current_user, "can_manage_media", False):
+        return jsonify(ok=False, error="Forbidden"), 403
+
+    # Creating folders is part of upload access, including inherited grants.
     if destination == UPLOAD_DEST_UPLOADS:
         if parent_subdir:
             base_rel = f"uploads/{parent_subdir}"
             perm = _current_user_folder_permission_for_rel(base_rel)
-            if not _perm_allows(perm, "edit") and not getattr(current_user, "is_admin", False):
+            if not _perm_allows(perm, "upload"):
                 return jsonify({"ok": False, "error": "Ingen rettighed til at oprette i denne mappe"}), 403
         else:
             # Creating directly under uploads root requires media management.
@@ -24155,6 +24161,9 @@ def api_settings_upload_folder():
             new_subdir = new_subdir[len("converted/"):]
         if not new_subdir:
             return jsonify({"ok": False, "error": "Ugyldig mappe-sti"}), 400
+
+    if not _can_upload_to_destination(destination, new_subdir):
+        return jsonify(ok=False, error="Ingen rettighed til at oprette i denne mappe"), 403
 
     target_root, _ = _upload_target_for_destination(destination)
     try:
@@ -24695,9 +24704,8 @@ def api_settings_upload_folder_rename():
 
 
 def _change_upload_folder():
-    fb = _forbid_media_management()
-    if fb:
-        return jsonify(fb[0]), fb[1]
+    if not current_user.is_authenticated:
+        return jsonify(ok=False, error="Forbidden"), 403
 
     body = request.get_json(silent=True) or {}
     moving = request.path.endswith('upload-folder-move')
@@ -24753,6 +24761,14 @@ def _change_upload_folder():
         return jsonify({"ok": False, "error": "Det nye navn skal vÃ¦re anderledes"}), 400
 
     base_rel = f"uploads/{old_subdir}"
+    if not getattr(current_user, 'can_manage_media', False):
+        with closing(get_conn()) as conn:
+            grants = _get_user_allowed_folders(conn, current_user.id)
+        grant_paths = [_normalize_rel_path_for_acl(g['folder_path'] if g['folder_path'].startswith('uploads/') else 'uploads/' + g['folder_path']) for g in grants]
+        if any(path == base_rel or path.startswith(base_rel + '/') for path in grant_paths):
+            return jsonify(ok=False, error="Selve mappen med tildelt adgang kan ikke flyttes eller omdøbes. Kun indholdet kan ændres."), 403
+        if not _perm_allows(_current_user_folder_permission_for_rel('uploads/' + new_subdir), 'edit'):
+            return jsonify(ok=False, error="Ingen rettighed til destinationsmappen"), 403
     perm = _current_user_folder_permission_for_rel(base_rel)
     if not _perm_allows(perm, "edit"):
         return jsonify({"ok": False, "error": f"Ingen omdÃ¸b-adgang til '{old_subdir}'"}), 403
@@ -28746,3 +28762,4 @@ if __name__ == "__main__":
     app.config["FOLDER_INDEX_WORKERS"] = True
     init_db()
     app.run(host="0.0.0.0", port=APP_PORT, debug=False)
+

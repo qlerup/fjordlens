@@ -15280,13 +15280,14 @@ function mediaPathPermission(path) {
   const canonical = value => String(value || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/^uploads\/(originals|converted)\//, 'uploads/');
   const rel = canonical(path);
   const matches = folder => rel === folder || rel.startsWith(folder + '/');
-  if ((user?.owned_folders || []).some(folder => matches(canonical(folder)))) return 'edit';
   let best = null;
   for (const grant of user?.allowed_folders || []) {
-    const folder = canonical(grant.folder_path);
+    let folder = canonical(grant.folder_path);
+    if (!folder || folder === 'uploads') continue;
+    folder = canonical(folder.startsWith('uploads/') ? folder : 'uploads/' + folder);
     if (matches(folder) && (!best || folder.length > best.folder.length)) best = {folder, permission: grant.permission};
   }
-  return best?.permission || null;
+  return best?.permission || ((user?.owned_folders || []).some(folder => matches(canonical(folder))) ? 'edit' : null);
 }
 
 function mapperFolderAllows(folder, required = 'edit') {
@@ -21936,3 +21937,4 @@ if (logsRetryAnchor) {
   button.addEventListener('click',()=>updateBulkRetry('POST'));
   updateBulkRetry();
 }
+

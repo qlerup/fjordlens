@@ -32,7 +32,7 @@ class FolderMoveTests(unittest.TestCase):
             '_direct_upload_active_rels_snapshot':lambda:set(),
             '_pending_upload_rels_snapshot':lambda:set(),
             'UPLOAD_FOLDER_SYNC_RUNNING':set(),
-            'current_user':SimpleNamespace(is_admin=True,id=1),
+            'current_user':SimpleNamespace(is_authenticated=True,can_manage_media=True,is_admin=True,id=1),
             '_upload_settings_payload':lambda destination:{'ok':True,'folders':[]},
             '_audit_actor':lambda:'test', 'log_event':lambda *a,**kw:None,
         }.items():
@@ -96,7 +96,7 @@ class FolderMoveTests(unittest.TestCase):
             self.assertEqual(self.move('New')[0],409)
 
     def test_destination_permission_is_required(self):
-        with patch.object(fl,'current_user',SimpleNamespace(is_admin=False,id=1)), patch.object(fl,'_current_user_folder_permission_for_rel',return_value='view'):
+        with patch.object(fl,'current_user',SimpleNamespace(is_authenticated=True,can_manage_media=False,is_admin=False,id=1)), patch.object(fl,'_current_user_folder_permission_for_rel',return_value='view'):
             self.assertEqual(self.move('New')[0],403)
 
     def test_wildcards_in_folder_names_do_not_change_neighbour_metadata(self):

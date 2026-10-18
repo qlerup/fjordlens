@@ -67,6 +67,59 @@ class FolderAccessTests(unittest.TestCase):
         self.assertEqual(result.status_code, 403, result.json)
         self.assertTrue((fl.UPLOAD_DIR / 'originals/Editable/b.jpg').exists())
 
+    def test_inherited_grants_allow_creating_nested_folders(self):
+        for permission in ('upload', 'edit'):
+            with self.subTest(permission=permission):
+                with fl.closing(fl.get_conn()) as conn:
+                    fl._set_user_allowed_folders(conn, 3, [{'folder_path': 'private', 'permission': permission}])
+                    conn.commit()
+                response = self.client(3).post('/api/settings/upload-folder', json={
+                    'destination': 'uploads', 'parent': 'private/Existing/Nested', 'path': permission})
+                self.assertEqual(response.status_code, 200, response.json)
+                self.assertTrue((fl.UPLOAD_DIR / 'originals/private/Existing/Nested' / permission).is_dir())
+                self.assertTrue((fl.UPLOAD_DIR / 'converted/private/Existing/Nested' / permission).is_dir())
+
+    def test_child_override_applies_to_all_descendants(self):
+        with fl.closing(fl.get_conn()) as conn:
+            fl._set_user_allowed_folders(conn, 3, [
+                {'folder_path': 'private', 'permission': 'edit'},
+                {'folder_path': 'uploads/private/ReadOnly', 'permission': 'view'},
+                {'folder_path': 'uploads/private/ReadOnly/Uploads', 'permission': 'upload'}])
+            conn.execute("INSERT INTO folder_owners(folder_path,user_id) VALUES('uploads/private/ReadOnly',3)")
+            conn.commit()
+        with fl.app.test_request_context():
+            with patch.object(fl, 'current_user', fl.User(3, 'user', 'user')):
+                for root in ('uploads/', 'uploads/originals/', 'uploads/converted/'):
+                    for suffix, expected in [('Other/Deep/a.jpg', 'edit'), ('ReadOnly/Deep/a.jpg', 'view'),
+                                             ('ReadOnly/Uploads/Deep/a.jpg', 'upload')]:
+                        self.assertEqual(fl._current_user_folder_permission_for_rel(root + 'private/' + suffix), expected)
+        user = self.client(3)
+        for parent, path in [('private/ReadOnly/Deep', 'new'), ('private', 'ReadOnly/Deep/new')]:
+            response = user.post('/api/settings/upload-folder', json={'destination': 'uploads', 'parent': parent, 'path': path})
+            self.assertEqual(response.status_code, 403, response.json)
+        response = user.post('/api/settings/upload-folder', json={
+            'destination': 'uploads', 'parent': 'private/ReadOnly/Uploads/Deep', 'path': 'new'})
+        self.assertEqual(response.status_code, 200, response.json)
+
+    def test_scoped_user_cannot_create_in_root_sibling_or_library(self):
+        self.mixed_grants()
+        user = self.client(3)
+        for destination, parent in [('uploads', ''), ('uploads', 'private'), ('uploads', 'EditableSibling'), ('library', 'Editable')]:
+            response = user.post('/api/settings/upload-folder', json={'destination': destination, 'parent': parent, 'path': 'new'})
+            self.assertEqual(response.status_code, 403, response.json)
+
+    def test_inherited_edit_allows_rename_but_protects_grant_entry(self):
+        self.mixed_grants()
+        child = fl.UPLOAD_DIR / 'originals/Editable/Child'
+        child.mkdir()
+        user = self.client(3)
+        response = user.post('/api/settings/upload-folder-rename', json={'path': 'Editable/Child', 'new_name': 'Renamed'})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertTrue((child.parent / 'Renamed').is_dir())
+        for path in ('Editable', 'private'):
+            response = user.post('/api/settings/upload-folder-rename', json={'path': path, 'new_name': 'Blocked'})
+            self.assertEqual(response.status_code, 403, response.json)
+
     def test_admin_and_manager_list_only_needed_user_fields_and_save_access(self):
         for uid in (1, 2):
             with self.subTest(actor=uid):
