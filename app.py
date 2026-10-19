@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session, send_file
+from flask import has_request_context, Flask, jsonify, render_template, request, send_from_directory, redirect, url_for, make_response, session, send_file
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 )
@@ -5024,7 +5024,7 @@ def _tus_store_meta(upload_id: str, meta: Dict[str, Any]) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
-def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> None:
+def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str, share_visitor_id: Optional[str] = None) -> None:
     """Create/update a lightweight photo row right after upload commit.
 
     This lets the UI show newly uploaded files immediately (often as
@@ -5051,6 +5051,7 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> N
         "metadata_json": json.dumps({}, ensure_ascii=False),
         "exif_json": json.dumps({}, ensure_ascii=False),
         "uploaded_by": _sanitize_share_visitor_name(uploaded_by or "") or None,
+        "share_visitor_id": share_visitor_id,
         "imported_at": now_iso(),
         "last_scanned_at": now_iso(),
     }
@@ -5063,12 +5064,12 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> N
                     rel_path, filename, ext, file_size,
                     created_fs, modified_fs, captured_at,
                     ai_tags, metadata_json, exif_json,
-                    uploaded_by, imported_at, last_scanned_at
+                    uploaded_by, share_visitor_id, imported_at, last_scanned_at
                 ) VALUES (
                     :rel_path, :filename, :ext, :file_size,
                     :created_fs, :modified_fs, :captured_at,
                     :ai_tags, :metadata_json, :exif_json,
-                    :uploaded_by, :imported_at, :last_scanned_at
+                    :uploaded_by, :share_visitor_id, :imported_at, :last_scanned_at
                 )
                 ON CONFLICT(rel_path) DO UPDATE SET
                     filename=excluded.filename,
@@ -5078,6 +5079,7 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str) -> N
                     created_fs=COALESCE(photos.created_fs, excluded.created_fs),
                     captured_at=COALESCE(photos.captured_at, excluded.captured_at),
                     uploaded_by=COALESCE(photos.uploaded_by, excluded.uploaded_by),
+                    share_visitor_id=excluded.share_visitor_id,
                     last_scanned_at=excluded.last_scanned_at
                 """,
                 payload,
@@ -5099,6 +5101,7 @@ def _commit_uploaded_file(
     last_modified_ms: Optional[int],
     uploaded_by: str,
     autostart_postprocess: bool = False,
+    share_visitor_id: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -5140,6 +5143,8 @@ def _commit_uploaded_file(
     except Exception:
         pass
 
+    # Record ownership before background workers can index/convert the upload.
+    _upsert_uploaded_stub(rel, committed_path, uploaded_by, share_visitor_id)
     try:
         _queue_uploaded_rel(uploaded_by, rel)
     except Exception as e:
@@ -5155,8 +5160,6 @@ def _commit_uploaded_file(
             except Exception:
                 pass
 
-    # Make file visible in UI immediately; all heavy work comes from postprocess.
-    _upsert_uploaded_stub(rel, committed_path, uploaded_by)
     return (True, target.name, None)
 
 
@@ -5624,6 +5627,13 @@ def init_db() -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_ahash ON photos(ahash)")
         except Exception:
             pass
+        for table, column, definition in (
+            ("share_links", "show_others_uploads", "INTEGER NOT NULL DEFAULT 1"),
+            ("photos", "share_visitor_id", "TEXT"),
+        ):
+            columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         try:
             conn.execute("ALTER TABLE share_links ADD COLUMN require_visitor_name INTEGER DEFAULT 0")
         except Exception:
@@ -12114,6 +12124,50 @@ def _share_link_for_admin_row(row: sqlite3.Row) -> Optional[str]:
     return fallback
 
 
+def _share_visitor_id(create: bool = False) -> str:
+    key = "share_visitor_id"
+    value = str(session.get(key) or "")
+    if not value and create:
+        value = secrets.token_urlsafe(32)
+        session[key] = value
+    return value
+
+
+def _share_show_others_uploads(share) -> bool:
+    return "show_others_uploads" not in share.keys() or bool(share["show_others_uploads"])
+
+
+def _share_photo_visible(conn, share, row) -> bool:
+    if not row:
+        return False
+    if _share_show_others_uploads(share):
+        return True
+    # A normal login only bypasses the link restriction with actual folder access.
+    if _is_rel_visible_for_user(current_user, row["rel_path"], conn):
+        return True
+    owner = str(row["share_visitor_id"] or "")
+    visitor = _share_visitor_id()
+    return bool(owner and visitor and hmac.compare_digest(owner, visitor))
+
+
+def _share_resolved_upload_visible(share, row, path: Path) -> bool:
+    """Do not let original/converted filename fallbacks cross visitor ownership."""
+    if _share_show_others_uploads(share):
+        return True
+    rel = _upload_path_to_rel(path)
+    if not rel:
+        return False
+    with closing(get_conn()) as conn:
+        if _is_rel_visible_for_user(current_user, rel, conn):
+            return True
+        target = conn.execute("SELECT * FROM photos WHERE rel_path=?", (rel,)).fetchone()
+        if target:
+            return _share_photo_visible(conn, share, target)
+        # Originals may no longer be indexed after conversion. Only an exact
+        # recorded conversion link is evidence that they belong to this photo.
+        return rel in _conversion_related_upload_rels(row["metadata_json"])
+
+
 def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row, photo_id: int) -> Optional[sqlite3.Row]:
     folder_paths = _share_folder_paths(conn, share_row)
     prefixes = _share_rel_prefixes(folder_paths)
@@ -12121,7 +12175,8 @@ def _get_share_scoped_photo_row(conn: sqlite3.Connection, share_row: sqlite3.Row
         return None
     where_sql, where_params = _share_scope_sql(prefixes)
     sql = f"SELECT * FROM photos WHERE id=? AND ({where_sql}) LIMIT 1"
-    return conn.execute(sql, (int(photo_id), *where_params)).fetchone()
+    row = conn.execute(sql, (int(photo_id), *where_params)).fetchone()
+    return row if _share_photo_visible(conn, share_row, row) else None
 
 
 def _upload_target_for_destination(destination: str) -> Tuple[Path, str]:
@@ -14537,6 +14592,12 @@ def upsert_photo(meta: Dict[str, Any]) -> None:
                 "last_scanned_at": now_iso(),
             },
         )
+        conversion = (meta.get("metadata_json") or {}).get("conversion") or {}
+        source_rel = conversion.get("from_rel_path")
+        if source_rel and source_rel != meta["rel_path"]:
+            conn.execute("UPDATE photos SET share_visitor_id="
+                         "(SELECT share_visitor_id FROM photos WHERE rel_path=?) WHERE rel_path=?",
+                         (source_rel, meta["rel_path"]))
         conn.commit()
     conversion = (meta.get("metadata_json") or {}).get("conversion") or {}
     if conversion.get("from_rel_path") and conversion.get("to_rel_path"):
@@ -15499,6 +15560,7 @@ def _resolve_row_view_rel_path(row_data: Dict[str, Any]) -> str:
 
 def row_to_public(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
+    d.pop("share_visitor_id", None)
     d['private'] = folder_privacy.private_for_response(get_conn, d.get('rel_path'))
     if d['private']:
         d['people_count'] = 0
@@ -17763,6 +17825,9 @@ def api_create_share():
 
     password_enabled = bool(body.get("password_enabled"))
     require_visitor_name = bool(body.get("require_visitor_name"))
+    if "show_others_uploads" in body and type(body["show_others_uploads"]) is not bool:
+        return jsonify(ok=False, error="show_others_uploads skal være true eller false"), 400
+    show_others_uploads = body.get("show_others_uploads", True)
     use_duckdns = bool(body.get("use_duckdns"))
     password_raw = str(body.get("password") or "")
     password_hash = None
@@ -17778,8 +17843,8 @@ def api_create_share():
     with closing(get_conn()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_download, can_upload, can_delete, require_visitor_name, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO share_links(token_hash, token_plain, share_name, folder_path, can_download, can_upload, can_delete, require_visitor_name, show_others_uploads, link_use_duckdns, password_hash, expires_at, revoked, created_by_user_id, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 token_hash,
@@ -17790,6 +17855,7 @@ def api_create_share():
                 int(can_upload),
                 int(can_delete),
                 1 if require_visitor_name else 0,
+                int(show_others_uploads),
                 1 if use_duckdns else 0,
                 password_hash,
                 expires_at,
@@ -17821,6 +17887,7 @@ def api_create_share():
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
             "require_visitor_name": bool(require_visitor_name),
+            "show_others_uploads": bool(show_others_uploads),
             "password_enabled": bool(password_hash),
             "expires_at": expires_at,
         }
@@ -17845,6 +17912,7 @@ def api_share_info(token: str):
     share_name = str(share["share_name"] or "").strip() if "share_name" in share.keys() else ""
     if not share_name:
         share_name = folder_label
+    _share_visitor_id(create=True)
     visitor_name = _share_get_visitor_name(share)
     upload_types = _upload_file_types_settings_payload()
     response = jsonify(
@@ -17860,6 +17928,7 @@ def api_share_info(token: str):
             "can_upload": bool(int(share["can_upload"] or 0)),
             "can_delete": bool(int(share["can_delete"] or 0)),
             "require_visitor_name": _share_requires_visitor_name(share),
+            "show_others_uploads": _share_show_others_uploads(share),
             "visitor_name": visitor_name,
             "password_enabled": _share_is_password_protected(share),
             "expires_at": share["expires_at"],
@@ -17920,6 +17989,8 @@ def api_share_photos(token: str):
             tuple(where_params),
         ).fetchall()
 
+    with closing(get_conn()) as conn:
+        rows = [r for r in rows if _share_photo_visible(conn, share, r)]
     rows = _dedupe_upload_storage_rows(rows)
     root = folder_paths[0] if len(folder_paths) == 1 else ""
 
@@ -18029,6 +18100,8 @@ def api_share_photo_download(token: str, photo_id: int):
         return ("Not found", 404)
     try:
         return _send_photo_download(row, mode, date_mode)
+    except (PermissionError, FileNotFoundError):
+        return ("Not found", 404)
     except Exception as exc:
         log_event("share_download_error", rel_path=str(row["rel_path"] or ""), error=str(exc))
         return jsonify({"ok": False, "error": f"Download kunne ikke klargøres: {exc}"}), 500
@@ -18171,6 +18244,7 @@ def api_share_upload(token: str):
                 last_modified_ms=None,
                 uploaded_by=uploaded_by,
                 autostart_postprocess=False,
+                share_visitor_id=_share_visitor_id(create=True),
             )
             if ok:
                 saved.append(saved_name)
@@ -18301,6 +18375,7 @@ def api_share_tus_create(token: str):
         # Label uploaded_by with visitor name for UI chips
         "uploaded_by": uploader_label,
         "share_id": share_context["share_id"],
+        "share_visitor_id": _share_visitor_id(create=True),
         "share_name": share_context["share_name"],
         "created_at": now_iso(),
     }
@@ -18323,6 +18398,8 @@ def _tus_share_authorized(token: str, meta: dict) -> bool:
     share = _load_share_from_token(token)
     if (not share or not _share_is_authorized(share) or int(share["can_upload"] or 0) != 1
             or meta.get("share_id") != int(share["id"])):
+        return False
+    if meta.get("share_visitor_id") and meta["share_visitor_id"] != _share_visitor_id():
         return False
     with closing(get_conn()) as conn:
         folders = _share_folder_paths(conn, share)
@@ -18436,6 +18513,7 @@ def api_share_tus_file(token: str, upload_id: str):
                 last_modified_ms=last_modified_ms,
                 uploaded_by=uploaded_by,
                 autostart_postprocess=False,
+                share_visitor_id=meta.get("share_visitor_id"),
             )
             try:
                 meta_path.unlink(missing_ok=True)
@@ -23791,7 +23869,12 @@ def _download_rel_and_path(row: sqlite3.Row, mode: str) -> tuple[str, Path]:
     if not rel:
         raise FileNotFoundError("Missing rel_path")
     src = (UPLOAD_DIR / rel[len("uploads/"):]) if rel.startswith("uploads/") else (PHOTO_DIR / rel)
-    return rel, _resolve_download_path(src, rel, mode)
+    resolved = _resolve_download_path(src, rel, mode)
+    if has_request_context() and request.endpoint in {"api_share_photo_download", "api_share_photos_download_zip"}:
+        share = _load_share_from_token(str((request.view_args or {}).get("token") or ""))
+        if not share or not _share_resolved_upload_visible(share, row, resolved):
+            raise PermissionError("Not found")
+    return rel, resolved
 
 
 def _row_capture_header(row: sqlite3.Row, path: Path, when: Optional[datetime] = None) -> str:
@@ -27783,7 +27866,7 @@ def api_admin_shares_list():
         rows = conn.execute(
             """
              SELECT s.id, s.share_name, s.folder_path, s.can_download, s.can_upload, s.can_delete, s.password_hash,
-                 s.token_plain, s.link_use_duckdns, s.require_visitor_name,
+                 s.token_plain, s.link_use_duckdns, s.require_visitor_name, s.show_others_uploads,
                    s.expires_at, s.revoked, s.created_at, s.last_used_at, s.created_by_user_id,
                    u.username AS created_by_username
             FROM share_links s
@@ -27848,6 +27931,7 @@ def api_admin_shares_list():
                 "can_upload": can_upload,
                 "can_delete": can_delete,
                 "require_visitor_name": bool(int(r["require_visitor_name"] or 0)),
+                "show_others_uploads": _share_show_others_uploads(r),
                 "use_duckdns": bool(int(r["link_use_duckdns"] or 0)),
                 "password_enabled": bool(str(r["password_hash"] or "").strip()),
                 "expires_at": r["expires_at"],
@@ -27995,17 +28079,21 @@ def api_admin_shares_update(share_id: int):
 
     password_enabled = bool(body.get("password_enabled"))
     require_visitor_name = bool(body.get("require_visitor_name"))
+    if "show_others_uploads" in body and type(body["show_others_uploads"]) is not bool:
+        return jsonify(ok=False, error="show_others_uploads skal være true eller false"), 400
+    show_others_uploads = body.get("show_others_uploads", True)
     use_duckdns = bool(body.get("use_duckdns"))
     password_raw = str(body.get("password") or "")
 
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, password_hash FROM share_links WHERE id=?",
+            "SELECT id, password_hash, show_others_uploads FROM share_links WHERE id=?",
             (int(share_id),),
         ).fetchone()
         if not row:
             return jsonify({"ok": False, "error": "Share-link findes ikke"}), 404
 
+        show_others_uploads = body.get("show_others_uploads", bool(row["show_others_uploads"]))
         existing_password_hash = str(row["password_hash"] or "").strip()
         password_hash: Optional[str]
         if not password_enabled:
@@ -28031,6 +28119,7 @@ def api_admin_shares_update(share_id: int):
                    can_upload=?,
                    can_delete=?,
                    require_visitor_name=?,
+                   show_others_uploads=?,
                    link_use_duckdns=?,
                    password_hash=?,
                    expires_at=?
@@ -28043,6 +28132,7 @@ def api_admin_shares_update(share_id: int):
                 int(can_upload),
                 int(can_delete),
                 1 if require_visitor_name else 0,
+                int(show_others_uploads),
                 1 if use_duckdns else 0,
                 password_hash,
                 expires_at,
@@ -28069,6 +28159,7 @@ def api_admin_shares_update(share_id: int):
             "can_upload": bool(can_upload),
             "can_delete": bool(can_delete),
             "require_visitor_name": bool(require_visitor_name),
+            "show_others_uploads": bool(show_others_uploads),
             "password_enabled": bool(password_hash),
             "use_duckdns": bool(use_duckdns),
             "expires_at": expires_at,
@@ -28757,6 +28848,16 @@ install_memory_cleanup(app)
 app.extensions['hub_session_call'] = lambda *args, **kwargs: _hub_api(*args, **kwargs)
 install_hub_session_guard(app, managed=lambda: bool(_FJORDHUB_URL and _FJORDHUB_API_KEY),
     subject=lambda: ({'id': getattr(current_user, 'hub_user_id', None), 'username': current_user.username} if current_user.is_authenticated else None), revoke=logout_user)
+
+
+
+@app.after_request
+def _private_share_responses(response):
+    if request.path.startswith("/api/share/"):
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 
 if __name__ == "__main__":
     app.config["FOLDER_INDEX_WORKERS"] = True

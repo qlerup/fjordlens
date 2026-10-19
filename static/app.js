@@ -328,6 +328,9 @@ const els = {
   sharedEditPasswordWrap: document.getElementById("sharedEditPasswordWrap"),
   sharedEditPasswordLabel: document.getElementById("sharedEditPasswordLabel"),
   sharedEditPasswordInput: document.getElementById("sharedEditPasswordInput"),
+  sharedEditShowOthersToggle: document.getElementById("sharedEditShowOthersToggle"),
+  sharedEditShowOthersToggleText: document.getElementById("sharedEditShowOthersToggleText"),
+  sharedEditShowOthersHint: document.getElementById("sharedEditShowOthersHint"),
   sharedEditRequireNameToggle: document.getElementById("sharedEditRequireNameToggle"),
   sharedEditRequireNameToggleText: document.getElementById("sharedEditRequireNameToggleText"),
   sharedEditError: document.getElementById("sharedEditError"),
@@ -415,6 +418,9 @@ const els = {
   mapperShareDuckdnsToggleText: document.getElementById("mapperShareDuckdnsToggleText"),
   mapperSharePasswordToggle: document.getElementById("mapperSharePasswordToggle"),
   mapperSharePasswordToggleText: document.getElementById("mapperSharePasswordToggleText"),
+  mapperShareShowOthersToggle: document.getElementById("mapperShareShowOthersToggle"),
+  mapperShareShowOthersToggleText: document.getElementById("mapperShareShowOthersToggleText"),
+  mapperShareShowOthersHint: document.getElementById("mapperShareShowOthersHint"),
   mapperShareRequireNameToggle: document.getElementById("mapperShareRequireNameToggle"),
   mapperShareRequireNameToggleText: document.getElementById("mapperShareRequireNameToggleText"),
   mapperSharePasswordWrap: document.getElementById("mapperSharePasswordWrap"),
@@ -1524,6 +1530,8 @@ const I18N = {
     mapper_share_expire_unit_label: 'Enhed',
     mapper_share_expire_days: 'Dage',
     mapper_share_expire_hours: 'Timer',
+    share_show_others: 'Vis andres uploads',
+    share_show_others_hint: 'Slå fra for kun at vise besøgendes egne uploads. Brugere med mappeadgang kan stadig se alt.',
     mapper_share_permission_label: 'Adgang',
     mapper_share_perm_view: 'Se',
     mapper_share_perm_download: 'Se',
@@ -2420,6 +2428,8 @@ const I18N = {
     mapper_share_expire_unit_label: 'Unit',
     mapper_share_expire_days: 'Days',
     mapper_share_expire_hours: 'Hours',
+    share_show_others: 'Show other people’s uploads',
+    share_show_others_hint: 'Turn off to show only the visitor’s own uploads. Users with folder access can still see everything.',
     mapper_share_permission_label: 'Access',
     mapper_share_perm_view: 'View',
     mapper_share_perm_download: 'View',
@@ -11221,6 +11231,7 @@ async function openSharedEditModal(shareId) {
   if (els.sharedEditPasswordInput) els.sharedEditPasswordInput.value = '';
   _syncSharedEditPasswordToggle();
 
+  if (els.sharedEditShowOthersToggle) els.sharedEditShowOthersToggle.checked = item.show_others_uploads !== false;
   if (els.sharedEditRequireNameToggle) els.sharedEditRequireNameToggle.checked = !!item.require_visitor_name;
 
   const [foldersResult] = await Promise.allSettled([
@@ -11311,6 +11322,7 @@ async function saveSharedEditModal() {
         expires_value: neverExpires ? 0 : expiresValue,
         expires_unit: String((els.sharedEditExpireUnit && els.sharedEditExpireUnit.value) || 'days'),
         use_duckdns: useDuckdns,
+        show_others_uploads: !!els.sharedEditShowOthersToggle?.checked,
         require_visitor_name: requireVisitorName,
         password_enabled: passwordEnabled,
         password,
@@ -14560,6 +14572,8 @@ function applyUiLanguage() {
   if (els.sharedEditPasswordToggleText) els.sharedEditPasswordToggleText.textContent = tr('dns_shares_edit_password_toggle');
   if (els.sharedEditPasswordLabel) els.sharedEditPasswordLabel.textContent = tr('dns_shares_edit_password_label');
   if (els.sharedEditPasswordInput) els.sharedEditPasswordInput.placeholder = tr('dns_shares_edit_password_placeholder');
+  if (els.sharedEditShowOthersToggleText) els.sharedEditShowOthersToggleText.textContent = tr('share_show_others');
+  if (els.sharedEditShowOthersHint) els.sharedEditShowOthersHint.textContent = tr('share_show_others_hint');
   if (els.sharedEditRequireNameToggleText) els.sharedEditRequireNameToggleText.textContent = tr('dns_shares_edit_require_name');
   if (els.sharedEditExpireUnit) {
     const dayOpt = els.sharedEditExpireUnit.querySelector('option[value="days"]');
@@ -14644,6 +14658,8 @@ function applyUiLanguage() {
   if (els.mapperSharePermissionLabel) els.mapperSharePermissionLabel.textContent = tr('mapper_share_permission_label');
   if (els.mapperShareDuckdnsToggleText) els.mapperShareDuckdnsToggleText.textContent = tr('mapper_share_duckdns_toggle');
   if (els.mapperSharePasswordToggleText) els.mapperSharePasswordToggleText.textContent = tr('mapper_share_password_toggle');
+  if (els.mapperShareShowOthersToggleText) els.mapperShareShowOthersToggleText.textContent = tr('share_show_others');
+  if (els.mapperShareShowOthersHint) els.mapperShareShowOthersHint.textContent = tr('share_show_others_hint');
   if (els.mapperShareRequireNameToggleText) els.mapperShareRequireNameToggleText.textContent = tr('mapper_share_require_name_toggle');
   if (els.mapperSharePasswordLabel) els.mapperSharePasswordLabel.textContent = tr('mapper_share_password_label');
   if (els.mapperSharePasswordInput) els.mapperSharePasswordInput.placeholder = tr('mapper_share_password_placeholder');
@@ -14864,6 +14880,7 @@ async function openMapperShareModal() {
   if (els.mapperSharePermission) els.mapperSharePermission.value = 'view';
   applyMapperShareDuckdnsToggleState({ preserveUserChoice: false });
   if (els.mapperSharePasswordToggle) els.mapperSharePasswordToggle.checked = false;
+  if (els.mapperShareShowOthersToggle) els.mapperShareShowOthersToggle.checked = true;
   if (els.mapperShareRequireNameToggle) els.mapperShareRequireNameToggle.checked = false;
   _syncMapperSharePasswordVisibility();
   if (els.mapperShareResultWrap) els.mapperShareResultWrap.classList.add('hidden');
@@ -14951,6 +14968,7 @@ async function createMapperShareLink() {
         expires_value: expiresValue,
         expires_unit: expiresUnit,
         use_duckdns: useDuckdns,
+        show_others_uploads: !!els.mapperShareShowOthersToggle?.checked,
         require_visitor_name: requireVisitorName,
         password_enabled: passwordEnabled,
         password,

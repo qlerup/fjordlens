@@ -908,3 +908,18 @@ tar czf fjordlens-backup-$(date +%Y%m%d).tar.gz /path/to/data_dir /path/to/uploa
 - [Bundled music](music/README.md) and [music rights](music/COPYRIGHT.md)
 - [Proxmox LXC GPU recovery](GPU_RECOVERY_LXC.md)
 - [Place-name aliases](resources/PLACE_NAMES.md)
+
+### Synlighed på sharelinks
+
+Ved oprettelse og redigering af eksisterende sharelinks kan administratoren slå
+**Vis andres uploads** til eller fra. Eksisterende links bevarer som udgangspunkt
+deres hidtidige synlighed. Slås visning fra, kan linkbesøgende kun se, hente og
+(eventuelt) slette egne uploads fra den samme browsers session. Begrænsningen
+omfatter oversigter, mappeforhåndsvisninger, direkte medielinks og ZIP-download.
+Oprettede brugere beholder adgang ud fra deres normale mappetilladelser.
+
+Egne gæsteuploads genkendes med en tilfældig sessionsidentitet, ikke det indtastede
+navn. Rydning af browserdata eller brug af en anden browser giver derfor ikke
+adgang til tidligere gæsteuploads. Ældre uploads uden denne identitet skjules
+for linkbesøgende, når begrænsningen aktiveres; administratorer og brugere med
+mappeadgang kan fortsat se dem.

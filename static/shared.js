@@ -286,6 +286,7 @@ function t(key) {
     auth_continue: 'Forts\u00e6t',
     upload_pick: 'Upload',
     perms_label: 'Tilladelser',
+    own_uploads_only: 'Andres uploads er skjult for linkbesøgende. Egne uploads genkendes i den browser, du uploader fra.',
     perms_view: 'Se',
     perms_view_upload: 'Se og upload',
     perms_view_upload_delete: 'Se, upload og slette',
@@ -360,6 +361,7 @@ function t(key) {
     auth_continue: 'Continue',
     upload_pick: 'Upload',
     perms_label: 'Permissions',
+    own_uploads_only: 'Other people’s uploads are hidden from link visitors. Your uploads are recognised in the browser you upload from.',
     perms_view: 'View',
     perms_view_upload: 'View and upload',
     perms_view_upload_delete: 'View, upload and delete',
@@ -2023,6 +2025,12 @@ async function loadInfo() {
       ? folderNames[0]
       : (String(data.share_name || '').trim() || String(data.folder_label || '').replace(/^uploads\//,'').trim());
     els.meta.innerHTML = `<div class="meta-folder">${baseTitle}</div><div class="meta-perms">${t('perms_label')}: ${permsText}</div>`;
+    if (data.show_others_uploads === false) {
+      const notice = document.createElement('div');
+      notice.className = 'meta-perms';
+      notice.textContent = t('own_uploads_only');
+      els.meta.appendChild(notice);
+    }
   }
   if (els.uploadWrap) els.uploadWrap.style.display = data.can_upload ? '' : 'none';
   if (els.uploadBtn) els.uploadBtn.style.display = data.can_upload ? '' : 'none';
