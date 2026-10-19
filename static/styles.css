@@ -2435,7 +2435,10 @@ body.view-mapper .folder-card.selected .folder-select-badge::after {
     gap: 6px;
   }
 
-  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-copy],
+  #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-copy] {
+    grid-column: 1 / -1;
+  }
+
   #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-qr],
   #sharedLinksList .dns-shares-table-wrap td.col-actions .btn[data-share-extend] {
     display: none;
