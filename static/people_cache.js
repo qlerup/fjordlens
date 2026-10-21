@@ -139,8 +139,15 @@
   }
 
   function fetchPeople(key, { render = true } = {}) {
-    if (inflight.has(key)) return inflight.get(key);
+    const pending = inflight.get(key);
+    if (pending) {
+      // Navigation can join a background prefetch. Promote that request so its
+      // result also updates the visible list instead of leaving skeletons up.
+      pending.render = pending.render || render;
+      return pending.promise;
+    }
 
+    const request = { render, promise: null };
     const url = key === 'hidden:1' ? '/api/people?include_hidden=1' : '/api/people';
     const started = performance.now();
     const promise = fetch(url, { cache: 'no-store' })
@@ -150,7 +157,7 @@
           throw new Error((data && data.error) || `HTTP ${response.status}`);
         }
         const items = Array.isArray(data.items) ? data.items : [];
-        applyItems(key, items, Date.now(), render);
+        applyItems(key, items, Date.now(), request.render);
         try {
           const elapsed = Math.round(performance.now() - started);
           if (elapsed >= 750) console.debug(`[FjordLens] People API: ${elapsed} ms (${items.length} people)`);
@@ -168,7 +175,8 @@
         inflight.delete(key);
       });
 
-    inflight.set(key, promise);
+    request.promise = promise;
+    inflight.set(key, request);
     return promise;
   }
 

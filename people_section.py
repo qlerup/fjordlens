@@ -8,7 +8,7 @@ from flask_login import current_user
 
 
 PEOPLE_FAST_ASSET = "/static/people_fast.js?v=6"
-PEOPLE_CACHE_ASSET = "/static/people_cache.js?v=2"
+PEOPLE_CACHE_ASSET = "/static/people_cache.js?v=3"
 
 
 def _allow_manager_for_people_action(original):
