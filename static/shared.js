@@ -1070,7 +1070,7 @@ function continueUploadPrepModal() {
 }
 
 function openShareFilePicker(skipPrepNotice = false) {
-  if (!els.fileInput) return;
+  if (!els.fileInput || uploadProgress.active) return;
   if (!skipPrepNotice && shouldShowUploadPrepNotice()) {
     showUploadPrepModal(() => openShareFilePicker(true));
     return;
@@ -2170,6 +2170,24 @@ async function runAuth() {
   await boot();
 }
 
+const shareUploadFileReader = {
+  async openFile(file, chunkSize) {
+    // Read in the page process: iOS WebKit can lose access to disk-backed
+    // Blob slices when the networking process serializes them (WebKit 319985).
+    // Bound memory to one TUS chunk, including when resuming at a new offset.
+    return {
+      size: file.size,
+      async slice(start, end) {
+        const stop = Math.min(end, start + chunkSize, file.size);
+        const value = await file.slice(start, stop).arrayBuffer();
+        if (value.byteLength !== stop - start) throw new Error('Could not read upload chunk');
+        return { value: new Blob([value]), done: stop >= file.size };
+      },
+      close() {},
+    };
+  },
+};
+
 function configureShareUploadRequest(request) {
   // tus-js-client's XHR transport has no default timeout. A stalled chunk
   // otherwise never reaches onError/retry, even while heartbeats still work.
@@ -2227,6 +2245,7 @@ async function runUpload(preselectedFiles = null) {
       const upload = new window.tus.Upload(file, {
         endpoint: `/api/share/${encodeURIComponent(state.token)}/upload/tus`,
         metadata: meta,
+        fileReader: shareUploadFileReader,
         uploadDataDuringCreation: false,
         withCredentials: true,
         onBeforeRequest: configureShareUploadRequest,
@@ -2418,8 +2437,7 @@ if (els.fileInput) {
         console.error(e);
       }
     }, 50);
-    // Clear value so the same files can be picked again later
-    els.fileInput.value = '';
+    // Keep the picker-backed files alive until runUpload's finally block.
   });
 }
 if (els.deleteBtn) els.deleteBtn.addEventListener('click', runDelete);
