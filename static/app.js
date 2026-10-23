@@ -13200,9 +13200,19 @@ async function deleteSelectedMapperPhotos() {
       photo_ids => requestMapperDeletion('/api/photos/delete', {photo_ids}),
       (data, batch) => {
         invalidateStoredFolderPreviews(data.preview_folders || (data.removed && data.removed.preview_folders) || []);
-        for (const id of (data.deleted_ids || batch)) state.mapperSelectedPhotoIds.delete(id);
+        const deletedIds = new Set(data.deleted_ids || batch);
+        for (const id of deletedIds) state.mapperSelectedPhotoIds.delete(id);
+        // Apply confirmed deletions immediately, even when the refresh is slow
+        // or fails. Cancel older reads so they cannot restore deleted cards.
+        photosRequestSequence++;
+        photosAbortController?.abort();
+        galleryDataCache.clear();
+        mapperViews.clear();
+        state.items = (state.items || []).filter(item => !deletedIds.has(item.id));
+        if (Array.isArray(state.viewerItems)) state.viewerItems = state.viewerItems.filter(item => !deletedIds.has(item.id));
+        renderGrid();
         removed += Number((data.removed && data.removed.photos) || 0);
-        return batch.filter(id => (data.deleted_ids || batch).includes(id)).length;
+        return batch.filter(id => deletedIds.has(id)).length;
       });
     if (completed) setMapperEditMode(false);
     await loadPhotos(false, true);

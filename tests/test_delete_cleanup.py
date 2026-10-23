@@ -131,6 +131,68 @@ class DeleteCleanupTests(unittest.TestCase):
         with fjordlens.closing(fjordlens.get_conn()) as conn:
             self.assertIsNotNone(conn.execute("SELECT 1 FROM folder_index_dirty WHERE path='trip'").fetchone())
 
+    def test_normal_video_delete_never_scans_conversion_directory(self):
+        photo_id, _, src, _ = self._insert_photo_with_face('uploads/originals/trip/clip.mp4')
+        unrelated = self.uploads / 'converted/trip/clip.jpg'
+        unrelated.parent.mkdir(parents=True)
+        unrelated.write_bytes(b'unrelated image')
+        with patch.object(Path, 'glob', side_effect=AssertionError('directory scan')), \
+             patch.object(fjordlens, '_find_existing_converted_for_upload_rel', side_effect=AssertionError('conversion lookup')):
+            result = fjordlens._delete_indexed_photos_by_ids([photo_id])
+        self.assertEqual(result['photos'], 1)
+        self.assertFalse(src.exists())
+        self.assertTrue(unrelated.exists())
+
+    def test_failed_source_unlink_preserves_index_and_thumbnail_for_retry(self):
+        photo_id, face_id, src, thumb = self._insert_photo_with_face('uploads/originals/trip/clip.mp4')
+        unlink = Path.unlink
+        def fail_source(path, *args, **kwargs):
+            if path == src:
+                raise PermissionError('Storage denied deletion')
+            return unlink(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', fail_source):
+            with self.assertRaisesRegex(PermissionError, 'Storage denied deletion'):
+                fjordlens._delete_indexed_photos_by_ids([photo_id])
+        self.assertTrue(src.exists())
+        self.assertTrue(thumb.exists())
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            self.assertIsNotNone(conn.execute('SELECT id FROM photos WHERE id=?', (photo_id,)).fetchone())
+            self.assertIsNotNone(conn.execute('SELECT id FROM faces WHERE id=?', (face_id,)).fetchone())
+        self.assertEqual(fjordlens._delete_indexed_photos_by_ids([photo_id])['photos'], 1)
+
+    def test_delete_removes_both_staged_and_persistent_upload(self):
+        rel = 'uploads/originals/trip/clip.mp4'
+        photo_id, _, src, _ = self._insert_photo_with_face(rel)
+        staged = fjordlens._staged_upload_path(rel)
+        staged.parent.mkdir(parents=True)
+        staged.write_bytes(b'staged')
+        self.assertEqual(fjordlens._delete_indexed_photos_by_ids([photo_id])['files'], 2)
+        self.assertFalse(src.exists())
+        self.assertFalse(staged.exists())
+
+    def test_legacy_mov_and_explicit_conversion_links_are_deleted(self):
+        import json
+        for filename, metadata in (
+            ('legacy.mov', None),
+            ('linked.mov', {'conversion': {'to_rel_path': 'uploads/converted/trip/linked_1.mp4'}}),
+        ):
+            photo_id, _, src, _ = self._insert_photo_with_face('uploads/originals/trip/' + filename)
+            converted = self.uploads / 'converted/trip' / ('legacy.mp4' if metadata is None else 'linked_1.mp4')
+            converted.parent.mkdir(parents=True, exist_ok=True)
+            converted.write_bytes(b'converted')
+            if metadata:
+                with fjordlens.closing(fjordlens.get_conn()) as conn:
+                    conn.execute('UPDATE photos SET metadata_json=? WHERE id=?', (json.dumps(metadata), photo_id))
+                    conn.commit()
+            self.assertEqual(fjordlens._delete_indexed_photos_by_ids([photo_id])['photos'], 1)
+            self.assertFalse(src.exists())
+            self.assertFalse(converted.exists())
+
+    def test_missing_source_can_still_be_removed_from_index(self):
+        photo_id, _, src, _ = self._insert_photo_with_face('uploads/originals/trip/clip.mp4')
+        src.unlink()
+        self.assertEqual(fjordlens._delete_indexed_photos_by_ids([photo_id])['photos'], 1)
+
     def test_delete_photo_removes_face_thumbs_and_photoframe_copy(self):
         rel = "uploads/originals/video.mp4"
         photo_id, face_id, src, thumb_path = self._insert_photo_with_face(rel)

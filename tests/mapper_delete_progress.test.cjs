@@ -20,6 +20,8 @@ function setup() {
   const messages = [];
   const ctx = vm.createContext({state:{currentUser:{role:'admin'},mapperSelectedFolders:new Set(),mapperSelectedPhotoIds:new Set()},
     els:{mapperDeleteBtn:button}, TextDecoder, tr:key=>labels[key]||key, showStatus:(...args)=>messages.push(args),
+    photosRequestSequence:0, photosAbortController:{abort(){}},
+    galleryDataCache:{clear(){}},mapperViews:new Map(),renderGrid(){},
     renderMapperContext(){},confirm:()=>true, invalidateStoredFolderPreviews(){},
     loadMapperTools:async()=>{},loadPhotos:async()=>{},setMapperEditMode(){}});
   vm.runInContext(source.slice(source.indexOf('function mediaPathPermission('), source.indexOf('function mapperContextMenuItemsForFolder(')), ctx);
@@ -94,4 +96,28 @@ test('partially authorized photo response counts only confirmed IDs and retains 
   await ctx.deleteSelectedMapperPhotos();
   assert.deepEqual([...ctx.state.mapperSelectedPhotoIds],[2,3]);
   assert.match(messages[0][0],/1 of 3 processed/);
+});
+
+
+test('confirmed photo deletions disappear before refresh completes and survive refresh failure',async()=>{
+  const {ctx}=setup();
+  ctx.state.mapperSelectedPhotoIds=new Set([1]);
+  ctx.state.items=[{id:1},{id:2}];
+  ctx.state.viewerItems=[{id:1},{id:2}];
+  let aborted=false, cleared=false, rendered=false;
+  ctx.photosAbortController={abort(){aborted=true;}};
+  ctx.galleryDataCache={clear(){cleared=true;}};
+  ctx.mapperViews.set('cached',{});
+  ctx.renderGrid=()=>{rendered=true;};
+  ctx.fetch=async()=>({ok:true,json:async()=>({ok:true,deleted_ids:[1],removed:{photos:1}})});
+  ctx.loadPhotos=async()=>{
+    assert.deepEqual(Array.from(ctx.state.items,p=>p.id),[2]);
+    assert.deepEqual(Array.from(ctx.state.viewerItems,p=>p.id),[2]);
+    assert.ok(aborted && cleared && rendered);
+    assert.equal(ctx.mapperViews.size,0);
+    throw Error('refresh unavailable');
+  };
+  await ctx.deleteSelectedMapperPhotos();
+  assert.deepEqual(Array.from(ctx.state.items,p=>p.id),[2]);
+  assert.equal(ctx.state.mapperDeleteProgress,null);
 });

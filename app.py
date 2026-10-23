@@ -8885,45 +8885,47 @@ def _related_photo_rel_paths_for_delete(rel_path: str, metadata_json_raw: Any = 
     conversion_rels = _conversion_related_upload_rels(metadata_json_raw)
     rels.update(conversion_rels)
 
-    # Fallback for legacy rows without conversion metadata.
+    # Only conversion source formats can have a legacy converted sibling.
+    # Looking for JPEGs for an ordinary MP4 scanned the entire NAS directory
+    # four times and could even select an unrelated same-stem image.
     if rel.startswith("uploads/") and not conversion_rels:
-        conv_exts = (".mp4",) if Path(rel).suffix.lower() == ".mov" else None
-        conv_path = _find_existing_converted_for_upload_rel(rel, extensions=conv_exts)
-        if conv_path is not None:
-            conv_rel = _upload_path_to_rel(conv_path)
-            if conv_rel:
-                rels.add(conv_rel)
         if rel.startswith("uploads/converted/"):
             orig_path = _find_existing_original_for_converted_rel(rel)
             if orig_path is not None:
                 orig_rel = _upload_path_to_rel(orig_path)
                 if orig_rel:
                     rels.add(orig_rel)
+        elif Path(rel).suffix.lower() in ({".mov", ".heic", ".heif"} | RAW_EXTS):
+            conv_exts = (".mp4",) if Path(rel).suffix.lower() == ".mov" else None
+            conv_path = _find_existing_converted_for_upload_rel(rel, extensions=conv_exts)
+            if conv_path is not None:
+                conv_rel = _upload_path_to_rel(conv_path)
+                if conv_rel:
+                    rels.add(conv_rel)
 
     return rels
 
 
 def _delete_photo_disk_variants(rel_path: str, metadata_json_raw: Any = None, already_deleted: Optional[set[str]] = None) -> int:
     removed = 0
-    for rel in _related_photo_rel_paths_for_delete(rel_path, metadata_json_raw):
-        try:
-            fp = _disk_path_from_rel_path(rel)
+    for rel in sorted(_related_photo_rel_paths_for_delete(rel_path, metadata_json_raw)):
+        # A recovered upload can exist both in local staging and on storage.
+        paths = ([UPLOAD_DIR / rel[len("uploads/"):], _staged_upload_path(rel)]
+                 if rel.startswith("uploads/") else [PHOTO_DIR / rel])
+        for fp in paths:
             key = str(fp.resolve(strict=False))
-        except Exception:
-            try:
-                key = str(_disk_path_from_rel_path(rel))
-            except Exception:
+            if already_deleted is not None and key in already_deleted:
                 continue
-        if already_deleted is not None and key in already_deleted:
-            continue
-        try:
-            if fp.exists() and fp.is_file():
+            try:
                 fp.unlink()
-                removed += 1
-                if already_deleted is not None:
-                    already_deleted.add(key)
-        except Exception:
-            continue
+            except FileNotFoundError:
+                # Retrying an interrupted deletion is safe.
+                continue
+            # Storage errors must reach the caller; otherwise a later scan can
+            # rediscover a file that we falsely reported as deleted.
+            removed += 1
+            if already_deleted is not None:
+                already_deleted.add(key)
     return removed
 
 
@@ -9011,6 +9013,13 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
             ).fetchall()
         ]
         faces_removed = len(face_ids)
+        # Remove source files before committing index removal, without holding a
+        # SQLite write transaction during potentially slow network filesystem IO.
+        files_removed = 0
+        deleted_keys: set[str] = set()
+        for rel, metadata_json_raw in photo_file_refs:
+            files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
+
         conn.execute(f"DELETE FROM faces WHERE photo_id IN ({ph2})", resolved_ids)
         conn.execute(f"DELETE FROM photos WHERE id IN ({ph2})", resolved_ids)
         conn.commit()
@@ -9018,10 +9027,7 @@ def _delete_indexed_photos_by_ids(photo_ids: Iterable[int]) -> dict:
     thumbs_removed = _delete_thumb_files_if_unreferenced(thumbs)
     face_thumbs_removed = _delete_face_thumb_files(face_ids)
 
-    files_removed = 0
-    deleted_keys: set[str] = set()
-    for rel, metadata_json_raw in photo_file_refs:
-        files_removed += _delete_photo_disk_variants(rel, metadata_json_raw, already_deleted=deleted_keys)
+    for rel, _ in photo_file_refs:
         files_removed += _delete_photoframe_prepared_copy(rel)
     preview_folders = _invalidate_deleted_photo_previews([rel for rel, _ in photo_file_refs])
 
