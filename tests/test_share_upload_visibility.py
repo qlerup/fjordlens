@@ -156,6 +156,42 @@ class ShareUploadVisibilityTests(unittest.TestCase):
             row=db.execute("SELECT share_visitor_id FROM photos WHERE filename='tus.jpg'").fetchone()
         self.assertEqual(row['share_visitor_id'],owner)
 
+    def test_private_share_video_upload_resumes_across_multiple_chunks(self):
+        import base64
+        guest, _, _ = self._prepare()
+        # Transfer/ownership testing does not require decoding the MOV contents.
+        data = b'video' * (1024 * 1024)
+        created = guest.post('/api/share/private-link/upload/tus', headers={
+            'Tus-Resumable': '1.0.0', 'Upload-Length': str(len(data)),
+            'Upload-Metadata': 'filename ' + base64.b64encode(b'video.mov').decode(),
+        })
+        self.assertEqual(created.status_code, 201)
+        location = created.headers['Location']
+        chunk_size = 2 * 1024 * 1024
+        with patch.object(lens, '_queue_uploaded_rel'):
+            for offset in range(0, len(data), chunk_size):
+                head = guest.head(location, headers={'Tus-Resumable': '1.0.0'})
+                self.assertEqual(head.status_code, 204)
+                self.assertEqual(int(head.headers['Upload-Offset']), offset)
+                chunk = data[offset:offset + chunk_size]
+                result = guest.post(location, data=chunk, headers={
+                    'Tus-Resumable': '1.0.0', 'Upload-Offset': str(offset),
+                    'X-HTTP-Method-Override': 'PATCH',
+                    'Content-Type': 'application/offset+octet-stream',
+                })
+                self.assertEqual(result.status_code, 204, result.get_data(as_text=True))
+                self.assertEqual(int(result.headers['Upload-Offset']), offset + len(chunk))
+        with lens.closing(lens.get_conn()) as db:
+            row = db.execute("SELECT * FROM photos WHERE filename='video.mov'").fetchone()
+        with guest.session_transaction() as session:
+            self.assertEqual(row['share_visitor_id'], session['share_visitor_id'])
+        self.assertEqual(lens._disk_path_from_rel_path(row['rel_path']).read_bytes(), data)
+        with patch.object(lens, '_sync_upload_folder_from_disk'):
+            own = guest.get('/api/share/private-link/photos').get_json()['items']
+            others = lens.app.test_client().get('/api/share/private-link/photos').get_json()['items']
+        self.assertIn(row['id'], [item['id'] for item in own])
+        self.assertNotIn(row['id'], [item['id'] for item in others])
+
     def test_metadata_conversion_preserves_ownership(self):
         guest, own, other=self._prepare()
         source='uploads/originals/album/mine.jpg'

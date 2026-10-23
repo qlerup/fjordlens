@@ -2170,6 +2170,18 @@ async function runAuth() {
   await boot();
 }
 
+function configureShareUploadRequest(request) {
+  // tus-js-client's XHR transport has no default timeout. A stalled chunk
+  // otherwise never reaches onError/retry, even while heartbeats still work.
+  const xhr = request.getUnderlyingObject();
+  xhr.timeout = 120000;
+  xhr.ontimeout = () => {
+    // The bundled tus transport listens for error, but not timeout.
+    // Forward it to the transport so its normal HEAD/resume retry path runs.
+    if (typeof xhr.onerror === 'function') xhr.onerror(new Error('Upload timed out'));
+  };
+}
+
 async function runUpload(preselectedFiles = null) {
   const files = Array.isArray(preselectedFiles)
     ? preselectedFiles
@@ -2217,6 +2229,7 @@ async function runUpload(preselectedFiles = null) {
         metadata: meta,
         uploadDataDuringCreation: false,
         withCredentials: true,
+        onBeforeRequest: configureShareUploadRequest,
         overridePatchMethod: true,
         chunkSize: 2 * 1024 * 1024,
         parallelUploads: 1,
@@ -2246,6 +2259,7 @@ async function runUpload(preselectedFiles = null) {
   }
 
   let saved=0, failed=0;
+  let firstUploadError = '';
   if (!hasTusClient()) { showStatus('TUS klient mangler. Genindl\u00e6s siden.', 'err'); return; }
   showUploadWarningModal();
   startShareUploadProgress(uploadFiles);
@@ -2257,7 +2271,11 @@ async function runUpload(preselectedFiles = null) {
       const r = await uploadTus(f);
       const ok = !!(r && r.ok);
       finishShareUploadFile(f, ok);
-      if (ok) saved+=1; else failed+=1;
+      if (ok) saved+=1;
+      else {
+        failed+=1;
+        if (!firstUploadError) firstUploadError = `${f.name}: ${r.error || 'Upload failed'}`;
+      }
     }
   } finally {
     await stopShareUploadTransferHeartbeat();
@@ -2275,7 +2293,7 @@ async function runUpload(preselectedFiles = null) {
   }
   if (postprocessError) {
     showStatus(`${t('upload_done')} - ${t('postprocess_start_failed')}: ${postprocessError}`, 'err');
-  } else if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl`, 'err'); }
+  } else if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl. ${firstUploadError}`, 'err'); }
   else { showStatus(t('upload_done'), 'ok'); }
   await loadPhotos(true);
 }
