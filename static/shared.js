@@ -2313,7 +2313,13 @@ async function runUpload(preselectedFiles = null) {
   if (postprocessError) {
     showStatus(`${t('upload_done')} - ${t('postprocess_start_failed')}: ${postprocessError}`, 'err');
   } else if (failed>0){ showStatus(`${t('upload_done')} - ${saved} ok - ${failed} fejl. ${firstUploadError}`, 'err'); }
-  else { showStatus(t('upload_done'), 'ok'); }
+  else {
+    showStatus(t('upload_done'), 'ok');
+    if (saved > 0) {
+      const dialog = document.getElementById('uploadCompleteDialog');
+      if (dialog && !dialog.open) dialog.showModal();
+    }
+  }
   await loadPhotos(true);
 }
 

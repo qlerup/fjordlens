@@ -182,6 +182,13 @@
     </div>
   </main>
 
+  <dialog id="uploadCompleteDialog" class="upload-complete-dialog" aria-labelledby="uploadCompleteTitle" aria-describedby="uploadCompleteMessage uploadCompleteCloseHint">
+    <h2 id="uploadCompleteTitle">{{ 'Upload complete' if ui_lang == 'en' else 'Upload er færdigt' }}</h2>
+    <p id="uploadCompleteMessage">{{ 'Your photos will be available once postprocessing is complete.' if ui_lang == 'en' else 'Billederne bliver tilgængelige, når efterbehandlingen er færdig.' }}</p>
+    <p id="uploadCompleteCloseHint">{{ 'You can close your browser now. Postprocessing continues on the server.' if ui_lang == 'en' else 'Du kan godt lukke browseren nu. Efterbehandlingen fortsætter på serveren.' }}</p>
+    <form method="dialog" class="actions"><button type="submit" class="btn primary" autofocus>OK</button></form>
+  </dialog>
+
   <script>
     window.SHARE_TOKEN = {{ share_token|tojson }};
   </script>

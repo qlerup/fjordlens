@@ -7,7 +7,7 @@ const source = fs.readFileSync('static/shared.js', 'utf8');
 function setup(Upload) {
   const messages = [];
   const ctx = vm.createContext({
-    Blob, window:{tus:{Upload}}, state:{token:'private-link'}, els:{},
+    document:{getElementById:()=>null}, Blob, window:{tus:{Upload}}, state:{token:'private-link'}, els:{},
     fetch:async()=>({ok:true,status:200,json:async()=>({ok:true,can_upload:true,show_others_uploads:false})}),
     showStatus:(text,tone)=>messages.push({text,tone}),t:key=>key,
     applyShareUploadFileTypes(){},renderShareBlockedTypes(){},
@@ -95,3 +95,25 @@ test('successful resumed upload still starts postprocessing',async()=>{
   assert.ok(resumed && processed);
   assert.equal(messages.at(-1).tone,'ok');
 });
+
+for (const outcome of ['success', 'file-error', 'postprocess-error']) {
+  test(`completion popup only follows a successful upload and postprocess start: ${outcome}`, async()=>{
+    class Upload {
+      constructor(file,options){this.options=options;}
+      findPreviousUploads(){return Promise.resolve([]);}
+      start(){
+        if(outcome==='file-error')this.options.onError(new Error('Transfer failed'));
+        else this.options.onSuccess();
+      }
+    }
+    const {ctx}=setup(Upload);
+    let shown=0, started=false;
+    ctx.document.getElementById=()=>({open:false,showModal(){assert.ok(started);shown++;}});
+    ctx.startShareUploadPostprocess=async()=>{
+      if(outcome==='postprocess-error')throw new Error('Unavailable');
+      started=true;
+    };
+    await ctx.runUpload([{name:'video.mov',size:123}]);
+    assert.equal(shown,outcome==='success'?1:0);
+  });
+}
