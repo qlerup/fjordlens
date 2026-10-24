@@ -5053,17 +5053,14 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str, shar
     """
     rel = str(rel_path or "").strip()
     if not rel:
-        return
-    try:
-        st = disk_path.stat()
-    except Exception:
-        return
+        raise ValueError("Upload path is required")
+    st = disk_path.stat()
 
     ts_iso = datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
     payload = {
         "rel_path": rel,
-        "filename": disk_path.name,
-        "ext": disk_path.suffix.lower(),
+        "filename": Path(rel).name,
+        "ext": Path(rel).suffix.lower(),
         "file_size": int(st.st_size),
         "created_fs": ts_iso,
         "modified_fs": ts_iso,
@@ -5111,6 +5108,7 @@ def _upsert_uploaded_stub(rel_path: str, disk_path: Path, uploaded_by: str, shar
             log_event("error", rel_path=rel, error=f"upload_stub_upsert: {e}")
         except Exception:
             pass
+        raise
 
 
 def _commit_uploaded_file(
@@ -5156,16 +5154,37 @@ def _commit_uploaded_file(
     rel = f"{rel_prefix}{rel_leaf}" if rel_prefix else rel_leaf
     committed_path = _staged_upload_path(rel) if should_stage_conversion else target
     committed_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source_path), str(committed_path))
+    # A cross-filesystem move can leave a visible copy behind if copying or
+    # removing the source fails. Keep incomplete files hidden from disk sync,
+    # and persist ownership before publishing the complete file atomically.
+    publish_tmp = committed_path.with_name(f".{committed_path.name}.{secrets.token_hex(8)}.upload")
+    registered = False
     try:
-        if last_modified_ms:
-            ts = float(last_modified_ms) / 1000.0
-            os.utime(committed_path, (ts, ts))
+        shutil.copy2(source_path, publish_tmp)
+        try:
+            if last_modified_ms:
+                ts = float(last_modified_ms) / 1000.0
+                os.utime(publish_tmp, (ts, ts))
+        except Exception:
+            pass
+        _upsert_uploaded_stub(rel, publish_tmp, uploaded_by, share_visitor_id)
+        registered = True
+        os.replace(publish_tmp, committed_path)
     except Exception:
-        pass
+        if registered:
+            with closing(get_conn()) as conn:
+                conn.execute("DELETE FROM photos WHERE rel_path=?", (rel,))
+                conn.commit()
+        raise
+    finally:
+        publish_tmp.unlink(missing_ok=True)
 
-    # Record ownership before background workers can index/convert the upload.
-    _upsert_uploaded_stub(rel, committed_path, uploaded_by, share_visitor_id)
+    # Once published, failure to remove the private transfer file must not
+    # turn a committed upload into a failed request and trigger another copy.
+    try:
+        source_path.unlink()
+    except OSError as e:
+        log_event("error", rel_path=rel, error=f"upload_source_cleanup: {e}")
     try:
         _queue_uploaded_rel(uploaded_by, rel)
     except Exception as e:

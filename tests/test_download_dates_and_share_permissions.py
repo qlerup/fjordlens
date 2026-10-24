@@ -80,6 +80,7 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
             "UPLOAD_DIR": fjordlens.UPLOAD_DIR,
             "THUMB_DIR": fjordlens.THUMB_DIR,
             "CONVERT_DIR": fjordlens.CONVERT_DIR,
+            "CONVERSION_WORK_DIR": fjordlens.CONVERSION_WORK_DIR,
             "TUS_TMP_DIR": fjordlens.TUS_TMP_DIR,
             "DB_PATH": fjordlens.DB_PATH,
             "INSTALL_STATE_PATH": fjordlens.INSTALL_STATE_PATH,
@@ -90,6 +91,7 @@ class DownloadDatesAndSharePermissionsTests(unittest.TestCase):
         fjordlens.UPLOAD_DIR = root / "uploads"
         fjordlens.THUMB_DIR = root / "thumbs"
         fjordlens.CONVERT_DIR = fjordlens.DATA_DIR / "converted"
+        fjordlens.CONVERSION_WORK_DIR = root / "conversion_work"
         fjordlens.TUS_TMP_DIR = fjordlens.DATA_DIR / "tus_uploads"
         fjordlens.DB_PATH = fjordlens.DATA_DIR / "fjordlens.db"
         fjordlens.INSTALL_STATE_PATH = fjordlens.DATA_DIR / "fjordlens.install.json"

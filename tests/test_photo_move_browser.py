@@ -32,6 +32,7 @@ def test_photo_move_picker_and_context_download(tmp_path, copying):
           window.fetch=async(url,opts)=>{
             window.payload={url,...JSON.parse(opts.body)};
             if(window.fail) return {ok:false,json:async()=>({ok:false,error:'Ingen adgang'})};
+            if(url==='/api/settings/upload-folder') return {ok:true,json:async()=>({ok:true,created:[payload.parent,payload.path].filter(Boolean).join('/')})};
             return {ok:true,json:async()=>({ok:true,moved:2,copied:2,renamed:1,destination:'New/Holiday'})};
           };
         }""")
@@ -45,6 +46,7 @@ def test_photo_move_picker_and_context_download(tmp_path, copying):
         if copying:
             expect(page.locator('dialog')).to_contain_text('Original og konverteret fil kopieres sammen.')
         expect(page.locator('[data-save]')).to_be_disabled()
+        expect(page.get_by_role('button', name='Opret mappe', exact=True)).to_be_disabled()
         expect(page.get_by_role('button',name='Read only',exact=True)).to_be_disabled()
         expect(page.get_by_role('button',name='Nakkefoldscanning',exact=True)).to_be_hidden()
         page.get_by_role('button',name='Undermapper i Bette',exact=True).click()
@@ -59,10 +61,24 @@ def test_photo_move_picker_and_context_download(tmp_path, copying):
         page.get_by_role('button', name='New', exact=True).click()
         page.get_by_label('Ny undermappe (valgfrit)').fill('Holiday')
         expect(page.locator('.move-preview')).to_contain_text('New/Holiday')
+        expect(page.get_by_role('button', name='Opret mappe', exact=True)).to_be_enabled()
         for width in [1280,390,320]:
             page.set_viewport_size({'width':width,'height':850})
             assert page.locator('dialog').evaluate('(el)=>el.scrollWidth<=el.clientWidth')
             page.screenshot(path=str(tmp_path/f'{"copy" if copying else "move"}-photos-{width}.png'))
+        page.evaluate('window.fail=true')
+        page.get_by_role('button', name='Opret mappe', exact=True).click()
+        expect(page.locator('.move-error')).to_contain_text('Ingen adgang')
+        expect(page.get_by_label('Ny undermappe (valgfrit)')).to_have_value('Holiday')
+        expect(page.get_by_role('button', name='Opret mappe', exact=True)).to_be_enabled()
+        page.evaluate('window.fail=false')
+        page.get_by_role('button', name='Opret mappe', exact=True).click()
+        expect(page.get_by_role('button', name='Holiday', exact=True)).to_have_attribute('aria-pressed', 'true')
+        expect(page.get_by_label('Ny undermappe (valgfrit)')).to_have_value('')
+        expect(page.locator('.move-preview')).to_have_text('Ny placering: New/Holiday')
+        expect(page.get_by_role('button', name='Opret mappe', exact=True)).to_be_disabled()
+        assert page.evaluate('window.payload') == dict(url='/api/settings/upload-folder',destination='uploads',parent='New',path='Holiday')
+        page.screenshot(path=str(tmp_path/f'{"copy" if copying else "move"}-folder-created.png'))
         page.evaluate('window.fail=true')
         page.locator('[data-save]').click()
         expect(page.locator('.move-error')).to_contain_text('Ingen adgang')
@@ -72,7 +88,7 @@ def test_photo_move_picker_and_context_download(tmp_path, copying):
         page.evaluate('window.fail=false')
         page.locator('[data-save]').click()
         expect(page.locator('dialog')).to_have_count(0)
-        assert page.evaluate('window.payload') == dict(url='/api/photos/copy' if copying else '/api/photos/move',photo_ids=[1,2],parent='New',new_name='Holiday')
+        assert page.evaluate('window.payload') == dict(url='/api/photos/copy' if copying else '/api/photos/move',photo_ids=[1,2],parent='New/Holiday',new_name='')
         assert '2 billeder' in page.evaluate('statusMessage') and '1 omdøbt' in page.evaluate('statusMessage')
         assert page.evaluate('state.mapperEditMode') is False
         if copying:

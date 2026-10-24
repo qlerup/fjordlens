@@ -15450,7 +15450,7 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
   dialog.innerHTML = `<h3 id="mapper-move-title">${copying ? 'Kopiér valgte billeder' : movingPhotos ? 'Flyt valgte billeder' : 'Flyt mappe'}</h3><p class="move-source"></p>
     <p>${copying ? 'Vælg en mappe til kopierne. Original og konverteret fil kopieres sammen. Navnesammenfald omdøbes automatisk, og kopierne efterbehandles automatisk.' : movingPhotos ? 'Vælg en eksisterende mappe, eller vælg en placering og angiv et navn på en ny undermappe. Billeder med samme navn omdøbes automatisk.' : 'Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:'}</p>
     <input type="search" class="move-search" placeholder="Søg efter destinationsmappe" aria-label="Søg efter destinationsmappe">
-    <div class="move-destinations"></div>${movingPhotos ? '<label>Ny undermappe (valgfrit)<input class="move-new-name move-search" placeholder="Lad feltet være tomt for at bruge den valgte mappe" maxlength="100"></label>' : ''}<p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
+    <div class="move-destinations"></div>${movingPhotos ? '<div class="move-create-folder"><label>Ny undermappe (valgfrit)<input class="move-new-name move-search" placeholder="Navn på ny mappe" maxlength="100" aria-describedby="move-create-hint"></label><button type="button" class="btn" data-create-folder disabled>Opret mappe</button><small id="move-create-hint">Vælg en placering ovenfor, og skriv et mappenavn.</small></div>' : ''}<p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
     <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>${copying ? 'Kopiér hertil' : 'Flyt hertil'}</button></div>`;
   dialog.querySelector('.move-source').textContent = movingPhotos ? `${photoIds.length} valgte billeder` : 'Mappe: ' + source;
   let destination = null, busy = false;
@@ -15459,7 +15459,14 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
     && (movingPhotos || path !== source && !path.startsWith(source + '/') && path !== currentParent))
     .filter(path => !movingPhotos || mapperFolderAllows(path, copying ? 'upload' : 'edit'));
   const newName = dialog.querySelector('.move-new-name');
+  const createFolder = dialog.querySelector('[data-create-folder]');
   function updatePreview() {
+    if (createFolder) {
+      createFolder.disabled = busy || destination === null || !newName.value.trim();
+      dialog.querySelector('#move-create-hint').textContent = destination === null
+        ? 'Vælg en placering ovenfor, og skriv et mappenavn.'
+        : 'Ny mappe oprettes i: ' + (destination || 'Rodmappe');
+    }
     if (destination === null) return;
     const leaf = movingPhotos ? (newName.value.trim() ? '/' + newName.value.trim() : '') : '/' + source.split('/').pop();
     dialog.querySelector('.move-preview').textContent = 'Ny placering: ' + ((destination + leaf).replace(/^\//, '') || 'Rodmappe');
@@ -15470,7 +15477,8 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
   const nodes = new Map([['', {path: '', children: new Map()}]]);
   // Build structural parents too, including parents without write permission.
   // Those can be expanded but cannot be selected as a destination.
-  for (const path of paths.filter(Boolean)) {
+  function addFolder(path) {
+    if (!path) return;
     let parent = nodes.get(''), prefix = '';
     for (const name of path.split('/')) {
       prefix = prefix ? prefix + '/' + name : name;
@@ -15479,6 +15487,7 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
       parent = nodes.get(prefix);
     }
   }
+  for (const path of paths.filter(Boolean)) addFolder(path);
   function render() {
     list.replaceChildren();
     const query = search.value.trim().toLocaleLowerCase('da');
@@ -15539,6 +15548,42 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
     if (!list.children.length) list.textContent = 'Ingen andre mapper fundet.';
   }
   search.oninput = render;
+  if (createFolder) createFolder.onclick = async () => {
+    if (busy || destination === null || !newName.value.trim()) return;
+    busy = true;
+    dialog.querySelectorAll('button,input').forEach(el => el.disabled = true);
+    createFolder.textContent = 'Opretter…'; createFolder.setAttribute('aria-busy', 'true');
+    dialog.querySelector('.move-error').textContent = '';
+    try {
+      const response = await fetch('/api/settings/upload-folder', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({destination: 'uploads', parent: destination, path: newName.value.trim()}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok || typeof data.created !== 'string' || !data.created) {
+        throw new Error(data.error || 'Mappen kunne ikke oprettes.');
+      }
+      destination = data.created;
+      if (!selectablePaths.has(destination)) paths.push(destination);
+      selectablePaths.add(destination); addFolder(destination);
+      let parent = destination;
+      while (parent.includes('/')) {
+        parent = parent.slice(0, parent.lastIndexOf('/')); expandedFolders.add(parent);
+      }
+      search.value = ''; newName.value = '';
+      galleryDataCache.clear(); mapperViews.clear();
+      updatePreview();
+    } catch (error) {
+      dialog.querySelector('.move-error').textContent = error.message;
+    } finally {
+      busy = false;
+      dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
+      createFolder.textContent = 'Opret mappe'; createFolder.removeAttribute('aria-busy');
+      render(); updatePreview(); save.disabled = destination === null;
+      const selected = [...list.querySelectorAll('.move-destination-option')].find(el => el.getAttribute('aria-pressed') === 'true');
+      if (selected) {selected.scrollIntoView({block: 'nearest'}); selected.focus();}
+    }
+  };
   dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
   dialog.addEventListener('cancel', event => {if (busy) event.preventDefault();});
   dialog.addEventListener('close', () => dialog.remove());
@@ -15569,6 +15614,7 @@ async function openMapperMoveDialog(source, photoIds = null, copying = false) {
     } finally {
       busy = false; dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
       render(); save.disabled = destination === null;
+      updatePreview();
       save.textContent = copying ? 'Kopiér hertil' : 'Flyt hertil'; save.classList.remove('loading'); save.removeAttribute('aria-busy');
     }
   };
