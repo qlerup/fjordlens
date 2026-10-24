@@ -353,19 +353,26 @@ def manual_cover(conn, path, saved):
 
 
 def refresh_covers(conn, limit=8, thumb_root=None, only=None):
-    """Drain coalesced invalidations. All reads/writes share a transaction.
+    """Read a cover snapshot without taking the SQLite writer lock.
 
-    A concurrent upload either commits before this snapshot or requeues the
-    folder afterwards. Deletion cannot be resurrected by a stale cover job.
+    Thumbnail I/O may be slow on a NAS. In WAL mode other writers can commit
+    while we inspect files; upgrading a stale read snapshot then returns BUSY.
+    Roll it back and leave the invalidation queued for the next worker pass.
     """
     done = 0
     attempted = set()
     for _ in range(limit):
-        conn.execute('BEGIN IMMEDIATE')
+        conn.execute('BEGIN')
         try:
+            changes_before = conn.total_changes
             if covers_busy(conn):
                 conn.commit()
                 break
+            if conn.total_changes != changes_before:
+                # Reaping a dead batch marker acquired the writer lock. Release
+                # it before starting a fresh cover snapshot with thumbnail I/O.
+                conn.commit()
+                continue
             row = (conn.execute('SELECT path FROM folder_index_dirty WHERE path=?', (only,)).fetchone() if only is not None
                    else conn.execute('SELECT path FROM folder_index_dirty ORDER BY rowid LIMIT 1').fetchone())
             if not row:
@@ -433,6 +440,11 @@ def refresh_covers(conn, limit=8, thumb_root=None, only=None):
             conn.execute('DELETE FROM folder_index_dirty WHERE path=?', (path,))
             conn.commit()
             done += 1
+        except sqlite3.OperationalError as exc:
+            conn.rollback()
+            if (getattr(exc, 'sqlite_errorcode', 0) & 0xff) == sqlite3.SQLITE_BUSY:
+                break  # Snapshot invalidated; no dirty marker or cover was committed.
+            raise
         except Exception:
             conn.rollback()
             raise

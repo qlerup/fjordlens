@@ -15161,7 +15161,6 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
         if "process_status" in result:
             aggregate["process_status"] = result["process_status"]
 
-    @media_activity.track(lambda: rels, consume_queue=True)
     def run() -> None:
         all_rels = list(rels)
         fatal_error = False
@@ -15188,109 +15187,111 @@ def _start_direct_upload_postprocess(rel_paths: list[str]) -> bool:
             )
 
         try:
-            if aggregate.get("faces_enabled") and rels:
-                _ai_face_runtime_warmup()
-            batch = list(rels)
-            while batch:
-                if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
-                    break
-                chunk = batch[:DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE]
-                batch = batch[DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE:]
-                try:
-                    log_event("direct_upload_postprocess_start", files=len(chunk), pending=len(batch), workflow_mode=workflow_mode)
-                except Exception:
-                    pass
-                result = _run_postprocess_serialized(
-                    "",
-                    chunk,
-                    progress_cb=set_direct_progress,
-                    workflow_mode=workflow_mode,
-                    item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
-                    stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
-                    deferred_face_writes=deferred_face_writes,
-                )
-                merge_result(result)
-                processed_total += int(result.get("received") or len(chunk))
-                try:
-                    log_event(
-                        "direct_upload_postprocess_done",
-                        files=result.get("received"),
-                        indexed=result.get("indexed"),
-                        heic_converted=result.get("heic_converted"),
-                        faces_done=result.get("faces_done"),
-                        ai_done=result.get("ai_done"),
-                        ai_desc_done=result.get("ai_desc_done"),
+            # Lease acquisition belongs inside cleanup/error handling too.
+            with media_activity.processing(rels, consume_queue=True):
+                if aggregate.get("faces_enabled") and rels:
+                    _ai_face_runtime_warmup()
+                batch = list(rels)
+                while batch:
+                    if UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                        break
+                    chunk = batch[:DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE]
+                    batch = batch[DIRECT_UPLOAD_POSTPROCESS_BATCH_SIZE:]
+                    try:
+                        log_event("direct_upload_postprocess_start", files=len(chunk), pending=len(batch), workflow_mode=workflow_mode)
+                    except Exception:
+                        pass
+                    result = _run_postprocess_serialized(
+                        "",
+                        chunk,
+                        progress_cb=set_direct_progress,
+                        workflow_mode=workflow_mode,
+                        item_pause_sec=DIRECT_UPLOAD_POSTPROCESS_ITEM_PAUSE_SEC,
+                        stop_event=UPLOAD_POSTPROCESS_STOP_EVENT,
+                        deferred_face_writes=deferred_face_writes,
                     )
-                except Exception:
-                    pass
-                if bool(result.get("stopped")) or UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
-                    batch = []
-                    more = []
-                else:
-                    more = _pop_uploaded_rels(state_user)
-                if more:
-                    # Keep later arrivals protected through the final deferred
-                    # face-write phase as well, not just their individual chunk.
-                    additional_flow_tokens.append(media_activity.acquire('processing', more))
-                    batch.extend(more)
-                    all_rels.extend(more)
-                    known_total += len(more)
-                state_patch = {
-                    "workflow_mode": workflow_mode,
-                    "overall_processed": max(0, processed_total),
-                    "overall_total": max(known_total, processed_total),
-                }
-                if batch:
-                    state_patch.update({"phase": "starting", "current_rel": None})
-                _set_upload_postprocess_state(state_user, state_patch)
-                if batch and DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC > 0:
-                    time.sleep(DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC)
-
-            if deferred_face_writes and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
-                retried = 0
-                touched = set()
-                def retry_completed(rel, count, error):
-                    nonlocal retried
-                    retried += 1
-                    if error is not None:
-                        aggregate['faces_errors'] += 1
-                        processing_failures.fail(rel, 'faces', error)
-                        log_event('error', rel_path=rel, error=f'postprocess_faces_queue: {error}')
+                    merge_result(result)
+                    processed_total += int(result.get("received") or len(chunk))
+                    try:
+                        log_event(
+                            "direct_upload_postprocess_done",
+                            files=result.get("received"),
+                            indexed=result.get("indexed"),
+                            heic_converted=result.get("heic_converted"),
+                            faces_done=result.get("faces_done"),
+                            ai_done=result.get("ai_done"),
+                            ai_desc_done=result.get("ai_desc_done"),
+                        )
+                    except Exception:
+                        pass
+                    if bool(result.get("stopped")) or UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                        batch = []
+                        more = []
                     else:
-                        aggregate['faces_done'] += 1
-                        aggregate['faces_found'] += int(count > 0)
-                        aggregate['face_count'] += max(0, int(count or 0))
-                        processing_failures.clear(rel, 'faces')
-                    _set_upload_postprocess_state(state_user, {
-                        'phase': 'faces', 'current_rel': rel, 'process_status': None,
-                        'stage_processed': retried, 'stage_total': len(deferred_face_writes),
-                    })
-                _set_upload_postprocess_state(state_user, {
-                    'phase': 'faces', 'current_rel': None, 'process_status': None,
-                    'stage_processed': 0, 'stage_total': len(deferred_face_writes),
-                })
-                _retry_deferred_face_writes(deferred_face_writes,
-                    lambda: not UPLOAD_POSTPROCESS_STOP_EVENT.is_set(), retry_completed, touched)
-                if touched:
-                    _recompute_person_centroids_bulk(touched)
+                        more = _pop_uploaded_rels(state_user)
+                    if more:
+                        # Keep later arrivals protected through the final deferred
+                        # face-write phase as well, not just their individual chunk.
+                        additional_flow_tokens.append(media_activity.acquire('processing', more))
+                        batch.extend(more)
+                        all_rels.extend(more)
+                        known_total += len(more)
+                    state_patch = {
+                        "workflow_mode": workflow_mode,
+                        "overall_processed": max(0, processed_total),
+                        "overall_total": max(known_total, processed_total),
+                    }
+                    if batch:
+                        state_patch.update({"phase": "starting", "current_rel": None})
+                    _set_upload_postprocess_state(state_user, state_patch)
+                    if batch and DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC > 0:
+                        time.sleep(DIRECT_UPLOAD_POSTPROCESS_BATCH_PAUSE_SEC)
 
-            _set_upload_postprocess_state(
-                state_user,
-                {
-                    "running": False,
-                    "finished_at": now_iso(),
-                    "result": aggregate,
-                    "error": None,
-                    "phase": "stopped" if UPLOAD_POSTPROCESS_STOP_EVENT.is_set() else "done",
-                    "workflow_mode": workflow_mode,
-                    "process_status": aggregate.get("process_status"),
-                    "current_rel": None,
-                    "stage_processed": int(aggregate.get("received") or 0),
-                    "stage_total": int(aggregate.get("received") or 0),
-                    "overall_processed": int(aggregate.get("received") or 0),
-                    "overall_total": max(int(aggregate.get("received") or 0), known_total),
-                },
-            )
+                if deferred_face_writes and not UPLOAD_POSTPROCESS_STOP_EVENT.is_set():
+                    retried = 0
+                    touched = set()
+                    def retry_completed(rel, count, error):
+                        nonlocal retried
+                        retried += 1
+                        if error is not None:
+                            aggregate['faces_errors'] += 1
+                            processing_failures.fail(rel, 'faces', error)
+                            log_event('error', rel_path=rel, error=f'postprocess_faces_queue: {error}')
+                        else:
+                            aggregate['faces_done'] += 1
+                            aggregate['faces_found'] += int(count > 0)
+                            aggregate['face_count'] += max(0, int(count or 0))
+                            processing_failures.clear(rel, 'faces')
+                        _set_upload_postprocess_state(state_user, {
+                            'phase': 'faces', 'current_rel': rel, 'process_status': None,
+                            'stage_processed': retried, 'stage_total': len(deferred_face_writes),
+                        })
+                    _set_upload_postprocess_state(state_user, {
+                        'phase': 'faces', 'current_rel': None, 'process_status': None,
+                        'stage_processed': 0, 'stage_total': len(deferred_face_writes),
+                    })
+                    _retry_deferred_face_writes(deferred_face_writes,
+                        lambda: not UPLOAD_POSTPROCESS_STOP_EVENT.is_set(), retry_completed, touched)
+                    if touched:
+                        _recompute_person_centroids_bulk(touched)
+
+                _set_upload_postprocess_state(
+                    state_user,
+                    {
+                        "running": False,
+                        "finished_at": now_iso(),
+                        "result": aggregate,
+                        "error": None,
+                        "phase": "stopped" if UPLOAD_POSTPROCESS_STOP_EVENT.is_set() else "done",
+                        "workflow_mode": workflow_mode,
+                        "process_status": aggregate.get("process_status"),
+                        "current_rel": None,
+                        "stage_processed": int(aggregate.get("received") or 0),
+                        "stage_total": int(aggregate.get("received") or 0),
+                        "overall_processed": int(aggregate.get("received") or 0),
+                        "overall_total": max(int(aggregate.get("received") or 0), known_total),
+                    },
+                )
         except Exception as e:
             fatal_error = True
             _set_upload_postprocess_state(
