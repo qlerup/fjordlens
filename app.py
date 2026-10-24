@@ -4194,6 +4194,27 @@ def _postprocess_uploaded_rels(
             except Exception:
                 pass
             meta = extract_metadata(disk_path, rel, generate_thumb=False)
+            # Reindexing an existing converted copy must keep its exact original
+            # link (including collision-renamed counterparts) and source dates.
+            if not conversion_from_rel and rel.startswith('uploads/converted/'):
+                with closing(get_conn()) as conn:
+                    previous = conn.execute(
+                        'SELECT metadata_json,captured_at,gps_lat,gps_lon FROM photos WHERE rel_path=?',
+                        (rel,),
+                    ).fetchone()
+                if previous:
+                    try:
+                        previous_meta = json.loads(previous['metadata_json'] or '{}')
+                    except (ValueError, TypeError):
+                        previous_meta = {}
+                    if isinstance(previous_meta, dict) and isinstance(previous_meta.get('conversion'), dict):
+                        if previous_meta['conversion'].get('to_rel_path') == rel:
+                            for key in ('conversion', 'converted_from_rel', 'converted_from_ext', 'converted_to_ext'):
+                                if key in previous_meta:
+                                    meta.setdefault('metadata_json', {})[key] = previous_meta[key]
+                            for key in ('captured_at', 'gps_lat', 'gps_lon'):
+                                if previous[key] is not None:
+                                    meta[key] = previous[key]
             # The converted MP4 may expose FFmpeg's conversion timestamp as its
             # CreateDate. The source MOV metadata captured before conversion is
             # authoritative, including when originals are configured for deletion.
@@ -24774,6 +24795,15 @@ def _apply_upload_folder_rename_db(old_subdir: str, new_subdir: str, *, reject_c
 
 
 _UPLOAD_FOLDER_CHANGE_LOCK = threading.Lock()
+
+
+@app.route('/api/photos/copy', methods=['POST'])
+@login_required
+def api_copy_photos():
+    import photo_copy
+    import sys
+    with _UPLOAD_FOLDER_CHANGE_LOCK:
+        return photo_copy.copy_selected(sys.modules[__name__])
 
 
 @app.route('/api/photos/move', methods=['POST'])

@@ -189,6 +189,7 @@ const els = {
   momentPlayerVideoBtn: document.getElementById("momentPlayerVideoBtn"),
   mapperEditBtn: document.getElementById("mapperEditBtn"),
   mapperDeleteBtn: document.getElementById("mapperDeleteBtn"),
+  mapperCopyPhotosBtn: document.getElementById("mapperCopyPhotosBtn"),
   mapperMovePhotosBtn: document.getElementById("mapperMovePhotosBtn"),
   mapperDownloadBtn: document.getElementById("mapperDownloadBtn"),
   mapperSelectAllBtn: document.getElementById("mapperSelectAllBtn"),
@@ -10255,6 +10256,12 @@ function renderMapperContext(path = '') {
       ? tr('mapper_menu_refresh_previews')
       : tr('mapper_refresh_previews_select_one');
   }
+  if (els.mapperCopyPhotosBtn) {
+    const visible = !!state.mapperEditMode && selPhotos > 0 && selFolders === 0;
+    els.mapperCopyPhotosBtn.classList.toggle('hidden', !visible);
+    els.mapperCopyPhotosBtn.disabled = !visible || !!state.mapperDeleteProgress;
+    els.mapperCopyPhotosBtn.textContent = `Kopiér valgte (${selPhotos})`;
+  }
   if (els.mapperMovePhotosBtn) {
     const visible = !!state.mapperEditMode && selPhotos > 0 && selFolders === 0;
     els.mapperMovePhotosBtn.classList.toggle('hidden', !visible);
@@ -15430,7 +15437,7 @@ async function openMapperPrivacyDialog(folder) {
   } catch (error) {showStatus(error.message, 'err');}
 }
 
-async function openMapperMoveDialog(source, photoIds = null) {
+async function openMapperMoveDialog(source, photoIds = null, copying = false) {
   const movingPhotos = Array.isArray(photoIds);
   source = _normalizeMapperPath(source || '');
   if (!movingPhotos && !source) {showStatus('Vælg én mappe, der skal flyttes.', 'err'); return;}
@@ -15440,17 +15447,17 @@ async function openMapperMoveDialog(source, photoIds = null) {
   const currentParent = source.includes('/') ? source.slice(0, source.lastIndexOf('/')) : '';
   const dialog = document.createElement('dialog');
   dialog.className = 'mapper-move-dialog'; dialog.setAttribute('aria-labelledby','mapper-move-title');
-  dialog.innerHTML = `<h3 id="mapper-move-title">${movingPhotos ? 'Flyt valgte billeder' : 'Flyt mappe'}</h3><p class="move-source"></p>
-    <p>${movingPhotos ? 'Vælg en eksisterende mappe, eller vælg en placering og angiv et navn på en ny undermappe. Billeder med samme navn omdøbes automatisk.' : 'Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:'}</p>
+  dialog.innerHTML = `<h3 id="mapper-move-title">${copying ? 'Kopiér valgte billeder' : movingPhotos ? 'Flyt valgte billeder' : 'Flyt mappe'}</h3><p class="move-source"></p>
+    <p>${copying ? 'Vælg en mappe til kopierne. Original og konverteret fil kopieres sammen. Navnesammenfald omdøbes automatisk, og kopierne efterbehandles automatisk.' : movingPhotos ? 'Vælg en eksisterende mappe, eller vælg en placering og angiv et navn på en ny undermappe. Billeder med samme navn omdøbes automatisk.' : 'Hele mappen med alle filer og undermapper flyttes. Vælg en ny placering:'}</p>
     <input type="search" class="move-search" placeholder="Søg efter destinationsmappe" aria-label="Søg efter destinationsmappe">
     <div class="move-destinations"></div>${movingPhotos ? '<label>Ny undermappe (valgfrit)<input class="move-new-name move-search" placeholder="Lad feltet være tomt for at bruge den valgte mappe" maxlength="100"></label>' : ''}<p class="move-preview" role="status"></p><p class="move-error" role="alert"></p>
-    <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>Flyt hertil</button></div>`;
+    <div class="move-actions"><button class="btn" data-cancel>Annuller</button><button class="btn primary" data-save disabled>${copying ? 'Kopiér hertil' : 'Flyt hertil'}</button></div>`;
   dialog.querySelector('.move-source').textContent = movingPhotos ? `${photoIds.length} valgte billeder` : 'Mappe: ' + source;
   let destination = null, busy = false;
   const list = dialog.querySelector('.move-destinations'), search = dialog.querySelector('input'), save = dialog.querySelector('[data-save]');
   const paths = ['', ...allFolders].filter((path, index, all) => all.indexOf(path) === index
     && (movingPhotos || path !== source && !path.startsWith(source + '/') && path !== currentParent))
-    .filter(path => !movingPhotos || mapperFolderAllows(path));
+    .filter(path => !movingPhotos || mapperFolderAllows(path, copying ? 'upload' : 'edit'));
   const newName = dialog.querySelector('.move-new-name');
   function updatePreview() {
     if (destination === null) return;
@@ -15538,12 +15545,12 @@ async function openMapperMoveDialog(source, photoIds = null) {
   save.onclick = async () => {
     if (busy || destination === null) return;
     busy = true; dialog.querySelectorAll('button,input').forEach(el => el.disabled = true);
-    save.textContent = movingPhotos ? `Flytter ${photoIds.length} billeder …` : 'Flytter…'; save.classList.add('loading'); save.setAttribute('aria-busy','true');
+    save.textContent = copying ? `Kopierer ${photoIds.length} billeder …` : movingPhotos ? `Flytter ${photoIds.length} billeder …` : 'Flytter…'; save.classList.add('loading'); save.setAttribute('aria-busy','true');
     let moved = false;
     try {
-      const response = await fetch(movingPhotos ? '/api/photos/move' : '/api/settings/upload-folder-move', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(movingPhotos ? {photo_ids:photoIds,parent:destination,new_name:newName.value.trim()} : {path:source,parent:destination})});
+      const response = await fetch(copying ? '/api/photos/copy' : movingPhotos ? '/api/photos/move' : '/api/settings/upload-folder-move', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(movingPhotos ? {photo_ids:photoIds,parent:destination,new_name:newName.value.trim()} : {path:source,parent:destination})});
       const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || 'Mappen kunne ikke flyttes.');
+      if (!response.ok || !data.ok) throw new Error(data.error || (copying ? 'Billederne kunne ikke kopieres.' : 'Mappen kunne ikke flyttes.'));
       moved = true;
       galleryDataCache.clear(); mapperViews.clear();
       state.mapperSelectedFolders?.clear(); state.mapperSelectedPhotoIds?.clear();
@@ -15552,14 +15559,17 @@ async function openMapperMoveDialog(source, photoIds = null) {
       state.folder = state.mapperPath || null;
       dialog.close();
       if (state.view === 'mapper') {await loadMapperTools(state.mapperPath); await loadPhotos(false, true);}
-      showStatus(movingPhotos ? `${data.moved} billeder er flyttet til ${data.destination || 'Rodmappe'}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}` : 'Mappen er flyttet til ' + data.new_path, 'ok');
+      if (copying) {
+        showStatus(`${data.copied} billeder er kopieret til ${data.destination || 'Rodmappe'}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}. ${data.postprocess_pending ? 'Efterbehandlingen afventer genoptagelse.' : 'Efterbehandling er sat i gang.'}`, data.postprocess_pending ? 'err' : 'ok');
+        if (!data.postprocess_pending) resumeUploadPostprocessAfterRefresh().catch(() => {});
+      } else showStatus(movingPhotos ? `${data.moved} billeder er flyttet til ${data.destination || 'Rodmappe'}${data.renamed ? ` · ${data.renamed} omdøbt` : ''}` : 'Mappen er flyttet til ' + data.new_path, 'ok');
     } catch (error) {
-      const message = moved ? 'Flytningen er færdig. Genindlæs siden for at opdatere visningen.' : error.message;
+      const message = moved ? (copying ? 'Kopieringen er færdig. Genindlæs siden for at opdatere visningen.' : 'Flytningen er færdig. Genindlæs siden for at opdatere visningen.') : error.message;
       dialog.querySelector('.move-error').textContent = message; showStatus(message, 'err');
     } finally {
       busy = false; dialog.querySelectorAll('button,input').forEach(el => el.disabled = false);
       render(); save.disabled = destination === null;
-      save.textContent = 'Flyt hertil'; save.classList.remove('loading'); save.removeAttribute('aria-busy');
+      save.textContent = copying ? 'Kopiér hertil' : 'Flyt hertil'; save.classList.remove('loading'); save.removeAttribute('aria-busy');
     }
   };
   document.body.append(dialog); render(); dialog.showModal(); search.focus();
@@ -15575,6 +15585,7 @@ document.getElementById('mapperHeaderMoveAction')?.addEventListener('click', () 
 function mapperContextMenuItemsForPhoto(photoId) {
   return [
     {label: 'Download billede', action: () => openDownloadModal(null, [photoId])},
+    {label: 'Kopiér billede …', action: () => openMapperMoveDialog('', [photoId], true)},
     {label: 'Flyt billede …', disabled: !mapperPhotoCanDelete(photoId), action: () => openMapperMoveDialog('', [photoId])},
     {
       label: tr('mapper_ctx_select'),
@@ -17944,6 +17955,7 @@ if (els.sharedLinksList) {
 }
 
 els.mapperDeleteBtn && els.mapperDeleteBtn.addEventListener('click', deleteSelectedInMapper);
+els.mapperCopyPhotosBtn?.addEventListener('click', () => openMapperMoveDialog('', Array.from(state.mapperSelectedPhotoIds || []), true));
 els.mapperMovePhotosBtn?.addEventListener('click', () => openMapperMoveDialog('', Array.from(state.mapperSelectedPhotoIds || [])));
 els.mapperSelectAllBtn && els.mapperSelectAllBtn.addEventListener('click', mapperSelectAll);
 els.mapperClearBtn && els.mapperClearBtn.addEventListener('click', mapperClearSelection);

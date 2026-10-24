@@ -11,6 +11,15 @@ import test_folder_move as folder_tests
 def setup():
     fixture = folder_tests.FolderMoveTests()
     fixture.setUp()
+    # JPEGs are not conversion source formats. Describe this legacy pair with
+    # explicit links, as real indexed converted media do.
+    with fl.closing(fl.get_conn()) as conn:
+        conn.execute('UPDATE photos SET metadata_json=? WHERE id=?',
+                     (json.dumps({'conversion': {
+                         'from_rel_path': 'uploads/originals/Old/Album/Nested/file.jpg',
+                         'to_rel_path': 'uploads/converted/Old/Album/Nested/file.jpg',
+                     }}), fixture.photo_id))
+        conn.commit()
     with patch.object(fl, '_current_user_folder_permission_for_rel', lambda rel, conn=None: 'edit'):
         yield fixture
     fixture.tearDown()
