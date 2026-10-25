@@ -54,6 +54,14 @@
         clearTimeout(timer);
         node.removeEventListener(event, loaded);
         node.removeEventListener('error', error);
+        if (video) {
+          // Only the metadata request is cached, not a playable video element.
+          // Keeping up to 20 detached players loaded retains media resources
+          // while the visible player is loading the next clip.
+          node.pause();
+          node.removeAttribute('src');
+          node.load();
+        }
         resolve();
       };
       const loaded = () => finish();
@@ -187,11 +195,18 @@
     return { update, clear, getImage };
   }
 
-  function createImagePresenter({ getNode, setNode, preloader, onReady = () => {} }) {
+  function createImagePresenter({ getNode, setNode, preloader, onReady = () => {}, getThumbnailUrl = item => item.thumb_url }) {
     let generation = 0;
+    let retryButton = null;
+
+    function removeRetry() {
+      retryButton?.remove();
+      retryButton = null;
+    }
 
     function clear() {
       generation += 1;
+      removeRetry();
       const node = getNode();
       if (node) {
         node.onload = null;
@@ -208,13 +223,14 @@
     function show(item, preview = null) {
       const previous = getNode();
       if (!previous) return;
+      removeRetry();
       const currentGeneration = ++generation;
       const url = mediaUrl(item);
       const readyPreview = preview && preview.tagName === 'IMG'
         && preview.getAttribute('src') === url && preview.complete && preview.naturalWidth > 0;
       const full = readyPreview ? preview : (preloader.getImage?.(item) || new Image());
       const readyFull = full.complete && full.naturalWidth > 0;
-      const node = readyFull ? full : new Image();
+      let node = readyFull ? full : new Image();
 
       // A reused <img> can keep painting the previous photo while its new src
       // loads. Start with a fresh node, or promote the actual loaded swipe image.
@@ -241,7 +257,8 @@
       node.style.removeProperty('--viewer-small-image-width');
       const isCurrent = () => currentGeneration === generation && getNode() === node;
       node.onload = () => { if (isCurrent()) { sizeImage(); onReady(item); } };
-      if (!readyFull && item.thumb_url) node.src = item.thumb_url;
+      const thumbnailUrl = getThumbnailUrl(item);
+      if (!readyFull && thumbnailUrl) node.src = thumbnailUrl;
       previous.onload = null;
       previous.replaceWith(node);
       setNode(node);
@@ -256,7 +273,40 @@
       full.fetchPriority = 'high';
       full.addEventListener('load', async () => {
         try { if (full.decode) await full.decode(); } catch (_) {}
-        if (isCurrent() && full.naturalWidth > 0) node.src = url;
+        if (!isCurrent() || full.naturalWidth <= 0) return;
+        // Promote the image that already downloaded and decoded. Assigning
+        // its URL to the thumbnail node can trigger another network request
+        // (notably with no-store responses), leaving the thumbnail on failure.
+        for (const attr of Array.from(full.attributes)) {
+          if (attr.name !== 'src') full.removeAttribute(attr.name);
+        }
+        for (const attr of Array.from(node.attributes)) {
+          if (attr.name !== 'src') full.setAttribute(attr.name, attr.value);
+        }
+        node.onload = null;
+        node.replaceWith(full);
+        node = full;
+        setNode(full);
+        sizeImage();
+        onReady(item);
+      }, { once: true });
+      full.addEventListener('error', () => {
+        if (!isCurrent()) return;
+        removeRetry();
+        const label = document.documentElement.lang.startsWith('en') ? 'Try again' : 'Prøv igen';
+        retryButton = document.createElement('button');
+        retryButton.type = 'button';
+        retryButton.className = 'btn video-play-overlay';
+        retryButton.dataset.errorLabel = label;
+        retryButton.setAttribute('aria-label', label);
+        retryButton.title = label;
+        retryButton.textContent = '↻';
+        retryButton.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (isCurrent()) show(item);
+        });
+        node.parentElement?.append(retryButton);
       }, { once: true });
       if (full.getAttribute('src') !== url) full.src = url;
     }

@@ -69,3 +69,32 @@ test('repeated updates do not start concurrent downloads and close stops queue',
   cache.update(items, 0); await tick(); assert.equal(nodes.length, 2);
   cache.clear(); nodes[1].done(); await tick(); assert.equal(nodes.length, 2);
 });
+
+test('metadata preloads release video resources before loading the next neighbour', async () => {
+  const {nodes, cache} = setup();
+  const videos = items.map(item => ({...item, is_video: true}));
+  try {
+    cache.update(videos, 0); await tick();
+    for (let i = 0; i < 3; i++) {
+      assert.equal(nodes.filter(node => node.src).length, 1);
+      nodes[i].done();
+      assert.equal(nodes[i].src, '', 'completed metadata must not keep a loaded player');
+      await tick();
+    }
+    assert.equal(nodes.length, 3);
+    assert.equal(nodes.filter(node => node.src).length, 0);
+    cache.update(videos, 0); await tick();
+    assert.equal(nodes.length, 3, 'completed metadata is not requested again');
+  } finally { cache.clear(); }
+});
+
+test('failed metadata preloads also release their video resource', async () => {
+  const {nodes, cache} = setup();
+  try {
+    cache.update(items.map(item => ({...item, is_video: true})), 0); await tick();
+    nodes[0].dispatchEvent(new Event('error'));
+    assert.equal(nodes[0].src, '');
+    await tick();
+    assert.equal(nodes.filter(node => node.src).length, 1);
+  } finally { cache.clear(); }
+});

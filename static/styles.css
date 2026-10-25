@@ -3375,6 +3375,18 @@ body.viewer-scroll-lock {
   border-color: rgba(255, 255, 255, 0.72);
   transform: translate(-50%, -50%) scale(1.04);
 }
+.video-play-overlay[data-error-label]:not([data-error-label=""])::after {
+  content: attr(data-error-label);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(8, 12, 20, .9);
+  color: #fff;
+  white-space: nowrap;
+}
 .video-play-overlay:focus-visible {
   outline: 3px solid rgba(96, 150, 255, 0.78);
   outline-offset: 4px;

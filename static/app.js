@@ -951,6 +951,7 @@ const I18N = {
     video_settings_load_failed: 'Kunne ikke hente videoindstillingen.',
     video_settings_save_failed: 'Kunne ikke gemme videoindstillingen.',
     video_play: 'Afspil video',
+    video_retry: 'Prøv igen',
     upload_workflow_title: 'Upload workflow',
     upload_workflow_desc: 'Vælg hvordan upload-efterbehandling kører.',
     upload_workflow_gentle_title: 'Skånsom',
@@ -1849,6 +1850,7 @@ const I18N = {
     video_settings_load_failed: 'Could not load the video setting.',
     video_settings_save_failed: 'Could not save the video setting.',
     video_play: 'Play video',
+    video_retry: 'Try again',
     upload_workflow_title: 'Upload workflow',
     upload_workflow_desc: 'Choose how upload post-processing runs.',
     upload_workflow_gentle_title: 'Gentle',
@@ -7822,6 +7824,7 @@ const viewerImagePresenter = window.FjordLensMediaPreloader.createImagePresenter
   getNode: () => els.viewerImg,
   setNode: (node) => { els.viewerImg = node; },
   preloader: viewerMediaPreloader,
+  getThumbnailUrl: photoThumbnailUrl,
   onReady: (item) => {
     try { positionViewerInfoPanel(); positionViewerInfoTrigger(); } catch {}
     updateViewerLandscapeClass(item);
@@ -7868,14 +7871,24 @@ function setViewerVideoPlayOverlayVisible(visible) {
 
 function syncViewerVideoPlayOverlay() {
   const active = isViewerVideoActive();
+  const failed = !!els.viewerVideo?.error;
   const paused = !!(els.viewerVideo && (els.viewerVideo.paused || els.viewerVideo.ended));
   const needsButton = !state.videoAutoplay || viewerVideoManualPlayRequired;
-  setViewerVideoPlayOverlayVisible(active && paused && needsButton);
+  if (els.viewerVideoPlayBtn) {
+    const label = tr(failed ? 'video_retry' : 'video_play');
+    els.viewerVideoPlayBtn.setAttribute('aria-label', label);
+    els.viewerVideoPlayBtn.title = label;
+    els.viewerVideoPlayBtn.dataset.errorLabel = failed ? label : '';
+  }
+  setViewerVideoPlayOverlayVisible(active && (failed || (paused && needsButton)));
 }
 
 async function playActiveViewerVideo(generation = viewerVideoSourceGeneration) {
   if (!isViewerVideoActive() || !els.viewerVideo) return false;
   try {
+    // A failed media element cannot recover through play() alone. The retry
+    // click reloads it synchronously, preserving iOS user activation.
+    if (els.viewerVideo.error) els.viewerVideo.load();
     const result = els.viewerVideo.play();
     if (result && typeof result.then === 'function') await result;
     if (generation !== viewerVideoSourceGeneration) return false;
@@ -18135,7 +18148,12 @@ if (els.viewerVideo) {
   els.viewerVideo.addEventListener('ended', syncViewerVideoPlayOverlay);
   els.viewerVideo.addEventListener('loadedmetadata', syncViewerVideoLayout);
   els.viewerVideo.addEventListener('loadeddata', scheduleViewerInfoPosition);
-  els.viewerVideo.addEventListener('error', () => setViewerVideoPlayOverlayVisible(false));
+  els.viewerVideo.addEventListener('error', () => {
+    syncViewerVideoPlayOverlay();
+    if (!isViewerVideoActive()) return;
+    const item = getViewerItems()[state.selectedIndex];
+    window.FjordLensVideoDiagnostics?.report(els.viewerVideo, item, `/api/media/playback-error/${item.id}`);
+  });
 
   if (typeof ResizeObserver === 'function') {
     viewerVideoResizeObserver = new ResizeObserver(() => {

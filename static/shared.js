@@ -327,6 +327,7 @@ function t(key) {
     cancel: 'Annuller',
     open_view: '\u00c5bn visning',
     video_play: 'Afspil video',
+    video_retry: 'Prøv igen',
     select_photos: 'V\u00e6lg billeder',
     select_done: 'Afslut v\u00e6lg',
     select_all: 'V\u00e6lg alle',
@@ -402,6 +403,7 @@ function t(key) {
     cancel: 'Cancel',
     open_view: 'Open view',
     video_play: 'Play video',
+    video_retry: 'Try again',
     select_photos: 'Select photos',
     select_done: 'Finish selecting',
     select_all: 'Select all',
@@ -1516,14 +1518,22 @@ function setShareViewerVideoPlayOverlayVisible(visible) {
 }
 
 function syncShareViewerVideoPlayOverlay() {
+  const failed = !!els.viewerVideo?.error;
   const paused = !!(els.viewerVideo && (els.viewerVideo.paused || els.viewerVideo.ended));
   const needsButton = !state.videoAutoplay || shareViewerVideoManualPlayRequired;
-  setShareViewerVideoPlayOverlayVisible(isShareViewerVideoActive() && paused && needsButton);
+  if (els.viewerVideoPlayBtn) {
+    const label = t(failed ? 'video_retry' : 'video_play');
+    els.viewerVideoPlayBtn.setAttribute('aria-label', label);
+    els.viewerVideoPlayBtn.title = label;
+    els.viewerVideoPlayBtn.dataset.errorLabel = failed ? label : '';
+  }
+  setShareViewerVideoPlayOverlayVisible(isShareViewerVideoActive() && (failed || (paused && needsButton)));
 }
 
 async function playActiveShareViewerVideo(generation = shareViewerVideoSourceGeneration) {
   if (!isShareViewerVideoActive() || !els.viewerVideo) return false;
   try {
+    if (els.viewerVideo.error) els.viewerVideo.load();
     const result = els.viewerVideo.play();
     if (result && typeof result.then === 'function') await result;
     if (generation !== shareViewerVideoSourceGeneration) return false;
@@ -1655,7 +1665,12 @@ if (els.viewerVideo) {
   els.viewerVideo.addEventListener('pause', syncShareViewerVideoPlayOverlay);
   els.viewerVideo.addEventListener('ended', syncShareViewerVideoPlayOverlay);
   els.viewerVideo.addEventListener('loadedmetadata', syncShareViewerVideoPlayOverlay);
-  els.viewerVideo.addEventListener('error', () => setShareViewerVideoPlayOverlayVisible(false));
+  els.viewerVideo.addEventListener('error', () => {
+    syncShareViewerVideoPlayOverlay();
+    if (!isShareViewerVideoActive()) return;
+    const item = state.visible[state.viewerIndex];
+    window.FjordLensVideoDiagnostics?.report(els.viewerVideo, item, `/api/share/${encodeURIComponent(state.token)}/playback-error/${item.id}`);
+  });
 }
 if (els.viewerMenuBtn) {
   els.viewerMenuBtn.addEventListener('click', (e) => {

@@ -176,6 +176,44 @@ class ViewerImageTests(unittest.TestCase):
         self.page.wait_for_timeout(100)
         self.wait_image("/b-thumb.jpg", 12)
 
+    def test_loaded_original_is_promoted_without_a_second_request(self):
+        self.show(1)
+        self.page.wait_for_function("current.getAttribute('src') === '/b-thumb.jpg'")
+        self.page.evaluate("window.loadedOriginal = preloader.getImage(items[1])")
+        self.release('b.jpg')
+        self.wait_image('/b.jpg', 600)
+        self.assertTrue(self.page.evaluate('current === loadedOriginal'))
+
+    def test_failed_private_image_can_retry_and_uses_folder_thumbnail_context(self):
+        self.page.evaluate("""() => {
+            items[1].private = true;
+            presenter = FjordLensMediaPreloader.createImagePresenter({
+                getNode: () => current, setNode: node => { current = node; }, preloader,
+                getThumbnailUrl: item => item.thumb_url + '?folder=Secret',
+            });
+        }""")
+        self.show(1)
+        self.wait_image('/b-thumb.jpg?folder=Secret', 12)
+        for route in self.pending.pop('b.jpg'):
+            route.abort()
+        retry = self.page.get_by_role('button', name='Prøv igen')
+        retry.wait_for(state='visible')
+        retry.click()
+        self.release('b.jpg')
+        self.wait_image('/b.jpg', 600)
+        self.assertEqual(self.page.get_by_role('button', name='Prøv igen').count(), 0)
+
+    def test_navigating_away_removes_image_retry(self):
+        self.show(1)
+        self.wait_image('/b-thumb.jpg', 12)
+        for route in self.pending.pop('b.jpg'):
+            route.abort()
+        self.page.get_by_role('button', name='Prøv igen').wait_for(state='visible')
+        self.show(2)
+        self.assertEqual(self.page.get_by_role('button', name='Prøv igen').count(), 0)
+        self.release('c.jpg')
+        self.wait_image('/c.jpg', 600)
+
     def test_small_originals_enlarge_without_distortion_or_affecting_large_photos(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("styles.css", "redesign.css"):

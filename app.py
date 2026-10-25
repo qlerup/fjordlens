@@ -6339,6 +6339,7 @@ def enforce_login_for_app():
         "api_share_photos",
         "api_share_thumb",
         "api_share_viewable",
+        "api_share_playback_error",
         "api_share_original",
         "api_share_photo_download",
         "api_share_photos_download_zip",
@@ -23615,6 +23616,58 @@ def api_thumbs_cleanup():
     return jsonify({"ok": True, **res, "dry_run": dry})
 def api_thumbs(thumb_name: str):
     return api_thumb_file(thumb_name)
+
+
+def _record_video_playback_error(row):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"ok": False}), 400
+    code = body.get("code")
+    if type(code) is not int or code not in {1, 2, 3, 4}:
+        return jsonify({"ok": False}), 400
+    if str(row["ext"] or "").lower() not in VIDEO_EXTS:
+        return jsonify({"ok": False}), 400
+    details = {"code": code}
+    for key, maximum in (("network_state", 3), ("ready_state", 4), ("http_status", 599)):
+        value = body.get(key)
+        if type(value) is int and 0 <= value <= maximum:
+            details[key] = value
+    for key in ("message", "content_type", "accept_ranges", "probe_error"):
+        value = str(body.get(key) or "")
+        token = (request.view_args or {}).get("token")
+        if token:
+            value = value.replace(token, "[share]")
+        details[key] = value[:300]
+    details["redirected"] = body.get("redirected") is True
+    details["user_agent"] = str(request.headers.get("User-Agent") or "")[:400]
+    # All paths come from the authorized DB row, never from a client-supplied URL
+    # (share URLs contain access tokens and must not end up in persistent logs).
+    reasons = {1: "aborted", 2: "network", 3: "decode", 4: "source_not_supported"}
+    log_event("error", rel_path=row["rel_path"], photo_id=row["id"],
+              error=f"video_playback: {reasons[code]}", playback=details)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/media/playback-error/<int:photo_id>", methods=["POST"])
+@login_required
+def api_video_playback_error(photo_id: int):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, rel_path, ext FROM photos WHERE id=?", (photo_id,)).fetchone()
+    if not row or not _is_rel_path_allowed_for_current_user(row["rel_path"]):
+        return ("Not found", 404)
+    return _record_video_playback_error(row)
+
+
+@app.route("/api/share/<token>/playback-error/<int:photo_id>", methods=["POST"])
+def api_share_playback_error(token: str, photo_id: int):
+    share = _load_share_from_token(token)
+    if not share or not _share_is_authorized(share):
+        return ("Forbidden", 403)
+    with closing(get_conn()) as conn:
+        row = _get_share_scoped_photo_row(conn, share, photo_id)
+    if not row:
+        return ("Not found", 404)
+    return _record_video_playback_error(row)
 
 
 @app.route("/api/original/<path:rel_path>")
