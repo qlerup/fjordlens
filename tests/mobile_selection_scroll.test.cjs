@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../static/app.js'), 'utf8');
 
-function setup(edit = true) {
+function setup(edit = true, allowDoubleTap = true) {
   const handlers = new Map(), timers = new Map(); let timerId = 0, selected = 0, opened = 0, doubles = 0;
   const element = {style: {}, addEventListener(name, handler) {
     if (!handlers.has(name)) handlers.set(name, []);
@@ -14,7 +14,7 @@ function setup(edit = true) {
     window: {scrollX: 0, scrollY: 0, matchMedia: () => ({matches: true}),
       setTimeout(fn) {timers.set(++timerId, fn); return timerId;}, clearTimeout(id) {timers.delete(id);}}});
   vm.runInContext(source.slice(source.indexOf('const MOBILE_SELECT_DOUBLE_TAP_MS'), source.indexOf('// --- Desktop right-click context menu')), context);
-  context.bindMobileDoubleTapSelection(element, {onSingleTap() {opened++;}, onDoubleTap() {doubles++;}});
+  context.bindMobileDoubleTapSelection(element, {allowDoubleTap, onSingleTap() {opened++;}, onDoubleTap() {doubles++;}});
   element.addEventListener('click', () => {if (context.state.mapperEditMode) selected++;});
   function fire(name, extra = {}) {
     const event = {detail: 1, preventDefault() {}, stopImmediatePropagation() {this.stopped = true;}, ...extra};
@@ -75,4 +75,22 @@ test('range dragging starts only with the mouse, never a scrolling touch or pen'
   assert.equal(starts, 0);
   ctx._handleMapperDragPointerStart({pointerType: 'mouse', button: 0, buttons: 1}, {});
   assert.equal(starts, 1);
+});
+
+test('a media tap opens synchronously without waiting for a double-tap timer', () => {
+  const s = setup(false, false);
+  s.touch('touchstart', 20, 100); s.touch('touchend', 20, 100); s.fire('click');
+  assert.equal(s.counts().opened, 1);
+  assert.equal(s.timers.size, 0);
+  assert.equal(s.counts().doubles, 0);
+});
+
+test('immediate media opening still ignores scrolls and supports selection mode', () => {
+  const s = setup(false, false);
+  s.touch('touchstart', 20, 100); s.touch('touchmove', 20, 60); s.touch('touchend', 20, 60); s.fire('click');
+  assert.equal(s.counts().opened, 0);
+  s.context.state.mapperEditMode = true;
+  s.touch('touchstart', 20, 60); s.touch('touchend', 20, 60); s.fire('click');
+  assert.equal(s.counts().opened, 0);
+  assert.equal(s.counts().selected, 1);
 });

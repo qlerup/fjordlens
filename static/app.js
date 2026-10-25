@@ -6981,10 +6981,10 @@ function appendCardTo(item, container) {
     renameButton.style.left = '6px';
     renameButton.style.top = '6px';
     renameButton.style.zIndex = '3';
-    renameButton.style.opacity = '0';
+    renameButton.style.opacity = isDesktopContextMenuDevice() ? '0' : '1';
     renameButton.style.transition = 'opacity 0.15s';
-    card.addEventListener('mouseenter', () => { renameButton.style.opacity = '1'; });
-    card.addEventListener('mouseleave', () => { renameButton.style.opacity = '0'; });
+    card.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') renameButton.style.opacity = '1'; });
+    card.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') renameButton.style.opacity = '0'; });
     thumb.style.position = 'relative';
     thumb.appendChild(renameButton);
     renameButton.addEventListener('click', (ev) => {
@@ -7002,11 +7002,12 @@ function appendCardTo(item, container) {
     infoIcon.style.top = '6px';
     infoIcon.style.zIndex = '3';
     infoIcon.style.cursor = 'pointer';
-    infoIcon.style.opacity = '0';
+    infoIcon.style.opacity = isDesktopContextMenuDevice() ? '0' : '1';
     infoIcon.style.transition = 'opacity 0.15s';
-    // Show icon on hover
-    card.addEventListener('mouseenter', () => { infoIcon.style.opacity = '1'; });
-    card.addEventListener('mouseleave', () => { infoIcon.style.opacity = '0'; });
+    // Touch users see the action immediately. Emulated mouse hover on iOS
+    // must not reveal new controls and consume the first tap on the photo.
+    card.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') infoIcon.style.opacity = '1'; });
+    card.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') infoIcon.style.opacity = '0'; });
     // Place icon above the red dot (assume red dot is at 0,0 or adjust as needed)
     thumb.style.position = 'relative';
     thumb.appendChild(infoIcon);
@@ -7128,14 +7129,8 @@ function appendCardTo(item, container) {
   });
   if (state.view === 'mapper') {
     bindMobileDoubleTapSelection(card, {
+      allowDoubleTap: false,
       ignoreTarget: (target) => !!(target && target.closest && target.closest('.info-icon-overlay, .btn, a')),
-      onDoubleTap: () => {
-        const photoId = Number(item && item.id || 0);
-        if (state.view !== 'mapper' || state.mapperEditMode || photoId <= 0) return;
-        if (!state.mapperSelectedPhotoIds) state.mapperSelectedPhotoIds = new Set();
-        state.mapperSelectedPhotoIds.add(photoId);
-        setMapperEditMode(true);
-      },
       onSingleTap: () => {
         if (state.view !== 'mapper' || state.mapperEditMode) return;
         try { document.body.classList.remove('detail-open'); } catch {}
@@ -15176,7 +15171,7 @@ function isMobileSelectionGestureDevice() {
   }
 }
 
-function bindMobileDoubleTapSelection(element, { onSingleTap, onDoubleTap, ignoreTarget } = {}) {
+function bindMobileDoubleTapSelection(element, { onSingleTap, onDoubleTap, ignoreTarget, allowDoubleTap = true } = {}) {
   if (!element) return;
   let pendingSingleTapTimer = null;
   let touchStart = null;
@@ -15223,6 +15218,13 @@ function bindMobileDoubleTapSelection(element, { onSingleTap, onDoubleTap, ignor
 
     event.preventDefault();
     event.stopImmediatePropagation();
+
+    // Media opens in this click, including the iOS activation needed by video.
+    // Folder cards retain their double-tap selection gesture.
+    if (!allowDoubleTap) {
+      if (typeof onSingleTap === 'function') onSingleTap();
+      return;
+    }
 
     if (pendingSingleTapTimer) {
       window.clearTimeout(pendingSingleTapTimer);

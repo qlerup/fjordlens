@@ -19,9 +19,11 @@
   pointer-events: auto;
   z-index: 3;
 }
-.photo-card:hover .info-icon-overlay {
-  opacity: 1;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+@media (hover: hover) and (pointer: fine) {
+  .photo-card:hover .info-icon-overlay {
+    opacity: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  }
 }
 .info-icon-overlay svg {
   width: 20px;
