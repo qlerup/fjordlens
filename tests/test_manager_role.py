@@ -81,6 +81,41 @@ class ManagerRoleTests(unittest.TestCase):
         response = self.client(3).post('/api/upload/tus', headers=headers)
         self.assertEqual(response.status_code, 403, response.json)
 
+    def test_manager_can_complete_upload_into_folder_it_created(self):
+        manager = self.client()
+        created = manager.post('/api/settings/upload-folder', json={
+            'destination': 'uploads',
+            'parent': '',
+            'path': 'manager-owned',
+        })
+        self.assertEqual(created.status_code, 200, created.json)
+
+        metadata = ','.join(name + ' ' + base64.b64encode(value.encode()).decode() for name, value in (
+            ('filename', 'new.jpg'), ('destination', 'uploads'), ('subdir', 'manager-owned')))
+        headers = {'Tus-Resumable': '1.0.0', 'Upload-Length': '4', 'Upload-Metadata': metadata}
+        started = manager.post('/api/upload/tus', headers=headers)
+        self.assertEqual(started.status_code, 201, started.data)
+
+        completed = manager.patch(
+            started.headers['Location'],
+            data=b'jpeg',
+            headers={
+                'Tus-Resumable': '1.0.0',
+                'Upload-Offset': '0',
+                'Content-Type': 'application/offset+octet-stream',
+            },
+        )
+        self.assertEqual(completed.status_code, 204, completed.data)
+        self.assertTrue((fjordlens.UPLOAD_DIR / 'originals' / 'manager-owned' / 'new.jpg').is_file())
+
+        with fjordlens.closing(fjordlens.get_conn()) as conn:
+            row = conn.execute(
+                "SELECT rel_path, uploaded_by FROM photos WHERE rel_path=?",
+                ('uploads/originals/manager-owned/new.jpg',),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row['uploaded_by'], 'manager')
+
     def test_manager_has_no_system_or_user_administration_rights(self):
         manager = self.client()
         for method, url in [('get', '/api/admin/users'), ('get', '/api/logs'), ('get', '/api/settings/video'),
